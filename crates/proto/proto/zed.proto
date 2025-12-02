@@ -437,12 +437,16 @@ message Envelope {
         OpenImageResponse open_image_response = 392;
         CreateImageForPeer create_image_for_peer = 393;
 
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394;
+        GitFileHistory git_file_history = 397;
+        GitFileHistoryResponse git_file_history_response = 398;
 
-        RunGitHook run_git_hook = 395; // current max
+        RunGitHook run_git_hook = 399;
+
+        GitDeleteBranch git_delete_branch = 400;
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401; // current max
     }
 
-    reserved 87 to 88;
+    reserved 87 to 88, 396;
     reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;
@@ -466,6 +470,7 @@ message Envelope {
     reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
+    reserved 394 to 395;
 }
 
 message Hello {

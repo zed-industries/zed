@@ -137,10 +137,10 @@ impl TabMap {
                         let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
                         let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
                         TabEdit {
-                            old: old_snapshot.to_tab_point(old_start)
-                                ..old_snapshot.to_tab_point(old_end),
-                            new: new_snapshot.to_tab_point(new_start)
-                                ..new_snapshot.to_tab_point(new_end),
+                            old: old_snapshot.fold_point_to_tab_point(old_start)
+                                ..old_snapshot.fold_point_to_tab_point(old_end),
+                            new: new_snapshot.fold_point_to_tab_point(new_start)
+                                ..new_snapshot.fold_point_to_tab_point(new_end),
                         }
                     })
                     .collect()
@@ -183,7 +183,7 @@ impl TabSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
+            self.fold_point_to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
                 .0
                 .column
         } else {
@@ -196,8 +196,8 @@ impl TabSnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
-        let input_start = self.to_fold_point(range.start, Bias::Left).0;
-        let input_end = self.to_fold_point(range.end, Bias::Right).0;
+        let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
+        let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
@@ -241,11 +241,11 @@ impl TabSnapshot {
         highlights: Highlights<'a>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
-            self.to_fold_point(range.start, Bias::Left);
+            self.tab_point_to_fold_point(range.start, Bias::Left);
         let input_column = input_start.column();
         let input_start = input_start.to_offset(&self.fold_snapshot);
         let input_end = self
-            .to_fold_point(range.end, Bias::Right)
+            .tab_point_to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.fold_snapshot);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
@@ -292,24 +292,28 @@ impl TabSnapshot {
     }
 
     pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.max_point())
+        self.fold_point_to_tab_point(self.fold_snapshot.max_point())
     }
 
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
-        self.to_tab_point(
+        self.fold_point_to_tab_point(
             self.fold_snapshot
-                .clip_point(self.to_fold_point(point, bias).0, bias),
+                .clip_point(self.tab_point_to_fold_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
+    pub fn fold_point_to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chunks = self.fold_snapshot.chunks_at(FoldPoint::new(input.row(), 0));
         let tab_cursor = TabStopCursor::new(chunks);
         let expanded = self.expand_tabs(tab_cursor, input.column());
         TabPoint::new(input.row(), expanded)
     }
 
-    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+    pub fn tab_point_cursor(&self) -> TabPointCursor<'_> {
+        TabPointCursor { this: self }
+    }
+
+    pub fn tab_point_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
         let chunks = self
             .fold_snapshot
             .chunks_at(FoldPoint::new(output.row(), 0));
@@ -326,14 +330,14 @@ impl TabSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
+    pub fn point_to_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        self.to_tab_point(fold_point)
+        self.fold_point_to_tab_point(fold_point)
     }
 
-    pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
-        let fold_point = self.to_fold_point(point, bias).0;
+    pub fn tab_point_to_point(&self, point: TabPoint, bias: Bias) -> Point {
+        let fold_point = self.tab_point_to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
         self.fold_snapshot
             .inlay_snapshot
@@ -432,6 +436,17 @@ impl TabSnapshot {
     }
 }
 
+// todo(lw): Implement TabPointCursor properly
+pub struct TabPointCursor<'this> {
+    this: &'this TabSnapshot,
+}
+
+impl TabPointCursor<'_> {
+    pub fn map(&mut self, point: FoldPoint) -> TabPoint {
+        self.this.fold_point_to_tab_point(point)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct TabPoint(pub Point);
 
@@ -527,13 +542,14 @@ pub struct TabChunks<'a> {
 
 impl TabChunks<'_> {
     pub(crate) fn seek(&mut self, range: Range<TabPoint>) {
-        let (input_start, expanded_char_column, to_next_stop) =
-            self.snapshot.to_fold_point(range.start, Bias::Left);
+        let (input_start, expanded_char_column, to_next_stop) = self
+            .snapshot
+            .tab_point_to_fold_point(range.start, Bias::Left);
         let input_column = input_start.column();
         let input_start = input_start.to_offset(&self.snapshot.fold_snapshot);
         let input_end = self
             .snapshot
-            .to_fold_point(range.end, Bias::Right)
+            .tab_point_to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.snapshot.fold_snapshot);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
@@ -804,23 +820,23 @@ mod tests {
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
-                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
-                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
-                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
-                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
         }
@@ -840,7 +856,7 @@ mod tests {
 
         // This should panic with the expected vs actual mismatch
         let tab_point = TabPoint::new(0, 9);
-        let result = tab_snapshot.to_fold_point(tab_point, Bias::Left);
+        let result = tab_snapshot.tab_point_to_fold_point(tab_point, Bias::Left);
         let expected = tab_snapshot.expected_to_fold_point(tab_point, Bias::Left);
 
         assert_eq!(result, expected);
@@ -884,26 +900,26 @@ mod tests {
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
-                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
-                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.start, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
 
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
-                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
                 tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
-                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                tab_snapshot.tab_point_to_fold_point(range.end, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
@@ -943,13 +959,13 @@ mod tests {
                 let input_point = Point::new(0, ix as u32);
                 let output_point = Point::new(0, output.find(c).unwrap() as u32);
                 assert_eq!(
-                    tab_snapshot.to_tab_point(FoldPoint(input_point)),
+                    tab_snapshot.fold_point_to_tab_point(FoldPoint(input_point)),
                     TabPoint(output_point),
                     "to_tab_point({input_point:?})"
                 );
                 assert_eq!(
                     tab_snapshot
-                        .to_fold_point(TabPoint(output_point), Bias::Left)
+                        .tab_point_to_fold_point(TabPoint(output_point), Bias::Left)
                         .0,
                     FoldPoint(input_point),
                     "to_fold_point({output_point:?})"
@@ -1138,7 +1154,7 @@ mod tests {
             let column = rng.random_range(0..=max_column + 10);
             let fold_point = FoldPoint::new(row, column);
 
-            let actual = tab_snapshot.to_tab_point(fold_point);
+            let actual = tab_snapshot.fold_point_to_tab_point(fold_point);
             let expected = tab_snapshot.expected_to_tab_point(fold_point);
 
             assert_eq!(

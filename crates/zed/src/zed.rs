@@ -1164,7 +1164,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let commit_view_toolbar = cx.new(|cx| CommitViewToolbar::new(workspace, cx));
+            let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
@@ -1394,8 +1394,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
     };
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
     let showed_parse_error = match error {
         Some(error) => {
@@ -1427,7 +1426,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             false
         }
     };
-    let id = NotificationId::Named("failed-to-migrate-settings".into());
+    let id = NotificationId::Named(format!("failed-to-migrate-settings-{is_user}").into());
 
     match result.migration_status {
         settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
@@ -4731,6 +4730,7 @@ mod tests {
                 "assistant",
                 "assistant2",
                 "auto_update",
+                "branch_picker",
                 "bedrock",
                 "branches",
                 "buffer_search",

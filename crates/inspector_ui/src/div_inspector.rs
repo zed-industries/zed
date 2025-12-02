@@ -87,7 +87,7 @@ impl DivInspector {
                 // Rust Analyzer doesn't get started for it.
                 let rust_language_result = languages.language_for_name("Rust").await;
                 let rust_style_buffer = rust_language_result.and_then(|rust_language| {
-                    cx.new(|cx| Buffer::local("", cx).with_language(rust_language, cx))
+                    cx.new(|cx| Buffer::local("", cx).with_language_async(rust_language, cx))
                 });
 
                 match json_style_buffer.and_then(|json_style_buffer| {

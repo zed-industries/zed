@@ -25,7 +25,7 @@ pub(crate) struct WindowsDispatcher {
     pub(crate) wake_posted: AtomicBool,
     main_sender: Sender<RunnableVariant>,
     main_thread_id: ThreadId,
-    platform_window_handle: SafeHwnd,
+    pub(crate) platform_window_handle: SafeHwnd,
     validation_number: usize,
 }
 

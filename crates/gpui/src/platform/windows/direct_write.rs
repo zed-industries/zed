@@ -1515,7 +1515,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     id,
                     position: point(
                         px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(0.0),
+                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
                     ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,

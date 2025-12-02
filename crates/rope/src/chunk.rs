@@ -220,7 +220,11 @@ impl<'a> ChunkSlice<'a> {
                 range.start = self.text.ceil_char_boundary(range.start);
             }
             if !self.assert_char_boundary::<false>(range.end) {
-                range.end = self.text.floor_char_boundary(range.end);
+                range.end = if range.end < range.start {
+                    range.start
+                } else {
+                    self.text.floor_char_boundary(range.end)
+                };
             }
             let mask = (1 as Bitmap)
                 .unbounded_shl(range.end as u32)

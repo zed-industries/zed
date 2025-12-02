@@ -287,7 +287,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -981,7 +981,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
+        self.read(cx).as_searchable(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {

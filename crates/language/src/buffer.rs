@@ -45,12 +45,12 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, hash_map},
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, Not, Range},
+    ops::{Deref, Range},
     path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
@@ -758,8 +758,8 @@ impl EditPreview {
             .to_point(&self.applied_edits_snapshot);
 
         let start = Point::new(start.row.saturating_sub(3), 0);
-        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
-        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+        let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
         Some(unified_diff(
             &self
@@ -862,7 +862,7 @@ impl EditPreview {
                 self.applied_edits_snapshot.line_ending(),
                 cx,
             );
-            buffer.set_language(self.syntax_snapshot.root_language(), cx);
+            buffer.set_language_async(self.syntax_snapshot.root_language(), cx);
             buffer
         })
     }
@@ -1031,6 +1031,12 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
+    pub fn with_language_async(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
+        self.set_language_async(Some(language), cx);
+        self
+    }
+
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
@@ -1210,7 +1216,7 @@ impl Buffer {
             }
 
             // Reparse the branch buffer so that we get syntax highlighting immediately.
-            branch.reparse(cx);
+            branch.reparse(cx, true);
 
             branch
         })
@@ -1362,12 +1368,26 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
+    pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
+    }
+
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.set_language_(language, true, cx);
+    }
+
+    fn set_language_(
+        &mut self,
+        language: Option<Arc<Language>>,
+        may_block: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.was_changed();
-        self.reparse(cx);
+        self.reparse(cx, may_block);
         cx.emit(BufferEvent::LanguageChanged);
     }
 
@@ -1610,9 +1630,9 @@ impl Buffer {
     /// The snapshot with the interpolated edits is sent to a background thread,
     /// where we ask Tree-sitter to perform an incremental parse.
     ///
-    /// Meanwhile, in the foreground, we block the main thread for up to 1ms
-    /// waiting on the parse to complete. As soon as it completes, we proceed
-    /// synchronously, unless a 1ms timeout elapses.
+    /// Meanwhile, in the foreground if `may_block` is true, we block the main
+    /// thread for up to 1ms waiting on the parse to complete. As soon as it
+    /// completes, we proceed synchronously, unless a 1ms timeout elapses.
     ///
     /// If we time out waiting on the parse, we spawn a second task waiting
     /// until the parse does complete and return with the interpolated tree still
@@ -1623,7 +1643,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut Context<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.reparse.is_some() {
             return;
         }
@@ -1652,42 +1672,70 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        match cx
-            .background_executor()
-            .block_with_timeout(self.sync_parse_timeout, parse_task)
-        {
-            Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
-                self.reparse = None;
-            }
-            Err(parse_task) => {
-                // todo(lw): hot foreground spawn
-                self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = cx.background_spawn(parse_task).await;
-                    this.update(cx, move |this, cx| {
-                        let grammar_changed = || {
-                            this.language.as_ref().is_none_or(|current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            })
-                        };
-                        let language_registry_changed = || {
-                            new_syntax_map.contains_unknown_injections()
-                                && language_registry.is_some_and(|registry| {
-                                    registry.version() != new_syntax_map.language_registry_version()
+        if may_block {
+            match cx
+                .background_executor()
+                .block_with_timeout(self.sync_parse_timeout, parse_task)
+            {
+                Ok(new_syntax_snapshot) => {
+                    self.did_finish_parsing(new_syntax_snapshot, cx);
+                    self.reparse = None;
+                }
+                Err(parse_task) => {
+                    self.reparse = Some(cx.spawn(async move |this, cx| {
+                        let new_syntax_map = cx.background_spawn(parse_task).await;
+                        this.update(cx, move |this, cx| {
+                            let grammar_changed = || {
+                                this.language.as_ref().is_none_or(|current_language| {
+                                    !Arc::ptr_eq(&language, current_language)
                                 })
-                        };
-                        let parse_again = this.version.changed_since(&parsed_version)
-                            || language_registry_changed()
-                            || grammar_changed();
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.reparse = None;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
-                    })
-                    .ok();
-                }));
+                            };
+                            let language_registry_changed = || {
+                                new_syntax_map.contains_unknown_injections()
+                                    && language_registry.is_some_and(|registry| {
+                                        registry.version()
+                                            != new_syntax_map.language_registry_version()
+                                    })
+                            };
+                            let parse_again = this.version.changed_since(&parsed_version)
+                                || language_registry_changed()
+                                || grammar_changed();
+                            this.did_finish_parsing(new_syntax_map, cx);
+                            this.reparse = None;
+                            if parse_again {
+                                this.reparse(cx, false);
+                            }
+                        })
+                        .ok();
+                    }));
+                }
             }
+        } else {
+            self.reparse = Some(cx.spawn(async move |this, cx| {
+                let new_syntax_map = cx.background_spawn(parse_task).await;
+                this.update(cx, move |this, cx| {
+                    let grammar_changed = || {
+                        this.language.as_ref().is_none_or(|current_language| {
+                            !Arc::ptr_eq(&language, current_language)
+                        })
+                    };
+                    let language_registry_changed = || {
+                        new_syntax_map.contains_unknown_injections()
+                            && language_registry.is_some_and(|registry| {
+                                registry.version() != new_syntax_map.language_registry_version()
+                            })
+                    };
+                    let parse_again = this.version.changed_since(&parsed_version)
+                        || language_registry_changed()
+                        || grammar_changed();
+                    this.did_finish_parsing(new_syntax_map, cx);
+                    this.reparse = None;
+                    if parse_again {
+                        this.reparse(cx, false);
+                    }
+                })
+                .ok();
+            }));
         }
     }
 
@@ -2588,7 +2636,7 @@ impl Buffer {
             return;
         }
 
-        self.reparse(cx);
+        self.reparse(cx, true);
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
@@ -4236,6 +4284,7 @@ impl BufferSnapshot {
 
         let mut new_bracket_matches = HashMap::default();
         let mut all_bracket_matches = HashMap::default();
+        let mut bracket_matches_to_color = HashMap::default();
 
         for chunk in tree_sitter_data
             .chunks
@@ -4265,7 +4314,7 @@ impl BufferSnapshot {
                         .collect::<Vec<_>>();
 
                     let chunk_range = chunk_range.clone();
-                    let new_matches = iter::from_fn(move || {
+                    let tree_sitter_matches = iter::from_fn(|| {
                         while let Some(mat) = matches.peek() {
                             let mut open = None;
                             let mut close = None;
@@ -4291,32 +4340,70 @@ impl BufferSnapshot {
                                 continue;
                             }
 
+                            if !pattern.rainbow_exclude
+                                // Also, certain languages have "brackets" that are not brackets, e.g. tags. and such
+                                // bracket will match the entire tag with all text inside.
+                                // For now, avoid highlighting any pair that has more than single char in each bracket.
+                                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                                && (open_range.len() == 1 || close_range.len() == 1)
+                            {
+                                // Certain tree-sitter grammars may return more bracket pairs than needed:
+                                // see `test_markdown_bracket_colorization` for a set-up that returns pairs with the same start bracket and different end one.
+                                // Pick the pair with the shortest range in case of ambiguity.
+                                match bracket_matches_to_color.entry(open_range.clone()) {
+                                    hash_map::Entry::Vacant(v) => {
+                                        v.insert(close_range.clone());
+                                    }
+                                    hash_map::Entry::Occupied(mut o) => {
+                                        let previous_close_range = o.get();
+                                        let previous_length =
+                                            previous_close_range.end - open_range.start;
+                                        let new_length = close_range.end - open_range.start;
+                                        if new_length < previous_length {
+                                            o.insert(close_range.clone());
+                                        }
+                                    }
+                                }
+                            }
                             return Some((open_range, close_range, pattern, depth));
                         }
                         None
                     })
                     .sorted_by_key(|(open_range, _, _, _)| open_range.start)
-                    .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
-                        while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
-                            if last_bracket_end <= open_range.start {
-                                bracket_pairs_ends.pop();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let bracket_depth = bracket_pairs_ends.len();
-                        bracket_pairs_ends.push(close_range.end);
-
-                        BracketMatch {
-                            open_range,
-                            close_range,
-                            syntax_layer_depth,
-                            newline_only: pattern.newline_only,
-                            color_index: pattern.rainbow_exclude.not().then_some(bracket_depth),
-                        }
-                    })
                     .collect::<Vec<_>>();
+
+                    let new_matches = tree_sitter_matches
+                        .into_iter()
+                        .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
+                            let participates_in_colorizing =
+                                bracket_matches_to_color.get(&open_range).is_some_and(
+                                    |close_range_to_color| close_range_to_color == &close_range,
+                                );
+                            let color_index = if participates_in_colorizing {
+                                while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
+                                    if last_bracket_end <= open_range.start {
+                                        bracket_pairs_ends.pop();
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                let bracket_depth = bracket_pairs_ends.len();
+                                bracket_pairs_ends.push(close_range.end);
+                                Some(bracket_depth)
+                            } else {
+                                None
+                            };
+
+                            BracketMatch {
+                                open_range,
+                                close_range,
+                                syntax_layer_depth,
+                                newline_only: pattern.newline_only,
+                                color_index,
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
                     new_bracket_matches.insert(chunk.id, new_matches.clone());
                     new_matches

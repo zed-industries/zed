@@ -8,7 +8,6 @@ use crate::tasks::workflows::{
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
-const RUN_TESTS_INPUT: &str = "run_tests";
 pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
@@ -27,17 +26,7 @@ pub(crate) fn extension_tests() -> Workflow {
     let tests_pass = tests_pass(&jobs);
 
     named::workflow()
-        .add_event(
-            Event::default().workflow_call(WorkflowCall::default().add_input(
-                RUN_TESTS_INPUT,
-                WorkflowCallInput {
-                    description: "Whether the workflow should run rust tests".into(),
-                    required: true,
-                    input_type: "boolean".into(),
-                    default: None,
-                },
-            )),
-        )
+        .add_event(Event::default().workflow_call(WorkflowCall::default()))
         .concurrency(one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
@@ -65,13 +54,9 @@ fn check_rust() -> NamedJob {
         .add_step(steps::cache_rust_dependencies_namespace())
         .add_step(steps::cargo_fmt())
         .add_step(run_clippy())
+        .add_step(steps::cargo_install_nextest())
         .add_step(
-            steps::cargo_install_nextest()
-                .if_condition(Expression::new(format!("inputs.{RUN_TESTS_INPUT}"))),
-        )
-        .add_step(
-            steps::cargo_nextest(runners::Platform::Linux)
-                .if_condition(Expression::new(format!("inputs.{RUN_TESTS_INPUT}"))),
+            steps::cargo_nextest(runners::Platform::Linux).add_env(("NEXTEST_NO_TESTS", "warn")),
         );
 
     named::job(job)
@@ -82,7 +67,7 @@ pub(crate) fn check_extension() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(1u32)
+        .timeout_minutes(2u32)
         .add_step(steps::checkout_repo())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))

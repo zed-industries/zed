@@ -1,4 +1,4 @@
-use std::{path::Path, pin::Pin, task::Poll};
+use std::{future::Future, path::Path, pin::Pin, task::Poll};
 
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -82,6 +82,65 @@ pub async fn download_server_binary(
                 format!("extracting response for asset {url} into {destination_path:?}",)
             })?,
     }
+    Ok(())
+}
+
+pub async fn fetch_github_binary_with_digest_check<ValidityCheck, ValidityCheckFuture>(
+    binary_path: &Path,
+    metadata_path: &Path,
+    expected_digest: Option<String>,
+    url: &str,
+    asset_kind: AssetKind,
+    download_destination: &Path,
+    http_client: &dyn HttpClient,
+    validity_check: ValidityCheck,
+) -> Result<()>
+where
+    ValidityCheck: FnOnce() -> ValidityCheckFuture,
+    ValidityCheckFuture: Future<Output = Result<()>>,
+{
+    let metadata = GithubBinaryMetadata::read_from_file(metadata_path)
+        .await
+        .ok();
+
+    if let Some(metadata) = metadata {
+        let validity_check_result = validity_check().await;
+
+        if let (Some(actual_digest), Some(expected_digest_ref)) =
+            (&metadata.digest, &expected_digest)
+        {
+            if actual_digest == expected_digest_ref {
+                if validity_check_result.is_ok() {
+                    return Ok(());
+                }
+            } else {
+                log::info!(
+                    "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest_ref}, Got: {actual_digest}"
+                );
+            }
+        } else if validity_check_result.is_ok() {
+            return Ok(());
+        }
+    }
+
+    download_server_binary(
+        http_client,
+        url,
+        expected_digest.as_deref(),
+        download_destination,
+        asset_kind,
+    )
+    .await?;
+
+    GithubBinaryMetadata::write_to_file(
+        &GithubBinaryMetadata {
+            metadata_version: 1,
+            digest: expected_digest,
+        },
+        metadata_path,
+    )
+    .await?;
+
     Ok(())
 }
 

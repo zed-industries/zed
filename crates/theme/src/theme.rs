@@ -84,6 +84,15 @@ impl From<WindowAppearance> for Appearance {
     }
 }
 
+impl From<Appearance> for ThemeAppearanceMode {
+    fn from(value: Appearance) -> Self {
+        match value {
+            Appearance::Light => Self::Light,
+            Appearance::Dark => Self::Dark,
+        }
+    }
+}
+
 /// Which themes should be loaded. This is used primarily for testing.
 pub enum LoadThemes {
     /// Only load the base theme.

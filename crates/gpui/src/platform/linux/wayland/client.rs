@@ -1419,6 +1419,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         state.repeat.current_keycode = Some(keycode);
 
                         let rate = state.repeat.characters_per_second;
+                        let repeat_interval = Duration::from_secs(1) / rate;
                         let id = state.repeat.current_id;
                         state
                             .loop_handle
@@ -1428,7 +1429,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     is_held: true,
                                     prefer_character_input: false,
                                 });
-                                move |_event, _metadata, this| {
+                                move |event_timestamp, _metadata, this| {
                                     let mut client = this.get_client();
                                     let mut state = client.borrow_mut();
                                     let is_repeating = id == state.repeat.current_id
@@ -1445,7 +1446,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     drop(state);
                                     focused_window.handle_input(input.clone());
 
-                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
+                                    // If the new scheduled time is in the past the event will repeat as soon as possible
+                                    TimeoutAction::ToInstant(event_timestamp + repeat_interval)
                                 }
                             })
                             .unwrap();

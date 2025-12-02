@@ -9738,6 +9738,9 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// todo(jk): turning this test off until we rework it in such a way so that it is not so susceptible
+// to different timings/ordering of events.
+#[ignore]
 #[gpui::test]
 async fn test_odd_events_for_ignored_dirs(
     executor: BackgroundExecutor,

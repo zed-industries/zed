@@ -14,7 +14,7 @@ use language::{
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
-    LanguageServerSelector,
+    LanguageServerSelector, Uri,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -282,6 +282,7 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;

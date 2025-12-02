@@ -418,6 +418,13 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: true
+    pub word_diff_enabled: Option<bool>,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     ///
     /// Default: false

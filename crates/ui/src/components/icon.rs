@@ -302,33 +302,43 @@ impl Component for Icon {
                 .children(vec![
                     example_group_with_title(
                         "Sizes",
-                        vec![
-                            single_example("Default", Icon::new(IconName::Star).into_any_element()),
-                            single_example(
-                                "Small",
-                                Icon::new(IconName::Star)
-                                    .size(IconSize::Small)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Large",
-                                Icon::new(IconName::Star)
-                                    .size(IconSize::XLarge)
-                                    .into_any_element(),
-                            ),
-                        ],
+                        vec![single_example(
+                            "XSmall, Small, Default, Large",
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Star)
+                                        .size(IconSize::XSmall)
+                                        .into_any_element(),
+                                )
+                                .child(
+                                    Icon::new(IconName::Star)
+                                        .size(IconSize::Small)
+                                        .into_any_element(),
+                                )
+                                .child(Icon::new(IconName::Star).into_any_element())
+                                .child(
+                                    Icon::new(IconName::Star)
+                                        .size(IconSize::XLarge)
+                                        .into_any_element(),
+                                )
+                                .into_any_element(),
+                        )],
                     ),
                     example_group_with_title(
                         "Colors",
-                        vec![
-                            single_example("Default", Icon::new(IconName::Bell).into_any_element()),
-                            single_example(
-                                "Custom Color",
-                                Icon::new(IconName::Bell)
-                                    .color(Color::Error)
-                                    .into_any_element(),
-                            ),
-                        ],
+                        vec![single_example(
+                            "Default & Custom",
+                            h_flex()
+                                .gap_1()
+                                .child(Icon::new(IconName::Star).into_any_element())
+                                .child(
+                                    Icon::new(IconName::Star)
+                                        .color(Color::Error)
+                                        .into_any_element(),
+                                )
+                                .into_any_element(),
+                        )],
                     ),
                     example_group_with_title(
                         "All Icons",
@@ -341,14 +351,14 @@ impl Component for Icon {
                                 .children(<IconName as strum::IntoEnumIterator>::iter().map(
                                     |icon_name| {
                                         h_flex()
+                                            .p_1()
                                             .gap_1()
                                             .border_1()
-                                            .rounded_md()
-                                            .px_2()
-                                            .py_1()
-                                            .border_color(Color::Muted.color(cx))
-                                            .child(SharedString::new_static(icon_name.into()))
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .bg(cx.theme().colors().element_disabled)
+                                            .rounded_sm()
                                             .child(Icon::new(icon_name).into_any_element())
+                                            .child(SharedString::new_static(icon_name.into()))
                                     },
                                 ))
                                 .into_any_element(),

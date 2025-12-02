@@ -1,4 +1,7 @@
-use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Use, Workflow, WorkflowDispatch};
+use gh_workflow::{
+    Event, Expression, Job, Run, Schedule, Step, Strategy, Use, Workflow, WorkflowDispatch,
+};
+use serde_json::json;
 
 use crate::tasks::workflows::{
     runners::{self, Platform},
@@ -114,7 +117,33 @@ fn cron_unit_evals() -> NamedJob {
         "#}))
     }
 
-    named::job(unit_evals(None).add_step(send_failure_to_slack()))
+    named::job(cron_unit_evals_job().add_step(send_failure_to_slack()))
+}
+
+const UNIT_EVAL_MODELS: &[&str] = &[
+    "anthropic/claude-sonnet-4-5-latest",
+    "anthropic/claude-opus-4-5-latest",
+    "google/gemini-3-pro",
+    "openai/gpt-5",
+];
+
+fn cron_unit_evals_job() -> Job {
+    let script_step = add_api_keys(steps::script("./script/run-unit-evals"))
+        .add_env(("ZED_AGENT_MODEL", "${{ matrix.model }}"));
+
+    Job::default()
+        .runs_on(runners::LINUX_DEFAULT)
+        .strategy(Strategy::default().fail_fast(false).matrix(json!({
+            "model": UNIT_EVAL_MODELS
+        })))
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(Platform::Linux))
+        .add_step(steps::cache_rust_dependencies_namespace())
+        .map(steps::install_linux_dependencies)
+        .add_step(steps::cargo_install_nextest())
+        .add_step(steps::clear_target_dir_if_large(Platform::Linux))
+        .add_step(script_step)
+        .add_step(steps::cleanup_cargo_config(Platform::Linux))
 }
 
 fn unit_evals(commit: Option<&WorkflowInput>) -> Job {

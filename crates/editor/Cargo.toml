@@ -41,6 +41,7 @@ dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true

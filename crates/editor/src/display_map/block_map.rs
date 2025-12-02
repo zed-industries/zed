@@ -556,6 +556,11 @@ impl BlockMap {
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
 
+        let mut inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
+        let mut tab_point_cursor = wrap_snapshot.tab_point_cursor();
+        let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
+        let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
+
         while let Some(edit) = edits.next() {
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
@@ -686,6 +691,9 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
+            // + 8 is chosen arbitrarily to cover some multibuffer headers
+            blocks_in_edit
+                .reserve(end_block_ix - start_block_ix + if buffer.is_singleton() { 0 } else { 8 });
 
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
@@ -704,7 +712,14 @@ impl BlockMap {
             blocks_in_edit.extend(self.header_and_footer_blocks(
                 buffer,
                 (start_bound, end_bound),
-                wrap_snapshot,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
@@ -777,11 +792,12 @@ impl BlockMap {
         }
     }
 
+    /// Guarantees that `wrap_row_for` is called with points in increasing order.
     fn header_and_footer_blocks<'a, R, T>(
         &'a self,
         buffer: &'a multi_buffer::MultiBufferSnapshot,
         range: R,
-        wrap_snapshot: &'a WrapSnapshot,
+        mut wrap_row_for: impl 'a + FnMut(Point, Bias) -> WrapRow,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
     where
         R: RangeBounds<T>,
@@ -792,9 +808,7 @@ impl BlockMap {
         std::iter::from_fn(move || {
             loop {
                 let excerpt_boundary = boundaries.next()?;
-                let wrap_row = wrap_snapshot
-                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                    .row();
+                let wrap_row = wrap_row_for(Point::new(excerpt_boundary.row.0, 0), Bias::Left);
 
                 let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
                     (None, next) => Some(next.buffer_id),
@@ -826,16 +840,13 @@ impl BlockMap {
 
                             boundaries.next();
                         }
-
-                        let wrap_end_row = wrap_snapshot
-                            .make_wrap_point(
-                                Point::new(
-                                    last_excerpt_end_row.0,
-                                    buffer.line_len(last_excerpt_end_row),
-                                ),
-                                Bias::Right,
-                            )
-                            .row();
+                        let wrap_end_row = wrap_row_for(
+                            Point::new(
+                                last_excerpt_end_row.0,
+                                buffer.line_len(last_excerpt_end_row),
+                            ),
+                            Bias::Right,
+                        );
 
                         return Some((
                             BlockPlacement::Replace(wrap_row..=wrap_end_row),
@@ -3243,11 +3254,23 @@ mod tests {
                 ))
             }));
 
+            let mut inlay_point_cursor = wraps_snapshot.inlay_point_cursor();
+            let mut tab_point_cursor = wraps_snapshot.tab_point_cursor();
+            let mut fold_point_cursor = wraps_snapshot.fold_point_cursor();
+            let mut wrap_point_cursor = wraps_snapshot.wrap_point_cursor();
+
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
                 MultiBufferOffset(0)..,
-                &wraps_snapshot,
+                |point, bias| {
+                    wrap_point_cursor
+                        .map(
+                            tab_point_cursor
+                                .map(fold_point_cursor.map(inlay_point_cursor.map(point), bias)),
+                        )
+                        .row()
+                },
             ));
 
             BlockMap::sort_blocks(&mut expected_blocks);

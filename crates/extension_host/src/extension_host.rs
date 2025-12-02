@@ -1376,7 +1376,11 @@ impl ExtensionStore {
                         wasm_extensions.push((extension.manifest.clone(), wasm_extension))
                     }
                     Err(e) => {
-                        log::error!("Failed to load extension: {e:#}");
+                        log::error!(
+                            "Failed to load extension: {}, {:#}",
+                            extension.manifest.id,
+                            e
+                        );
                         this.update(cx, |_, cx| {
                             cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
                         })

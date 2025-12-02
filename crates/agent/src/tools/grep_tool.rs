@@ -32,8 +32,21 @@ pub struct GrepToolInput {
     /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
     /// A glob pattern for the paths of files to include in the search.
-    /// Supports standard glob patterns like "**/*.rs" or "src/**/*.ts".
+    /// Supports standard glob patterns like "**/*.rs" or "frontend/src/**/*.ts".
     /// If omitted, all files in the project will be searched.
+    ///
+    /// The glob pattern is matched against the full path including the project root directory.
+    ///
+    /// <example>
+    /// If the project has the following root directories:
+    ///
+    /// - /a/b/backend
+    /// - /c/d/frontend
+    ///
+    /// Use "backend/**/*.rs" to search only Rust files in the backend root directory.
+    /// Use "frontend/src/**/*.ts" to search TypeScript files only in the frontend root directory (sub-directory "src").
+    /// Use "**/*.rs" to search Rust files across all root directories.
+    /// </example>
     pub include_pattern: Option<String>,
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
@@ -132,8 +145,7 @@ impl AgentTool for GrepTool {
             let exclude_patterns = global_settings
                 .file_scan_exclusions
                 .sources()
-                .iter()
-                .chain(global_settings.private_files.sources().iter());
+                .chain(global_settings.private_files.sources());
 
             match PathMatcher::new(exclude_patterns, path_style) {
                 Ok(matcher) => matcher,

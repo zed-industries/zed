@@ -507,6 +507,8 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+    /// Do not load direnv configuration
+    Disabled,
 }
 
 #[derive(

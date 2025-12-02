@@ -42,6 +42,7 @@ util.workspace = true
 util_macros.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

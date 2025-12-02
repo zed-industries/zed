@@ -1380,6 +1380,7 @@ dependencies = [
  "http_client",
  "markdown_preview",
  "release_channel",
+ "semver",
  "serde",
  "serde_json",
  "smol",
@@ -2422,6 +2423,7 @@ dependencies = [
  "rand 0.9.2",
  "rope",
  "serde_json",
+ "settings",
  "sum_tree",
  "text",
  "unindent",
@@ -5298,6 +5300,7 @@ dependencies = [
  "indoc",
  "language",
  "lsp",
+ "menu",
  "paths",
  "project",
  "regex",
@@ -5307,6 +5310,8 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "ui_input",
+ "util",
  "workspace",
  "zed_actions",
  "zeta",
@@ -5365,6 +5370,7 @@ dependencies = [
  "db",
  "edit_prediction",
  "emojis",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -6966,7 +6972,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=e5f883040530b4df36437f140084ee5cc7c1c9be#e5f883040530b4df36437f140084ee5cc7c1c9be"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -6983,7 +6989,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=e5f883040530b4df36437f140084ee5cc7c1c9be#e5f883040530b4df36437f140084ee5cc7c1c9be"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -7106,6 +7112,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
+ "git_hosting_providers",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -7127,6 +7134,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "strum 0.27.2",
  "telemetry",
  "theme",
@@ -9012,6 +9020,7 @@ dependencies = [
  "chrono",
  "collections",
  "futures 0.3.31",
+ "globset",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -9037,7 +9046,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "smallvec",
  "smol",
+ "snippet",
  "task",
  "terminal",
  "text",
@@ -15111,6 +15122,7 @@ dependencies = [
  "editor",
  "futures 0.3.31",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "lsp",
  "menu",
@@ -21008,6 +21020,7 @@ dependencies = [
  "indexmap",
  "indoc",
  "serde",
+ "serde_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21515,7 +21528,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -21668,6 +21681,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "copilot",
+ "credentials_provider",
  "ctor",
  "db",
  "edit_prediction",

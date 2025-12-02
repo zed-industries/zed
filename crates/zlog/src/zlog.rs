@@ -183,7 +183,7 @@ macro_rules! time {
         $crate::Timer::new($logger, $name)
     };
     ($name:expr) => {
-        time!($crate::default_logger!() => $name)
+        $crate::time!($crate::default_logger!() => $name)
     };
 }
 

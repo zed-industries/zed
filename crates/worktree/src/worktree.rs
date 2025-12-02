@@ -5509,7 +5509,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
         let path =
             RelPath::from_proto(&entry.path).context("invalid relative path in proto message")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
-        let is_always_included = always_included.is_match(path.as_std_path());
+        let is_always_included = always_included.is_match(&path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,

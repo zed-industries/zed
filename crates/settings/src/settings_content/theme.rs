@@ -861,6 +861,14 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.ignored")]
     pub version_control_ignored: Option<String>,
 
+    /// Color for added words in word diffs.
+    #[serde(rename = "version_control.word_added")]
+    pub version_control_word_added: Option<String>,
+
+    /// Color for deleted words in word diffs.
+    #[serde(rename = "version_control.word_deleted")]
+    pub version_control_word_deleted: Option<String>,
+
     /// Background color for row highlights of "ours" regions in merge conflicts.
     #[serde(rename = "version_control.conflict_marker.ours")]
     pub version_control_conflict_marker_ours: Option<String>,

@@ -1,4 +1,4 @@
-use gpui::{Hsla, IntoElement};
+use gpui::{Hsla, IntoElement, PathBuilder, canvas, point};
 
 use crate::prelude::*;
 
@@ -59,15 +59,6 @@ pub struct Divider {
     inset: bool,
 }
 
-impl RenderOnce for Divider {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        match self.style {
-            DividerStyle::Solid => self.render_solid(cx).into_any_element(),
-            DividerStyle::Dashed => self.render_dashed(cx).into_any_element(),
-        }
-    }
-}
-
 impl Divider {
     pub fn horizontal() -> Self {
         Self {
@@ -115,49 +106,56 @@ impl Divider {
         self
     }
 
-    pub fn render_solid(self, cx: &mut App) -> impl IntoElement {
-        div()
-            .map(|this| match self.direction {
-                DividerDirection::Horizontal => {
-                    this.h_px().w_full().when(self.inset, |this| this.mx_1p5())
-                }
-                DividerDirection::Vertical => {
-                    this.w_px().h_full().when(self.inset, |this| this.my_1p5())
-                }
-            })
-            .bg(self.color.hsla(cx))
+    pub fn render_solid(self, base: Div, cx: &mut App) -> impl IntoElement {
+        base.bg(self.color.hsla(cx))
     }
 
-    // TODO: Use canvas or a shader here
-    // This obviously is a short term approach
-    pub fn render_dashed(self, cx: &mut App) -> impl IntoElement {
-        let segment_count = 128;
-        let segment_count_f = segment_count as f32;
-        let segment_min_w = 6.;
-        let base = match self.direction {
-            DividerDirection::Horizontal => h_flex(),
-            DividerDirection::Vertical => v_flex(),
-        };
-        let (w, h) = match self.direction {
-            DividerDirection::Horizontal => (px(segment_min_w), px(1.)),
-            DividerDirection::Vertical => (px(1.), px(segment_min_w)),
-        };
-        let color = self.color.hsla(cx);
-        let total_min_w = segment_min_w * segment_count_f * 2.; // * 2 because of the gap
-
-        base.min_w(px(total_min_w))
-            .map(|this| {
-                if self.direction == DividerDirection::Horizontal {
-                    this.w_full().h_px()
-                } else {
-                    this.w_px().h_full()
-                }
-            })
-            .gap(px(segment_min_w))
-            .overflow_hidden()
-            .children(
-                (0..segment_count).map(|_| div().flex_grow().flex_shrink_0().w(w).h(h).bg(color)),
+    pub fn render_dashed(self, base: Div) -> impl IntoElement {
+        base.relative().child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    let mut builder = PathBuilder::stroke(px(1.)).dash_array(&[px(4.), px(2.)]);
+                    let (start, end) = match self.direction {
+                        DividerDirection::Horizontal => {
+                            let x = bounds.origin.x;
+                            let y = bounds.origin.y + px(0.5);
+                            (point(x, y), point(x + bounds.size.width, y))
+                        }
+                        DividerDirection::Vertical => {
+                            let x = bounds.origin.x + px(0.5);
+                            let y = bounds.origin.y;
+                            (point(x, y), point(x, y + bounds.size.height))
+                        }
+                    };
+                    builder.move_to(start);
+                    builder.line_to(end);
+                    if let Ok(line) = builder.build() {
+                        window.paint_path(line, self.color.hsla(cx));
+                    }
+                },
             )
+            .absolute()
+            .size_full(),
+        )
+    }
+}
+
+impl RenderOnce for Divider {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let base = match self.direction {
+            DividerDirection::Horizontal => {
+                div().h_px().w_full().when(self.inset, |this| this.mx_1p5())
+            }
+            DividerDirection::Vertical => {
+                div().w_px().h_full().when(self.inset, |this| this.my_1p5())
+            }
+        };
+
+        match self.style {
+            DividerStyle::Solid => self.render_solid(base, cx).into_any_element(),
+            DividerStyle::Dashed => self.render_dashed(base).into_any_element(),
+        }
     }
 }
 
@@ -232,6 +230,7 @@ impl Component for Divider {
                         vec![single_example(
                             "Between Content",
                             v_flex()
+                                .w_full()
                                 .gap_4()
                                 .px_4()
                                 .child(Label::new("Section One"))

@@ -1209,6 +1209,13 @@
   "tab_size": 4,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
+  // Whether to enable word diff highlighting in the editor.
+  //
+  // When enabled, changed words within modified lines are highlighted
+  // to show exactly what changed.
+  //
+  // Default: true
+  "word_diff_enabled": true,
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
@@ -1350,6 +1357,8 @@
   //      "load_direnv": "direct"
   // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
   //      "load_direnv": "shell_hook"
+  // 3. Don't load direnv configuration at all.
+  //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.

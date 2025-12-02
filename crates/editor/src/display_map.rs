@@ -181,6 +181,8 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
 
+        // todo word diff here?
+
         DisplaySnapshot {
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -889,7 +891,7 @@ impl DisplaySnapshot {
     pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot().to_inlay_point(point);
         let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
-        let tab_point = self.tab_snapshot().to_tab_point(fold_point);
+        let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
@@ -919,7 +921,10 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
-        let fold_point = self.tab_snapshot().to_fold_point(tab_point, bias).0;
+        let fold_point = self
+            .tab_snapshot()
+            .tab_point_to_fold_point(tab_point, bias)
+            .0;
         fold_point.to_inlay_point(self.fold_snapshot())
     }
 
@@ -927,11 +932,13 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
-        self.tab_snapshot().to_fold_point(tab_point, bias).0
+        self.tab_snapshot()
+            .tab_point_to_fold_point(tab_point, bias)
+            .0
     }
 
     pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
-        let tab_point = self.tab_snapshot().to_tab_point(fold_point);
+        let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
@@ -1584,7 +1591,10 @@ impl DisplayPoint {
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> MultiBufferOffset {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0, bias);
         let tab_point = map.wrap_snapshot().to_tab_point(wrap_point);
-        let fold_point = map.tab_snapshot().to_fold_point(tab_point, bias).0;
+        let fold_point = map
+            .tab_snapshot()
+            .tab_point_to_fold_point(tab_point, bias)
+            .0;
         let inlay_point = fold_point.to_inlay_point(map.fold_snapshot());
         map.inlay_snapshot()
             .to_buffer_offset(map.inlay_snapshot().to_offset(inlay_point))

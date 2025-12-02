@@ -9,10 +9,16 @@ pub(crate) fn neutral() -> ColorScaleSet {
 }
 
 const ADDED_COLOR: Hsla = Hsla {
-    h: 142. / 360.,
-    s: 0.68,
-    l: 0.45,
+    h: 134. / 360.,
+    s: 0.55,
+    l: 0.40,
     a: 1.0,
+};
+const WORD_ADDED_COLOR: Hsla = Hsla {
+    h: 134. / 360.,
+    s: 0.55,
+    l: 0.40,
+    a: 0.35,
 };
 const MODIFIED_COLOR: Hsla = Hsla {
     h: 48. / 360.,
@@ -21,10 +27,16 @@ const MODIFIED_COLOR: Hsla = Hsla {
     a: 1.0,
 };
 const REMOVED_COLOR: Hsla = Hsla {
-    h: 355. / 360.,
-    s: 0.65,
-    l: 0.65,
+    h: 350. / 360.,
+    s: 0.88,
+    l: 0.25,
     a: 1.0,
+};
+const WORD_DELETED_COLOR: Hsla = Hsla {
+    h: 350. / 360.,
+    s: 0.88,
+    l: 0.25,
+    a: 0.80,
 };
 
 /// The default colors for the theme.
@@ -152,6 +164,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
             version_control_ignored: gray().light().step_12(),
+            version_control_word_added: WORD_ADDED_COLOR,
+            version_control_word_deleted: WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
             vim_normal_background: system.transparent,
@@ -287,6 +301,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
             version_control_ignored: gray().dark().step_12(),
+            version_control_word_added: WORD_ADDED_COLOR,
+            version_control_word_deleted: WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
             vim_normal_background: system.transparent,

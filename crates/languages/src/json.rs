@@ -10,7 +10,7 @@ use language::{
     ContextProvider, LanguageName, LocalFile as _, LspAdapter, LspAdapterDelegate, LspInstaller,
     Toolchain,
 };
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -251,6 +251,7 @@ impl LspAdapter for JsonLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = cx.update(|cx| {

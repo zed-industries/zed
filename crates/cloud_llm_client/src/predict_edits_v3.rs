@@ -9,7 +9,7 @@ use std::{
 use strum::EnumIter;
 use uuid::Uuid;
 
-use crate::PredictEditsGitInfo;
+use crate::{PredictEditsGitInfo, PredictEditsRequestTrigger};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanContextRetrievalRequest {
@@ -53,6 +53,8 @@ pub struct PredictEditsRequest {
     pub prompt_max_bytes: Option<usize>,
     #[serde(default)]
     pub prompt_format: PromptFormat,
+    #[serde(default)]
+    pub trigger: PredictEditsRequestTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

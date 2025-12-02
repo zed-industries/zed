@@ -1,0 +1,43 @@
+# Generated from xtask::workflows::extension_release
+# Rebuild with `cargo xtask workflows`.
+name: extension_release
+on:
+  workflow_call:
+    secrets:
+      app-id:
+        description: The app ID used to create the PR
+        required: true
+      app-secret:
+        description: The app secret for the corresponding app ID
+        required: true
+jobs:
+  create_release:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
+        owner: zed-industries
+        repositories: extensions
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - id: get-extension-id
+      name: extension_release::get_extension_id
+      run: |
+        EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
+      shell: bash -euxo pipefail {0}
+    - name: extension_release::release_action
+      uses: huacnlee/zed-extension-action@v2
+      with:
+        extension-name: ${{ steps.get-extension-id.outputs.extension_id }}
+        push-to: zed-industries/extensions
+      env:
+        COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}

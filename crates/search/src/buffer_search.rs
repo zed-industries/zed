@@ -432,10 +432,8 @@ impl Render for BufferSearchBar {
             }))
             .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
-                    .when(in_replace, |this| {
-                        this.on_action(cx.listener(Self::replace_next))
-                            .on_action(cx.listener(Self::replace_all))
-                    })
+                    .on_action(cx.listener(Self::replace_next))
+                    .on_action(cx.listener(Self::replace_all))
             })
             .when(case, |this| {
                 this.on_action(cx.listener(Self::toggle_case_sensitive))
@@ -2546,6 +2544,52 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
             .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace_focus(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("What a bad day!", window, cx)
+        });
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("bad", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        // Calling `toggle_replace` in the search bar ensures that the "Replace
+        // *" buttons are rendered, so we can then simulate clicking the
+        // buttons.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx)
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("great", window, cx);
+            });
+        });
+
+        // Focus on the editor instead of the search bar, as we want to ensure
+        // that pressing the "Replace Next Match" button will work, even if the
+        // search bar is not focused.
+        cx.focus(&editor);
+
+        // We'll not simulate clicking the "Replace Next Match " button, asserting that
+        // the replacement was done.
+        let button_bounds = cx
+            .debug_bounds("ICON-ReplaceNext")
+            .expect("'Replace Next Match' button should be visible");
+        cx.simulate_click(button_bounds.center(), gpui::Modifiers::none());
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "What a great day!"
         );
     }
 
