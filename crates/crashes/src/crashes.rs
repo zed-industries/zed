@@ -371,6 +371,11 @@ fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
 
     let mut startup_info = STARTUPINFOW::default();
     startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+    // By default, Windows enables a "busy" cursor when a GUI application is launched.
+    // This cursor is disabled once the application starts processing window messages.
+    // Since the crash handler process doesn't process messages, this "busy" cursor stays enabled for a long time.
+    // Disable the cursor feedback to prevent this from happening.
     startup_info.dwFlags = STARTF_FORCEOFFFEEDBACK;
 
     let mut process_info = PROCESS_INFORMATION::default();
