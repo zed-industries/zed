@@ -2,7 +2,7 @@ use super::*;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
-use language::{Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
+use language::{Language, LanguageConfig, LanguageMatcher, Point, ToPoint as _, tree_sitter_rust};
 use lsp::FakeLanguageServer;
 use project::{FakeFs, LocationLink, Project};
 use serde_json::json;

@@ -609,7 +609,7 @@ impl Zeta {
                     // todo: implement
                     None
                 }
-                ZetaProjectContext::Lsp(store) => Some(dbg!(store.read(cx).related_files())),
+                ZetaProjectContext::Lsp(store) => Some(store.read(cx).related_files()),
                 ZetaProjectContext::Agentic { context, .. } => Some(context.as_slice()),
             })
             .unwrap_or(&[])

@@ -1,11 +1,9 @@
+use crate::assemble_excerpts::assemble_excerpts;
 use anyhow::Result;
 use collections::HashMap;
-use fs::MTime;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
-use language::{
-    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _, ToPoint as _,
-};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _};
 use project::{LocationLink, Project, ProjectPath};
 use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
@@ -51,10 +49,6 @@ struct CachedDefinition {
     path: ProjectPath,
     buffer: Entity<Buffer>,
     anchor_range: Range<Anchor>,
-    point_range: Range<Point>,
-    buffer_max_row: u32,
-    text: Rope,
-    mtime: MTime,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -293,31 +287,35 @@ async fn rebuild_related_files(
     Ok(cx
         .background_spawn(async move {
             let mut files = Vec::<RelatedFile>::new();
+            let mut ranges_by_buffer = HashMap::<_, Vec<Range<Point>>>::default();
+            let mut paths_by_buffer = HashMap::default();
             for entry in new_entries.values() {
                 for definition in &entry.definitions {
-                    let excerpt = RelatedExcerpt {
-                        anchor_range: definition.anchor_range.clone(),
-                        point_range: definition.point_range.clone(),
-                        text: definition.text.clone(),
+                    let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
+                        continue;
                     };
-                    if let Some(file) = files
-                        .iter_mut()
-                        .find(|existing| existing.path == definition.path)
-                    {
-                        file.excerpts.push(excerpt);
-                    } else {
-                        files.push(RelatedFile {
-                            path: definition.path.clone(),
-                            buffer: definition.buffer.downgrade(),
-                            excerpts: vec![excerpt],
-                            max_row: definition.buffer_max_row,
-                        });
-                    }
+                    paths_by_buffer.insert(definition.buffer.entity_id(), definition.path.clone());
+                    ranges_by_buffer
+                        .entry(definition.buffer.clone())
+                        .or_default()
+                        .push(definition.anchor_range.to_point(snapshot));
                 }
             }
 
-            for file in &mut files {
-                file.merge_excerpts();
+            for (buffer, ranges) in ranges_by_buffer {
+                let Some(snapshot) = snapshots.get(&buffer.entity_id()) else {
+                    continue;
+                };
+                let Some(project_path) = paths_by_buffer.get(&buffer.entity_id()) else {
+                    continue;
+                };
+                let excerpts = assemble_excerpts(snapshot, ranges);
+                files.push(RelatedFile {
+                    path: project_path.clone(),
+                    buffer: buffer.downgrade(),
+                    excerpts,
+                    max_row: snapshot.max_point().row,
+                });
             }
 
             files.sort_by_key(|file| file.path.clone());
@@ -334,7 +332,6 @@ fn process_definition(
     let buffer = location.target.buffer.read(cx);
     let range = location.target.range;
     let file = buffer.file()?;
-    let buffer_max_row = buffer.max_point().row;
     let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
     if worktree.read(cx).is_single_file() {
         return None;
@@ -346,10 +343,6 @@ fn process_definition(
         },
         buffer: location.target.buffer,
         anchor_range: range.clone(),
-        point_range: range.to_point(buffer),
-        buffer_max_row,
-        text: buffer.as_rope().slice(range.to_offset(buffer)),
-        mtime: file.disk_state().mtime()?,
     })
 }
 
