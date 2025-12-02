@@ -10,19 +10,20 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task, WeakEntity,
-    Window, actions, canvas, div, fill, img, opaque_grey, point, px, size,
+    Window, actions, canvas, div, img, opaque_grey, point, px, size,
 };
 use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::{Theme, ThemeSettings};
-use ui::prelude::*;
+use ui::{Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
+    item::{BreadcrumbText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -478,51 +479,13 @@ impl Render for ImageView {
         let zoom_level = self.zoom_level;
         let pan_offset = self.pan_offset;
 
-        let checkered_background =
-            |bounds: Bounds<Pixels>, _, window: &mut Window, _cx: &mut App| {
-                let square_size: f32 = 32.0;
-
-                let start_y = bounds.origin.y.into();
-                let height: f32 = bounds.size.height.into();
-                let start_x = bounds.origin.x.into();
-                let width: f32 = bounds.size.width.into();
-
-                let mut y = start_y;
-                let mut x = start_x;
-                let mut color_swapper = true;
-                // draw checkerboard pattern
-                while y < start_y + height {
-                    // Keeping track of the grid in order to be resilient to resizing
-                    let start_swap = color_swapper;
-                    while x < start_x + width {
-                        // Clamp square dimensions to not exceed bounds
-                        let square_width = square_size.min(start_x + width - x);
-                        let square_height = square_size.min(start_y + height - y);
-
-                        let rect = Bounds::new(
-                            point(px(x), px(y)),
-                            size(px(square_width), px(square_height)),
-                        );
-
-                        let color = if color_swapper {
-                            opaque_grey(0.6, 0.4)
-                        } else {
-                            opaque_grey(0.7, 0.4)
-                        };
-
-                        window.paint_quad(fill(rect, color));
-                        color_swapper = !color_swapper;
-                        x += square_size;
-                    }
-                    x = start_x;
-                    color_swapper = !start_swap;
-                    y += square_size;
-                }
-            };
-
         let zoom_percentage = format!("{}%", (self.zoom_level * 100.0).round() as i32);
 
         let entity = cx.entity().downgrade();
+
+        let scaled_size = self
+            .image_size
+            .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -544,6 +507,7 @@ impl Render for ImageView {
                     // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
                     .h_full()
                     .overflow_hidden()
+                    .bg(cx.theme().colors().editor_background)
                     .cursor(if self.is_dragging {
                         gpui::CursorStyle::ClosedHand
                     } else {
@@ -573,27 +537,74 @@ impl Render for ImageView {
                     .child(
                         div()
                             .relative()
-                            .child(
-                                canvas(|_, _, _| (), checkered_background)
-                                    .border_2()
-                                    .border_color(cx.theme().styles.colors.border)
-                                    .size_full()
-                                    .absolute()
-                                    .top_0()
-                                    .left_0(),
-                            )
+                            .when_some(scaled_size, |div, (scaled_width, scaled_height)| {
+                                div.w(scaled_width).h(scaled_height)
+                            })
+                            .ml(pan_offset.x)
+                            .mt(pan_offset.y)
+                            .child({
+                                // draw checkerboard pattern behind the image for transparency
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _cx| {
+                                        let square_size: f32 = 8.0;
+
+                                        let start_y: f32 = bounds.origin.y.into();
+                                        let height: f32 = scaled_size
+                                            .map(|(_, h)| h.into())
+                                            .unwrap_or_else(|| bounds.size.height.into());
+                                        let start_x: f32 = bounds.origin.x.into();
+                                        let width: f32 = scaled_size
+                                            .map(|(w, _)| w.into())
+                                            .unwrap_or_else(|| bounds.size.width.into());
+
+                                        let mut y = start_y;
+                                        let mut x = start_x;
+                                        let mut color_swapper = true;
+                                        // draw checkerboard pattern
+                                        while y < start_y + height {
+                                            // keeping track of the grid in order to be resilient to resizing
+                                            let start_swap = color_swapper;
+                                            while x < start_x + width {
+                                                // clamp square dimensions to not exceed bounds
+                                                let square_width =
+                                                    square_size.min(start_x + width - x);
+                                                let square_height =
+                                                    square_size.min(start_y + height - y);
+
+                                                let rect = Bounds::new(
+                                                    point(px(x), px(y)),
+                                                    size(px(square_width), px(square_height)),
+                                                );
+
+                                                let color = if color_swapper {
+                                                    opaque_grey(0.6, 0.4)
+                                                } else {
+                                                    opaque_grey(0.7, 0.4)
+                                                };
+
+                                                window.paint_quad(gpui::fill(rect, color));
+                                                color_swapper = !color_swapper;
+                                                x += square_size;
+                                            }
+                                            x = start_x;
+                                            color_swapper = !start_swap;
+                                            y += square_size;
+                                        }
+                                    },
+                                )
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .size_full()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                            })
                             .child({
                                 let image_element = img(image).id("img");
 
-                                if let Some((img_width, img_height)) = self.image_size {
-                                    let scaled_width = px(img_width as f32 * zoom_level);
-                                    let scaled_height = px(img_height as f32 * zoom_level);
-
-                                    image_element
-                                        .w(scaled_width)
-                                        .h(scaled_height)
-                                        .ml(pan_offset.x)
-                                        .mt(pan_offset.y)
+                                if let Some((scaled_width, scaled_height)) = scaled_size {
+                                    image_element.w(scaled_width).h(scaled_height)
                                 } else {
                                     image_element.max_w_full().max_h_full()
                                 }
@@ -662,6 +673,122 @@ impl ProjectItem for ImageView {
         Self: Sized,
     {
         Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    }
+}
+
+pub struct ImageViewToolbarControls {
+    image_view: Option<WeakEntity<ImageView>>,
+    _subscription: Option<gpui::Subscription>,
+}
+
+impl ImageViewToolbarControls {
+    pub fn new() -> Self {
+        Self {
+            image_view: None,
+            _subscription: None,
+        }
+    }
+}
+
+impl Render for ImageViewToolbarControls {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(image_view) = self.image_view.as_ref().and_then(|v| v.upgrade()) else {
+            return div().into_any_element();
+        };
+
+        let zoom_level = image_view.read(cx).zoom_level;
+        let zoom_percentage = format!("{}%", (zoom_level * 100.0).round() as i32);
+
+        h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("zoom-out", IconName::Dash)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|_window, cx| Tooltip::for_action("Zoom Out", &ZoomOut, cx))
+                    .on_click({
+                        let image_view = image_view.downgrade();
+                        move |_, window, cx| {
+                            if let Some(view) = image_view.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.zoom_out(&ZoomOut, window, cx);
+                                });
+                            }
+                        }
+                    }),
+            )
+            .child(
+                Button::new("zoom-level", zoom_percentage)
+                    .label_size(LabelSize::Small)
+                    .tooltip(|_window, cx| Tooltip::for_action("Reset Zoom", &ResetZoom, cx))
+                    .on_click({
+                        let image_view = image_view.downgrade();
+                        move |_, window, cx| {
+                            if let Some(view) = image_view.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.reset_zoom(&ResetZoom, window, cx);
+                                });
+                            }
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("zoom-in", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|_window, cx| Tooltip::for_action("Zoom In", &ZoomIn, cx))
+                    .on_click({
+                        let image_view = image_view.downgrade();
+                        move |_, window, cx| {
+                            if let Some(view) = image_view.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.zoom_in(&ZoomIn, window, cx);
+                                });
+                            }
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("fit-to-view", IconName::Maximize)
+                    .icon_size(IconSize::Small)
+                    .tooltip(|_window, cx| Tooltip::for_action("Fit to View", &FitToView, cx))
+                    .on_click({
+                        let image_view = image_view.downgrade();
+                        move |_, window, cx| {
+                            if let Some(view) = image_view.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.fit_to_view(&FitToView, window, cx);
+                                });
+                            }
+                        }
+                    }),
+            )
+            .into_any_element()
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ImageViewToolbarControls {}
+
+impl ToolbarItemView for ImageViewToolbarControls {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.image_view = None;
+        self._subscription = None;
+
+        if let Some(item) = active_pane_item {
+            if let Some(image_view) = item.downcast::<ImageView>() {
+                self._subscription = Some(cx.observe(&image_view, |_, _, cx| {
+                    cx.notify();
+                }));
+                self.image_view = Some(image_view.downgrade());
+                cx.notify();
+                return ToolbarItemLocation::PrimaryRight;
+            }
+        }
+
+        ToolbarItemLocation::Hidden
     }
 }
 
