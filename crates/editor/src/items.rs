@@ -1,7 +1,8 @@
 use crate::{
     Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
     ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
+    ReportEditorEvent, SearchBackgroundHighlight, SearchWithinRange, SelectionEffects,
+    ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -1463,21 +1464,22 @@ impl Editor {
     }
 }
 
-pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
-            .map_or(Vec::new(), |(_color, ranges)| {
-                ranges.iter().cloned().collect()
+            .get(&HighlightKey::Type(
+                TypeId::of::<SearchBackgroundHighlight>(),
+            ))
+            .map_or(Vec::new(), |highlight| {
+                highlight.ranges().iter().cloned().collect()
             })
     }
 
     fn clear_matches(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self
-            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .clear_background_highlights::<SearchBackgroundHighlight>(cx)
             .is_some()
         {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -1487,17 +1489,19 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let existing_range = self
             .background_highlights
-            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
-            .map(|(_, range)| range.as_ref());
+            .get(&HighlightKey::Type(
+                TypeId::of::<SearchBackgroundHighlight>(),
+            ))
+            .map(|highlight| highlight.ranges());
         let updated = existing_range != Some(matches);
-        self.highlight_background::<BufferSearchHighlights>(
-            matches,
-            |theme| theme.colors().search_match_background,
+        self.highlight_background::<SearchBackgroundHighlight, _>(
+            SearchBackgroundHighlight::new(matches, active_match_index),
             cx,
         );
         if updated {
@@ -1518,7 +1522,7 @@ impl SearchableItem for Editor {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
                 .clear_background_highlights::<SearchWithinRange>(cx)
-                .map(|(_, ranges)| ranges)
+                .map(|h| Arc::from(h.ranges()))
         }
 
         if let Some(range) = enabled {
@@ -1734,8 +1738,8 @@ impl SearchableItem for Editor {
         let search_within_ranges = self
             .background_highlights
             .get(&HighlightKey::Type(TypeId::of::<SearchWithinRange>()))
-            .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().cloned().collect::<Vec<_>>()
+            .map_or(vec![], |highlight| {
+                highlight.ranges().iter().cloned().collect::<Vec<_>>()
             });
 
         cx.background_spawn(async move {

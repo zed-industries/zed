@@ -576,7 +576,7 @@ impl EditorTestContext {
             editor
                 .background_highlights
                 .get(&HighlightKey::Type(TypeId::of::<Tag>()))
-                .map(|h| h.1.clone())
+                .map(|h| h.ranges().to_vec())
                 .unwrap_or_default()
                 .iter()
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot()))

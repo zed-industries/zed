@@ -1,5 +1,8 @@
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
+use editor::{
+    Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, SimpleBackgroundHighlight,
+    scroll::Autoscroll,
+};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -457,13 +460,12 @@ impl SyntaxTreeView {
                                     cx,
                                     |editor, range, _, cx| {
                                         editor.clear_background_highlights::<Self>(cx);
-                                        editor.highlight_background::<Self>(
-                                            &[range],
-                                            |theme| {
+                                        editor.highlight_background::<Self, _>(
+                                            SimpleBackgroundHighlight::new(&[range], |theme| {
                                                 theme
                                                     .colors()
                                                     .editor_document_highlight_write_background
-                                            },
+                                            }),
                                             cx,
                                         );
                                     },

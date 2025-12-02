@@ -5,8 +5,8 @@ use crate::{
     state::Mode,
 };
 use editor::{
-    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
-    display_map::ToDisplayPoint,
+    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, SimpleBackgroundHighlight, ToOffset,
+    ToPoint, display_map::ToDisplayPoint,
 };
 use gpui::{ClipboardEntry, Context, Window, actions};
 use language::{Point, SelectionGoal};
@@ -229,8 +229,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
-            let previous_range = ranges[0].clone();
+        if let Some(highlight) = editor.clear_background_highlights::<VimExchange>(cx) {
+            let previous_range = highlight.ranges()[0].clone();
 
             let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot());
             let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot());
@@ -271,9 +271,10 @@ impl Vim {
             }
         } else {
             let ranges = [new_range];
-            editor.highlight_background::<VimExchange>(
-                &ranges,
-                |theme| theme.colors().editor_document_highlight_read_background,
+            editor.highlight_background::<VimExchange, _>(
+                SimpleBackgroundHighlight::new(&ranges, |theme| {
+                    theme.colors().editor_document_highlight_read_background
+                }),
                 cx,
             );
         }

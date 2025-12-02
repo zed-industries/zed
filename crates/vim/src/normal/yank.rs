@@ -7,7 +7,7 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor, SelectionEffects};
+use editor::{ClipboardSelection, Editor, SelectionEffects, SimpleBackgroundHighlight};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
@@ -221,9 +221,10 @@ impl Vim {
             return;
         }
 
-        editor.highlight_background::<HighlightOnYank>(
-            &ranges_to_highlight,
-            |colors| colors.colors().editor_document_highlight_read_background,
+        editor.highlight_background::<HighlightOnYank, _>(
+            SimpleBackgroundHighlight::new(&ranges_to_highlight, |colors| {
+                colors.colors().editor_document_highlight_read_background
+            }),
             cx,
         );
         cx.spawn(async move |this, cx| {

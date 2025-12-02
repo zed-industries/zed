@@ -8,7 +8,7 @@ use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
     Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    MultiBufferOffset, SizingBehavior,
+    MultiBufferOffset, SimpleBackgroundHighlight, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -252,10 +252,9 @@ impl Console {
                         let start_offset = range.start;
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
-                        console.highlight_background_key::<ConsoleAnsiHighlight>(
+                        console.highlight_background_key::<ConsoleAnsiHighlight, _>(
                             start_offset,
-                            &[range],
-                            color_fetcher(color),
+                            SimpleBackgroundHighlight::new(&[range], color_fetcher(color)),
                             cx,
                         );
                     }
