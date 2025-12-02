@@ -6,29 +6,50 @@ PHP support is available through the [PHP extension](https://github.com/zed-exte
 - Language Server: [phpactor/phpactor](https://github.com/phpactor/phpactor)
 - Alternate Language Server: [bmewburn/vscode-intelephense](https://github.com/bmewburn/vscode-intelephense/)
 
+## Install PHP
+
+The PHP extension requires PHP to be installed and available in your path:
+
+```sh
+# macOS via Homebrew
+brew install php
+
+# Debian/Ubuntu
+sudo apt-get install php-cli
+
+# CentOS 8+/RHEL
+sudo dnf install php-cli
+
+# Arch Linux
+sudo pacman -S php
+
+# check PHP path
+which php
+```
+
 ## Choosing a language server
 
-The PHP extension offers both `phpactor` and `intelephense` language server support.
-
-`phpactor` is enabled by default.
+The PHP extension offers Phpactor and Intelephense as language server with Phpactor as default.
 
 ### Phpactor
 
-The Zed PHP Extension can install `phpactor` automatically but requires `php` to be installed and available in your path:
+To use Phpactor instead of Intelephense, add the following to your `settings.json`:
 
-```sh
-# brew install php            # macOS
-# sudo apt-get install php    # Debian/Ubuntu
-# yum install php             # CentOS/RHEL
-# pacman -S php               # Arch Linux
-which php
+```json [settings]
+{
+  "languages": {
+    "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "..."]
+    }
+  }
+}
 ```
 
 ### Intelephense
 
-[Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/).
+[Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/buy).
 
-To switch to `intelephense`, add the following to your `settings.json`:
+To use Intelephense, add the following to your `settings.json`:
 
 ```json [settings]
 {
@@ -40,7 +61,9 @@ To switch to `intelephense`, add the following to your `settings.json`:
 }
 ```
 
-To use the premium features, you can place your [licence.txt file](https://intelephense.com/faq.html) at `~/intelephense/licence.txt` inside your home directory. Alternatively, you can pass the licence key or a path to a file containing the licence key as an initialization option for the `intelephense` language server. To do this, add the following to your `settings.json`:
+To use the premium features, you can place your license file inside your home directory at `~/intelephense/licence.txt`.
+
+Alternatively, you can pass the licence key or a path to a file containing the licence key as an initialization option. To do this, add the following to your `settings.json`:
 
 ```json [settings]
 {
@@ -60,9 +83,9 @@ Zed supports syntax highlighting for PHPDoc comments.
 
 - Tree-sitter: [claytonrcarter/tree-sitter-phpdoc](https://github.com/claytonrcarter/tree-sitter-phpdoc)
 
-## Setting up Xdebug
+## Debugging
 
-Zed’s PHP extension provides a debug adapter for PHP and Xdebug. The adapter name is `Xdebug`. Here a couple ways you can use it:
+The PHP extension provides a debug adapter for PHP and Xdebug. Here a couple ways you can use it:
 
 ```json
 [
@@ -82,10 +105,10 @@ Zed’s PHP extension provides a debug adapter for PHP and Xdebug. The adapter n
 ]
 ```
 
-In case you run into issues:
+In case you run into issues, here are some ways to solve them:
 
-- ensure that you have Xdebug installed for the version of PHP you’re running
-- ensure that Xdebug is configured to run in `debug` mode
-- ensure that Xdebug is actually starting a debugging session
-- check that the host and port matches between Xdebug and Zed
-- look at the diagnostics log by using the `xdebug_info()` function in the page you’re trying to debug
+- Ensure that you have Xdebug installed for the version of PHP you’re running.
+- Ensure that Xdebug is configured to run in `debug` mode.
+- Ensure that Xdebug is actually starting a debugging session.
+- Ensure that the host and port matches between Xdebug and Zed.
+- Look at the diagnostics log by using the `xdebug_info()` function in the page you’re trying to debug.
