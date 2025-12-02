@@ -54,8 +54,8 @@ fn main() {
         }
 
         if cfg!(target_arch = "x86_64") {
-            println!("cargo::rerun-if-changed=\\..\\..\\..\\conpty.dll");
-            println!("cargo::rerun-if-changed=\\..\\..\\..\\OpenConsole.exe");
+            println!("cargo::rerun-if-changed=resources\\windows\\bin\\x64\\conpty.dll");
+            println!("cargo::rerun-if-changed=resources\\windows\\bin\\x64\\OpenConsole.exe");
             let conpty_target = std::env::var("OUT_DIR").unwrap() + "\\..\\..\\..\\conpty.dll";
             match std::fs::copy("resources/windows/bin/x64/conpty.dll", &conpty_target) {
                 Ok(_) => println!("Copied conpty.dll to {conpty_target}"),
