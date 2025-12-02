@@ -729,13 +729,6 @@ impl EditorActionId {
 pub trait BackgroundHighlightHandle: 'static + Send + Sync {
     fn ranges(&self) -> &[Range<Anchor>];
     fn color_for_range(&self, index: usize, theme: &Theme) -> Hsla;
-    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle>;
-}
-
-impl Clone for Box<dyn BackgroundHighlightHandle> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
 }
 
 pub struct BackgroundHighlight {
@@ -759,13 +752,6 @@ impl BackgroundHighlightHandle for BackgroundHighlight {
 
     fn color_for_range(&self, _index: usize, theme: &Theme) -> Hsla {
         (self.color_fetcher)(theme)
-    }
-
-    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle> {
-        Box::new(Self {
-            ranges: self.ranges.clone(),
-            color_fetcher: self.color_fetcher,
-        })
     }
 }
 
@@ -794,13 +780,6 @@ impl BackgroundHighlightHandle for ActiveBackgroundHighlight {
         } else {
             theme.colors().search_match_background
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn BackgroundHighlightHandle> {
-        Box::new(Self {
-            ranges: self.ranges.clone(),
-            active_index: self.active_index,
-        })
     }
 }
 
@@ -1155,7 +1134,7 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
-    background_highlights: HashMap<HighlightKey, Box<dyn BackgroundHighlightHandle>>,
+    background_highlights: HashMap<HighlightKey, Arc<dyn BackgroundHighlightHandle>>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -20980,7 +20959,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.background_highlights
-            .insert(HighlightKey::Type(TypeId::of::<T>()), Box::new(highlight));
+            .insert(HighlightKey::Type(TypeId::of::<T>()), Arc::new(highlight));
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
@@ -20993,7 +20972,7 @@ impl Editor {
     ) {
         self.background_highlights.insert(
             HighlightKey::TypePlus(TypeId::of::<T>(), key),
-            Box::new(highlight),
+            Arc::new(highlight),
         );
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
@@ -21002,7 +20981,7 @@ impl Editor {
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Option<Box<dyn BackgroundHighlightHandle>> {
+    ) -> Option<Arc<dyn BackgroundHighlightHandle>> {
         let text_highlights = self
             .background_highlights
             .remove(&HighlightKey::Type(TypeId::of::<T>()))?;
