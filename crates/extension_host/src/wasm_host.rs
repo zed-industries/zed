@@ -309,6 +309,21 @@ impl extension::Extension for WasmExtension {
         .await?
     }
 
+    async fn run_action(&self, action: Arc<str>, arguments: Vec<String>) -> Result<String> {
+        self.call(|extension, store| {
+            async move {
+                let output = extension
+                    .call_run_action(store, &action.to_string(), &arguments)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                Ok(output)
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     async fn context_server_command(
         &self,
         context_server_id: Arc<str>,

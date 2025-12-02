@@ -1,0 +1,16 @@
+id = "custom-actions-example"
+name = "Custom Actions Example"
+description = "An example extension showcasing custom actions"
+version = "0.1.0"
+schema_version = 1
+authors = ["Zed Industries <hi@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[custom_actions.hello]
+description = "Prints a hello message"
+
+[custom_actions.greet]
+description = "Greets a person by name"
+
+[custom_actions.reverse_text]
+description = "Reverses the provided text"

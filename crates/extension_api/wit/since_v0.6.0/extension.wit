@@ -15,6 +15,7 @@ world extension {
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
+    use custom-action.{custom-action};
 
     /// Initializes the extension.
     export init-extension: func();
@@ -140,6 +141,9 @@ world extension {
 
     /// Returns the output from running the provided slash command.
     export run-slash-command: func(command: slash-command, args: list<string>, worktree: option<borrow<worktree>>) -> result<slash-command-output, string>;
+
+    /// Runs the provided custom action with the given arguments and returns the result.
+    export run-action: func(action: custom-action, args: list<string>) -> result<string, string>;
 
     /// Returns the command used to start up a context server.
     export context-server-command: func(context-server-id: string, project: borrow<project>) -> result<command, string>;

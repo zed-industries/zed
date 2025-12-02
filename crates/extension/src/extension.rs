@@ -119,6 +119,8 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Option<Arc<dyn WorktreeDelegate>>,
     ) -> Result<SlashCommandOutput>;
 
+    async fn run_action(&self, action: Arc<str>, arguments: Vec<String>) -> Result<String>;
+
     async fn context_server_command(
         &self,
         context_server_id: Arc<str>,
