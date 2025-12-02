@@ -336,6 +336,14 @@ impl BufferDiffSnapshot {
         self.inner.hunks_intersecting_range_rev(range, buffer)
     }
 
+    pub fn hunks_intersecting_base_text_range<'a>(
+        &'a self,
+        range: Range<usize>,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        // FIXME
+        std::iter::empty()
+    }
+
     pub fn base_text(&self) -> &language::BufferSnapshot {
         &self.inner.base_text
     }
@@ -1060,6 +1068,7 @@ impl std::fmt::Debug for BufferDiff {
 pub enum BufferDiffEvent {
     DiffChanged {
         changed_range: Option<Range<text::Anchor>>,
+        base_text_changed_range: Option<Range<usize>>,
     },
     LanguageChanged,
     HunksStagedOrUnstaged(Option<Rope>),
@@ -1127,6 +1136,7 @@ impl BufferDiff {
             });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::min_max_range_for_buffer(self.buffer_id)),
+                base_text_changed_range: todo!(),
             });
         }
     }
@@ -1154,6 +1164,7 @@ impl BufferDiff {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(changed_range),
+                base_text_changed_range: todo!(),
             });
         }
         new_index_text
@@ -1284,6 +1295,7 @@ impl BufferDiff {
 
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range: changed_range.clone(),
+            base_text_changed_range: todo!(),
         });
         changed_range
     }
