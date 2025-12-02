@@ -1,7 +1,7 @@
 pub mod predict_edits_v3;
 
-use std::str::FromStr;
 use std::sync::Arc;
+use std::str::FromStr;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
@@ -206,9 +206,14 @@ pub struct AcceptEditPredictionBody {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectEditPredictionsBodyRef<'a> {
+    pub rejections: &'a [EditPredictionRejection],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
