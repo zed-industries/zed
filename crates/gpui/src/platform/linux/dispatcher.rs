@@ -8,7 +8,6 @@ use calloop::{
     timer::TimeoutAction,
 };
 use std::{
-    collections::BTreeMap,
     thread,
     time::{Duration, Instant},
 };
@@ -203,9 +202,9 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.background_sender.send(runnable).unwrap();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         self.main_sender
-            .send(ItemPriority::Medium, runnable)
+            .send(priority, runnable)
             .unwrap_or_else(|runnable| {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
@@ -226,40 +225,36 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 }
 
-#[derive(Debug, Ord, PartialOrd, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Ord, PartialOrd, PartialEq, Eq)]
 #[repr(u8)]
-pub enum ItemPriority {
+pub enum Priority {
     High,
+    #[default]
     Medium,
     Low,
 }
 
-impl ItemPriority {
-    fn ticket_percentage(&self) -> usize {
+impl Priority {
+    fn ticket_percentage(&self) -> f32 {
         match self {
-            ItemPriority::High => 60,
-            ItemPriority::Medium => 30,
-            ItemPriority::Low => 10,
+            Priority::High => 0.6f32,
+            Priority::Medium => 0.3f32,
+            Priority::Low => 0.1f32,
         }
     }
 }
 
 pub struct BadPriorityQueueSender<T> {
-    sender: flume::Sender<(ItemPriority, T)>,
+    sender: flume::Sender<(Priority, T)>,
     ping: calloop::ping::Ping,
 }
 
 impl<T> BadPriorityQueueSender<T> {
-    fn new(tx: flume::Sender<(ItemPriority, T)>, ping: calloop::ping::Ping) -> Self {
+    fn new(tx: flume::Sender<(Priority, T)>, ping: calloop::ping::Ping) -> Self {
         Self { sender: tx, ping }
     }
 
-    fn send(
-        &self,
-        priority: ItemPriority,
-        item: T,
-    ) -> Result<(), flume::SendError<(ItemPriority, T)>> {
-        dbg!();
+    fn send(&self, priority: Priority, item: T) -> Result<(), flume::SendError<(Priority, T)>> {
         let res = self.sender.send((priority, item));
         if res.is_ok() {
             self.ping.ping();
@@ -275,7 +270,7 @@ impl<T> Drop for BadPriorityQueueSender<T> {
 }
 
 struct BadReceiverState<T> {
-    receiver: flume::Receiver<(ItemPriority, T)>,
+    receiver: flume::Receiver<(Priority, T)>,
     high_priority: Vec<T>,
     medium_priority: Vec<T>,
     low_priority: Vec<T>,
@@ -285,7 +280,7 @@ struct BadReceiverState<T> {
 impl<T> BadReceiverState<T> {
     const TICKET_COUNT: usize = 100;
 
-    fn new(receiver: flume::Receiver<(ItemPriority, T)>) -> Self {
+    fn new(receiver: flume::Receiver<(Priority, T)>) -> Self {
         BadReceiverState {
             receiver,
             high_priority: Vec::new(),
@@ -295,16 +290,16 @@ impl<T> BadReceiverState<T> {
         }
     }
 
-    fn pop(&mut self) -> Vec<T> {
+    fn pop(&mut self) -> impl Iterator<Item = T> {
         let mut max_count = Self::TICKET_COUNT;
         loop {
             match self.receiver.try_recv() {
                 Ok((priority, item)) => {
                     max_count -= 1;
                     match priority {
-                        ItemPriority::High => self.high_priority.push(item),
-                        ItemPriority::Medium => self.medium_priority.push(item),
-                        ItemPriority::Low => self.low_priority.push(item),
+                        Priority::High => self.high_priority.push(item),
+                        Priority::Medium => self.medium_priority.push(item),
+                        Priority::Low => self.low_priority.push(item),
                     }
 
                     if max_count == 0 {
@@ -323,28 +318,33 @@ impl<T> BadReceiverState<T> {
 
         let mut results = Vec::new();
 
-        // todo(kate): actually make this a better ticket system
-        // as currently the lack of high priority tasks does not increase ticket count
-        // for the other tasks
         let mut ticket_count = Self::TICKET_COUNT;
-        let high_taken = ticket_count / ItemPriority::High.ticket_percentage();
-        let medium_taken = ticket_count / ItemPriority::Medium.ticket_percentage();
-        let low_taken = ticket_count / ItemPriority::Low.ticket_percentage();
 
-        results.extend(
-            self.high_priority
-                .drain(..high_taken.min(self.high_priority.len())),
-        );
-        results.extend(
+        // todo(kate): make it also consider the other way around where there's
+        // a lot of high priority tasks and no low priority ones i have it a
+        // math problem and will solve it later
+        // todo(for kate): tests, soo many tests
+        let high_percentage = Priority::High.ticket_percentage();
+        let medium_percentage = Priority::Medium.ticket_percentage() / (1.0f32 - high_percentage);
+        let low_percentage = (Priority::Low.ticket_percentage() / (1.0f32 - high_percentage))
+            / (1.0f32 - medium_percentage);
+
+        let high_taken = (ticket_count as f32 * high_percentage).ceil() as usize;
+        ticket_count -= high_taken;
+
+        let medium_taken = (ticket_count as f32 / medium_percentage).ceil() as usize;
+        ticket_count -= medium_taken;
+
+        let low_taken = (ticket_count as f32 / low_percentage).ceil() as usize;
+
+            let high_priority = self.high_priority
+                .drain(..high_taken.min(self.high_priority.len()));
+            let medium_priority =
             self.medium_priority
-                .drain(..medium_taken.min(self.medium_priority.len())),
-        );
-        results.extend(
+                .drain(..medium_taken.min(self.medium_priority.len()));
+            let low_priority =
             self.low_priority
-                .drain(..low_taken.min(self.low_priority.len())),
-        );
-
-        println!("returning {} tasks to process", results.len());
+                .drain(..low_taken.min(self.low_priority.len()));
 
         results
     }
@@ -501,7 +501,7 @@ mod tests {
         assert!(!data.got_closed);
         // a message is send
 
-        tx.send(ItemPriority::Medium, ()).unwrap();
+        tx.send(Priority::Medium, ()).unwrap();
         event_loop
             .dispatch(Some(::std::time::Duration::ZERO), &mut data)
             .unwrap();

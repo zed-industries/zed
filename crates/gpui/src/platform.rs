@@ -581,7 +581,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
     fn now(&self) -> Instant {

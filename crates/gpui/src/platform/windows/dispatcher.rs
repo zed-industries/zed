@@ -155,7 +155,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         match self.main_sender.send(runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
