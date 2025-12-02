@@ -507,11 +507,11 @@ impl Render for SyntaxTreeView {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.list_scroll_handle.clone())
+                        .track_scroll(&self.list_scroll_handle)
                         .text_bg(cx.theme().colors().background)
                         .into_any_element(),
                     )
-                    .vertical_scrollbar_for(self.list_scroll_handle.clone(), window, cx)
+                    .vertical_scrollbar_for(&self.list_scroll_handle, window, cx)
                     .into_any_element()
                 } else {
                     let inner_content = v_flex()

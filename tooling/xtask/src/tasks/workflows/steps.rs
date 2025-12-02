@@ -128,9 +128,9 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub struct NamedJob {
+pub struct NamedJob<J: JobType = RunJob> {
     pub name: String,
-    pub job: Job,
+    pub job: Job<J>,
 }
 
 // impl NamedJob {
@@ -142,9 +142,13 @@ pub struct NamedJob {
 //     }
 // }
 
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(
-        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
         trigger_always.then_some(" && always()").unwrap_or_default()
     ))
 }
@@ -176,6 +180,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -248,8 +253,10 @@ pub mod named {
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub fn bash(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1))
+            .run(script.as_ref())
+            .shell(BASH_SHELL)
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
@@ -276,15 +283,19 @@ pub mod named {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
-                .next()
-                .unwrap()
-                .to_owned(),
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .skip(1)
+                .rev()
+                .collect::<Vec<_>>()
+                .join("::"),
         )
     }
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub fn job(job: Job) -> NamedJob {
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,

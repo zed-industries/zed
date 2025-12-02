@@ -419,6 +419,11 @@ fn init_renderers(cx: &mut App) {
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
                         .tab_index(0_isize)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Edit in settings.json",
+                            &OpenCurrentFile,
+                            &settings_window.focus_handle,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_current_settings_file(window, cx);
                         }))
@@ -2172,6 +2177,11 @@ impl SettingsWindow {
                 Button::new(edit_in_json_id, "Edit in settings.json")
                     .tab_index(0_isize)
                     .style(ButtonStyle::OutlinedGhost)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Edit in settings.json",
+                        &OpenCurrentFile,
+                        &self.focus_handle,
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_current_settings_file(window, cx);
                     })),
@@ -2192,7 +2202,7 @@ impl SettingsWindow {
                         format!(
                             "{}{}{}",
                             directory_name,
-                            path_style.separator(),
+                            path_style.primary_separator(),
                             path.display(path_style)
                         )
                     }
@@ -2455,9 +2465,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.navbar_scroll_handle.clone()),
+                        .track_scroll(&self.navbar_scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.navbar_scroll_handle, window, cx),
             )
             .child(
                 h_flex()
@@ -2865,6 +2875,11 @@ impl SettingsWindow {
                     Button::new("open-in-settings-file", "Edit in settings.json")
                         .tab_index(0_isize)
                         .style(ButtonStyle::OutlinedGhost)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Edit in settings.json",
+                            &OpenCurrentFile,
+                            &self.focus_handle,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_current_settings_file(window, cx);
                         })),
@@ -3012,10 +3027,10 @@ impl SettingsWindow {
                 window.focus_prev();
             }))
             .when(sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()
