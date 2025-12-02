@@ -46,6 +46,8 @@ pub(crate) struct WindowsPlatform {
     disable_direct_composition: bool,
 }
 
+pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
+
 struct WindowsPlatformInner {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
@@ -1265,20 +1267,36 @@ unsafe extern "system" fn window_procedure(
 
 #[cfg(test)]
 mod tests {
-    use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
+    use crate::ClipboardItem;
 
     #[test]
     fn test_clipboard() {
-        let item = ClipboardItem::new_string("你好，我是张小白".to_string());
-        write_to_clipboard(item.clone());
-        assert_eq!(read_from_clipboard(), Some(item));
+        use std::time::Duration;
 
-        let item = ClipboardItem::new_string("12345".to_string());
-        write_to_clipboard(item.clone());
-        assert_eq!(read_from_clipboard(), Some(item));
+        // Helper that retries a few times since clipboard access may be briefly unavailable
+        fn assert_write_read(expected: ClipboardItem) {
+            use crate::{read_from_clipboard, write_to_clipboard};
+            write_to_clipboard(expected.clone());
+            for _ in 0..10 {
+                if let Some(found) = read_from_clipboard() {
+                    // If the clipboard contains an item, only accept it when it matches
+                    // the expected content exactly. Some environments may surface older
+                    // clipboard contents transiently; keep retrying until we see the
+                    // expected value or exhaust attempts.
+                    if found == expected {
+                        return;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            panic!("clipboard did not contain expected item after retries");
+        }
 
-        let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
-        write_to_clipboard(item.clone());
-        assert_eq!(read_from_clipboard(), Some(item));
+        assert_write_read(ClipboardItem::new_string("你好，我是张小白".to_string()));
+        assert_write_read(ClipboardItem::new_string("12345".to_string()));
+        assert_write_read(ClipboardItem::new_string_with_json_metadata(
+            "abcdef".to_string(),
+            vec![3, 4],
+        ));
     }
 }
