@@ -740,7 +740,7 @@ impl DebugPanel {
                                         }
                                     })
                                     .child(
-                                        IconButton::new("debug-step-over", IconName::ArrowRight)
+                                        IconButton::new("step-over", IconName::DebugStepOver)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
                                                 running_state,
@@ -762,32 +762,29 @@ impl DebugPanel {
                                             }),
                                     )
                                     .child(
-                                        IconButton::new(
-                                            "debug-step-into",
-                                            IconName::ArrowDownRight,
-                                        )
-                                        .icon_size(IconSize::Small)
-                                        .on_click(window.listener_for(
-                                            running_state,
-                                            |this, _, _window, cx| {
-                                                this.step_in(cx);
-                                            },
-                                        ))
-                                        .disabled(thread_status != ThreadStatus::Stopped)
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            move |_window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Step In",
-                                                    &StepInto,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                            }
-                                        }),
+                                        IconButton::new("step-into", IconName::DebugStepInto)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(window.listener_for(
+                                                running_state,
+                                                |this, _, _window, cx| {
+                                                    this.step_in(cx);
+                                                },
+                                            ))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Step In",
+                                                        &StepInto,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
                                     )
                                     .child(
-                                        IconButton::new("debug-step-out", IconName::ArrowUpRight)
+                                        IconButton::new("step-out", IconName::DebugStepOut)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
                                                 running_state,
