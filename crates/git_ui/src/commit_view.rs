@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
@@ -228,7 +229,7 @@ impl CommitView {
             }
 
             let message_buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(dbg!(commit_message), cx);
+                let mut buffer = Buffer::local(commit_message, cx);
                 buffer.set_capability(Capability::ReadOnly, cx);
                 buffer
             })?;
@@ -236,6 +237,17 @@ impl CommitView {
             this.update(cx, |this, cx| {
                 this.editor.update(cx, |editor, cx| {
                     editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+                    editor.insert_blocks(
+                        [BlockProperties {
+                            placement: BlockPlacement::Above(editor::Anchor::min()),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(|_| gpui::Empty.into_any_element()),
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    )
                 });
                 this.multibuffer.update(cx, |multibuffer, cx| {
                     let range = ExcerptRange {
@@ -949,7 +961,6 @@ impl Render for CommitView {
             .flex()
             .flex_col()
             .size_full()
-            .gap_3()
             .child(self.render_header(window, cx))
             .child(div().flex_grow().child(self.editor.clone()))
     }
