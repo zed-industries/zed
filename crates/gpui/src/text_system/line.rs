@@ -213,25 +213,24 @@ fn paint_line(
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let text_system = cx.text_system().clone();
-        let mut glyph_origin = point(
-            aligned_origin_x(
-                origin,
-                align_width.unwrap_or(layout.width),
-                px(0.0),
-                &align,
-                layout,
-                wraps.peek(),
-            ),
-            origin.y,
+        let line_start_x = aligned_origin_x(
+            origin,
+            align_width.unwrap_or(layout.width),
+            px(0.0),
+            &align,
+            layout,
+            wraps.peek(),
         );
-        let mut prev_glyph_position = Point::default();
+        let mut glyph_origin = point(line_start_x, origin.y);
+        let mut current_line_start_x = line_start_x;
+        let mut current_wrap_offset = px(0.0);
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
-                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                glyph_origin.x = current_line_start_x + glyph.position.x - current_wrap_offset;
                 if glyph_ix == 0 && run_ix == 0 {
                     first_glyph_x = glyph_origin.x;
                 }
@@ -265,7 +264,7 @@ fn paint_line(
                         strikethrough_origin.y += line_height;
                     }
 
-                    glyph_origin.x = aligned_origin_x(
+                    current_line_start_x = aligned_origin_x(
                         origin,
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
@@ -273,9 +272,10 @@ fn paint_line(
                         layout,
                         wraps.peek(),
                     );
+                    current_wrap_offset = glyph.position.x;
+                    glyph_origin.x = current_line_start_x;
                     glyph_origin.y += line_height;
                 }
-                prev_glyph_position = glyph.position;
 
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
@@ -446,24 +446,23 @@ fn paint_line_background(
         let mut run_end = 0;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
         let text_system = cx.text_system().clone();
-        let mut glyph_origin = point(
-            aligned_origin_x(
-                origin,
-                align_width.unwrap_or(layout.width),
-                px(0.0),
-                &align,
-                layout,
-                wraps.peek(),
-            ),
-            origin.y,
+        let line_start_x = aligned_origin_x(
+            origin,
+            align_width.unwrap_or(layout.width),
+            px(0.0),
+            &align,
+            layout,
+            wraps.peek(),
         );
-        let mut prev_glyph_position = Point::default();
+        let mut glyph_origin = point(line_start_x, origin.y);
+        let mut current_line_start_x = line_start_x;
+        let mut current_wrap_offset = px(0.0);
         let mut max_glyph_size = size(px(0.), px(0.));
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
-                glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+                glyph_origin.x = current_line_start_x + glyph.position.x - current_wrap_offset;
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
@@ -483,7 +482,7 @@ fn paint_line_background(
                         background_origin.y += line_height;
                     }
 
-                    glyph_origin.x = aligned_origin_x(
+                    current_line_start_x = aligned_origin_x(
                         origin,
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
@@ -491,9 +490,10 @@ fn paint_line_background(
                         layout,
                         wraps.peek(),
                     );
+                    current_wrap_offset = glyph.position.x;
+                    glyph_origin.x = current_line_start_x;
                     glyph_origin.y += line_height;
                 }
-                prev_glyph_position = glyph.position;
 
                 let mut finished_background: Option<(Point<Pixels>, Hsla)> = None;
                 if glyph.index >= run_end {
