@@ -195,9 +195,14 @@ pub struct AcceptEditPredictionBody {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectEditPredictionsBodyRef<'a> {
+    pub rejections: &'a [EditPredictionRejection],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
