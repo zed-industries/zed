@@ -29,7 +29,6 @@ use language::{Bias, Buffer, BufferSnapshot, Point};
 use metrics::delta_chr_f;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
-use serde_json::json;
 use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
@@ -97,7 +96,7 @@ struct ContextArgs {
 enum ContextProvider {
     Zeta1,
     #[default]
-    Syntax,
+    Zeta2,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -380,7 +379,7 @@ async fn load_context(
     })
 }
 
-async fn zeta2_syntax_context(
+async fn zeta2_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
@@ -412,24 +411,19 @@ async fn zeta2_syntax_context(
             });
             cx.spawn(async move |cx| {
                 indexing_done_task.await?;
-                let request = zeta
-                    .update(cx, |zeta, cx| {
-                        let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
-                        zeta.cloud_request_for_zeta_cli(&project, &buffer, cursor, cx)
-                    })?
-                    .await?;
+                let updates_rx = zeta.update(cx, |zeta, cx| {
+                    let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
+                    zeta.refresh_context_if_needed(&project, &buffer, cursor, cx);
+                    zeta.project_context_updates(&project).unwrap()
+                })?;
 
-                let (prompt_string, section_labels) = cloud_zeta2_prompt::build_prompt(&request)?;
+                updates_rx.recv().await.ok();
 
-                match args.zeta2_args.output_format {
-                    OutputFormat::Prompt => anyhow::Ok(prompt_string),
-                    OutputFormat::Request => anyhow::Ok(serde_json::to_string_pretty(&request)?),
-                    OutputFormat::Full => anyhow::Ok(serde_json::to_string_pretty(&json!({
-                        "request": request,
-                        "prompt": prompt_string,
-                        "section_labels": section_labels,
-                    }))?),
-                }
+                let context = zeta.update(cx, |zeta, cx| {
+                    zeta.context_for_project(&project, cx).to_vec()
+                })?;
+
+                anyhow::Ok(serde_json::to_string_pretty(&context).unwrap())
             })
         })?
         .await?;
@@ -507,10 +501,8 @@ fn main() {
                                 zeta1_context(context_args, &app_state, cx).await.unwrap();
                             serde_json::to_string_pretty(&context.body).unwrap()
                         }
-                        ContextProvider::Syntax => {
-                            zeta2_syntax_context(context_args, &app_state, cx)
-                                .await
-                                .unwrap()
+                        ContextProvider::Zeta2 => {
+                            zeta2_context(context_args, &app_state, cx).await.unwrap()
                         }
                     };
                     println!("{}", result);

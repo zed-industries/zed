@@ -5369,6 +5369,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "smallvec",

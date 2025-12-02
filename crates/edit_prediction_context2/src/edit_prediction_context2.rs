@@ -2,9 +2,12 @@ use anyhow::Result;
 use collections::HashMap;
 use fs::MTime;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use language::{
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _, ToPoint as _,
+};
 use project::{LocationLink, Project, ProjectPath};
+use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::{RangeExt as _, ResultExt};
@@ -19,6 +22,11 @@ pub struct RelatedExcerptStore {
     related_files: Vec<RelatedFile>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
+}
+
+pub enum RelatedExcerptStoreEvent {
+    StartedRefresh,
+    FinishedRefresh,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -43,23 +51,90 @@ struct CachedDefinition {
     buffer: WeakEntity<Buffer>,
     anchor_range: Range<Anchor>,
     point_range: Range<Point>,
+    buffer_max_row: u32,
     text: Rope,
     mtime: MTime,
 }
 
+#[derive(Clone, Debug, Serialize)]
 pub struct RelatedFile {
+    #[serde(serialize_with = "serialize_project_path")]
     pub path: ProjectPath,
+    #[serde(skip)]
     pub buffer: WeakEntity<Buffer>,
     pub excerpts: Vec<RelatedExcerpt>,
+    pub max_row: u32,
 }
 
+impl RelatedFile {
+    pub fn merge_excerpts(&mut self) {
+        self.excerpts.sort_unstable_by(|a, b| {
+            a.point_range
+                .start
+                .cmp(&b.point_range.start)
+                .then(b.point_range.end.cmp(&a.point_range.end))
+        });
+
+        let mut index = 1;
+        while index < self.excerpts.len() {
+            if self.excerpts[index - 1]
+                .point_range
+                .end
+                .cmp(&self.excerpts[index].point_range.start)
+                .is_ge()
+            {
+                let removed = self.excerpts.remove(index);
+                if removed
+                    .point_range
+                    .end
+                    .cmp(&self.excerpts[index - 1].point_range.end)
+                    .is_gt()
+                {
+                    self.excerpts[index - 1].point_range.end = removed.point_range.end;
+                    self.excerpts[index - 1].anchor_range.end = removed.anchor_range.end;
+                }
+            } else {
+                index += 1;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct RelatedExcerpt {
+    #[serde(skip)]
     pub anchor_range: Range<Anchor>,
+    #[serde(serialize_with = "serialize_point_range")]
     pub point_range: Range<Point>,
+    #[serde(serialize_with = "serialize_rope")]
     pub text: Rope,
 }
 
+fn serialize_project_path<S: Serializer>(
+    project_path: &ProjectPath,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    project_path.path.serialize(serializer)
+}
+
+fn serialize_rope<S: Serializer>(rope: &Rope, serializer: S) -> Result<S::Ok, S::Error> {
+    rope.to_string().serialize(serializer)
+}
+
+fn serialize_point_range<S: Serializer>(
+    range: &Range<Point>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    [
+        [range.start.row, range.start.column],
+        [range.end.row, range.end.column],
+    ]
+    .serialize(serializer)
+}
+
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
+
+impl EventEmitter<RelatedExcerptStoreEvent> for RelatedExcerptStore {}
 
 impl RelatedExcerptStore {
     pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
@@ -106,7 +181,7 @@ impl RelatedExcerptStore {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
-    pub fn related_files(&self) -> &Vec<RelatedFile> {
+    pub fn related_files(&self) -> &[RelatedFile] {
         &self.related_files
     }
 
@@ -117,12 +192,24 @@ impl RelatedExcerptStore {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-        let Some(project) = this.read_with(cx, |this, _| this.project.upgrade())? else {
+        let Some(project) = this.update(cx, |this, cx| {
+            cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
+            this.project.upgrade()
+        })?
+        else {
             return Ok(());
         };
         let identifiers = cx
             .background_spawn(async move { identifiers_for_position(&snapshot, position) })
             .await;
+
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        let identifiers_dbg = identifiers
+            .iter()
+            .map(|id| (id.name.clone(), id.range.start.to_point(&snapshot)))
+            .collect::<Vec<_>>();
+
+        dbg!(&identifiers_dbg);
 
         let async_cx = cx.clone();
         let new_cache = this.update(cx, |this, cx| {
@@ -184,7 +271,7 @@ impl RelatedExcerptStore {
         this.update(cx, |this, cx| {
             this.cache = new_cache;
             this.related_files = related_files;
-            cx.notify();
+            cx.emit(RelatedExcerptStoreEvent::FinishedRefresh);
         })?;
 
         anyhow::Ok(())
@@ -210,27 +297,14 @@ fn rebuild_related_files(new_entries: &HashMap<Identifier, Arc<CacheEntry>>) -> 
                     path: definition.path.clone(),
                     buffer: definition.buffer.clone(),
                     excerpts: vec![excerpt],
-                })
+                    max_row: definition.buffer_max_row,
+                });
             }
         }
     }
 
     for file in &mut files {
-        file.excerpts.sort_by(|a, b| {
-            a.point_range
-                .start
-                .cmp(&b.point_range.start)
-                .then(b.point_range.end.cmp(&a.point_range.end))
-        });
-        file.excerpts.dedup_by(|a, b| {
-            if a.point_range.start <= b.point_range.end {
-                b.point_range.start = b.point_range.start.min(a.point_range.start);
-                b.point_range.end = b.point_range.end.max(a.point_range.end);
-                true
-            } else {
-                false
-            }
-        });
+        file.merge_excerpts();
     }
 
     files.sort_by_key(|file| file.path.clone());
@@ -245,6 +319,7 @@ fn process_definition(
     let buffer = location.target.buffer.read(cx);
     let range = location.target.range;
     let file = buffer.file()?;
+    let buffer_max_row = buffer.max_point().row;
     let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
     if worktree.read(cx).is_single_file() {
         return None;
@@ -257,6 +332,7 @@ fn process_definition(
         buffer: location.target.buffer.downgrade(),
         anchor_range: range.clone(),
         point_range: range.to_point(buffer),
+        buffer_max_row,
         text: buffer.as_rope().slice(range.to_offset(buffer)),
         mtime: file.disk_state().mtime()?,
     })

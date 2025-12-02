@@ -97,7 +97,7 @@ impl Zeta2ContextView {
     ) {
         match event {
             ZetaDebugInfo::ContextRetrievalStarted(info) => {
-                if info.project == self.project {
+                if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_started(info, window, cx);
                 }
             }
@@ -107,12 +107,12 @@ impl Zeta2ContextView {
                 }
             }
             ZetaDebugInfo::SearchQueriesExecuted(info) => {
-                if info.project == self.project {
+                if info.project_entity_id == self.project.entity_id() {
                     self.handle_search_queries_executed(info, window, cx);
                 }
             }
             ZetaDebugInfo::ContextRetrievalFinished(info) => {
-                if info.project == self.project {
+                if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
@@ -126,13 +126,11 @@ impl Zeta2ContextView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .runs
-            .back()
-            .is_some_and(|run| run.search_results_executed_at.is_none())
-        {
-            self.runs.pop_back();
-        }
+        // if self.runs.back()
+        // // .is_some_and(|run| run.search_results_executed_at.is_none())
+        // {
+        //     self.runs.pop_back();
+        // }
 
         let multibuffer = cx.new(|_| MultiBuffer::new(language::Capability::ReadOnly));
         let editor = cx
@@ -166,32 +164,65 @@ impl Zeta2ContextView {
 
         run.finished_at = Some(info.timestamp);
 
+        let project = self.project.clone();
+        let related_files = self
+            .zeta
+            .read(cx)
+            .context_for_project(&self.project, cx)
+            .to_vec();
+
+        let editor = run.editor.clone();
         let multibuffer = run.editor.read(cx).buffer().clone();
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.clear(cx);
-
-            let context = self.zeta.read(cx).context_for_project(&self.project);
+        cx.spawn_in(window, async move |this, cx| {
             let mut paths = Vec::new();
-            for (buffer, ranges) in context {
-                let path = PathKey::for_buffer(&buffer, cx);
-                let snapshot = buffer.read(cx).snapshot();
-                let ranges = ranges
-                    .iter()
-                    .map(|range| range.to_point(&snapshot))
-                    .collect::<Vec<_>>();
-                paths.push((path, buffer, ranges));
+            for related_file in related_files {
+                let (buffer, point_ranges): (_, Vec<_>) =
+                    if let Some(buffer) = related_file.buffer.upgrade() {
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+
+                        (
+                            buffer,
+                            related_file
+                                .excerpts
+                                .iter()
+                                .map(|excerpt| excerpt.anchor_range.to_point(&snapshot))
+                                .collect(),
+                        )
+                    } else {
+                        (
+                            project
+                                .update(cx, |project, cx| {
+                                    project.open_buffer(related_file.path.clone(), cx)
+                                })?
+                                .await?,
+                            related_file
+                                .excerpts
+                                .iter()
+                                .map(|excerpt| excerpt.point_range.clone())
+                                .collect(),
+                        )
+                    };
+                cx.update(|_, cx| {
+                    let path = PathKey::for_buffer(&buffer, cx);
+                    paths.push((path, buffer, point_ranges));
+                })?;
             }
 
-            for (path, buffer, ranges) in paths {
-                multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
-            }
-        });
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.clear(cx);
 
-        run.editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&Default::default(), window, cx);
-        });
+                for (path, buffer, ranges) in paths {
+                    multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
+                }
+            })?;
 
-        cx.notify();
+            editor.update_in(cx, |editor, window, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            })?;
+
+            this.update(cx, |_, cx| cx.notify())
+        })
+        .detach();
     }
 
     fn handle_search_queries_generated(
@@ -347,24 +378,16 @@ impl Zeta2ContextView {
                             ),
                     )
                     .map(|mut div| {
-                        let pending_message = |div: ui::Div, msg: &'static str| {
-                            if is_latest {
-                                return div.child(msg);
-                            } else {
-                                return div.child("Canceled");
-                            }
-                        };
-
                         let t0 = run.started_at;
-                        let Some(t1) = run.search_results_generated_at else {
-                            return pending_message(div, "Planning search...");
-                        };
-                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
+                        if let Some(t1) = run.search_results_generated_at {
+                            div = div
+                                .child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
 
-                        let Some(t2) = run.search_results_executed_at else {
-                            return pending_message(div, "Running search...");
-                        };
-                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
+                            if let Some(t2) = run.search_results_executed_at {
+                                div = div
+                                    .child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
+                            }
+                        }
 
                         div.child(format!(
                             "Total: {:>5} ms",

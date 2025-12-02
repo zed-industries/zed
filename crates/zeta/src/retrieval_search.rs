@@ -1,6 +1,7 @@
 use anyhow::Result;
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
+use edit_prediction_context2::{RelatedExcerpt, RelatedFile};
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedSender},
@@ -8,7 +9,7 @@ use futures::{
 use gpui::{AppContext, AsyncApp, Entity};
 use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt, Point, ToOffset, ToPoint};
 use project::{
-    Project, WorktreeSettings,
+    Project, ProjectPath, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use smol::channel;
@@ -20,14 +21,14 @@ use util::{
 use workspace::item::Settings as _;
 
 #[cfg(feature = "eval-support")]
-type CachedSearchResults = std::collections::BTreeMap<std::path::PathBuf, Vec<Range<usize>>>;
+type CachedSearchResults = std::collections::BTreeMap<std::path::PathBuf, Vec<Range<(u32, u32)>>>;
 
 pub async fn run_retrieval_searches(
     queries: Vec<SearchToolQuery>,
     project: Entity<Project>,
     #[cfg(feature = "eval-support")] eval_cache: Option<std::sync::Arc<dyn crate::EvalCache>>,
     cx: &mut AsyncApp,
-) -> Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>> {
+) -> Result<Vec<RelatedFile>> {
     #[cfg(feature = "eval-support")]
     let cache = if let Some(eval_cache) = eval_cache {
         use crate::EvalCacheEntryKind;
@@ -54,24 +55,44 @@ pub async fn run_retrieval_searches(
         if let Some(cached_results) = eval_cache.read(key) {
             let file_results = serde_json::from_str::<CachedSearchResults>(&cached_results)
                 .context("Failed to deserialize cached search results")?;
-            let mut results = HashMap::default();
+            let mut results = Vec::new();
 
             for (path, ranges) in file_results {
+                let project_path = project.update(cx, |project, cx| {
+                    project.find_project_path(path, cx).unwrap()
+                })?;
                 let buffer = project
                     .update(cx, |project, cx| {
-                        let project_path = project.find_project_path(path, cx).unwrap();
-                        project.open_buffer(project_path, cx)
+                        project.open_buffer(project_path.clone(), cx)
                     })?
                     .await?;
                 let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                 let mut ranges: Vec<_> = ranges
                     .into_iter()
-                    .map(|range| {
-                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
-                    })
+                    .map(
+                        |Range {
+                             start: (start_row, start_col),
+                             end: (end_row, end_col),
+                         }| {
+                            snapshot.anchor_before(Point::new(start_row, start_col))
+                                ..snapshot.anchor_after(Point::new(end_row, end_col))
+                        },
+                    )
                     .collect();
                 merge_anchor_ranges(&mut ranges, &snapshot);
-                results.insert(buffer, ranges);
+                results.push(RelatedFile {
+                    path: project_path,
+                    buffer: buffer.downgrade(),
+                    excerpts: ranges
+                        .into_iter()
+                        .map(|range| RelatedExcerpt {
+                            point_range: range.to_point(&snapshot),
+                            text: snapshot.as_rope().slice(range.to_offset(&snapshot)),
+                            anchor_range: range,
+                        })
+                        .collect(),
+                    max_row: snapshot.max_point().row,
+                });
             }
 
             return Ok(results);
@@ -117,14 +138,29 @@ pub async fn run_retrieval_searches(
     #[cfg(feature = "eval-support")]
     let cache = cache.clone();
     cx.background_spawn(async move {
-        let mut results: HashMap<Entity<Buffer>, Vec<Range<Anchor>>> = HashMap::default();
+        let mut results: Vec<RelatedFile> = Vec::default();
         let mut snapshots = HashMap::default();
 
         let mut total_bytes = 0;
-        'outer: while let Some((buffer, snapshot, excerpts)) = results_rx.next().await {
-            snapshots.insert(buffer.entity_id(), snapshot);
-            let existing = results.entry(buffer).or_default();
-            existing.reserve(excerpts.len());
+        'outer: while let Some((project_path, buffer, snapshot, excerpts)) = results_rx.next().await
+        {
+            let existing = results
+                .iter_mut()
+                .find(|related_file| related_file.buffer.entity_id() == buffer.entity_id());
+            let existing = match existing {
+                Some(existing) => existing,
+                None => {
+                    results.push(RelatedFile {
+                        path: project_path,
+                        buffer: buffer.downgrade(),
+                        excerpts: Vec::new(),
+                        max_row: snapshot.max_point().row,
+                    });
+                    results.last_mut().unwrap()
+                }
+            };
+            // let existing = results.entry(buffer).or_default();
+            existing.excerpts.reserve(excerpts.len());
 
             for (range, size) in excerpts {
                 // Blunt trimming of the results until we have a proper algorithmic filtering step
@@ -133,24 +169,35 @@ pub async fn run_retrieval_searches(
                     break 'outer;
                 }
                 total_bytes += size;
-                existing.push(range);
+                existing.excerpts.push(RelatedExcerpt {
+                    point_range: range.to_point(&snapshot),
+                    text: snapshot.as_rope().slice(range.to_offset(&snapshot)),
+                    anchor_range: range,
+                });
             }
+            snapshots.insert(buffer.entity_id(), snapshot);
         }
 
         #[cfg(feature = "eval-support")]
         if let Some((cache, queries, key)) = cache {
             let cached_results: CachedSearchResults = results
                 .iter()
-                .filter_map(|(buffer, ranges)| {
-                    let snapshot = snapshots.get(&buffer.entity_id())?;
-                    let path = snapshot.file().map(|f| f.path());
-                    let mut ranges = ranges
+                .filter_map(|related_file| {
+                    let mut ranges = related_file
+                        .excerpts
                         .iter()
-                        .map(|range| range.to_offset(&snapshot))
+                        .map(
+                            |RelatedExcerpt {
+                                 point_range: Range { start, end },
+                                 ..
+                             }| {
+                                (start.row, start.column)..(end.row, end.column)
+                            },
+                        )
                         .collect::<Vec<_>>();
                     ranges.sort_unstable_by_key(|range| (range.start, range.end));
 
-                    Some((path?.as_std_path().to_path_buf(), ranges))
+                    Some((related_file.path.path.as_std_path().to_path_buf(), ranges))
                 })
                 .collect();
             cache.write(
@@ -160,10 +207,8 @@ pub async fn run_retrieval_searches(
             );
         }
 
-        for (buffer, ranges) in results.iter_mut() {
-            if let Some(snapshot) = snapshots.get(&buffer.entity_id()) {
-                merge_anchor_ranges(ranges, snapshot);
-            }
+        for related_file in results.iter_mut() {
+            related_file.merge_excerpts();
         }
 
         Ok(results)
@@ -201,6 +246,7 @@ const MAX_RESULTS_LEN: usize = MAX_EXCERPT_LEN * 5;
 struct SearchJob {
     buffer: Entity<Buffer>,
     snapshot: BufferSnapshot,
+    project_path: ProjectPath,
     ranges: Vec<Range<usize>>,
     query_ix: usize,
     jobs_tx: channel::Sender<SearchJob>,
@@ -208,7 +254,12 @@ struct SearchJob {
 
 async fn run_query(
     input_query: SearchToolQuery,
-    results_tx: UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
+    results_tx: UnboundedSender<(
+        ProjectPath,
+        Entity<Buffer>,
+        BufferSnapshot,
+        Vec<(Range<Anchor>, usize)>,
+    )>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
@@ -257,12 +308,21 @@ async fn run_query(
                     .read_with(cx, |buffer, _| buffer.parsing_idle())?
                     .await;
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let Some(file) = snapshot.file() else {
+                    continue;
+                };
+
+                let project_path = cx.update(|cx| ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path().clone(),
+                })?;
                 let expanded_ranges: Vec<_> = ranges
                     .into_iter()
                     .filter_map(|range| expand_to_parent_range(&range, &snapshot))
                     .collect();
                 jobs_tx
                     .send(SearchJob {
+                        project_path,
                         buffer,
                         snapshot,
                         ranges: expanded_ranges,
@@ -301,6 +361,13 @@ async fn run_query(
 
         while let Some(SearchResult::Buffer { buffer, ranges }) = results_rx.next().await {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let Some(file) = snapshot.file() else {
+                continue;
+            };
+            let project_path = cx.update(|cx| ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            })?;
 
             let ranges = ranges
                 .into_iter()
@@ -314,7 +381,8 @@ async fn run_query(
                 })
                 .collect();
 
-            let send_result = results_tx.unbounded_send((buffer.clone(), snapshot.clone(), ranges));
+            let send_result =
+                results_tx.unbounded_send((project_path, buffer.clone(), snapshot.clone(), ranges));
 
             if let Err(err) = send_result
                 && !err.is_disconnected()
@@ -330,7 +398,12 @@ async fn run_query(
 }
 
 async fn process_nested_search_job(
-    results_tx: &UnboundedSender<(Entity<Buffer>, BufferSnapshot, Vec<(Range<Anchor>, usize)>)>,
+    results_tx: &UnboundedSender<(
+        ProjectPath,
+        Entity<Buffer>,
+        BufferSnapshot,
+        Vec<(Range<Anchor>, usize)>,
+    )>,
     queries: &Vec<SearchQuery>,
     content_query: &Option<SearchQuery>,
     job: SearchJob,
@@ -347,6 +420,7 @@ async fn process_nested_search_job(
         }
         job.jobs_tx
             .send(SearchJob {
+                project_path: job.project_path,
                 buffer: job.buffer,
                 snapshot: job.snapshot,
                 ranges: subranges,
@@ -382,7 +456,8 @@ async fn process_nested_search_job(
             })
             .collect();
 
-        let send_result = results_tx.unbounded_send((job.buffer, job.snapshot, matches));
+        let send_result =
+            results_tx.unbounded_send((job.project_path, job.buffer, job.snapshot, matches));
 
         if let Err(err) = send_result
             && !err.is_disconnected()
@@ -417,7 +492,7 @@ fn expand_to_parent_range<T: ToPoint + ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assemble_excerpts::assemble_excerpts;
+    use cloud_llm_client::predict_edits_v3::Excerpt;
     use cloud_zeta2_prompt::write_codeblock;
     use edit_prediction_context::Line;
     use gpui::TestAppContext;
@@ -582,34 +657,25 @@ mod tests {
         .await
         .unwrap();
 
-        let mut results = results.into_iter().collect::<Vec<_>>();
-        results.sort_by_key(|results| {
-            results
-                .0
-                .read_with(cx, |buffer, _| buffer.file().unwrap().path().clone())
-        });
-
         let mut output = String::new();
-        for (buffer, ranges) in results {
-            buffer.read_with(cx, |buffer, cx| {
-                let excerpts = ranges.into_iter().map(|range| {
-                    let point_range = range.to_point(buffer);
-                    if point_range.end.column > 0 {
-                        Line(point_range.start.row)..Line(point_range.end.row + 1)
-                    } else {
-                        Line(point_range.start.row)..Line(point_range.end.row)
-                    }
-                });
+        for related_file in &results {
+            let excerpts = related_file
+                .excerpts
+                .iter()
+                .map(|excerpt| Excerpt {
+                    start_line: Line(excerpt.point_range.start.row),
+                    text: excerpt.text.to_string().into(),
+                })
+                .collect::<Vec<_>>();
 
-                write_codeblock(
-                    &buffer.file().unwrap().full_path(cx),
-                    assemble_excerpts(&buffer.snapshot(), excerpts).iter(),
-                    &[],
-                    Line(buffer.max_point().row),
-                    false,
-                    &mut output,
-                );
-            });
+            write_codeblock(
+                related_file.path.path.as_std_path(),
+                excerpts.iter(),
+                &[],
+                Line(related_file.max_row),
+                false,
+                &mut output,
+            );
         }
         output.pop();
 
