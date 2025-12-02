@@ -1030,6 +1030,12 @@ impl ExpandExcerptDirection {
     }
 }
 
+// enum LinkedMultiBuffer {
+//     None,
+//     Follower(Entity<MulitBuffer>),
+//     Leader(WeakEntity<MulitBuffer>),
+// }
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,

@@ -19,6 +19,7 @@ use std::{
     cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
+    num::NonZero,
     ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
         Arc,
@@ -40,6 +41,7 @@ pub struct BlockMap {
     next_block_id: AtomicUsize,
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
+    spacer_blocks_by_id: TreeMap<SpacerId, /* height: */ NonZero<u32>>,
     transforms: RefCell<SumTree<Transform>>,
     buffer_header_height: u32,
     excerpt_header_height: u32,
@@ -59,6 +61,7 @@ pub struct BlockSnapshot {
     pub(super) wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
+    spacer_blocks_by_id: TreeMap<SpacerId, /* height: */ NonZero<u32>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
 }
@@ -273,6 +276,7 @@ pub enum BlockId {
     ExcerptBoundary(ExcerptId),
     FoldedBuffer(ExcerptId),
     Custom(CustomBlockId),
+    Spacer(SpacerId),
 }
 
 impl From<BlockId> for ElementId {
@@ -283,6 +287,7 @@ impl From<BlockId> for ElementId {
                 ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
             }
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
+            BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
     }
 }
@@ -293,6 +298,7 @@ impl std::fmt::Display for BlockId {
             Self::Custom(id) => write!(f, "Block({id:?})"),
             Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
             Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
+            Self::Spacer(id) => write!(f, "Spacer({id:?})"),
         }
     }
 }
@@ -303,7 +309,7 @@ struct Transform {
     block: Option<Block>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Block {
     Custom(Arc<CustomBlock>),
     FoldedBuffer {
@@ -318,17 +324,20 @@ pub enum Block {
         excerpt: ExcerptInfo,
         height: u32,
     },
-    // Spacer {
-    //     height: u32,
-    //     source: SpacerSource
-    // },
+    Spacer {
+        id: SpacerId,
+        height: NonZero<u32>,
+    },
 }
 
-// pub enum SpacerSource {
-//     Hunk(HunkId),
-//     SoftWrap(BufferRow),
-//     CustomBlock(Arc<CustomBlock>),
-// }
+#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
+pub struct SpacerId(pub usize);
+
+impl Debug for SpacerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SpacerId({})", self.0)
+    }
+}
 
 impl Block {
     pub fn id(&self) -> BlockId {
@@ -343,6 +352,7 @@ impl Block {
                 excerpt: next_excerpt,
                 ..
             } => BlockId::ExcerptBoundary(next_excerpt.id),
+            Block::Spacer { id, .. } => BlockId::Spacer(*id),
         }
     }
 
@@ -351,13 +361,15 @@ impl Block {
             Block::Custom(block) => block.height.is_some(),
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => true,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => true,
         }
     }
 
     pub fn height(&self) -> u32 {
         match self {
             Block::Custom(block) => block.height.unwrap_or(0),
+            Block::Spacer { height, .. } => (*height).into(),
             Block::ExcerptBoundary { height, .. }
             | Block::FoldedBuffer { height, .. }
             | Block::BufferHeader { height, .. } => *height,
@@ -367,7 +379,8 @@ impl Block {
     pub fn style(&self) -> BlockStyle {
         match self {
             Block::Custom(block) => block.style,
-            Block::ExcerptBoundary { .. }
+            Block::Spacer { .. }
+            | Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
             | Block::BufferHeader { .. } => BlockStyle::Sticky,
         }
@@ -379,6 +392,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -388,6 +402,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -400,6 +415,7 @@ impl Block {
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => true,
         }
     }
 
@@ -409,6 +425,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -418,6 +435,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => true,
             Block::BufferHeader { .. } => true,
+            Block::Spacer { .. } => false,
         }
     }
 
@@ -427,32 +445,7 @@ impl Block {
             Block::FoldedBuffer { .. } => true,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => true,
-        }
-    }
-}
-
-impl Debug for Block {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
-            Self::FoldedBuffer {
-                first_excerpt,
-                height,
-            } => f
-                .debug_struct("FoldedBuffer")
-                .field("first_excerpt", &first_excerpt)
-                .field("height", height)
-                .finish(),
-            Self::ExcerptBoundary { excerpt, height } => f
-                .debug_struct("ExcerptBoundary")
-                .field("excerpt", excerpt)
-                .field("height", height)
-                .finish(),
-            Self::BufferHeader { excerpt, height } => f
-                .debug_struct("BufferHeader")
-                .field("excerpt", excerpt)
-                .field("height", height)
-                .finish(),
+            Block::Spacer { .. } => false,
         }
     }
 }
@@ -496,6 +489,7 @@ impl BlockMap {
             next_block_id: AtomicUsize::new(0),
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
+            spacer_blocks_by_id: TreeMap::default(),
             folded_buffers: HashSet::default(),
             buffers_with_disabled_headers: HashSet::default(),
             transforms: RefCell::new(transforms),
@@ -528,6 +522,7 @@ impl BlockMap {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
+                spacer_blocks_by_id: self.spacer_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
             },
@@ -697,24 +692,28 @@ impl BlockMap {
                     Ok(ix) | Err(ix) => last_block_ix + ix,
                 };
 
-            let end_bound;
+            let new_buffer_end;
             let end_block_ix = if new_end > wrap_snapshot.max_point().row() {
-                end_bound = Bound::Unbounded;
+                new_buffer_end = None;
                 self.custom_blocks.len()
             } else {
-                let new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
-                end_bound = Bound::Excluded(new_buffer_end);
+                let end = wrap_snapshot.to_point(WrapPoint::new(new_end, 0), Bias::Left);
+                new_buffer_end = Some(end);
                 match self.custom_blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .start()
                         .to_point(buffer)
-                        .cmp(&new_buffer_end)
+                        .cmp(&end)
                         .then(Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => start_block_ix + ix,
                 }
             };
             last_block_ix = end_block_ix;
+            let end_bound = match new_buffer_end {
+                Some(new_buffer_end) => Bound::Excluded(new_buffer_end),
+                None => Bound::Unbounded,
+            };
 
             debug_assert!(blocks_in_edit.is_empty());
             // + 8 is chosen arbitrarily to cover some multibuffer headers
@@ -749,10 +748,10 @@ impl BlockMap {
             ));
 
             blocks_in_edit.extend(self.spacer_blocks(
-                buffer,
                 wrap_snapshot,
                 companion_wrap_snapshot,
-                (start_bound, end_bound),
+                new_buffer_start,
+                new_buffer_end,
             ));
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
@@ -980,11 +979,13 @@ impl BlockMap {
 
     fn spacer_blocks<'a>(
         &'a self,
-        buffer: &MultiBufferSnapshot,
         wrap_snapshot: &WrapSnapshot,
         companion_wrap_snapshot: Option<&WrapSnapshot>,
-        bounds: (Bound<Point>, Bound<Point>),
-    ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a {
+        start: MultiBufferPoint,
+        end: Option<MultiBufferPoint>,
+        out_blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>,
+    ) {
+        // todo!()
         // 0. find the matching positions for the start of the edit in the two wrap snapshots
         // 1. loop:
         //    if (at_end_of_edit)
@@ -992,10 +993,33 @@ impl BlockMap {
         //    else if (in_hunk)
         //       advance to end of hunk on both sides
         //       spacer_size = sizes based on the hunk (in wraprows)
-        //    else 
+        //    else
         //       advance to next buffer line on both sides
-        //       spacer_size = size of buffer_line in companion (in wraprows) 
+        //       spacer_size = size of buffer_line in companion (in wraprows)
         //    yield a spacer based on the size
+
+        let Some(companion_wrap_snapshot) = companion_wrap_snapshot else {
+            return;
+        };
+        let end = end.unwrap_or(wrap_snapshot.buffer.max_point());
+        let mut current_point = start;
+        let mut hunks = wrap_snap;
+        let companion_end = wrap_snapshot.buffer.max_point();
+        
+        //   hello  0
+        // + world  5
+        //   <edit> 6-10
+             
+        let offset = wrap_snapshot.buffer.diff_hunks_in_range(Point::zero()..start).filter_map(|hunk| hunk.row_range);
+        // we know the excerpt IDs match up
+        // we can look at our text anchor
+        companion_wrap_snapshot.buffer.anchor_in_excerpt(excerpt_id, text_anchor).to_point(&companion_wrap_snapshot.buffer);
+        
+        while current_point < end && current_point < companion_end {
+            wrap_snapshot.buffer.follower_point(point);
+            companion_wrap_snapshot.make_wrap_point(point, bias)
+            wrap_snapshot.buffer.diff_hunks_in_range(current_point..current_point);
+        }
     }
 }
 
@@ -1536,6 +1560,10 @@ impl BlockSnapshot {
             BlockId::FoldedBuffer(excerpt_id) => self
                 .wrap_snapshot
                 .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left),
+            BlockId::Spacer(id) => {
+                let &height = self.spacer_blocks_by_id.get(&id)?;
+                return Some(Block::Spacer { id, height });
+            }
         };
         let wrap_row = wrap_point.row();
 
