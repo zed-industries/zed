@@ -403,6 +403,10 @@ where
     }
 
     /// Returns whether we found the item you were seeking for.
+    ///
+    /// # Panics
+    ///
+    /// If we did not seek before, use seek instead in that case.
     #[track_caller]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where

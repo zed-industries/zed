@@ -37,7 +37,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -127,6 +127,32 @@ pub fn init(cx: &mut App) {
         });
         workspace.register_action(|_, _: &LeaveCall, window, cx| {
             CollabPanel::leave_call(window, cx);
+        });
+        workspace.register_action(|workspace, _: &CopyRoomId, window, cx| {
+            use workspace::notifications::{NotificationId, NotifyTaskExt as _};
+
+            struct RoomIdCopiedToast;
+
+            if let Some(room) = ActiveCall::global(cx).read(cx).room() {
+                let romo_id_fut = room.read(cx).room_id();
+                cx.spawn(async move |workspace, cx| {
+                    let room_id = romo_id_fut.await.context("Failed to get livekit room")?;
+                    workspace.update(cx, |workspace, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(room_id));
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                NotificationId::unique::<RoomIdCopiedToast>(),
+                                "Room ID copied to clipboard",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_notify_err(window, cx);
+            } else {
+                workspace.show_error(&"There’s no active call; join one first.", cx);
+            }
         });
         workspace.register_action(|workspace, _: &ShareProject, window, cx| {
             let project = workspace.project().clone();

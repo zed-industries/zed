@@ -748,7 +748,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Refineable, Copy, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Debug + Default + PartialEq> {
@@ -1675,8 +1675,6 @@ impl Bounds<DevicePixels> {
         }
     }
 }
-
-impl<T: Copy + Clone + Debug + Default + PartialEq> Copy for Bounds<T> {}
 
 /// Represents the edges of a box in a 2D space, such as padding or margin.
 ///

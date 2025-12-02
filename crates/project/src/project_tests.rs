@@ -9733,7 +9733,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
             ("project/target/debug/deps".to_string(), PathChange::Added),
             ("project/target/debug/deps".to_string(), PathChange::Removed),
         ],
-        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        "Due to `debug` directory being tracked, it should get updates for entries inside it.
         No updates for more nested directories should happen as those are ignored",
     );
 }
