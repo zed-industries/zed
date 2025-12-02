@@ -437,6 +437,8 @@ actions!(
         SwapPaneUp,
         /// Swaps the current pane with the one below.
         SwapPaneDown,
+        // Swaps the current pane with the first available adjacent pane (searching in order: below, above, right, left) and activates that pane.
+        SwapPaneAdjacent,
         /// Move the current pane to be at the far left.
         MovePaneLeft,
         /// Move the current pane to be at the far right.
@@ -5822,6 +5824,21 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneAdjacent, window, cx| {
+                const DIRECTION_PRIORITY: [SplitDirection; 4] = [
+                    SplitDirection::Down,
+                    SplitDirection::Up,
+                    SplitDirection::Right,
+                    SplitDirection::Left,
+                ];
+                for dir in DIRECTION_PRIORITY {
+                    if workspace.find_pane_in_direction(dir, cx).is_some() {
+                        workspace.swap_pane_in_direction(dir, cx);
+                        workspace.activate_pane_in_direction(dir.opposite(), window, cx);
+                        break;
+                    }
+                }
             }))
             .on_action(cx.listener(|workspace, _: &MovePaneLeft, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Left, cx)
