@@ -963,6 +963,15 @@ impl SplitDirection {
             Self::Down | Self::Right => true,
         }
     }
+
+    pub fn opposite(&self) -> SplitDirection {
+        match self {
+            Self::Down => Self::Up,
+            Self::Up => Self::Down,
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
 }
 
 mod element {

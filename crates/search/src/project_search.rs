@@ -21,6 +21,7 @@ use gpui::{
     Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point, Render,
     SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
@@ -377,6 +378,9 @@ impl ProjectSearch {
                     })
                     .ok()?;
                 while let Some(new_ranges) = new_ranges.next().await {
+                    // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
+                    // will not reschedule, starving other front end tasks, insert a yield point for that here
+                    smol::future::yield_now().await;
                     project_search
                         .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
@@ -505,7 +509,7 @@ impl Item for ProjectSearchView {
             None
         }
     }
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.results_editor.clone()))
     }
 

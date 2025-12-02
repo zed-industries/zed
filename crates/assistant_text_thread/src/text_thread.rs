@@ -2933,6 +2933,7 @@ impl TextThread {
                         RenameOptions {
                             overwrite: true,
                             ignore_if_exists: true,
+                            create_parents: false,
                         },
                     )
                     .await?;
