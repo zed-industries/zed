@@ -20,7 +20,6 @@ use std::{
     time::Instant,
 };
 use util::{
-    ResultExt as _,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::ShellKind,
@@ -49,7 +48,6 @@ pub(crate) struct WslRemoteConnection {
     shell_kind: ShellKind,
     default_system_shell: String,
     connection_options: WslConnectionOptions,
-    can_exec: bool,
 }
 
 impl WslRemoteConnection {
@@ -73,7 +71,6 @@ impl WslRemoteConnection {
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
-            can_exec: true,
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.shell = this
@@ -82,8 +79,6 @@ impl WslRemoteConnection {
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
         this.shell_kind = ShellKind::new(&this.shell, false);
-        this.can_exec = this.detect_can_exec().await;
-        log::info!("Remote can exec: {}", this.can_exec);
         this.platform = this
             .detect_platform()
             .await
@@ -99,27 +94,9 @@ impl WslRemoteConnection {
         Ok(this)
     }
 
-    async fn detect_can_exec(&self) -> bool {
-        let options = &self.connection_options;
-        let program = self.shell_kind.prepend_command_prefix("uname");
-        let args = &["-m"];
-        let output = wsl_command_impl(options, &program, args, true)
-            .output()
-            .await;
-
-        if !output.is_ok_and(|output| output.status.success()) {
-            run_wsl_command_impl(options, &program, args, false)
-                .await
-                .context("failed detecting exec status")
-                .log_err();
-            false
-        } else {
-            true
-        }
-    }
     async fn detect_platform(&self) -> Result<RemotePlatform> {
         let program = self.shell_kind.prepend_command_prefix("uname");
-        let arch_str = self.run_wsl_command(&program, &["-m"]).await?;
+        let arch_str = self.run_wsl_command_with_output(&program, &["-m"]).await?;
         let arch_str = arch_str.trim().to_string();
         let arch = match arch_str.as_str() {
             "x86_64" => "x86_64",
@@ -131,18 +108,25 @@ impl WslRemoteConnection {
 
     async fn detect_shell(&self) -> Result<String> {
         Ok(self
-            .run_wsl_command("sh", &["-c", "echo $SHELL"])
+            .run_wsl_command_with_output("sh", &["-c", "echo $SHELL"])
             .await
+            .inspect_err(|err| log::error!("Failed to detect remote shell: {err}"))
             .ok()
             .unwrap_or_else(|| "/bin/sh".to_string()))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
-        windows_path_to_wsl_path_impl(&self.connection_options, source, self.can_exec).await
+        windows_path_to_wsl_path_impl(&self.connection_options, source).await
     }
 
-    async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<String> {
-        run_wsl_command_impl(&self.connection_options, program, args, self.can_exec).await
+    async fn run_wsl_command_with_output(&self, program: &str, args: &[&str]) -> Result<String> {
+        run_wsl_command_with_output_impl(&self.connection_options, program, args).await
+    }
+
+    async fn run_wsl_command(&self, program: &str, args: &[&str]) -> Result<()> {
+        run_wsl_command_impl(&self.connection_options, program, args, false)
+            .await
+            .map(|_| ())
     }
 
     async fn ensure_server_binary(
@@ -343,7 +327,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let proxy_process =
-            match wsl_command_impl(&self.connection_options, "env", &proxy_args, self.can_exec)
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, false)
                 .kill_on_drop(true)
                 .spawn()
             {
@@ -370,15 +354,14 @@ impl RemoteConnection for WslRemoteConnection {
     ) -> Task<Result<()>> {
         cx.background_spawn({
             let options = self.connection_options.clone();
-            let can_exec = self.can_exec;
             async move {
-                let wsl_src = windows_path_to_wsl_path_impl(&options, &src_path, can_exec).await?;
+                let wsl_src = windows_path_to_wsl_path_impl(&options, &src_path).await?;
 
                 run_wsl_command_impl(
                     &options,
                     "cp",
                     &["-r", &wsl_src, &dest_path.to_string()],
-                    can_exec,
+                    true,
                 )
                 .await
                 .map_err(|e| {
@@ -520,13 +503,26 @@ async fn sanitize_path(path: &Path) -> Result<String> {
     Ok(sanitized.replace('\\', "/"))
 }
 
+async fn run_wsl_command_with_output_impl(
+    options: &WslConnectionOptions,
+    program: &str,
+    args: &[&str],
+) -> Result<String> {
+    match run_wsl_command_impl(options, program, args, true).await {
+        Ok(res) => Ok(res),
+        Err(exec_err) => match run_wsl_command_impl(options, program, args, false).await {
+            Ok(res) => Ok(res),
+            Err(e) => Err(e.context(exec_err)),
+        },
+    }
+}
+
 async fn windows_path_to_wsl_path_impl(
     options: &WslConnectionOptions,
     source: &Path,
-    exec: bool,
 ) -> Result<String> {
     let source = sanitize_path(source).await?;
-    run_wsl_command_impl(options, "wslpath", &["-u", &source], exec).await
+    run_wsl_command_with_output_impl(options, "wslpath", &["-u", &source]).await
 }
 
 async fn run_wsl_command_impl(
