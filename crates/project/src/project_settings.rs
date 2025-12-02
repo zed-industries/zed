@@ -23,7 +23,7 @@ use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
     SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -1028,17 +1028,19 @@ impl SettingsObserver {
         let remote_worktree_id = worktree.read(cx).id();
         let task_store = self.task_store.clone();
         let worktree_abs_path = worktree.read(cx).abs_path();
-        let can_trust_worktree = get_trusted_worktrees_storage(cx)
-            .map(|trusted_worktrees_storage| {
-                trusted_worktrees_storage.can_trust_path(worktree_abs_path.as_ref(), cx)
-            })
-            .unwrap_or(true);
-
+        let can_trust_worktree = OnceCell::new();
         for (directory, kind, file_content) in settings_contents {
             let mut applied = true;
             match kind {
                 LocalSettingsKind::Settings => {
-                    if can_trust_worktree {
+                    if *can_trust_worktree.get_or_init(|| {
+                        get_trusted_worktrees_storage(cx)
+                            .map(|trusted_worktrees_storage| {
+                                trusted_worktrees_storage
+                                    .can_trust_path(worktree_abs_path.as_ref(), cx)
+                            })
+                            .unwrap_or(true)
+                    }) {
                         apply_local_settings(worktree_id, &directory, kind, &file_content, cx)
                     } else {
                         applied = false;
