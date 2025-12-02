@@ -7,6 +7,7 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
+mod since_v0_8_0;
 use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
 use gpui::BackgroundExecutor;
@@ -20,7 +21,7 @@ use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequ
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semver::Version;
-use since_v0_6_0 as latest;
+use since_v0_8_0 as latest;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
     Store,
@@ -95,6 +96,7 @@ pub fn authorize_access_to_unreleased_wasm_api_version(
 }
 
 pub enum Extension {
+    V0_8_0(since_v0_8_0::Extension),
     V0_6_0(since_v0_6_0::Extension),
     V0_5_0(since_v0_5_0::Extension),
     V0_4_0(since_v0_4_0::Extension),
