@@ -2041,7 +2041,9 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
-    // TODO kb docs
+    // Whether or not to skip project trust checks and synchronize project settings from any worktree automatically.
+    //
+    // Default: false
     "trust_all_worktrees": false
   },
   // Zed's Prettier integration settings.

@@ -1451,6 +1451,45 @@ or
 
 `boolean` values
 
+### Session
+
+- Description: Controls Zed lifecycle-related behavior.
+- Setting: `session`
+- Default:
+
+```json
+{
+  "session": {
+      "restore_unsaved_buffers": true,
+      "trust_all_worktrees": false
+  }
+}
+```
+
+**Options**
+
+1.  Whether or not to restore unsaved buffers on restart:
+
+```json [settings]
+{
+  "session": {
+    "restore_unsaved_buffers": true
+  }
+}
+```
+
+If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
+
+2. Whether or not to skip project trust checks and synchronize project settings from any worktree automatically:
+
+```json [settings]
+{
+  "session": {
+    "trust_all_worktrees": false
+  }
+}
+```
+
 ### Drag And Drop Selection
 
 - Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
