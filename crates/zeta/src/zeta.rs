@@ -5,8 +5,8 @@ use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat, Signature};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
     EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
-    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger,
-    RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
+    MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
+    ZED_VERSION_HEADER_NAME,
 };
 use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
@@ -3543,14 +3543,17 @@ mod tests {
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
+        // start two refresh tasks
         zeta.update(cx, |zeta, cx| {
-            // start two refresh tasks
-            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
-
             zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
         });
 
         let (_, respond_first) = requests.predict.next().await.unwrap();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
         let (_, respond_second) = requests.predict.next().await.unwrap();
 
         // wait for throttle
@@ -3629,17 +3632,21 @@ mod tests {
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
+        // start two refresh tasks
         zeta.update(cx, |zeta, cx| {
-            // start two refresh tasks
-            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
             zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
         });
 
+        let (_, respond_first) = requests.predict.next().await.unwrap();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        });
+
+        let (_, respond_second) = requests.predict.next().await.unwrap();
+
         // wait for throttle, so requests are sent
         cx.run_until_parked();
-
-        let (_, respond_first) = requests.predict.next().await.unwrap();
-        let (_, respond_second) = requests.predict.next().await.unwrap();
 
         zeta.update(cx, |zeta, cx| {
             // start a third request
