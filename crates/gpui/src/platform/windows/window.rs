@@ -66,7 +66,7 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    system_settings: RefCell<WindowsSystemSettings>,
+    system_settings: WindowsSystemSettings,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
@@ -232,7 +232,7 @@ impl WindowsWindowInner {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
-            system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
+            system_settings: WindowsSystemSettings::new(context.display),
         }))
     }
 
@@ -328,12 +328,8 @@ impl WindowsWindowInner {
         Ok(())
     }
 
-    pub(crate) fn system_settings(&self) -> std::cell::Ref<'_, WindowsSystemSettings> {
-        self.system_settings.borrow()
-    }
-
-    pub(crate) fn system_settings_mut(&self) -> std::cell::RefMut<'_, WindowsSystemSettings> {
-        self.system_settings.borrow_mut()
+    pub(crate) fn system_settings(&self) -> &WindowsSystemSettings {
+        &self.system_settings
     }
 }
 
