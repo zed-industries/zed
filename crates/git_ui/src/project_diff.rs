@@ -364,7 +364,9 @@ impl ProjectDiff {
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&Default::default(), window, cx);
+            editor.primary_editor().update(cx, |editor, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            });
         });
     }
 
