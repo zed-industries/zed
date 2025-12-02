@@ -769,12 +769,12 @@ impl BackgroundHighlightHandle for BackgroundHighlight {
     }
 }
 
-pub struct SearchBackgroundHighlight {
+pub struct ActiveBackgroundHighlight {
     pub ranges: Arc<[Range<Anchor>]>,
     pub active_index: Option<usize>,
 }
 
-impl SearchBackgroundHighlight {
+impl ActiveBackgroundHighlight {
     pub fn new(ranges: &[Range<Anchor>], active_index: Option<usize>) -> Self {
         Self {
             ranges: Arc::from(ranges),
@@ -783,7 +783,7 @@ impl SearchBackgroundHighlight {
     }
 }
 
-impl BackgroundHighlightHandle for SearchBackgroundHighlight {
+impl BackgroundHighlightHandle for ActiveBackgroundHighlight {
     fn ranges(&self) -> &[Range<Anchor>] {
         &self.ranges
     }
@@ -21147,13 +21147,13 @@ impl Editor {
 
     #[cfg(feature = "test-support")]
     pub fn search_background_highlights(&mut self, cx: &mut Context<Self>) -> Vec<Range<Point>> {
+        use crate::items::BufferSearchHighlights;
+
         let snapshot = self.buffer().read(cx).snapshot(cx);
 
         let highlights = self
             .background_highlights
-            .get(&HighlightKey::Type(
-                TypeId::of::<SearchBackgroundHighlight>(),
-            ));
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()));
 
         if let Some(highlight) = highlights {
             highlight

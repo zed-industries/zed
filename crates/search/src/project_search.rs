@@ -8,8 +8,8 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SearchBackgroundHighlight, SelectionEffects,
+    ActiveBackgroundHighlight, Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN,
+    MultiBuffer, PathKey, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
     multibuffer_context_lines,
@@ -1518,8 +1518,8 @@ impl ProjectSearchView {
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
-                editor.highlight_background::<SearchBackgroundHighlight, _>(
-                    SearchBackgroundHighlight::new(&match_ranges, self.active_match_index),
+                editor.highlight_background::<Self, _>(
+                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
                     cx,
                 );
             });

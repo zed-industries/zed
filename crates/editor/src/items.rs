@@ -1,8 +1,7 @@
 use crate::{
-    Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SearchBackgroundHighlight, SearchWithinRange, SelectionEffects,
-    ToPoint as _,
+    ActiveBackgroundHighlight, Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent,
+    EditorSettings, ExcerptId, ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot,
+    NavigationData, ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -1464,14 +1463,13 @@ impl Editor {
     }
 }
 
+pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
-            .get(&HighlightKey::Type(
-                TypeId::of::<SearchBackgroundHighlight>(),
-            ))
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map_or(Vec::new(), |highlight| {
                 highlight.ranges().iter().cloned().collect()
             })
@@ -1479,7 +1477,7 @@ impl SearchableItem for Editor {
 
     fn clear_matches(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self
-            .clear_background_highlights::<SearchBackgroundHighlight>(cx)
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
             .is_some()
         {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -1495,13 +1493,11 @@ impl SearchableItem for Editor {
     ) {
         let existing_range = self
             .background_highlights
-            .get(&HighlightKey::Type(
-                TypeId::of::<SearchBackgroundHighlight>(),
-            ))
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map(|highlight| highlight.ranges());
         let updated = existing_range != Some(matches);
-        self.highlight_background::<SearchBackgroundHighlight, _>(
-            SearchBackgroundHighlight::new(matches, active_match_index),
+        self.highlight_background::<BufferSearchHighlights, _>(
+            ActiveBackgroundHighlight::new(matches, active_match_index),
             cx,
         );
         if updated {
