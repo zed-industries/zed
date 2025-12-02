@@ -9213,18 +9213,34 @@ impl Element for EditorElement {
                             continue;
                         };
 
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added =>
-                                cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted =>
-                                cx.theme().colors().version_control_deleted,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                continue;
-                            }
-                        };
+                        let background_color = dbg!(match diff_status.kind {
+                                                    DiffHunkStatusKind::Added =>
+                                                        cx.theme().colors().version_control_added,
+                                                    DiffHunkStatusKind::Deleted =>
+                                                        cx.theme().colors().version_control_deleted,
+                                                    DiffHunkStatusKind::Modified => {
+                                                        debug_panic!("modified diff status for row info");
+                                                        continue;
+                                                    }
+                                                });
 
-                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
+                        // Potential fix with new tokens:
+                        // diff.added = "#2EA048"
+                        // diff.added_word = @diff.added/24%
+                        // diff.added_background = @diff.added/20%
+                        //
+                        //
+                        // Ideal State:
+                        // version_control.added = "#2EA048"
+                        // version_control.added_word = @version_control.added/24%
+                        // version_control.added_background = @version_control.added/20%
+                        // version_control.added_icon = "something"
+
+                        // let hunk_opacity = if background_color.a < 1.0 {
+                        //         background_color.a  // Use existing alpha
+                        //     } else {
+                        //         if is_light { 0.16 } else { 0.20 }
+                        //     };
 
                         let hollow_highlight = LineHighlight {
                             background: (background_color.opacity(if is_light {
@@ -9243,7 +9259,7 @@ impl Element for EditorElement {
                         };
 
                         let filled_highlight = LineHighlight {
-                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            background: solid_background(background_color),
                             border: None,
                             include_gutter: true,
                             type_id: None,

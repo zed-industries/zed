@@ -8,35 +8,66 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
-const ADDED_COLOR: Hsla = Hsla {
+const LIGHT_ADDED_COLOR: Hsla = Hsla {
     h: 134. / 360.,
     s: 0.55,
     l: 0.40,
     a: 1.0,
 };
-const WORD_ADDED_COLOR: Hsla = Hsla {
+const LIGHT_WORD_ADDED_COLOR: Hsla = Hsla {
     h: 134. / 360.,
     s: 0.55,
     l: 0.40,
     a: 0.35,
 };
-const MODIFIED_COLOR: Hsla = Hsla {
+const LIGHT_MODIFIED_COLOR: Hsla = Hsla {
     h: 48. / 360.,
     s: 0.76,
     l: 0.47,
     a: 1.0,
 };
-const REMOVED_COLOR: Hsla = Hsla {
+const LIGHT_REMOVED_COLOR: Hsla = Hsla {
     h: 350. / 360.,
     s: 0.88,
     l: 0.25,
     a: 1.0,
 };
-const WORD_DELETED_COLOR: Hsla = Hsla {
+const LIGHT_WORD_DELETED_COLOR: Hsla = Hsla {
     h: 350. / 360.,
     s: 0.88,
     l: 0.25,
     a: 0.80,
+};
+
+pub(crate) const DARK_ADDED_COLOR: Hsla = Hsla {
+    h: 1.0,
+    s: 0.55,
+    l: 0.30,
+    a: 0.20,
+};
+pub(crate) const DARK_WORD_ADDED_COLOR: Hsla = Hsla {
+    h: 135. / 360.,
+    s: 0.55,
+    l: 0.30,
+    a: 0.24,
+};
+pub(crate) const DARK_MODIFIED_COLOR: Hsla = Hsla {
+    h: 218. / 360.,
+    s: 0.66,
+    l: 0.36,
+    a: 0.20,
+};
+pub(crate) const DARK_REMOVED_COLOR: Hsla = Hsla {
+    h: 356. / 360.,
+    s: 0.87,
+    l: 0.35,
+    a: 0.32,
+};
+pub(crate) const DARK_WORD_DELETED_COLOR: Hsla = Hsla {
+    h: 356. / 360.,
+    s: 0.87,
+    l: 0.35,
+    a: 0.50,
 };
 
 /// The default colors for the theme.
@@ -158,14 +189,14 @@ impl ThemeColors {
             terminal_ansi_dim_cyan: cyan().light().step_10(),
             terminal_ansi_dim_white: neutral().light().step_11(),
             link_text_hover: orange().light().step_10(),
-            version_control_added: ADDED_COLOR,
-            version_control_deleted: REMOVED_COLOR,
-            version_control_modified: MODIFIED_COLOR,
-            version_control_renamed: MODIFIED_COLOR,
+            version_control_added: LIGHT_ADDED_COLOR,
+            version_control_deleted: LIGHT_REMOVED_COLOR,
+            version_control_modified: LIGHT_MODIFIED_COLOR,
+            version_control_renamed: LIGHT_MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
             version_control_ignored: gray().light().step_12(),
-            version_control_word_added: WORD_ADDED_COLOR,
-            version_control_word_deleted: WORD_DELETED_COLOR,
+            version_control_word_added: LIGHT_WORD_ADDED_COLOR,
+            version_control_word_deleted: LIGHT_WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
             vim_normal_background: system.transparent,
@@ -295,14 +326,14 @@ impl ThemeColors {
             terminal_ansi_bright_white: neutral().dark().step_11(),
             terminal_ansi_dim_white: neutral().dark().step_10(),
             link_text_hover: orange().dark().step_10(),
-            version_control_added: ADDED_COLOR,
-            version_control_deleted: REMOVED_COLOR,
-            version_control_modified: MODIFIED_COLOR,
-            version_control_renamed: MODIFIED_COLOR,
+            version_control_added: DARK_ADDED_COLOR,
+            version_control_deleted: DARK_REMOVED_COLOR,
+            version_control_modified: DARK_MODIFIED_COLOR,
+            version_control_renamed: DARK_MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
             version_control_ignored: gray().dark().step_12(),
-            version_control_word_added: WORD_ADDED_COLOR,
-            version_control_word_deleted: WORD_DELETED_COLOR,
+            version_control_word_added: DARK_WORD_ADDED_COLOR,
+            version_control_word_deleted: DARK_WORD_DELETED_COLOR,
             version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
             vim_normal_background: system.transparent,

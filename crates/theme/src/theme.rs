@@ -247,6 +247,10 @@ impl ThemeFamily {
         };
         let mut theme_colors_refinement =
             theme_colors_refinement(&theme.style.colors, &status_colors_refinement);
+        // todo! We could pass in refined_theme_colors to apply default version control colors
+        // instead of falling back to the status colors created ... etc
+        //
+        // That would probably break backwards compatibility though
         apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
         refined_theme_colors.refine(&theme_colors_refinement);
 

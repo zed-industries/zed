@@ -287,6 +287,7 @@ pub fn theme_colors_refinement(
         .panel_background
         .as_ref()
         .and_then(|color| try_parse_color(color).ok());
+
     ThemeColorsRefinement {
         border,
         border_variant: this
@@ -713,6 +714,7 @@ pub fn theme_colors_refinement(
             .as_ref()
             .and_then(|color| try_parse_color(color).ok())
             // Fall back to `created`, for backwards compatibility.
+            // todo!
             .or(status_colors.created),
         version_control_deleted: this
             .version_control_deleted
