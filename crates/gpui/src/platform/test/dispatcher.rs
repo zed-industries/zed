@@ -296,7 +296,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         self.state
             .lock()
             .foreground

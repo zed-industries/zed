@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
+use crate::{App, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -497,6 +497,19 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
+        self.spawn_with_priority(future, Priority::default())
+    }
+
+    /// Enqueues the given Task to run on the main thread at some point in the future.
+    #[track_caller]
+    pub fn spawn_with_priority<R>(
+        &self,
+        future: impl Future<Output = R> + 'static,
+        priority: Priority,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
         let dispatcher = self.dispatcher.clone();
         let location = core::panic::Location::caller();
 
@@ -505,16 +518,19 @@ impl ForegroundExecutor {
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
             location: &'static core::panic::Location<'static>,
+            priority: Priority,
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
-                move |runnable| dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable)),
+                move |runnable| {
+                    dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
+                },
                 RunnableMeta { location },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future), location)
+        inner::<R>(dispatcher, Box::pin(future), location, priority)
     }
 }
 
