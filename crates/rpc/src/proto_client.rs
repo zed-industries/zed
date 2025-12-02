@@ -59,6 +59,7 @@ pub trait ProtoClient: Send + Sync {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
 
     fn is_via_collab(&self) -> bool;
+    fn has_wsl_interop(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -509,6 +510,10 @@ impl AnyProtoClient {
                 handle: entity.downgrade().into(),
             },
         );
+    }
+
+    pub fn has_wsl_interop(&self) -> bool {
+        self.0.client.has_wsl_interop()
     }
 }
 
