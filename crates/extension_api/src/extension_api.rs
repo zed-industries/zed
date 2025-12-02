@@ -334,7 +334,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.6.0",
+        path: "./wit/since_v0.8.0",
     });
 }
 

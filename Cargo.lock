@@ -21496,6 +21496,8 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
 dependencies = [
  "serde",
  "serde_json",
@@ -21504,9 +21506,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -21524,7 +21524,7 @@ dependencies = [
 name = "zed_html"
 version = "0.2.3"
 dependencies = [
- "zed_extension_api 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.7.0",
 ]
 
 [[package]]
@@ -21538,7 +21538,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.7.0",
+ "zed_extension_api 0.8.0",
 ]
 
 [[package]]
