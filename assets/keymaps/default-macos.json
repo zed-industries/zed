@@ -49,7 +49,8 @@
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
-      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu",
+      "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
   {
@@ -589,8 +590,7 @@
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
-      "cmd-\\": "pane::SplitRight",
-      "ctrl-cmd-c": "editor::DisplayCursorNames"
+      "cmd-\\": "pane::SplitRight"
     }
   },
   {
@@ -730,7 +730,8 @@
     "context": "Workspace && debugger_running",
     "use_key_equivalents": true,
     "bindings": {
-      "f5": "zed::NoAction"
+      "f5": "zed::NoAction",
+      "f11": "debugger::StepInto"
     }
   },
   {
@@ -1382,6 +1383,7 @@
       "escape": "workspace::CloseWindow",
       "cmd-m": "settings_editor::Minimize",
       "cmd-f": "search::FocusSearch",
+      "cmd-,": "settings_editor::OpenCurrentFile",
       "left": "settings_editor::ToggleFocusNav",
       "cmd-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
@@ -1437,6 +1439,13 @@
     "bindings": {
       "alt-left": "dev::Zeta2ContextGoBack",
       "alt-right": "dev::Zeta2ContextGoForward"
+    }
+  },
+  {
+    "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-backspace": "branch_picker::DeleteBranch"
     }
   }
 ]

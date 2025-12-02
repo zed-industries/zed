@@ -247,7 +247,13 @@ impl RenderOnce for Checkbox {
 
         h_flex()
             .id(self.id)
-            .cursor_pointer()
+            .map(|this| {
+                if self.disabled {
+                    this.cursor_not_allowed()
+                } else {
+                    this.cursor_pointer()
+                }
+            })
             .gap(DynamicSpacing::Base06.rems(cx))
             .child(checkbox)
             .when_some(

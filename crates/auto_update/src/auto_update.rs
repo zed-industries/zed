@@ -639,10 +639,11 @@ impl AutoUpdater {
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
                 VersionCheckType::Sha(cached_version) => {
-                    let should_download = parsed_fetched_version
-                        .as_ref()
-                        .ok()
-                        .is_none_or(|version| version.build.as_str() != cached_version.full());
+                    let should_download =
+                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
+                            version.build.as_str().rsplit('.').next()
+                                != Some(&cached_version.full())
+                        });
                     let newer_version = should_download
                         .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
                     return Ok(newer_version);
@@ -662,10 +663,9 @@ impl AutoUpdater {
                     .ok()
                     .flatten()
                     .map(|sha| {
-                        parsed_fetched_version
-                            .as_ref()
-                            .ok()
-                            .is_none_or(|version| version.build.as_str() != sha)
+                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
+                            version.build.as_str().rsplit('.').next() != Some(&sha)
+                        })
                     })
                     .unwrap_or(true);
                 let newer_version = should_download

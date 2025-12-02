@@ -7,7 +7,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
     steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
-    vars::PathCondition,
+    vars::{self, PathCondition},
 };
 
 use super::{
@@ -353,7 +353,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     }
 
     fn bufbuild_setup_action() -> Step<Use> {
-        named::uses("bufbuild", "buf-setup-action", "v1").add_with(("version", "v1.29.0"))
+        named::uses("bufbuild", "buf-setup-action", "v1")
+            .add_with(("version", "v1.29.0"))
+            .add_with(("github_token", vars::GITHUB_TOKEN))
     }
 
     fn bufbuild_breaking_action() -> Step<Use> {

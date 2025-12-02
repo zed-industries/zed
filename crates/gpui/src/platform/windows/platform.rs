@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     ffi::OsStr,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -47,7 +47,7 @@ pub(crate) struct WindowsPlatform {
 }
 
 struct WindowsPlatformInner {
-    state: RefCell<WindowsPlatformState>,
+    state: WindowsPlatformState,
     raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
@@ -57,22 +57,22 @@ struct WindowsPlatformInner {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    menus: Vec<OwnedMenu>,
-    jump_list: JumpList,
+    menus: RefCell<Vec<OwnedMenu>>,
+    jump_list: RefCell<JumpList>,
     // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Option<HCURSOR>,
-    directx_devices: Option<DirectXDevices>,
+    pub(crate) current_cursor: Cell<Option<HCURSOR>>,
+    directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
 #[derive(Default)]
 struct PlatformCallbacks {
-    open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    quit: Option<Box<dyn FnMut()>>,
-    reopen: Option<Box<dyn FnMut()>>,
-    app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
-    will_open_app_menu: Option<Box<dyn FnMut()>>,
-    validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
-    keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
+    quit: Cell<Option<Box<dyn FnMut()>>>,
+    reopen: Cell<Option<Box<dyn FnMut()>>>,
+    app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
+    will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
+    validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
+    keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -84,10 +84,10 @@ impl WindowsPlatformState {
 
         Self {
             callbacks,
-            jump_list,
-            current_cursor,
-            directx_devices,
-            menus: Vec::new(),
+            jump_list: RefCell::new(jump_list),
+            current_cursor: Cell::new(current_cursor),
+            directx_devices: RefCell::new(directx_devices),
+            menus: RefCell::new(Vec::new()),
         }
     }
 }
@@ -194,14 +194,14 @@ impl WindowsPlatform {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
-            current_cursor: self.inner.state.borrow().current_cursor,
+            current_cursor: self.inner.state.current_cursor.get(),
             windows_version: self.windows_version,
             drop_target_helper: self.drop_target_helper.clone(),
             validation_number: self.inner.validation_number,
             main_receiver: self.inner.main_receiver.clone(),
             platform_window_handle: self.handle,
             disable_direct_composition: self.disable_direct_composition,
-            directx_devices: self.inner.state.borrow().directx_devices.clone().unwrap(),
+            directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
             invalidate_devices: self.invalidate_devices.clone(),
         }
     }
@@ -213,9 +213,8 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.inner.state.borrow_mut();
-        lock.jump_list.dock_menus = actions;
-        update_jump_list(&lock.jump_list).log_err();
+        self.inner.state.jump_list.borrow_mut().dock_menus = actions;
+        update_jump_list(&self.inner.state.jump_list.borrow()).log_err();
     }
 
     fn update_jump_list(
@@ -229,12 +228,10 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.inner.state.borrow_mut();
-        lock.jump_list.dock_menus = actions;
-        lock.jump_list.recent_workspaces = entries;
-        update_jump_list(&lock.jump_list)
-            .log_err()
-            .unwrap_or_default()
+        let mut jump_list = self.inner.state.jump_list.borrow_mut();
+        jump_list.dock_menus = actions;
+        jump_list.recent_workspaces = entries;
+        update_jump_list(&jump_list).log_err().unwrap_or_default()
     }
 
     fn find_current_active_window(&self) -> Option<HWND> {
@@ -250,7 +247,7 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let mut directx_device = self.inner.state.borrow().directx_devices.clone().unwrap();
+        let mut directx_device = self.inner.state.directx_devices.borrow().clone().unwrap();
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
@@ -334,9 +331,9 @@ impl Platform for WindowsPlatform {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.inner
             .state
-            .borrow_mut()
             .callbacks
-            .keyboard_layout_change = Some(callback);
+            .keyboard_layout_change
+            .set(Some(callback));
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -354,7 +351,7 @@ impl Platform for WindowsPlatform {
         }
 
         self.inner
-            .with_callback(|callbacks| &mut callbacks.quit, |callback| callback());
+            .with_callback(|callbacks| &callbacks.quit, |callback| callback());
     }
 
     fn quit(&self) {
@@ -473,7 +470,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.state.borrow_mut().callbacks.open_urls = Some(callback);
+        self.inner.state.callbacks.open_urls.set(Some(callback));
     }
 
     fn prompt_for_paths(
@@ -543,19 +540,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.state.borrow_mut().callbacks.quit = Some(callback);
+        self.inner.state.callbacks.quit.set(Some(callback));
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.state.borrow_mut().callbacks.reopen = Some(callback);
+        self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.inner.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
+        *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.inner.state.borrow().menus.clone())
+        Some(self.inner.state.menus.borrow().clone())
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
@@ -563,19 +560,27 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.inner
+            .state
+            .callbacks
+            .app_menu_action
+            .set(Some(callback));
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
+        self.inner
+            .state
+            .callbacks
+            .will_open_app_menu
+            .set(Some(callback));
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.inner
             .state
-            .borrow_mut()
             .callbacks
-            .validate_app_menu_command = Some(callback);
+            .validate_app_menu_command
+            .set(Some(callback));
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -589,13 +594,13 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        if self.inner.state.borrow_mut().current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
+        if self.inner.state.current_cursor.get().map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
                 WPARAM(0),
                 LPARAM(hcursor.map_or(0, |c| c.0 as isize)),
             );
-            self.inner.state.borrow_mut().current_cursor = hcursor;
+            self.inner.state.current_cursor.set(hcursor);
         }
     }
 
@@ -721,12 +726,12 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
-        let state = RefCell::new(WindowsPlatformState::new(
+        let state = WindowsPlatformState::new(
             context
                 .directx_devices
                 .take()
                 .context("missing directx devices")?,
-        ));
+        );
         Ok(Rc::new(Self {
             state,
             raw_window_handles: context.raw_window_handles.clone(),
@@ -746,13 +751,13 @@ impl WindowsPlatformInner {
     /// Calls `project` to project to the corresponding callback field, removes it from callbacks, calls `f` with the callback and then puts the callback back.
     fn with_callback<T>(
         &self,
-        project: impl Fn(&mut PlatformCallbacks) -> &mut Option<T>,
+        project: impl Fn(&PlatformCallbacks) -> &Cell<Option<T>>,
         f: impl FnOnce(&mut T),
     ) {
-        let callback = project(&mut self.state.borrow_mut().callbacks).take();
+        let callback = project(&self.state.callbacks).take();
         if let Some(mut callback) = callback {
             f(&mut callback);
-            *project(&mut self.state.borrow_mut().callbacks) = Some(callback)
+            project(&self.state.callbacks).set(Some(callback));
         }
     }
 
@@ -813,25 +818,60 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        loop {
-            for runnable in self.main_receiver.drain() {
-                WindowsDispatcher::execute_runnable(runnable);
+        const MAIN_TASK_TIMEOUT: u128 = 10;
+
+        let start = std::time::Instant::now();
+        'tasks: loop {
+            'timeout_loop: loop {
+                if start.elapsed().as_millis() >= MAIN_TASK_TIMEOUT {
+                    log::debug!("foreground task timeout reached");
+                    // we spent our budget on gpui tasks, we likely have a lot of work queued so drain system events first to stay responsive
+                    // then quit out of foreground work to allow us to process other gpui events first before returning back to foreground task work
+                    // if we don't we might not for example process window quit events
+                    let mut msg = MSG::default();
+                    let process_message = |msg: &_| {
+                        if translate_accelerator(msg).is_none() {
+                            _ = unsafe { TranslateMessage(msg) };
+                            unsafe { DispatchMessageW(msg) };
+                        }
+                    };
+                    let peek_msg = |msg: &mut _, msg_kind| unsafe {
+                        PeekMessageW(msg, None, 0, 0, PM_REMOVE | msg_kind).as_bool()
+                    };
+                    if peek_msg(&mut msg, PM_QS_PAINT) {
+                        process_message(&msg);
+                    }
+                    while peek_msg(&mut msg, PM_QS_INPUT) {
+                        process_message(&msg);
+                    }
+                    // Allow the main loop to process other gpui events before going back into `run_foreground_task`
+                    unsafe {
+                        if let Err(_) = PostMessageW(
+                            Some(self.dispatcher.platform_window_handle.as_raw()),
+                            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                            WPARAM(self.validation_number),
+                            LPARAM(0),
+                        ) {
+                            self.dispatcher.wake_posted.store(false, Ordering::Release);
+                        };
+                    }
+                    break 'tasks;
+                }
+                match self.main_receiver.try_recv() {
+                    Err(_) => break 'timeout_loop,
+                    Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
+                }
             }
 
             // Someone could enqueue a Runnable here. The flag is still true, so they will not PostMessage.
             // We need to check for those Runnables after we clear the flag.
-            let dispatcher = self.dispatcher.clone();
-
-            dispatcher.wake_posted.store(false, Ordering::Release);
+            self.dispatcher.wake_posted.store(false, Ordering::Release);
             match self.main_receiver.try_recv() {
+                Err(_) => break 'tasks,
                 Ok(runnable) => {
-                    let _ = dispatcher.wake_posted.swap(true, Ordering::AcqRel);
+                    self.dispatcher.wake_posted.store(true, Ordering::Release);
 
                     WindowsDispatcher::execute_runnable(runnable);
-                    continue;
-                }
-                _ => {
-                    break;
                 }
             }
         }
@@ -842,8 +882,8 @@ impl WindowsPlatformInner {
     fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
         let Some(action) = self
             .state
-            .borrow_mut()
             .jump_list
+            .borrow()
             .dock_menus
             .get(action_idx)
             .map(|dock_menu| dock_menu.action.boxed_clone())
@@ -852,7 +892,7 @@ impl WindowsPlatformInner {
             return Some(1);
         };
         self.with_callback(
-            |callbacks| &mut callbacks.app_menu_action,
+            |callbacks| &callbacks.app_menu_action,
             |callback| callback(&*action),
         );
         Some(0)
@@ -860,7 +900,7 @@ impl WindowsPlatformInner {
 
     fn handle_keyboard_layout_change(&self) -> Option<isize> {
         self.with_callback(
-            |callbacks| &mut callbacks.keyboard_layout_change,
+            |callbacks| &callbacks.keyboard_layout_change,
             |callback| callback(),
         );
         Some(0)
@@ -869,9 +909,8 @@ impl WindowsPlatformInner {
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
-        let mut lock = self.state.borrow_mut();
-        lock.directx_devices.take();
-        lock.directx_devices = Some(directx_devices.clone());
+        self.state.directx_devices.borrow_mut().take();
+        *self.state.directx_devices.borrow_mut() = Some(directx_devices.clone());
 
         Some(0)
     }
