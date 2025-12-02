@@ -2,7 +2,7 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AvailableSpace, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
     Keystroke, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
@@ -137,23 +137,13 @@ impl WhichKeyModal {
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let margin_bottom = px(16.);
-        let margin_right = px(16.);
-        let panel_padding_x = px(12.);
-        let panel_padding_y = px(8.);
-        let key_action_gap = px(8.);
-        let row_gap = px(2.);
-        let row_padding_y = px(2.);
-        let title_gap = px(2.);
-        let divider_gap = px(2.);
-
-        let row_count = self.bindings.len();
-        let has_rows = row_count > 0;
+        let has_rows = !self.bindings.is_empty();
         let viewport_size = window.viewport_size();
 
+        let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+        let max_content_height = px(f32::from(viewport_size.height) * 0.4);
+
         // Push above status bar when visible
-        // Estimate the status bar height dynamically using spacing constants
-        // and theme font size since the API doesn’t provide it directly
         let status_height = self
             ._workspace
             .upgrade()
@@ -170,177 +160,101 @@ impl Render for WhichKeyModal {
                 })
             })
             .unwrap_or(px(0.));
+
+        let margin_bottom = px(16.);
         let bottom_offset = margin_bottom + status_height;
 
         // Title section
-        let title_text: SharedString = self.pending_keys.clone();
-        let build_title_section = || -> AnyElement {
+        let title_section = {
             let mut column = v_flex().gap(px(0.)).child(
                 div()
                     .child(
-                        Label::new(title_text.clone())
-                            .size(LabelSize::Small)
+                        Label::new(self.pending_keys.clone())
+                            .size(LabelSize::Default)
                             .weight(FontWeight::MEDIUM)
-                            .color(Color::Muted),
+                            .color(Color::Accent),
                     )
-                    .mb(title_gap),
+                    .mb(px(2.)),
             );
 
             if has_rows {
                 column = column.child(
                     div()
                         .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                        .mb(divider_gap),
+                        .mb(px(2.)),
                 );
             }
 
-            column.into_any_element()
+            column
         };
 
-        // Compute consistent key column width
-        let key_column_width = self
-            .bindings
-            .iter()
-            .map(|(keystrokes, _)| {
-                Label::new(keystrokes.clone())
-                    .size(LabelSize::Default)
-                    .into_any_element()
-                    .layout_as_root(AvailableSpace::min_size(), window, cx)
-                    .width
-            })
-            .max()
-            .unwrap_or(px(0.))
-            .max(px(28.));
-
-        // Measure rows (unconstrained) to derive natural width
-        let mut max_row_width = px(0.);
-        for (keystrokes, action_name) in &self.bindings {
-            let row_size = measure_binding_row(
-                keystrokes.clone(),
-                action_name.clone(),
-                key_column_width,
-                key_action_gap,
-                row_padding_y,
-                None,
-                window,
-                cx,
-            );
-
-            max_row_width = max_row_width.max(row_size.width);
-        }
-
-        // Width: tight to content with clamps
-        // Review the hard coded min/max value
-        let min_panel_width = px(220.);
-        let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
-        let mut panel_width = max_row_width + (panel_padding_x * 2.0);
-        panel_width = panel_width.clamp(min_panel_width, max_panel_width);
-
-        let available_content_width = panel_width - (panel_padding_x * 2.0);
-
-        // Remeasure title/rows with width constraint to get accurate heights/wrapping
-        let title_section_height = build_title_section()
-            .layout_as_root(
-                gpui::Size {
-                    width: AvailableSpace::Definite(available_content_width),
-                    height: AvailableSpace::MinContent,
-                },
-                window,
-                cx,
-            )
-            .height;
-
-        let mut row_height = px(0.);
-        for (keystrokes, action_name) in &self.bindings {
-            let row_size = measure_binding_row(
-                keystrokes.clone(),
-                action_name.clone(),
-                key_column_width,
-                key_action_gap,
-                row_padding_y,
-                Some(available_content_width),
-                window,
-                cx,
-            );
-
-            row_height = row_height.max(row_size.height);
-        }
-
-        if row_height == px(0.) {
-            row_height = measure_binding_row(
-                SharedString::new_static(""),
-                SharedString::new_static(""),
-                key_column_width,
-                key_action_gap,
-                row_padding_y,
-                Some(available_content_width),
-                window,
-                cx,
-            )
-            .height;
-        }
-
-        let content_height = if row_count > 0 {
-            (row_height * row_count) + (row_gap * row_count.saturating_sub(1))
-        } else {
-            px(0.)
-        };
-
-        let panel_vert_padding = panel_padding_y * 2.0;
-        let desired_height = panel_vert_padding + title_section_height + content_height;
-        let available_height_above_margin =
-            (f32::from(viewport_size.height) - f32::from(bottom_offset)).max(0.0);
-        let max_panel_height = px((f32::from(viewport_size.height) * 0.6).floor())
-            .min(px(available_height_above_margin));
-        let min_panel_height = panel_vert_padding + title_section_height;
-        let panel_height = if max_panel_height < min_panel_height {
-            max_panel_height
-        } else {
-            desired_height.clamp(min_panel_height, max_panel_height)
-        };
-
-        let list_container_height =
-            (panel_height - panel_vert_padding - title_section_height).max(px(0.));
-
-        let rows = v_flex()
-            .id("which-key-rows")
-            .gap(row_gap)
+        let content = h_flex()
+            .id("which-key-content")
+            .gap(px(8.))
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .children(self.bindings.iter().map(|(keystrokes, action_name)| {
-                binding_row(
-                    keystrokes.clone(),
-                    action_name.clone(),
-                    key_column_width,
-                    key_action_gap,
-                    row_padding_y,
-                )
-                .into_any_element()
-            }));
+            .h_full()
+            .max_h(max_content_height)
+            .child(
+                // Keystrokes column
+                v_flex()
+                    .gap(px(4.))
+                    .flex_shrink_0()
+                    .children(self.bindings.iter().map(|(keystrokes, _)| {
+                        div()
+                            .child(
+                                Label::new(keystrokes.clone())
+                                    .size(LabelSize::Default)
+                                    .color(Color::Accent),
+                            )
+                            .text_align(gpui::TextAlign::Right)
+                    }))
+            )
+            .child(
+                // Actions column
+                v_flex()
+                    .gap(px(4.))
+                    .flex_1()
+                    .min_w_0()
+                    .children(self.bindings.iter().map(|(_, action_name)| {
+                        let is_group = action_name.starts_with('+');
+                        let label_color = if is_group {
+                            Color::Success
+                        } else {
+                            Color::Default
+                        };
+
+                        div()
+                            .child(
+                                Label::new(action_name.clone())
+                                    .size(LabelSize::Default)
+                                    .color(label_color)
+                                    .single_line()
+                                    .truncate(),
+                            )
+                    }))
+            );
+
 
         div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
             .absolute()
             .bottom(bottom_offset)
-            .right(margin_right)
-            .w(panel_width)
-            .h(panel_height)
+            .right(px(16.))
+            .min_w(px(220.))
+            .max_w(max_panel_width)
             .elevation_3(cx)
-            .pl(panel_padding_x)
-            .pr(panel_padding_x)
-            .pt(panel_padding_y)
-            .pb(panel_padding_y)
+            .px(px(12.))
             .child(
                 v_flex()
-                    .gap(px(0.))
-                    .child(build_title_section())
-                    .when(has_rows, |content| {
-                        content.child(
+                    .child(title_section)
+                    .when(has_rows, |el| {
+                        el.child(
                             div()
-                                .h(list_container_height)
-                                .child(rows.h(list_container_height))
-                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                                .max_h(max_content_height)
+                                .child(content)
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                         )
                     }),
             )
@@ -394,76 +308,4 @@ fn group_bindings(
     }
 
     result
-}
-
-fn binding_row(
-    keystrokes: SharedString,
-    action_name: SharedString,
-    key_column_width: Pixels,
-    key_action_gap: Pixels,
-    row_padding_y: Pixels,
-) -> impl IntoElement {
-    let is_group = action_name.starts_with('+');
-    let label_color = if is_group {
-        Color::Success
-    } else {
-        Color::Default
-    };
-
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .items_center()
-        .gap(key_action_gap)
-        .py(row_padding_y)
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(key_column_width)
-                .child(
-                    Label::new(keystrokes)
-                        .size(LabelSize::Default)
-                        .color(Color::Accent),
-                )
-                .text_align(gpui::TextAlign::Right),
-        )
-        .child(
-            div().flex_1().min_w_0().child(
-                Label::new(action_name)
-                    .size(LabelSize::Default)
-                    .color(label_color)
-                    .single_line()
-                    .truncate(),
-            ),
-        )
-}
-
-fn measure_binding_row(
-    keystrokes: SharedString,
-    action_name: SharedString,
-    key_column_width: Pixels,
-    key_action_gap: Pixels,
-    row_padding_y: Pixels,
-    available_width: Option<Pixels>,
-    window: &mut Window,
-    cx: &mut Context<WhichKeyModal>,
-) -> gpui::Size<Pixels> {
-    binding_row(
-        keystrokes,
-        action_name,
-        key_column_width,
-        key_action_gap,
-        row_padding_y,
-    )
-    .into_any_element()
-    .layout_as_root(
-        gpui::Size {
-            width: available_width
-                .map(AvailableSpace::Definite)
-                .unwrap_or(AvailableSpace::MinContent),
-            height: AvailableSpace::MinContent,
-        },
-        window,
-        cx,
-    )
 }
