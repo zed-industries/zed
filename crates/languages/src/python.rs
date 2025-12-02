@@ -107,11 +107,17 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     for item in items {
         let is_dunder = item.label.starts_with("__") && item.label.ends_with("__");
 
-        if is_dunder {
-            item.sort_text = Some(format!("9{}", item.label));
-            continue;
-        }
+        let visibility_priority = if is_dunder {
+            '3'
+        } else if item.label.starts_with("__") {
+            '2' // private non-dunder
+        } else if item.label.starts_with('_') {
+            '1' // protected
+        } else {
+            '0' // public
+        };
 
+        // Kind priority within same visibility level
         let kind_priority = match item.kind {
             Some(lsp::CompletionItemKind::ENUM_MEMBER) => '0',
             Some(lsp::CompletionItemKind::FIELD) => '1',
@@ -125,7 +131,7 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             _ => '8',
         };
 
-        item.sort_text = Some(format!("{}{}", kind_priority, item.label));
+        item.sort_text = Some(format!("{}{}{}", visibility_priority, kind_priority, item.label));
     }
 }
 
