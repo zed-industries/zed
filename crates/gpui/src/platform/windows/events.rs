@@ -51,7 +51,7 @@ impl WindowsWindowInner {
             WM_NCCALCSIZE => self.handle_calc_client_size(handle, wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(handle, wparam, lparam),
             WM_DISPLAYCHANGE => self.handle_display_change_msg(handle),
-            WM_NCHITTEST => self.handle_hit_test_msg(handle, msg, wparam, lparam),
+            WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(handle),
@@ -834,73 +834,69 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_hit_test_msg(
-        &self,
-        handle: HWND,
-        msg: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> Option<isize> {
+    fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         if !self.is_movable || self.state.borrow().is_fullscreen() {
             return None;
         }
 
-        let mut lock = self.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
-            drop(lock);
+        let callback = self
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control
+            .take();
+        let drag_area = if let Some(mut callback) = callback {
             let area = callback();
             self.state.borrow_mut().callbacks.hit_test_window_control = Some(callback);
             if let Some(area) = area {
-                return match area {
+                match area {
                     WindowControlArea::Drag => Some(HTCAPTION as _),
-                    WindowControlArea::Close => Some(HTCLOSE as _),
-                    WindowControlArea::Max => Some(HTMAXBUTTON as _),
-                    WindowControlArea::Min => Some(HTMINBUTTON as _),
-                };
+                    WindowControlArea::Close => return Some(HTCLOSE as _),
+                    WindowControlArea::Max => return Some(HTMAXBUTTON as _),
+                    WindowControlArea::Min => return Some(HTMINBUTTON as _),
+                }
+            } else {
+                None
             }
         } else {
-            drop(lock);
-        }
+            None
+        };
 
         if !self.hide_title_bar {
             // If the OS draws the title bar, we don't need to handle hit test messages.
-            return None;
-        }
-
-        // default handler for resize areas
-        let hit = unsafe { DefWindowProcW(handle, msg, wparam, lparam) };
-        if matches!(
-            hit.0 as u32,
-            HTNOWHERE
-                | HTRIGHT
-                | HTLEFT
-                | HTTOPLEFT
-                | HTTOP
-                | HTTOPRIGHT
-                | HTBOTTOMRIGHT
-                | HTBOTTOM
-                | HTBOTTOMLEFT
-        ) {
-            return Some(hit.0);
-        }
-
-        if self.state.borrow().is_fullscreen() {
-            return Some(HTCLIENT as _);
+            return drag_area;
         }
 
         let dpi = unsafe { GetDpiForWindow(handle) };
-        let frame_y = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, dpi) };
-
+        // We do not use the OS title bar, so the default `DefWindowProcW` will only register a 1px edge for resizes
+        // We need to calculate the frame thickness ourselves and do the hit test manually.
+        let frame_y = get_frame_thicknessx(dpi);
+        let frame_x = get_frame_thicknessy(dpi);
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
+
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        if !self.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y {
-            return Some(HTTOP as _);
+        if !self.state.borrow().is_maximized() && 0 <= cursor_point.y && cursor_point.y <= frame_y {
+            // x-axis actually goes from -frame_x to 0
+            return Some(if cursor_point.x <= 0 {
+                HTTOPLEFT
+            } else {
+                let mut rect = Default::default();
+                unsafe { GetWindowRect(handle, &mut rect) }.log_err();
+                // right and bottom bounds of RECT are exclusive, thus `-1`
+                let right = rect.right - rect.left - 1;
+                // the bounds include the padding frames, so accomodate for both of them
+                if right - 2 * frame_x <= cursor_point.x {
+                    HTTOPRIGHT
+                } else {
+                    HTTOP
+                }
+            } as _);
         }
 
-        Some(HTCLIENT as _)
+        drag_area
     }
 
     fn handle_nc_mouse_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
@@ -1527,7 +1523,7 @@ fn get_client_area_insets(
     // The top inset is calculated using an empirical formula that I derived through various
     // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
     let dpi = unsafe { GetDpiForWindow(handle) };
-    let frame_thickness = get_frame_thickness(dpi);
+    let frame_thickness = get_frame_thicknessx(dpi);
     let top_insets = if is_maximized {
         frame_thickness
     } else {
@@ -1548,8 +1544,14 @@ fn get_client_area_insets(
 // borders on Windows:
 // - SM_CXSIZEFRAME: The resize handle.
 // - SM_CXPADDEDBORDER: Additional border space that isn't part of the resize handle.
-fn get_frame_thickness(dpi: u32) -> i32 {
+fn get_frame_thicknessx(dpi: u32) -> i32 {
     let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+    let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+    resize_frame_thickness + padding_thickness
+}
+
+fn get_frame_thicknessy(dpi: u32) -> i32 {
+    let resize_frame_thickness = unsafe { GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) };
     let padding_thickness = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
     resize_frame_thickness + padding_thickness
 }
