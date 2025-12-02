@@ -132,12 +132,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.reject_current_prediction(
-                EditPredictionRejectReason::Discarded,
-                &self.project,
-                cx,
-            );
+        self.zeta.update(cx, |zeta, _cx| {
+            zeta.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project);
         });
     }
 
@@ -173,11 +169,10 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let snapshot = buffer.snapshot();
 
         let Some(edits) = prediction.interpolate(&snapshot) else {
-            self.zeta.update(cx, |zeta, cx| {
+            self.zeta.update(cx, |zeta, _cx| {
                 zeta.reject_current_prediction(
                     EditPredictionRejectReason::InterpolatedEmpty,
                     &self.project,
-                    cx,
                 );
             });
             return None;
