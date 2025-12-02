@@ -16,9 +16,9 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageModelProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -57,9 +57,10 @@ use std::{
 };
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
+use wasm_host::llm_provider::ExtensionLanguageModelProvider;
 use wasm_host::{
     WasmExtension, WasmHost,
-    wit::{is_supported_wasm_api_version, wasm_api_version_range},
+    wit::{LlmModelInfo, LlmProviderInfo, is_supported_wasm_api_version, wasm_api_version_range},
 };
 
 pub use extension::{
@@ -1217,6 +1218,11 @@ impl ExtensionStore {
             for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
+            for provider_id in extension.manifest.language_model_providers.keys() {
+                let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
+                self.proxy
+                    .unregister_language_model_provider(full_provider_id, cx);
+            }
         }
 
         self.wasm_extensions
@@ -1355,7 +1361,11 @@ impl ExtensionStore {
             })
             .await;
 
-            let mut wasm_extensions = Vec::new();
+            let mut wasm_extensions: Vec<(
+                Arc<ExtensionManifest>,
+                WasmExtension,
+                Vec<(LlmProviderInfo, Vec<LlmModelInfo>)>,
+            )> = Vec::new();
             for extension in extension_entries {
                 if extension.manifest.lib.kind.is_none() {
                     continue;
@@ -1373,7 +1383,71 @@ impl ExtensionStore {
 
                 match wasm_extension {
                     Ok(wasm_extension) => {
-                        wasm_extensions.push((extension.manifest.clone(), wasm_extension))
+                        // Query for LLM providers if the manifest declares any
+                        let mut llm_providers_with_models = Vec::new();
+                        if !extension.manifest.language_model_providers.is_empty() {
+                            let providers_result = wasm_extension
+                                .call(|ext, store| {
+                                    async move { ext.call_llm_providers(store).await }.boxed()
+                                })
+                                .await;
+
+                            if let Ok(Ok(providers)) = providers_result {
+                                for provider_info in providers {
+                                    let models_result = wasm_extension
+                                        .call({
+                                            let provider_id = provider_info.id.clone();
+                                            |ext, store| {
+                                                async move {
+                                                    ext.call_llm_provider_models(store, &provider_id)
+                                                        .await
+                                                }
+                                                .boxed()
+                                            }
+                                        })
+                                        .await;
+
+                                    let models: Vec<LlmModelInfo> = match models_result {
+                                        Ok(Ok(Ok(models))) => models,
+                                        Ok(Ok(Err(e))) => {
+                                            log::error!(
+                                                "Failed to get models for LLM provider {} in extension {}: {}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                        Ok(Err(e)) => {
+                                            log::error!(
+                                                "Wasm error calling llm_provider_models for {} in extension {}: {:?}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                        Err(e) => {
+                                            log::error!(
+                                                "Extension call failed for llm_provider_models {} in extension {}: {:?}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                    };
+
+                                    llm_providers_with_models.push((provider_info, models));
+                                }
+                            }
+                        }
+
+                        wasm_extensions.push((
+                            extension.manifest.clone(),
+                            wasm_extension,
+                            llm_providers_with_models,
+                        ))
                     }
                     Err(e) => {
                         log::error!(
@@ -1392,7 +1466,7 @@ impl ExtensionStore {
             this.update(cx, |this, cx| {
                 this.reload_complete_senders.clear();
 
-                for (manifest, wasm_extension) in &wasm_extensions {
+                for (manifest, wasm_extension, llm_providers_with_models) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
                     for (language_server_id, language_server_config) in &manifest.language_servers {
@@ -1446,9 +1520,38 @@ impl ExtensionStore {
                         this.proxy
                             .register_debug_locator(extension.clone(), debug_adapter.clone());
                     }
+
+                    // Register LLM providers
+                    for (provider_info, models) in llm_providers_with_models {
+                        let provider_id: Arc<str> =
+                            format!("{}:{}", manifest.id, provider_info.id).into();
+                        let wasm_ext = wasm_extension.clone();
+                        let pinfo = provider_info.clone();
+                        let mods = models.clone();
+
+                        this.proxy.register_language_model_provider(
+                            provider_id,
+                            Box::new(move |cx: &mut App| {
+                                let provider = Arc::new(ExtensionLanguageModelProvider::new(
+                                    wasm_ext, pinfo, mods, cx,
+                                ));
+                                language_model::LanguageModelRegistry::global(cx).update(
+                                    cx,
+                                    |registry, cx| {
+                                        registry.register_provider(provider, cx);
+                                    },
+                                );
+                            }),
+                            cx,
+                        );
+                    }
                 }
 
-                this.wasm_extensions.extend(wasm_extensions);
+                let wasm_extensions_without_llm: Vec<_> = wasm_extensions
+                    .into_iter()
+                    .map(|(manifest, ext, _)| (manifest, ext))
+                    .collect();
+                this.wasm_extensions.extend(wasm_extensions_without_llm);
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);

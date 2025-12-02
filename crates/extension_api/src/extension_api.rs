@@ -17,7 +17,8 @@ pub use serde_json;
 pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
-    make_file_executable,
+    llm_delete_credential, llm_get_credential, llm_get_env_var, llm_request_credential,
+    llm_store_credential, make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
@@ -28,6 +29,19 @@ pub use wit::{
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
+    },
+    zed::extension::llm_provider::{
+        CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
+        CompletionRequest as LlmCompletionRequest, CredentialType as LlmCredentialType,
+        ImageData as LlmImageData, MessageContent as LlmMessageContent,
+        MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
+        ModelInfo as LlmModelInfo, ProviderInfo as LlmProviderInfo,
+        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
+        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
+        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
+        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
+        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
+        ToolUseJsonParseError as LlmToolUseJsonParseError,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
@@ -259,6 +273,79 @@ pub trait Extension: Send + Sync {
     ) -> Result<DebugRequest, String> {
         Err("`run_dap_locator` not implemented".to_string())
     }
+
+    // =========================================================================
+    // Language Model Provider Methods
+    // =========================================================================
+
+    /// Returns information about language model providers offered by this extension.
+    fn llm_providers(&self) -> Vec<LlmProviderInfo> {
+        Vec::new()
+    }
+
+    /// Returns the models available for a provider.
+    fn llm_provider_models(&self, _provider_id: &str) -> Result<Vec<LlmModelInfo>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Check if the provider is authenticated.
+    fn llm_provider_is_authenticated(&self, _provider_id: &str) -> bool {
+        false
+    }
+
+    /// Attempt to authenticate the provider.
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        Err("`llm_provider_authenticate` not implemented".to_string())
+    }
+
+    /// Reset credentials for the provider.
+    fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
+        Err("`llm_provider_reset_credentials` not implemented".to_string())
+    }
+
+    /// Count tokens for a request.
+    fn llm_count_tokens(
+        &self,
+        _provider_id: &str,
+        _model_id: &str,
+        _request: &LlmCompletionRequest,
+    ) -> Result<u64, String> {
+        Err("`llm_count_tokens` not implemented".to_string())
+    }
+
+    /// Start streaming a completion from the model.
+    /// Returns a stream ID that can be used with `llm_stream_completion_next` and `llm_stream_completion_close`.
+    fn llm_stream_completion_start(
+        &mut self,
+        _provider_id: &str,
+        _model_id: &str,
+        _request: &LlmCompletionRequest,
+    ) -> Result<String, String> {
+        Err("`llm_stream_completion_start` not implemented".to_string())
+    }
+
+    /// Get the next event from a completion stream.
+    /// Returns `Ok(None)` when the stream is complete.
+    fn llm_stream_completion_next(
+        &mut self,
+        _stream_id: &str,
+    ) -> Result<Option<LlmCompletionEvent>, String> {
+        Err("`llm_stream_completion_next` not implemented".to_string())
+    }
+
+    /// Close a completion stream and release its resources.
+    fn llm_stream_completion_close(&mut self, _stream_id: &str) {
+        // Default implementation does nothing
+    }
+
+    /// Get cache configuration for a model (if prompt caching is supported).
+    fn llm_cache_configuration(
+        &self,
+        _provider_id: &str,
+        _model_id: &str,
+    ) -> Option<LlmCacheConfiguration> {
+        None
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -334,7 +421,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.6.0",
+        path: "./wit/since_v0.7.0",
     });
 }
 
@@ -517,6 +604,61 @@ impl wit::Guest for Component {
         build_task: TaskTemplate,
     ) -> Result<DebugRequest, String> {
         extension().run_dap_locator(locator_name, build_task)
+    }
+
+    // =========================================================================
+    // Language Model Provider Methods
+    // =========================================================================
+
+    fn llm_providers() -> Vec<LlmProviderInfo> {
+        extension().llm_providers()
+    }
+
+    fn llm_provider_models(provider_id: String) -> Result<Vec<LlmModelInfo>, String> {
+        extension().llm_provider_models(&provider_id)
+    }
+
+    fn llm_provider_is_authenticated(provider_id: String) -> bool {
+        extension().llm_provider_is_authenticated(&provider_id)
+    }
+
+    fn llm_provider_authenticate(provider_id: String) -> Result<(), String> {
+        extension().llm_provider_authenticate(&provider_id)
+    }
+
+    fn llm_provider_reset_credentials(provider_id: String) -> Result<(), String> {
+        extension().llm_provider_reset_credentials(&provider_id)
+    }
+
+    fn llm_count_tokens(
+        provider_id: String,
+        model_id: String,
+        request: LlmCompletionRequest,
+    ) -> Result<u64, String> {
+        extension().llm_count_tokens(&provider_id, &model_id, &request)
+    }
+
+    fn llm_stream_completion_start(
+        provider_id: String,
+        model_id: String,
+        request: LlmCompletionRequest,
+    ) -> Result<String, String> {
+        extension().llm_stream_completion_start(&provider_id, &model_id, &request)
+    }
+
+    fn llm_stream_completion_next(stream_id: String) -> Result<Option<LlmCompletionEvent>, String> {
+        extension().llm_stream_completion_next(&stream_id)
+    }
+
+    fn llm_stream_completion_close(stream_id: String) {
+        extension().llm_stream_completion_close(&stream_id)
+    }
+
+    fn llm_cache_configuration(
+        provider_id: String,
+        model_id: String,
+    ) -> Option<LlmCacheConfiguration> {
+        extension().llm_cache_configuration(&provider_id, &model_id)
     }
 }
 

@@ -1,3 +1,4 @@
+pub mod llm_provider;
 pub mod wit;
 
 use crate::capability_granter::CapabilityGranter;
