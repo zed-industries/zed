@@ -84,7 +84,7 @@ jobs:
       run: ./script/check-keymaps
       shell: bash -euxo pipefail {0}
     - name: run_tests::check_style::check_for_typos
-      uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1
+      uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
     - name: steps::cargo_fmt
@@ -520,6 +520,7 @@ jobs:
       uses: bufbuild/buf-setup-action@v1
       with:
         version: v1.29.0
+        github_token: ${{ secrets.GITHUB_TOKEN }}
     - name: run_tests::check_postgres_and_protobuf_migrations::bufbuild_breaking_action
       uses: bufbuild/buf-breaking-action@v1
       with:
