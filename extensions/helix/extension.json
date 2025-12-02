@@ -1,0 +1,15 @@
+{
+  "name": "helix",
+  "display_name": "Helix Keymap",
+  "description": "Provides a Helix-style keymap preset for Zed's modal editing.",
+  "version": "0.1.0",
+  "publisher": "community",
+  "categories": ["Keymap"],
+  "contributes": {
+    "keymaps": [
+      {
+        "path": "keymaps.json"
+      }
+    ]
+  }
+}
