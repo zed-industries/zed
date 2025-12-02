@@ -1340,6 +1340,14 @@ impl BufferSearchBar {
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(matches) = self
+                    .searchable_items_with_matches
+                    .get(&searchable_item.downgrade())
+                {
+                    searchable_item.update_matches(matches, self.active_match_index, window, cx);
+                }
+            }
             cx.notify();
         }
     }

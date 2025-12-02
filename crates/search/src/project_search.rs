@@ -1508,8 +1508,8 @@ impl ProjectSearchView {
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
-            self.results_editor.update(cx, |editor, cx| {
-                if is_new_search {
+            if is_new_search {
+                self.results_editor.update(cx, |editor, cx| {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
@@ -1517,12 +1517,8 @@ impl ProjectSearchView {
                         s.select_ranges(range_to_select)
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
-                }
-                editor.highlight_background::<Self, _>(
-                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
-                    cx,
-                );
-            });
+                });
+            }
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
             }
@@ -1542,6 +1538,13 @@ impl ProjectSearchView {
         );
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
+            let match_ranges = self.entity.read(cx).match_ranges.clone();
+            self.results_editor.update(cx, |editor, cx| {
+                editor.highlight_background::<Self, _>(
+                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
+                    cx,
+                );
+            });
             cx.notify();
         }
     }
