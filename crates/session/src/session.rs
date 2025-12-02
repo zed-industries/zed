@@ -128,6 +128,8 @@ impl AppSession {
     }
 }
 
+/// A collection of worktree absolute paths that are considered trusted.
+/// This can be used when checking for this criteria before enabling certain features.
 #[derive(Clone)]
 pub struct TrustedWorktreesStorage(Entity<TrustedWorktrees>);
 
@@ -136,7 +138,11 @@ pub enum Event {
     UntrustedWorktree(PathBuf),
 }
 
-/// TODO kb docs
+/// A collection of absolute paths for trusted worktrees.
+/// Such worktrees' local settings will be processed and applied.
+///
+/// Emits an event each time the worktree path checked and found not trusted,
+/// or a certain worktree path had been trusted.
 struct TrustedWorktrees {
     worktree_roots: HashSet<PathBuf>,
     serialization_task: Task<()>,
@@ -162,14 +168,12 @@ impl TrustedWorktrees {
         }
     }
 
-    // TODO kb implement "do not trust" too?
-    // How other editors do that?
-    fn trust_path(&mut self, new_path: PathBuf, cx: &mut Context<'_, Self>) {
+    fn trust_path(&mut self, abs_path: PathBuf, cx: &mut Context<'_, Self>) {
         debug_assert!(
-            new_path.is_absolute(),
-            "Cannot trust non-absolute path {new_path:?}"
+            abs_path.is_absolute(),
+            "Cannot trust non-absolute path {abs_path:?}"
         );
-        let updated = self.worktree_roots.insert(new_path.clone());
+        let updated = self.worktree_roots.insert(abs_path.clone());
         if updated {
             let new_worktree_roots =
                 self.worktree_roots
@@ -187,7 +191,7 @@ impl TrustedWorktrees {
                     .await
                     .log_err();
             });
-            cx.emit(Event::TrustedWorktree(new_path));
+            cx.emit(Event::TrustedWorktree(abs_path));
         }
     }
 }
@@ -203,22 +207,26 @@ impl TrustedWorktreesStorage {
         cx.subscribe(&self.0, move |_, e, cx| on_event(e, cx))
     }
 
-    pub fn trust_path(&self, trusted_path: PathBuf, cx: &mut App) {
+    /// Adds a worktree absolute path to the trusted list.
+    /// This will emit [`Event::TrustedWorktree`] event.
+    pub fn trust_path(&self, abs_path: PathBuf, cx: &mut App) {
         self.0.update(cx, |trusted_worktrees, cx| {
-            trusted_worktrees.trust_path(trusted_path, cx)
+            trusted_worktrees.trust_path(abs_path, cx)
         });
     }
 
-    pub fn can_trust_path(&self, path: &Path, cx: &mut App) -> bool {
+    /// Checks whether a certain worktree absolute path is trusted.
+    /// If not, emits [`Event::UntrustedWorktree`] event.
+    pub fn can_trust_path(&self, abs_path: &Path, cx: &mut App) -> bool {
         debug_assert!(
-            path.is_absolute(),
-            "Cannot check if trusting non-absolute path {path:?}"
+            abs_path.is_absolute(),
+            "Cannot check if trusting non-absolute path {abs_path:?}"
         );
 
         self.0.update(cx, |trusted_worktrees, cx| {
             let trusted_worktree_roots = &trusted_worktrees.worktree_roots;
             let can_trust = if trusted_worktree_roots.len() > 100 {
-                let mut path = Some(path);
+                let mut path = Some(abs_path);
                 while let Some(path_to_check) = path {
                     if trusted_worktree_roots.contains(path_to_check) {
                         return true;
@@ -229,10 +237,10 @@ impl TrustedWorktreesStorage {
             } else {
                 trusted_worktree_roots
                     .iter()
-                    .any(|trusted_root| path.starts_with(&trusted_root))
+                    .any(|trusted_root| abs_path.starts_with(&trusted_root))
             };
             if !can_trust {
-                cx.emit(Event::UntrustedWorktree(path.to_owned()));
+                cx.emit(Event::UntrustedWorktree(abs_path.to_owned()));
             }
 
             can_trust

@@ -83,7 +83,7 @@ pub struct SessionSettings {
     ///
     /// Default: true
     pub restore_unsaved_buffers: bool,
-    /// TODO kb docs everywhere, including configuring-zed.md
+    /// Whether or not to skip project trust checks and synchronize project settings from any worktree automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: bool,

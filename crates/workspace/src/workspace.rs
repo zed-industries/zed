@@ -268,7 +268,7 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
-        /// Trust current worktree.
+        /// Enables advanced features for the current worktree.
         TrustCurrentWorktree,
         /// Stops following a collaborator.
         Unfollow,
@@ -1214,7 +1214,8 @@ impl Workspace {
             cx.try_global::<session::TrustedWorktreesStorage>().cloned()
         {
             let weak_self = cx.weak_entity();
-            // TODO kb proper UI
+            // TODO kb proper UI to manage paths and show the warning to the user
+            // TODO kb Is it ok that remote projects' worktrees are identified by abs path only?
             trusted_worktrees_storage
                 .subscribe(cx, move |e, cx| {
                     weak_self

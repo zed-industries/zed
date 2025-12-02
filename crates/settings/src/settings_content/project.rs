@@ -187,7 +187,7 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
-    /// TODO kb docs
+    /// Whether or not to skip project trust checks and synchronize project settings from any worktree automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,
