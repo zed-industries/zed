@@ -2297,6 +2297,13 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 let git = GitBinary::new(git_binary_path, working_directory, executor)
                     .envs(HashMap::clone(&env));
+
+                let output = git.run(&["help", "-a"]).await?;
+                if !output.lines().any(|line| line.trim().starts_with("hook ")) {
+                    log::warn!("git hook command not available, skip running hook");
+                    return Ok(());
+                }
+
                 git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
                     .await?;
                 Ok(())
