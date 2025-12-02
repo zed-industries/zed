@@ -1,7 +1,7 @@
 pub mod predict_edits_v3;
 
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
