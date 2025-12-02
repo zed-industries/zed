@@ -243,20 +243,25 @@ impl Render for SplittableEditor {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let Some(active) = self.panes.panes().into_iter().next() else {
-            return div().into_any_element();
+        let inner = if self.secondary.is_none() {
+            self.primary_editor.clone().into_any_element()
+        } else if let Some(active) = self.panes.panes().into_iter().next() {
+            self.panes
+                .render(
+                    None,
+                    &ActivePaneDecorator::new(active, &self.workspace),
+                    window,
+                    cx,
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
         };
         div()
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
             .on_action(cx.listener(Self::unsplit))
             .size_full()
-            .child(self.panes.render(
-                None,
-                &ActivePaneDecorator::new(active, &self.workspace),
-                window,
-                cx,
-            ))
-            .into_any_element()
+            .child(inner)
     }
 }
