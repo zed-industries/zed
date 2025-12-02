@@ -132,6 +132,7 @@ pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
     is_wsl: bool,
+    is_devcontainer: bool,
     status_message: Option<SharedString>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
@@ -157,6 +158,7 @@ impl RemoteConnectionPrompt {
         connection_string: String,
         nickname: Option<String>,
         is_wsl: bool,
+        is_devcontainer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -164,6 +166,7 @@ impl RemoteConnectionPrompt {
             connection_string: connection_string.into(),
             nickname: nickname.map(|nickname| nickname.into()),
             is_wsl,
+            is_devcontainer,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
@@ -295,16 +298,30 @@ impl RemoteConnectionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (connection_string, nickname, is_wsl) = match connection_options {
-            RemoteConnectionOptions::Ssh(options) => {
-                (options.connection_string(), options.nickname.clone(), false)
+        let (connection_string, nickname, is_wsl, is_devcontainer) = match connection_options {
+            RemoteConnectionOptions::Ssh(options) => (
+                options.connection_string(),
+                options.nickname.clone(),
+                false,
+                false,
+            ),
+            RemoteConnectionOptions::Wsl(options) => {
+                (options.distro_name.clone(), None, true, false)
             }
-            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
-            RemoteConnectionOptions::DockerExec(options) => (options.name.clone(), None, false),
+            RemoteConnectionOptions::DockerExec(options) => {
+                (options.name.clone(), None, false, true)
+            }
         };
         Self {
             prompt: cx.new(|cx| {
-                RemoteConnectionPrompt::new(connection_string, nickname, is_wsl, window, cx)
+                RemoteConnectionPrompt::new(
+                    connection_string,
+                    nickname,
+                    is_wsl,
+                    is_devcontainer,
+                    window,
+                    cx,
+                )
             }),
             finished: false,
             paths,
@@ -337,6 +354,7 @@ pub(crate) struct SshConnectionHeader {
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
     pub(crate) is_wsl: bool,
+    pub(crate) is_devcontainer: bool,
 }
 
 impl RenderOnce for SshConnectionHeader {
@@ -352,9 +370,12 @@ impl RenderOnce for SshConnectionHeader {
             (self.connection_string, None)
         };
 
-        let icon = match self.is_wsl {
-            true => IconName::Linux,
-            false => IconName::Server,
+        let icon = if self.is_wsl {
+            IconName::Linux
+        } else if self.is_devcontainer {
+            IconName::Box
+        } else {
+            IconName::Server
         };
 
         h_flex()
@@ -397,6 +418,7 @@ impl Render for RemoteConnectionModal {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let is_wsl = self.prompt.read(cx).is_wsl;
+        let is_devcontainer = self.prompt.read(cx).is_devcontainer;
 
         let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
@@ -416,6 +438,7 @@ impl Render for RemoteConnectionModal {
                     connection_string,
                     nickname,
                     is_wsl,
+                    is_devcontainer,
                 }
                 .render(window, cx),
             )

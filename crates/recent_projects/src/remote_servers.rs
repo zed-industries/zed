@@ -389,6 +389,7 @@ impl gpui::Render for ProjectPicker {
                     paths: Default::default(),
                     nickname: nickname.clone(),
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
                 ProjectPickerData::Wsl { distro_name } => SshConnectionHeader {
@@ -396,6 +397,7 @@ impl gpui::Render for ProjectPicker {
                     paths: Default::default(),
                     nickname: None,
                     is_wsl: true,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             })
@@ -774,6 +776,7 @@ impl RemoteServerProjects {
             RemoteConnectionPrompt::new(
                 connection_options.connection_string(),
                 connection_options.nickname.clone(),
+                false,
                 false,
                 window,
                 cx,
@@ -2002,6 +2005,7 @@ impl RemoteServerProjects {
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,
+                        is_devcontainer: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -2010,6 +2014,7 @@ impl RemoteServerProjects {
                         paths: Default::default(),
                         nickname: None,
                         is_wsl: true,
+                        is_devcontainer: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -2348,6 +2353,7 @@ impl RemoteServerProjects {
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             )
