@@ -1,3 +1,7 @@
+use crate::display_map::{
+    fold_map::FoldCursor, inlay_map::InlayOffsetCursor, tab_map::TabPointCursor,
+};
+
 use super::{
     Highlights,
     dimensions::RowDelta,
@@ -6,7 +10,7 @@ use super::{
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::Point;
-use multi_buffer::{MultiBufferSnapshot, RowInfo};
+use multi_buffer::{MBDiffCursor, MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
@@ -36,10 +40,12 @@ pub struct WrapMap {
     font_with_size: (Font, Pixels),
 }
 
+pub type WrapCursor<'a> = Cursor<'a, 'static, Transform, Dimensions<WrapPoint, TabPoint>>;
+
 #[derive(Clone)]
 pub struct WrapSnapshot {
     pub(super) tab_snapshot: TabSnapshot,
-    transforms: SumTree<Transform>,
+    pub transforms: SumTree<Transform>,
     interpolated: bool,
 }
 
@@ -52,13 +58,13 @@ impl std::ops::Deref for WrapSnapshot {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Transform {
+pub struct Transform {
     summary: TransformSummary,
     display_text: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct TransformSummary {
+pub struct TransformSummary {
     input: TextSummary,
     output: TextSummary,
 }
@@ -665,23 +671,59 @@ impl WrapSnapshot {
     }
 
     pub fn text_summary_for_range(&self, rows: Range<WrapRow>) -> TextSummary {
+        let mut wrap_cursor = self.wrap_cursor();
+        let mut mb_cursor = self
+            .buffer
+            .diff_transforms
+            .cursor::<multi_buffer::CursorType>(());
+        let mut inlay_cursor = self
+            .inlay_snapshot
+            .transforms
+            .cursor::<Dimensions<super::InlayOffset, multi_buffer::MultiBufferOffset>>(());
+        let mut fold_cursor = self
+            .fold_snapshot
+            .transforms
+            .cursor::<Dimensions<super::FoldPoint, super::InlayPoint>>(());
+        let mut tab_cursor = self.tab_point_cursor();
+        self.text_summary_for_range_(
+            rows,
+            &mut wrap_cursor,
+            &mut mb_cursor,
+            &mut inlay_cursor,
+            &mut fold_cursor,
+            &mut tab_cursor,
+        )
+    }
+
+    pub fn text_summary_for_range_(
+        &self,
+        rows: Range<WrapRow>,
+        wrap_cursor: &mut WrapCursor<'_>,
+        mb_cursor: &mut MBDiffCursor<'_>,
+        inlay_cursor: &mut super::inlay_map::InlayOffsetCursor<'_>,
+        fold_cursor: &mut super::fold_map::FoldCursor<'_>,
+        tab_cursor: &mut tab_map::TabPointCursor<'_>,
+    ) -> TextSummary {
         let mut summary = TextSummary::default();
 
         let start = WrapPoint::new(rows.start, 0);
         let end = WrapPoint::new(rows.end, 0);
 
         // Retain this wrap cursor
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<WrapPoint, TabPoint>>(());
-        cursor.seek(&start, Bias::Right);
-        if let Some(transform) = cursor.item() {
-            let start_in_transform = start.0 - cursor.start().0.0;
-            let end_in_transform = cmp::min(end, cursor.end().0).0 - cursor.start().0.0;
+        wrap_cursor.seek(&start, Bias::Right);
+        if let Some(transform) = wrap_cursor.item() {
+            let start_in_transform = start.0 - wrap_cursor.start().0.0;
+            let end_in_transform = cmp::min(end, wrap_cursor.end().0).0 - wrap_cursor.start().0.0;
             if transform.is_isomorphic() {
-                let tab_start = TabPoint(cursor.start().1.0 + start_in_transform);
-                let tab_end = TabPoint(cursor.start().1.0 + end_in_transform);
-                summary += &self.tab_snapshot.text_summary_for_range(tab_start..tab_end);
+                let tab_start = TabPoint(wrap_cursor.start().1.0 + start_in_transform);
+                let tab_end = TabPoint(wrap_cursor.start().1.0 + end_in_transform);
+                summary += &self.tab_snapshot.text_summary_for_range_(
+                    mb_cursor,
+                    inlay_cursor,
+                    fold_cursor,
+                    tab_cursor,
+                    tab_start..tab_end,
+                );
             } else {
                 debug_assert_eq!(start_in_transform.row, end_in_transform.row);
                 let indent_len = end_in_transform.column - start_in_transform.column;
@@ -694,18 +736,18 @@ impl WrapSnapshot {
                 };
             }
 
-            cursor.next();
+            wrap_cursor.next();
         }
 
-        if rows.end > cursor.start().0.row() {
-            summary += &cursor
+        if rows.end > wrap_cursor.start().0.row() {
+            summary += &wrap_cursor
                 .summary::<_, TransformSummary>(&WrapPoint::new(rows.end, 0), Bias::Right)
                 .output;
 
-            if let Some(transform) = cursor.item() {
-                let end_in_transform = end.0 - cursor.start().0.0;
+            if let Some(transform) = wrap_cursor.item() {
+                let end_in_transform = end.0 - wrap_cursor.start().0.0;
                 if transform.is_isomorphic() {
-                    let char_start = cursor.start().1;
+                    let char_start = wrap_cursor.start().1;
                     let char_end = TabPoint(char_start.0 + end_in_transform);
                     summary += &self
                         .tab_snapshot
@@ -800,6 +842,11 @@ impl WrapSnapshot {
                 .transforms
                 .cursor::<Dimensions<TabPoint, WrapPoint>>(()),
         }
+    }
+
+    pub fn wrap_cursor(&self) -> WrapCursor<'_> {
+        self.transforms
+            .cursor::<Dimensions<WrapPoint, TabPoint>>(())
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
@@ -921,10 +968,30 @@ impl WrapSnapshot {
             }
         }
     }
+
+    pub(crate) fn fold_cursor(&self) -> FoldCursor {
+        self.fold_snapshot
+            .transforms
+            .cursor::<Dimensions<super::FoldPoint, super::InlayPoint>>(())
+    }
+
+    pub(crate) fn tab_cursor(&self) -> TabPointCursor {
+        self.tab_point_cursor()
+    }
+
+    /// TODO redo all cursor names, make them make sense
+    ///
+    /// maybe CursorInlayToOffset (pattern: Cursor<From>To<To>)
+    /// that makes searching easier
+    pub(crate) fn inlay_cursor(&self) -> InlayOffsetCursor {
+        self.inlay_snapshot
+            .transforms
+            .cursor::<Dimensions<super::InlayOffset, multi_buffer::MultiBufferOffset>>(())
+    }
 }
 
 pub struct WrapPointCursor<'transforms> {
-    cursor: Cursor<'transforms, 'static, Transform, Dimensions<TabPoint, WrapPoint>>,
+    pub(crate) cursor: Cursor<'transforms, 'static, Transform, Dimensions<TabPoint, WrapPoint>>,
 }
 
 impl WrapPointCursor<'_> {

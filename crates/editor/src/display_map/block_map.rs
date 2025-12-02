@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     EditorStyle, GutterDimensions,
-    display_map::{dimensions::RowDelta, wrap_map::WrapRow},
+    display_map::{
+        dimensions::RowDelta,
+        wrap_map::{WrapPointCursor, WrapRow},
+    },
 };
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
@@ -562,10 +565,14 @@ impl BlockMap {
         let mut fold_point_cursor = wrap_snapshot.fold_point_cursor();
         let mut wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
-        let mut inlay_point_cursor2 = wrap_snapshot.inlay_point_cursor();
-        let mut tab_point_cursor2 = wrap_snapshot.tab_point_cursor();
-        let mut fold_point_cursor2 = wrap_snapshot.fold_point_cursor();
-        let mut wrap_point_cursor2 = wrap_snapshot.wrap_point_cursor();
+        let mut inlay_cursor = wrap_snapshot.inlay_cursor();
+        let mut tab_cursor = wrap_snapshot.tab_cursor();
+        let mut fold_cursor = wrap_snapshot.fold_cursor();
+        let mut wrap_cursor = wrap_snapshot.wrap_cursor();
+        let mut multi_buffer_cursor2 = wrap_snapshot
+            .buffer
+            .diff_transforms
+            .cursor::<multi_buffer::CursorType>(());
 
         while let Some(edit) = edits.next() {
             let mut old_start = edit.old.start;
@@ -605,10 +612,15 @@ impl BlockMap {
             if transform_rows_before_edit > RowDelta(0) {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
-                    push_isomorphic(
+                    push_isomorphic_(
                         &mut new_transforms,
                         transform_rows_before_edit,
                         wrap_snapshot,
+                        &mut wrap_point_cursor2,
+                        &mut multi_buffer_cursor2,
+                        &mut inlay_point_cursor2,
+                        &mut fold_point_cursor2,
+                        &mut tab_point_cursor2,
                     );
                 } else {
                     // We landed within a block that replaces some lines, so we
@@ -764,7 +776,12 @@ impl BlockMap {
                     }
                 }
 
-                push_isomorphic(&mut new_transforms, rows_before_block, wrap_snapshot);
+                push_isomorphic_(
+                    &mut new_transforms,
+                    rows_before_block,
+                    wrap_snapshot,
+                    &mut wrap_cursor,
+                );
                 new_transforms.push(
                     Transform {
                         summary,
@@ -777,7 +794,12 @@ impl BlockMap {
             // Insert an isomorphic transform after the final block.
             let rows_after_last_block =
                 RowDelta(new_end.0).saturating_sub(RowDelta(new_transforms.summary().input_rows.0));
-            push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
+            push_isomorphic_(
+                &mut new_transforms,
+                rows_after_last_block,
+                wrap_snapshot,
+                &mut wrap_cursor,
+            );
         }
 
         new_transforms.append(cursor.suffix(), ());
@@ -952,15 +974,61 @@ impl BlockMap {
     }
 }
 
-// This is called whenever we push actual text (nonisomorphic is inlay hints and blocks)
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot: &WrapSnapshot) {
+    let mut wrap_cursor = wrap_snapshot
+        .transforms
+        .cursor::<Dimensions<WrapPoint, super::tab_map::TabPoint>>(());
+    let mut mb_cursor = wrap_snapshot
+        .buffer
+        .diff_transforms
+        .cursor::<multi_buffer::CursorType>(());
+    let mut inlay_cursor = wrap_snapshot
+        .inlay_snapshot
+        .transforms
+        .cursor::<Dimensions<super::InlayOffset, MultiBufferOffset>>(());
+    let mut fold_cursor = wrap_snapshot
+        .fold_snapshot
+        .transforms
+        .cursor::<Dimensions<super::FoldPoint, super::InlayPoint>>(());
+    let mut tab_cursor = wrap_snapshot.tab_point_cursor();
+
+    push_isomorphic_(
+        tree,
+        rows,
+        wrap_snapshot,
+        &mut wrap_cursor,
+        &mut mb_cursor,
+        &mut inlay_cursor,
+        &mut fold_cursor,
+        &mut tab_cursor,
+    );
+}
+
+// This is called whenever we push actual text (nonisomorphic is inlay hints and blocks)
+fn push_isomorphic_(
+    tree: &mut SumTree<Transform>,
+    rows: RowDelta,
+    wrap_snapshot: &WrapSnapshot,
+    wrap_cursor: &mut wrap_map::WrapCursor<'_>,
+    mb_cursor: &mut multi_buffer::MBDiffCursor<'_>,
+    inlay_cursor: &mut super::inlay_map::InlayOffsetCursor<'_>,
+    fold_cursor: &mut super::fold_map::FoldCursor<'_>,
+    tab_cursor: &mut super::tab_map::TabPointCursor<'_>,
+) {
     if rows == RowDelta(0) {
         return;
     }
 
     let wrap_row_start = tree.summary().input_rows;
     let wrap_row_end = wrap_row_start + rows;
-    let wrap_summary = wrap_snapshot.text_summary_for_range(wrap_row_start..wrap_row_end);
+    let wrap_summary = wrap_snapshot.text_summary_for_range_(
+        wrap_row_start..wrap_row_end,
+        wrap_cursor,
+        mb_cursor,
+        inlay_cursor,
+        fold_cursor,
+        tab_cursor,
+    );
     let summary = TransformSummary {
         input_rows: WrapRow(rows.0),
         output_rows: BlockRow(rows.0),

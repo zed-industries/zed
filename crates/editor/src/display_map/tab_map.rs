@@ -232,6 +232,7 @@ impl TabSnapshot {
         let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
         // TODO we can use cursor here
         let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;
+        // TODO we can use cursor here
         let input_summary = self
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
@@ -347,12 +348,12 @@ impl TabSnapshot {
         TabPointCursor { this: self }
     }
 
-    pub fn tab_point_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
-        let chunks = self
-            .fold_snapshot
-            .chunks_at(FoldPoint::new(output.row(), 0));
-
-        let tab_cursor = TabStopCursor::new(chunks);
+    pub fn tab_point_to_fold_point_<'a, I: Iterator<Item = Chunk<'a>>>(
+        &self,
+        tab_cursor: &mut TabStopCursor<'a, I>,
+        output: TabPoint,
+        bias: Bias,
+    ) -> (FoldPoint, u32, u32) {
         let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
             self.collapse_tabs(tab_cursor, expanded, bias);
@@ -362,6 +363,14 @@ impl TabSnapshot {
             expanded_char_column,
             to_next_stop,
         )
+    }
+
+    pub fn tab_point_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+        let chunks = self
+            .fold_snapshot
+            .chunks_at(FoldPoint::new(output.row(), 0));
+        let mut tab_cursor = TabStopCursor::new(chunks);
+        self.tab_point_to_fold_point_(&mut tab_cursor, output, bias)
     }
 
     pub fn point_to_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
@@ -413,7 +422,7 @@ impl TabSnapshot {
 
     fn collapse_tabs<'a, I>(
         &self,
-        mut cursor: TabStopCursor<'a, I>,
+        cursor: &mut TabStopCursor<'a, I>,
         column: u32,
         bias: Bias,
     ) -> (u32, u32, u32)
@@ -1470,7 +1479,7 @@ mod tests {
     }
 }
 
-struct TabStopCursor<'a, I>
+pub struct TabStopCursor<'a, I>
 where
     I: Iterator<Item = Chunk<'a>>,
 {

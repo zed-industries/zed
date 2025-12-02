@@ -210,7 +210,7 @@ pub struct InlayBufferRows<'a> {
 }
 
 pub struct InlayChunks<'a> {
-    transforms: InlayOffsetCursor,
+    transforms: InlayOffsetCursor<'a>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
@@ -1163,7 +1163,7 @@ impl InlaySnapshot {
 }
 
 pub struct InlayPointCursor<'transforms> {
-    cursor: Cursor<'transforms, 'static, Transform, Dimensions<Point, InlayPoint>>,
+    pub(crate) cursor: Cursor<'transforms, 'static, Transform, Dimensions<Point, InlayPoint>>,
     transforms: &'transforms SumTree<Transform>,
 }
 

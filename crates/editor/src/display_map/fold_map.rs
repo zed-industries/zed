@@ -628,7 +628,7 @@ impl FoldMap {
 #[derive(Clone)]
 pub struct FoldSnapshot {
     pub inlay_snapshot: InlaySnapshot,
-    transforms: SumTree<Transform>,
+    pub transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
     fold_metadata_by_id: TreeMap<FoldId, FoldMetadata>,
     pub version: usize,
@@ -961,7 +961,7 @@ impl FoldSnapshot {
 }
 
 pub struct FoldPointCursor<'transforms> {
-    cursor: Cursor<'transforms, 'static, Transform, Dimensions<InlayPoint, FoldPoint>>,
+    pub(crate) cursor: Cursor<'transforms, 'static, Transform, Dimensions<InlayPoint, FoldPoint>>,
 }
 
 impl FoldPointCursor<'_> {
