@@ -56,7 +56,7 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>) {
+    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, _priority: Priority) {
         let (context, trampoline) = match runnable {
             RunnableVariant::Meta(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
