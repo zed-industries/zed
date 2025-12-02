@@ -744,6 +744,14 @@ pub fn theme_colors_refinement(
             .and_then(|color| try_parse_color(color).ok())
             // Fall back to `conflict`, for backwards compatibility.
             .or(status_colors.ignored),
+        version_control_word_added: this
+            .version_control_word_added
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        version_control_word_deleted: this
+            .version_control_word_deleted
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         #[allow(deprecated)]
         version_control_conflict_marker_ours: this
             .version_control_conflict_marker_ours
