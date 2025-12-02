@@ -7236,7 +7236,9 @@ actions!(
         /// Shares the current project with collaborators.
         ShareProject,
         /// Shares your screen with collaborators.
-        ScreenShare
+        ScreenShare,
+        /// Copies the current room name and session id for debugging purposes.
+        CopyRoomId,
     ]
 );
 actions!(
