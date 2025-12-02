@@ -50,6 +50,7 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    /// List of remotes, keys are names and values are URLs
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub refs: HashMap<String, String>,

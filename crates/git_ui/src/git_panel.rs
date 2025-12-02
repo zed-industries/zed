@@ -173,8 +173,6 @@ fn git_panel_context_menu(
                 Some(Box::new(ToggleSortByPath)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
             )
-            .separator()
-            .action("Remotes", project_diff::Diff.boxed_clone())
     })
 }
 

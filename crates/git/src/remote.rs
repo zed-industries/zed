@@ -2,12 +2,11 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 use derive_more::Deref;
-use derive_more::Into;
 use regex::Regex;
 use url::Url;
 
 /// The URL to a Git remote.
-#[derive(Debug, PartialEq, Eq, Clone, Deref, Into, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Deref)]
 pub struct RemoteUrl(Url);
 
 static USERNAME_REGEX: LazyLock<Regex> =
