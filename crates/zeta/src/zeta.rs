@@ -936,6 +936,7 @@ impl Zeta {
 
             let flush_count = batched
                 .len()
+                // in case items have accumulated after failure
                 .min(MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST);
             let start = batched.len() - flush_count;
 
@@ -2904,7 +2905,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::{path::Path, sync::Arc, time::Duration};
 
     use client::UserStore;
     use clock::FakeSystemClock;
@@ -2931,7 +2932,7 @@ mod tests {
     use util::path;
     use uuid::Uuid;
 
-    use crate::{BufferEditPrediction, Zeta};
+    use crate::{BufferEditPrediction, EditPredictionId, REJECT_REQUEST_DEBOUNCE, Zeta};
 
     #[gpui::test]
     async fn test_current_state(cx: &mut TestAppContext) {
@@ -3739,6 +3740,118 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_rejections_flushing(cx: &mut TestAppContext) {
+        let (zeta, mut requests) = init_test(cx);
+
+        zeta.update(cx, |zeta, _cx| {
+            zeta.reject_prediction(
+                EditPredictionId("test-1".into()),
+                EditPredictionRejectReason::Discarded,
+                false,
+            );
+            zeta.reject_prediction(
+                EditPredictionId("test-2".into()),
+                EditPredictionRejectReason::Canceled,
+                true,
+            );
+        });
+
+        cx.executor().advance_clock(REJECT_REQUEST_DEBOUNCE);
+        cx.run_until_parked();
+
+        let (reject_request, respond_tx) = requests.reject.next().await.unwrap();
+        respond_tx.send(()).unwrap();
+
+        // batched
+        assert_eq!(reject_request.rejections.len(), 2);
+        assert_eq!(
+            reject_request.rejections[0],
+            EditPredictionRejection {
+                request_id: "test-1".to_string(),
+                reason: EditPredictionRejectReason::Discarded,
+                was_shown: false
+            }
+        );
+        assert_eq!(
+            reject_request.rejections[1],
+            EditPredictionRejection {
+                request_id: "test-2".to_string(),
+                reason: EditPredictionRejectReason::Canceled,
+                was_shown: true
+            }
+        );
+
+        // Reaching batch size limit sends without debounce
+        zeta.update(cx, |zeta, _cx| {
+            for i in 0..70 {
+                zeta.reject_prediction(
+                    EditPredictionId(format!("batch-{}", i).into()),
+                    EditPredictionRejectReason::Discarded,
+                    false,
+                );
+            }
+        });
+
+        // First MAX/2 items are sent immediately
+        cx.run_until_parked();
+        let (reject_request, respond_tx) = requests.reject.next().await.unwrap();
+        respond_tx.send(()).unwrap();
+
+        assert_eq!(reject_request.rejections.len(), 50);
+        assert_eq!(reject_request.rejections[0].request_id, "batch-0");
+        assert_eq!(reject_request.rejections[49].request_id, "batch-49");
+
+        // Remaining items are debounced with the next batch
+        cx.executor().advance_clock(Duration::from_secs(15));
+        cx.run_until_parked();
+
+        let (reject_request, respond_tx) = requests.reject.next().await.unwrap();
+        respond_tx.send(()).unwrap();
+
+        assert_eq!(reject_request.rejections.len(), 20);
+        assert_eq!(reject_request.rejections[0].request_id, "batch-50");
+        assert_eq!(reject_request.rejections[19].request_id, "batch-69");
+
+        // Request failure
+        zeta.update(cx, |zeta, _cx| {
+            zeta.reject_prediction(
+                EditPredictionId("retry-1".into()),
+                EditPredictionRejectReason::Discarded,
+                false,
+            );
+        });
+
+        cx.executor().advance_clock(REJECT_REQUEST_DEBOUNCE);
+        cx.run_until_parked();
+
+        let (reject_request, _respond_tx) = requests.reject.next().await.unwrap();
+        assert_eq!(reject_request.rejections.len(), 1);
+        assert_eq!(reject_request.rejections[0].request_id, "retry-1");
+        // Simulate failure
+        drop(_respond_tx);
+
+        // Add another rejection
+        zeta.update(cx, |zeta, _cx| {
+            zeta.reject_prediction(
+                EditPredictionId("retry-2".into()),
+                EditPredictionRejectReason::Discarded,
+                false,
+            );
+        });
+
+        cx.executor().advance_clock(REJECT_REQUEST_DEBOUNCE);
+        cx.run_until_parked();
+
+        // Retry should include both the failed item and the new one
+        let (reject_request, respond_tx) = requests.reject.next().await.unwrap();
+        respond_tx.send(()).unwrap();
+
+        assert_eq!(reject_request.rejections.len(), 2);
+        assert_eq!(reject_request.rejections[0].request_id, "retry-1");
+        assert_eq!(reject_request.rejections[1].request_id, "retry-2");
     }
 
     // Skipped until we start including diagnostics in prompt
