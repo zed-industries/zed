@@ -1,6 +1,6 @@
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, RunnableVariant, THREAD_TIMINGS, TaskLabel,
-    TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableVariant, THREAD_TIMINGS,
+    TaskLabel, TaskTiming, ThreadTaskTimings,
 };
 use calloop::{
     EventLoop, PostAction,
@@ -19,9 +19,9 @@ struct TimerAfter {
 }
 
 pub(crate) struct LinuxDispatcher {
-    main_sender: BadPriorityQueueSender<RunnableVariant>,
+    main_sender: BadPriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
-    background_sender: flume::Sender<RunnableVariant>,
+    background_sender: BadPriorityQueueSender<RunnableVariant>,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -29,56 +29,60 @@ pub(crate) struct LinuxDispatcher {
 const MIN_THREADS: usize = 2;
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: BadPriorityQueueSender<RunnableVariant>) -> Self {
-        let (background_sender, background_receiver) = flume::unbounded::<RunnableVariant>();
+    pub fn new(main_sender: BadPriorityQueueCalloopSender<RunnableVariant>) -> Self {
+        let (background_sender, background_receiver) = BadPriorityQueueReceiver::new();
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
 
+        // These thread should really be lower prio then the foreground
+        // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let receiver = background_receiver.clone();
+                let mut receiver = background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
-                        for runnable in receiver {
-                            let start = Instant::now();
+                        while let Ok(runnables) = receiver.pop() {
+                            for runnable in runnables {
+                                let start = Instant::now();
 
-                            let mut location = match runnable {
-                                RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    Self::add_task_timing(timing);
+                                let mut location = match runnable {
+                                    RunnableVariant::Meta(runnable) => {
+                                        let location = runnable.metadata().location;
+                                        let timing = TaskTiming {
+                                            location,
+                                            start,
+                                            end: None,
+                                        };
+                                        Self::add_task_timing(timing);
 
-                                    runnable.run();
-                                    timing
-                                }
-                                RunnableVariant::Compat(runnable) => {
-                                    let location = core::panic::Location::caller();
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    Self::add_task_timing(timing);
+                                        runnable.run();
+                                        timing
+                                    }
+                                    RunnableVariant::Compat(runnable) => {
+                                        let location = core::panic::Location::caller();
+                                        let timing = TaskTiming {
+                                            location,
+                                            start,
+                                            end: None,
+                                        };
+                                        Self::add_task_timing(timing);
 
-                                    runnable.run();
-                                    timing
-                                }
-                            };
+                                        runnable.run();
+                                        timing
+                                    }
+                                };
 
-                            let end = Instant::now();
-                            location.end = Some(end);
-                            Self::add_task_timing(location);
+                                let end = Instant::now();
+                                location.end = Some(end);
+                                Self::add_task_timing(location);
 
-                            log::trace!(
-                                "background thread {}: ran runnable. took: {:?}",
-                                i,
-                                start.elapsed()
-                            );
+                                log::trace!(
+                                    "background thread {}: ran runnable. took: {:?}",
+                                    i,
+                                    start.elapsed()
+                                );
+                            }
                         }
                     })
                     .unwrap()
@@ -199,8 +203,8 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>) {
-        self.background_sender.send(runnable).unwrap();
+    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+        self.background_sender.send(priority, runnable).unwrap();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
@@ -226,37 +230,32 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Ord, PartialOrd, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Priority {
-    High,
-    #[default]
-    Medium,
-    Low,
-}
-
-impl Priority {
-    fn ticket_percentage(&self) -> f32 {
-        match self {
-            Priority::High => 0.6f32,
-            Priority::Medium => 0.3f32,
-            Priority::Low => 0.1f32,
-        }
-    }
-}
-
 pub struct BadPriorityQueueSender<T> {
     sender: flume::Sender<(Priority, T)>,
-    ping: calloop::ping::Ping,
 }
 
 impl<T> BadPriorityQueueSender<T> {
-    fn new(tx: flume::Sender<(Priority, T)>, ping: calloop::ping::Ping) -> Self {
+    fn new(tx: flume::Sender<(Priority, T)>) -> Self {
+        Self { sender: tx }
+    }
+
+    fn send(&self, priority: Priority, item: T) -> Result<(), flume::SendError<(Priority, T)>> {
+        self.sender.send((priority, item))
+    }
+}
+
+pub struct BadPriorityQueueCalloopSender<T> {
+    sender: BadPriorityQueueSender<T>,
+    ping: calloop::ping::Ping,
+}
+
+impl<T> BadPriorityQueueCalloopSender<T> {
+    fn new(tx: BadPriorityQueueSender<T>, ping: calloop::ping::Ping) -> Self {
         Self { sender: tx, ping }
     }
 
     fn send(&self, priority: Priority, item: T) -> Result<(), flume::SendError<(Priority, T)>> {
-        let res = self.sender.send((priority, item));
+        let res = self.sender.send(priority, item);
         if res.is_ok() {
             self.ping.ping();
         }
@@ -264,13 +263,13 @@ impl<T> BadPriorityQueueSender<T> {
     }
 }
 
-impl<T> Drop for BadPriorityQueueSender<T> {
+impl<T> Drop for BadPriorityQueueCalloopSender<T> {
     fn drop(&mut self) {
         self.ping.ping();
     }
 }
 
-struct BadReceiverState<T> {
+pub struct BadPriorityQueueReceiver<T> {
     receiver: flume::Receiver<(Priority, T)>,
     high_priority: Vec<T>,
     medium_priority: Vec<T>,
@@ -278,31 +277,75 @@ struct BadReceiverState<T> {
     disconnected: bool,
 }
 
-impl<T> BadReceiverState<T> {
+impl<T> Clone for BadPriorityQueueReceiver<T> {
+    fn clone(&self) -> Self {
+        Self {
+            receiver: self.receiver.clone(),
+            high_priority: Vec::new(),
+            medium_priority: Vec::new(),
+            low_priority: Vec::new(),
+            disconnected: self.disconnected,
+        }
+    }
+}
+
+pub struct ReceiverDisconnected;
+
+impl<T> BadPriorityQueueReceiver<T> {
     const TICKET_COUNT: usize = 100;
 
-    fn new(receiver: flume::Receiver<(Priority, T)>) -> Self {
-        BadReceiverState {
-            receiver,
+    pub fn new() -> (BadPriorityQueueSender<T>, Self) {
+        let (tx, rx) = flume::unbounded();
+
+        let sender = BadPriorityQueueSender::new(tx);
+
+        let receiver = BadPriorityQueueReceiver {
+            receiver: rx,
             high_priority: Vec::new(),
             medium_priority: Vec::new(),
             low_priority: Vec::new(),
             disconnected: false,
-        }
+        };
+
+        (sender, receiver)
     }
 
-    fn pop(&mut self) -> impl Iterator<Item = T> {
+    pub fn try_pop(&mut self) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
+        self.pop_inner(false)
+    }
+
+    pub fn pop(&mut self) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
+        self.pop_inner(true)
+    }
+
+    #[inline(always)]
+    fn pop_inner(&mut self, block: bool) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
+        if self.disconnected {
+            return Err(ReceiverDisconnected);
+        }
+
+        let mut add_element = |(priority, item): (Priority, T)| match priority {
+            Priority::High => self.high_priority.push(item),
+            Priority::Medium => self.medium_priority.push(item),
+            Priority::Low => self.low_priority.push(item),
+        };
+
         let mut max_count = Self::TICKET_COUNT;
+        if block {
+            match self.receiver.recv() {
+                Ok(e) => add_element(e),
+                Err(flume::RecvError::Disconnected) => {
+                    self.disconnected = true;
+                }
+            };
+            max_count -= 1;
+        }
+
         loop {
             match self.receiver.try_recv() {
-                Ok((priority, item)) => {
+                Ok(e) => {
                     max_count -= 1;
-                    match priority {
-                        Priority::High => self.high_priority.push(item),
-                        Priority::Medium => self.medium_priority.push(item),
-                        Priority::Low => self.low_priority.push(item),
-                    }
-
+                    add_element(e);
                     if max_count == 0 {
                         break;
                     }
@@ -316,8 +359,6 @@ impl<T> BadReceiverState<T> {
                 }
             }
         }
-
-        let mut results = Vec::new();
 
         let mut ticket_count = Self::TICKET_COUNT;
 
@@ -333,40 +374,41 @@ impl<T> BadReceiverState<T> {
         let high_taken = (ticket_count as f32 * high_percentage).ceil() as usize;
         ticket_count -= high_taken;
 
-        let medium_taken = (ticket_count as f32 / medium_percentage).ceil() as usize;
+        let medium_taken = (ticket_count as f32 * medium_percentage).ceil() as usize;
         ticket_count -= medium_taken;
 
-        let low_taken = (ticket_count as f32 / low_percentage).ceil() as usize;
+        let low_taken = (ticket_count as f32 * low_percentage).ceil() as usize;
 
-            let high_priority = self.high_priority
-                .drain(..high_taken.min(self.high_priority.len()));
-            let medium_priority =
-            self.medium_priority
-                .drain(..medium_taken.min(self.medium_priority.len()));
-            let low_priority =
-            self.low_priority
-                .drain(..low_taken.min(self.low_priority.len()));
+        let high_priority = self
+            .high_priority
+            .drain(..high_taken.min(self.high_priority.len()));
+        let medium_priority = self
+            .medium_priority
+            .drain(..medium_taken.min(self.medium_priority.len()));
+        let low_priority = self
+            .low_priority
+            .drain(..low_taken.min(self.low_priority.len()));
 
-        results
+        Ok(high_priority.chain(medium_priority).chain(low_priority))
     }
 }
 
-pub struct BadPriorityQueueReceiver<T> {
-    receiver: BadReceiverState<T>,
+pub struct BadPriorityQueueCalloopReceiver<T> {
+    receiver: BadPriorityQueueReceiver<T>,
     source: calloop::ping::PingSource,
     ping: calloop::ping::Ping,
 }
 
-impl<T> BadPriorityQueueReceiver<T> {
-    pub fn new() -> (BadPriorityQueueSender<T>, Self) {
+impl<T> BadPriorityQueueCalloopReceiver<T> {
+    pub fn new() -> (BadPriorityQueueCalloopSender<T>, Self) {
         let (ping, source) = calloop::ping::make_ping().expect("Failed to create a Ping.");
 
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = BadPriorityQueueReceiver::new();
 
         (
-            BadPriorityQueueSender::new(tx, ping.clone()),
+            BadPriorityQueueCalloopSender::new(tx, ping.clone()),
             Self {
-                receiver: BadReceiverState::new(rx),
+                receiver: rx,
                 source,
                 ping,
             },
@@ -393,7 +435,7 @@ impl std::error::Error for ChannelError {
     }
 }
 
-impl<T> calloop::EventSource for BadPriorityQueueReceiver<T> {
+impl<T> calloop::EventSource for BadPriorityQueueCalloopReceiver<T> {
     type Event = Event<T>;
     type Metadata = ();
     type Ret = ();
@@ -409,26 +451,30 @@ impl<T> calloop::EventSource for BadPriorityQueueReceiver<T> {
         F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
     {
         let mut clear_readiness = false;
+        let mut disconnected = false;
 
         let action = self
             .source
             .process_events(readiness, token, |(), &mut ()| {
-                let runnables = self.receiver.pop();
-                if runnables.is_empty() {
-                    clear_readiness = true;
-                }
+                let Ok(runnables) = self.receiver.try_pop() else {
+                    disconnected = true;
+                    callback(Event::Closed, &mut ());
+                    return;
+                };
 
+                let mut is_empty = true;
                 for runnable in runnables {
-                    callback(Event::Msg(runnable), &mut ())
+                    callback(Event::Msg(runnable), &mut ());
+                    is_empty = false;
                 }
 
-                if self.receiver.disconnected {
-                    callback(Event::Closed, &mut ())
+                if is_empty {
+                    clear_readiness = true;
                 }
             })
             .map_err(ChannelError)?;
 
-        if self.receiver.disconnected {
+        if disconnected {
             Ok(PostAction::Remove)
         } else if clear_readiness {
             Ok(action)
@@ -469,7 +515,7 @@ mod tests {
         let mut event_loop = calloop::EventLoop::try_new().unwrap();
         let handle = event_loop.handle();
 
-        let (tx, rx) = BadPriorityQueueReceiver::new();
+        let (tx, rx) = BadPriorityQueueCalloopReceiver::new();
 
         struct Data {
             got_msg: bool,
