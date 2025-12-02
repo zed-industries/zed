@@ -147,12 +147,12 @@ mod test {
     fn should_parse_from_devcontainer_json() {
         let json = r#"{"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
         let up: DevContainerUp = serde_json::from_str(json).unwrap();
-        assert_eq!(up.outcome, "success");
+        assert_eq!(up._outcome, "success");
         assert_eq!(
             up.container_id,
             "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
         );
-        assert_eq!(up.remote_user, "vscode");
+        assert_eq!(up._remote_user, "vscode");
         assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
     }
 }
