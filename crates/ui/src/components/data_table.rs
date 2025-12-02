@@ -872,7 +872,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 interaction_state.as_ref(),
                                 |this, state| {
                                     this.track_scroll(
-                                        state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                        &state.read_with(cx, |s, _| s.scroll_handle.clone()),
                                     )
                                 },
                             ),
@@ -906,7 +906,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
                     content
                         .custom_scrollbars(
-                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            scrollbars.tracked_scroll_handle(&state.read(cx).scroll_handle),
                             window,
                             cx,
                         )

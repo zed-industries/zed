@@ -972,7 +972,7 @@ impl ExtensionImports for WasmState {
                             });
 
                         match settings {
-                            project::project_settings::ContextServerSettings::Custom {
+                            project::project_settings::ContextServerSettings::Stdio {
                                 enabled: _,
                                 command,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {

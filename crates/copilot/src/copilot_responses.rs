@@ -313,7 +313,8 @@ pub async fn stream_response(
     };
 
     let is_streaming = request.stream;
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {

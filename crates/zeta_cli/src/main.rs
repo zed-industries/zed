@@ -1,6 +1,7 @@
 mod evaluate;
 mod example;
 mod headless;
+mod metrics;
 mod paths;
 mod predict;
 mod source_location;
@@ -25,13 +26,15 @@ use edit_prediction_context::{
 };
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
+use metrics::delta_chr_f;
 use project::{Project, Worktree};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
-use zeta2::ContextMode;
+use zeta::ContextMode;
+use zeta::udiff::DiffLine;
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
@@ -52,6 +55,10 @@ enum Command {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
         output_format: ExampleFormat,
+    },
+    Score {
+        golden_patch: PathBuf,
+        actual_patch: PathBuf,
     },
     Clean,
 }
@@ -128,8 +135,6 @@ pub struct PredictArguments {
 
 #[derive(Clone, Debug, Args)]
 pub struct PredictionOptions {
-    #[arg(long)]
-    use_expected_context: bool,
     #[clap(flatten)]
     zeta2: Zeta2Args,
     #[clap(long)]
@@ -193,13 +198,14 @@ pub struct EvaluateArguments {
 
 #[derive(clap::ValueEnum, Default, Debug, Clone, Copy, PartialEq)]
 enum PredictionProvider {
+    Zeta1,
     #[default]
     Zeta2,
     Sweep,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
-    zeta2::ZetaOptions {
+fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta::ZetaOptions {
+    zeta::ZetaOptions {
         context: ContextMode::Syntax(EditPredictionContextOptions {
             max_retrieved_declarations: args.max_retrieved_definitions,
             use_imports: !args.disable_imports_gathering,
@@ -397,7 +403,7 @@ async fn zeta2_syntax_context(
     let output = cx
         .update(|cx| {
             let zeta = cx.new(|cx| {
-                zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
             let indexing_done_task = zeta.update(cx, |zeta, cx| {
                 zeta.set_options(zeta2_args_to_options(&args.zeta2_args, true));
@@ -435,7 +441,7 @@ async fn zeta1_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<zeta::GatherContextOutput> {
+) -> Result<zeta::zeta1::GatherContextOutput> {
     let LoadedContext {
         full_path_str,
         snapshot,
@@ -450,11 +456,12 @@ async fn zeta1_context(
 
     let prompt_for_events = move || (events, 0);
     cx.update(|cx| {
-        zeta::gather_context(
+        zeta::zeta1::gather_context(
             full_path_str,
             &snapshot,
             clipped_cursor,
             prompt_for_events,
+            cloud_llm_client::PredictEditsRequestTrigger::Cli,
             cx,
         )
     })?
@@ -520,6 +527,26 @@ fn main() {
                 }) => {
                     let example = NamedExample::load(path).unwrap();
                     example.write(output_format, io::stdout()).unwrap();
+                }
+                Some(Command::Score {
+                    golden_patch,
+                    actual_patch,
+                }) => {
+                    let golden_content = std::fs::read_to_string(golden_patch).unwrap();
+                    let actual_content = std::fs::read_to_string(actual_patch).unwrap();
+
+                    let golden_diff: Vec<DiffLine> = golden_content
+                        .lines()
+                        .map(|line| DiffLine::parse(line))
+                        .collect();
+
+                    let actual_diff: Vec<DiffLine> = actual_content
+                        .lines()
+                        .map(|line| DiffLine::parse(line))
+                        .collect();
+
+                    let score = delta_chr_f(&golden_diff, &actual_diff);
+                    println!("{:.2}", score);
                 }
                 Some(Command::Clean) => {
                     std::fs::remove_dir_all(&*crate::paths::TARGET_ZETA_DIR).unwrap()

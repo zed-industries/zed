@@ -999,7 +999,7 @@ impl Worktree {
             };
 
             if worktree_relative_path.components().next().is_some() {
-                full_path_string.push_str(self.path_style.separator());
+                full_path_string.push_str(self.path_style.primary_separator());
                 full_path_string.push_str(&worktree_relative_path.display(self.path_style));
             }
 
@@ -2108,8 +2108,8 @@ impl Snapshot {
         if path.file_name().is_some() {
             let mut abs_path = self.abs_path.to_string();
             for component in path.components() {
-                if !abs_path.ends_with(self.path_style.separator()) {
-                    abs_path.push_str(self.path_style.separator());
+                if !abs_path.ends_with(self.path_style.primary_separator()) {
+                    abs_path.push_str(self.path_style.primary_separator());
                 }
                 abs_path.push_str(component);
             }
@@ -5509,7 +5509,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
         let path =
             RelPath::from_proto(&entry.path).context("invalid relative path in proto message")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
-        let is_always_included = always_included.is_match(path.as_std_path());
+        let is_always_included = always_included.is_match(&path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,

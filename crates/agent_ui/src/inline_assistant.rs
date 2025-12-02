@@ -440,7 +440,6 @@ impl InlineAssistant {
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,
-                buffer.remote_id(),
                 buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
             );
 
@@ -1445,6 +1444,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
+                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
                             Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
@@ -1456,6 +1456,7 @@ impl InlineAssistant {
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
+                    editor.set_offset_content(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);

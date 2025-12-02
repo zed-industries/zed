@@ -71,6 +71,8 @@ actions!(
         CycleModeSelector,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Removes all thread history.
+        RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
         /// Adds a context server to the configuration.

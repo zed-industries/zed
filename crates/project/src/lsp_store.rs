@@ -436,6 +436,7 @@ impl LocalLspStore {
                         adapter.adapter.clone(),
                         &delegate,
                         toolchain,
+                        None,
                         cx,
                     )
                     .await?;
@@ -720,25 +721,42 @@ impl LocalLspStore {
                                 )
                             })?
                             .context("Expected the LSP store to be in a local mode")?;
-                        let workspace_config = Self::workspace_configuration_for_adapter(
-                            adapter.clone(),
-                            &delegate,
-                            toolchain_for_id,
-                            &mut cx,
-                        )
-                        .await?;
+
+                        let mut scope_uri_to_workspace_config = BTreeMap::new();
+                        for item in &params.items {
+                            let scope_uri = item.scope_uri.clone();
+                            let std::collections::btree_map::Entry::Vacant(new_scope_uri) =
+                                scope_uri_to_workspace_config.entry(scope_uri.clone())
+                            else {
+                                // We've already queried workspace configuration of this URI.
+                                continue;
+                            };
+                            let workspace_config = Self::workspace_configuration_for_adapter(
+                                adapter.clone(),
+                                &delegate,
+                                toolchain_for_id.clone(),
+                                scope_uri,
+                                &mut cx,
+                            )
+                            .await?;
+                            new_scope_uri.insert(workspace_config);
+                        }
 
                         Ok(params
                             .items
                             .into_iter()
-                            .map(|item| {
+                            .filter_map(|item| {
+                                let workspace_config =
+                                    scope_uri_to_workspace_config.get(&item.scope_uri)?;
                                 if let Some(section) = &item.section {
-                                    workspace_config
-                                        .get(section)
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null)
+                                    Some(
+                                        workspace_config
+                                            .get(section)
+                                            .cloned()
+                                            .unwrap_or(serde_json::Value::Null),
+                                    )
                                 } else {
-                                    workspace_config.clone()
+                                    Some(workspace_config.clone())
                                 }
                             })
                             .collect())
@@ -2684,10 +2702,15 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
-            let _ = self.buffer_snapshots.remove(&buffer.remote_id());
+            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                language_server.unregister_buffer(file_url.clone());
+                if snapshots
+                    .as_mut()
+                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                {
+                    language_server.unregister_buffer(file_url.clone());
+                }
             }
         });
     }
@@ -2741,7 +2764,7 @@ impl LocalLspStore {
         let actions = lsp_store
             .update(cx, move |this, cx| {
                 let request = GetCodeActions {
-                    range: text::Anchor::MIN..text::Anchor::MAX,
+                    range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
                     kinds: Some(code_action_kinds),
                 };
                 let server = LanguageServerToQuery::Other(language_server_id);
@@ -3016,17 +3039,23 @@ impl LocalLspStore {
                         .new_uri
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
-                    fs.rename(
-                        &source_abs_path,
-                        &target_abs_path,
-                        op.options
-                            .map(|options| fs::RenameOptions {
-                                overwrite: options.overwrite.unwrap_or(false),
-                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .await?;
+
+                    let options = fs::RenameOptions {
+                        overwrite: op
+                            .options
+                            .as_ref()
+                            .and_then(|options| options.overwrite)
+                            .unwrap_or(false),
+                        ignore_if_exists: op
+                            .options
+                            .as_ref()
+                            .and_then(|options| options.ignore_if_exists)
+                            .unwrap_or(false),
+                        create_parents: true,
+                    };
+
+                    fs.rename(&source_abs_path, &target_abs_path, options)
+                        .await?;
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
@@ -3516,11 +3545,12 @@ impl LocalLspStore {
         adapter: Arc<dyn LspAdapter>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        requested_uri: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(delegate, toolchain, cx)
+            .workspace_configuration(delegate, toolchain, requested_uri, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -4259,8 +4289,9 @@ impl LspStore {
                                 for buffer in buffer_store.buffers() {
                                     if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned()
                                     {
-                                        buffer
-                                            .update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                        buffer.update(cx, |buffer, cx| {
+                                            buffer.set_language_async(None, cx)
+                                        });
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
 
@@ -4323,7 +4354,7 @@ impl LspStore {
                         }
 
                         for buffer in buffers_with_unknown_injections {
-                            buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                            buffer.update(cx, |buffer, cx| buffer.reparse(cx, false));
                         }
                     })
                     .ok();
@@ -4383,7 +4414,7 @@ impl LspStore {
                 .language()
                 .is_none_or(|old_language| !Arc::ptr_eq(old_language, &new_language))
             {
-                buffer.set_language(Some(new_language.clone()), cx);
+                buffer.set_language_async(Some(new_language.clone()), cx);
             }
         });
 
@@ -7952,6 +7983,7 @@ impl LspStore {
                                                 adapter.adapter.clone(),
                                                 &delegate,
                                                 toolchain,
+                                                None,
                                                 cx,
                                             )
                                             .await
@@ -13608,7 +13640,7 @@ pub fn language_server_settings<'a>(
     )
 }
 
-pub(crate) fn language_server_settings_for<'a>(
+pub fn language_server_settings_for<'a>(
     location: SettingsLocation<'a>,
     language: &LanguageServerName,
     cx: &'a App,

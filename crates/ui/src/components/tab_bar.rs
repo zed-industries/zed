@@ -24,8 +24,8 @@ impl TabBar {
         }
     }
 
-    pub fn track_scroll(mut self, scroll_handle: ScrollHandle) -> Self {
-        self.scroll_handle = Some(scroll_handle);
+    pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.scroll_handle = Some(scroll_handle.clone());
         self
     }
 
