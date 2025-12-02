@@ -1247,7 +1247,7 @@ impl Workspace {
                                             cx.new(move |cx| {
                                                 MessageNotification::new(
                                                     format!(
-                                                        "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded."
+                                                        "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded.\nMake sure you review project settings for extensions that may be installed automatically."
                                                     ),
                                                     cx,
                                                 )
