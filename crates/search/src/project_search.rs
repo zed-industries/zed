@@ -1522,10 +1522,6 @@ impl ProjectSearchView {
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
-                editor.highlight_background::<Self, _>(
-                    ActiveBackgroundHighlight::new(&match_ranges, self.active_match_index),
-                    cx,
-                );
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
@@ -1544,6 +1540,12 @@ impl ProjectSearchView {
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
+        self.results_editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self, _>(
+                ActiveBackgroundHighlight::new(&self.entity.read(cx).match_ranges, new_index),
+                cx,
+            );
+        });
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
             cx.notify();
