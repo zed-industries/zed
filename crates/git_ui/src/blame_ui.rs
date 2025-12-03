@@ -56,10 +56,6 @@ impl BlameRenderer for GitBlameRenderer {
             None
         };
 
-        // Split editor clones for different purposes to avoid borrow conflicts
-        let editor_for_mouse_down = editor.clone();
-        let editor_for_tooltip = editor;
-
         Some(
             div()
                 .mr_2()
@@ -92,7 +88,7 @@ impl BlameRenderer for GitBlameRenderer {
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
-                                    editor_for_mouse_down.clone(),
+                                    editor.clone(),
                                     event.position,
                                     window,
                                     cx,
@@ -115,23 +111,20 @@ impl BlameRenderer for GitBlameRenderer {
                                 )
                             }
                         })
-                        .when(
-                            !editor_for_tooltip.read(cx).has_mouse_context_menu(),
-                            |el| {
-                                el.hoverable_tooltip(move |_window, cx| {
-                                    cx.new(|cx| {
-                                        CommitTooltip::blame_entry(
-                                            &blame_entry,
-                                            details.clone(),
-                                            repository.clone(),
-                                            workspace.clone(),
-                                            cx,
-                                        )
-                                    })
-                                    .into()
+                        .when(!editor.read(cx).has_mouse_context_menu(), |el| {
+                            el.hoverable_tooltip(move |_window, cx| {
+                                cx.new(|cx| {
+                                    CommitTooltip::blame_entry(
+                                        &blame_entry,
+                                        details.clone(),
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
                                 })
-                            },
-                        ),
+                                .into()
+                            })
+                        }),
                 )
                 .into_any(),
         )
