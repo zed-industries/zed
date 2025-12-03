@@ -83,7 +83,7 @@ use remote::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use session::AppSession;
+use session::{AppSession, TrustedWorktreesStorage};
 use settings::{
     CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
 };
@@ -270,6 +270,7 @@ actions!(
         ToggleZoom,
         /// Enables advanced features for the current worktree.
         TrustCurrentWorktree,
+        // TODO kb another action to clear trust for all worktrees + docs
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1179,7 +1180,6 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
-    untrusted_paths: HashSet<PathBuf>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1210,30 +1210,25 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        if let Some(trusted_worktrees_storage) =
-            cx.try_global::<session::TrustedWorktreesStorage>().cloned()
-        {
-            let weak_self = cx.weak_entity();
-            // TODO kb proper UI to manage paths and show the warning to the user
-            // TODO kb Is it ok that remote projects' worktrees are identified by abs path only?
-            trusted_worktrees_storage
-                .subscribe(cx, move |e, cx| {
-                    weak_self
-                        .update(cx, |workspace, cx| match e {
-                            session::Event::TrustedWorktree(trusted_path) => {
-                                workspace
-                                    .untrusted_paths
-                                    .remove(trusted_path);
-                                workspace
-                                    .dismiss_notification(
-                                        &NotificationId::named(SharedString::new(
-                                            trusted_path.to_string_lossy(),
-                                        )),
-                                        cx,
-                                    );
-                            },
-                            session::Event::UntrustedWorktree(untrusted_path) => {
-                                if workspace.untrusted_paths.insert(untrusted_path.clone()) {
+        if cx.has_global::<TrustedWorktreesStorage>() {
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                let weak_workspace = cx.weak_entity();
+                // TODO kb proper UI to manage paths and show the warning to the user
+                // TODO kb Is it ok that remote projects' worktrees are identified by abs path only?
+                trusted_worktrees_storage
+                    .subscribe(cx, move |e, cx| {
+                        weak_workspace
+                            .update(cx, |workspace, cx| match e {
+                                session::Event::TrustedWorktree(trusted_path) => {
+                                    workspace
+                                        .dismiss_notification(
+                                            &NotificationId::named(SharedString::new(
+                                                trusted_path.to_string_lossy(),
+                                            )),
+                                            cx,
+                                        );
+                                },
+                                session::Event::UntrustedWorktree(untrusted_path) => {
                                     workspace
                                     .show_notification(
                                         NotificationId::named(SharedString::new(
@@ -1241,7 +1236,6 @@ impl Workspace {
                                         )),
                                         cx,
                                         |cx| {
-                                            let weak_workspace = cx.weak_entity();
                                             let untrusted_path = untrusted_path.clone();
                                             cx.new(move |cx| {
                                                 MessageNotification::new(
@@ -1255,19 +1249,12 @@ impl Workspace {
                                                 .primary_icon_color(Color::Success)
                                                 .primary_on_click({
                                                     move |_, cx| {
-                                                        if let Some(trusted_worktrees_storage) = cx
-                                                            .try_global::<session::TrustedWorktreesStorage>(
-                                                            )
-                                                            .cloned()
-                                                        {
-                                                            weak_workspace.update(cx, |workspace, _| {
-                                                                workspace
-                                                                    .untrusted_paths
-                                                                    .remove(&untrusted_path);
-                                                            }).ok();
-
-                                                            trusted_worktrees_storage
-                                                                .trust_path(untrusted_path.clone(), cx)
+                                                        if cx.has_global::<TrustedWorktreesStorage>() {
+                                                            cx.update_global::<TrustedWorktreesStorage, _>(
+                                                                |trusted_worktrees_storage, cx| {
+                                                                    trusted_worktrees_storage.trust_path(untrusted_path.clone(), cx)
+                                                                },
+                                                            );
                                                         }
                                                     }
                                                 })
@@ -1277,19 +1264,21 @@ impl Workspace {
                                         },
                                     )
                                 }
-                            }
-                        })
-                        .ok();
-                })
-                .detach();
+                            })
+                            .ok();
+                    })
+                    .detach();
+            })
         }
-        cx.observe_global::<SettingsStore>(|workspace, cx| {
+
+        cx.observe_global::<SettingsStore>(|_, cx| {
             if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                for untrusted_path in std::mem::take(&mut workspace.untrusted_paths) {
-                    workspace.dismiss_notification(
-                        &NotificationId::named(SharedString::new(untrusted_path.to_string_lossy())),
-                        cx,
-                    );
+                if cx.has_global::<TrustedWorktreesStorage>() {
+                    cx.update_global::<TrustedWorktreesStorage, _>(
+                        |trusted_worktrees_storage, cx| {
+                            trusted_worktrees_storage.trust_all(cx);
+                        },
+                    )
                 }
             }
         })
@@ -1608,7 +1597,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
-            untrusted_paths: HashSet::default(),
+
             removing: false,
         }
     }
@@ -6007,9 +5996,7 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &TrustCurrentWorktree, _, cx| {
                     if let Some(active_item) = workspace.active_item(cx) {
-                        if let Some(trusted_worktrees_storage) =
-                            cx.try_global::<session::TrustedWorktreesStorage>().cloned()
-                        {
+                        if cx.has_global::<TrustedWorktreesStorage>() {
                             for trusted_path in active_item
                                 .project_paths(cx)
                                 .into_iter()
@@ -6020,7 +6007,11 @@ impl Workspace {
                                 })
                                 .collect::<Vec<_>>()
                             {
-                                trusted_worktrees_storage.trust_path(trusted_path, cx);
+                                cx.update_global::<TrustedWorktreesStorage, _>(
+                                    |trusted_worktrees_storage, cx| {
+                                        trusted_worktrees_storage.trust_path(trusted_path, cx)
+                                    },
+                                );
                             }
                         }
                     }
