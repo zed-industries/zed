@@ -81,7 +81,11 @@ impl Vim {
                         start_positions.insert(selection.id, start_position);
                     });
                 });
-                vim.yank_selections_content(editor, MotionKind::Exclusive, window, cx);
+                let kind = match object.target_visual_mode(vim.mode, around) {
+                    Mode::VisualLine => MotionKind::Linewise,
+                    _ => MotionKind::Exclusive,
+                };
+                vim.yank_selections_content(editor, kind, window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
