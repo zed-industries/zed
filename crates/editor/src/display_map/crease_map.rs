@@ -35,7 +35,6 @@ pub struct CreaseSnapshot {
 }
 
 impl CreaseSnapshot {
-    #[tracing::instrument(skip_all)]
     pub fn new(snapshot: &MultiBufferSnapshot) -> Self {
         CreaseSnapshot {
             creases: SumTree::new(snapshot),
@@ -266,7 +265,6 @@ impl<T> std::fmt::Debug for Crease<T>
 where
     T: Debug,
 {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Crease::Inline {
@@ -296,7 +294,6 @@ struct CreaseItem {
 }
 
 impl CreaseMap {
-    #[tracing::instrument(skip_all)]
     pub fn snapshot(&self) -> CreaseSnapshot {
         self.snapshot.clone()
     }
@@ -373,7 +370,6 @@ pub struct ItemSummary {
 }
 
 impl Default for ItemSummary {
-    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self {
             range: Anchor::min()..Anchor::min(),
@@ -384,7 +380,6 @@ impl Default for ItemSummary {
 impl sum_tree::Summary for ItemSummary {
     type Context<'a> = &'a MultiBufferSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: Self::Context<'_>) -> Self {
         Default::default()
     }
@@ -428,7 +423,6 @@ mod test {
     use multi_buffer::MultiBuffer;
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_insert_and_remove_creases(cx: &mut App) {
         let text = "line1\nline2\nline3\nline4\nline5";
         let buffer = MultiBuffer::build_simple(text, cx);

@@ -46,7 +46,6 @@ pub fn is_invisible(c: char) -> bool {
 // ASCII control characters have fancy unicode glyphs, everything else
 // is replaced by a space - unless it is used in combining characters in
 // which case we need to leave it in the string.
-#[tracing::instrument(skip_all)]
 pub fn replacement(c: char) -> Option<&'static str> {
     if c <= '\x1f' {
         Some(C0_SYMBOLS[c as usize])

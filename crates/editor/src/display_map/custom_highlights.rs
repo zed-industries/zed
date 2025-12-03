@@ -164,14 +164,12 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
 }
 
 impl PartialOrd for HighlightEndpoint {
-    #[tracing::instrument(skip_all)]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for HighlightEndpoint {
-    #[tracing::instrument(skip_all)]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.offset
             .cmp(&other.offset)
@@ -190,7 +188,6 @@ mod tests {
     use util::RandomCharIter;
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
         // Generate random buffer using existing test infrastructure
         let len = rng.random_range(10..10000);

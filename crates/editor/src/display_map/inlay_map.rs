@@ -38,7 +38,6 @@ pub struct InlaySnapshot {
 impl std::ops::Deref for InlaySnapshot {
     type Target = MultiBufferSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.buffer
     }
@@ -75,7 +74,6 @@ struct TransformSummary {
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
-    #[tracing::instrument(skip_all)]
     fn zero() -> Self {
         Default::default()
     }
@@ -95,7 +93,6 @@ pub struct InlayOffset(pub MultiBufferOffset);
 impl Add for InlayOffset {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
     }
@@ -104,7 +101,6 @@ impl Add for InlayOffset {
 impl Sub for InlayOffset {
     type Output = <MultiBufferOffset as Sub>::Output;
 
-    #[tracing::instrument(skip_all)]
     fn sub(self, rhs: Self) -> Self::Output {
         self.0 - rhs.0
     }
@@ -114,7 +110,6 @@ impl<T> SubAssign<T> for InlayOffset
 where
     MultiBufferOffset: SubAssign<T>,
 {
-    #[tracing::instrument(skip_all)]
     fn sub_assign(&mut self, rhs: T) {
         self.0 -= rhs;
     }
@@ -126,14 +121,12 @@ where
 {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn add(self, rhs: T) -> Self::Output {
         Self(self.0 + rhs)
     }
 }
 
 impl AddAssign for InlayOffset {
-    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
@@ -143,14 +136,12 @@ impl<T> AddAssign<T> for InlayOffset
 where
     MultiBufferOffset: AddAssign<T>,
 {
-    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: T) {
         self.0 += rhs;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -167,7 +158,6 @@ pub struct InlayPoint(pub Point);
 impl Add for InlayPoint {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
     }
@@ -176,14 +166,12 @@ impl Add for InlayPoint {
 impl Sub for InlayPoint {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0 - rhs.0)
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -195,7 +183,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for MultiBufferOffset {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -207,7 +194,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for MultiBufferOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -261,7 +247,6 @@ impl InlayChunks<'_> {
         self.max_output_offset = new_range.end;
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn offset(&self) -> InlayOffset {
         self.output_offset
     }
@@ -509,12 +494,10 @@ impl Iterator for InlayBufferRows<'_> {
 }
 
 impl InlayPoint {
-    #[tracing::instrument(skip_all)]
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row(self) -> u32 {
         self.0.row
     }
@@ -1276,7 +1259,6 @@ mod tests {
     use util::post_inc;
 
     #[test]
-    #[tracing::instrument(skip_all)]
     fn test_inlay_properties_label_padding() {
         assert_eq!(
             Inlay::hint(
@@ -1360,7 +1342,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_inlay_hint_padding_with_multibyte_chars() {
         assert_eq!(
             Inlay::hint(
@@ -1384,7 +1365,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1706,7 +1686,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
@@ -1753,7 +1732,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_inlays(cx: &mut App, mut rng: StdRng) {
         init_test(cx);
 
@@ -2062,7 +2040,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
 
@@ -2158,7 +2135,6 @@ mod tests {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -2166,7 +2142,6 @@ mod tests {
     }
 
     /// Helper to create test highlights for an inlay
-    #[tracing::instrument(skip_all)]
     fn create_inlay_highlights(
         inlay_id: InlayId,
         highlight_range: Range<usize>,
@@ -2190,7 +2165,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_inlay_utf8_boundary_panic_fix(cx: &mut App) {
         init_test(cx);
 
@@ -2249,7 +2223,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_inlay_utf8_boundaries(cx: &mut App) {
         init_test(cx);
 

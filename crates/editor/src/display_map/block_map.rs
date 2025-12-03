@@ -66,7 +66,6 @@ pub struct BlockSnapshot {
 impl Deref for BlockSnapshot {
     type Target = WrapSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.wrap_snapshot
     }
@@ -76,7 +75,6 @@ impl Deref for BlockSnapshot {
 pub struct CustomBlockId(pub usize);
 
 impl From<CustomBlockId> for ElementId {
-    #[tracing::instrument(skip_all)]
     fn from(val: CustomBlockId) -> Self {
         val.0.into()
     }
@@ -95,7 +93,6 @@ impl_for_row_types! {
 }
 
 impl BlockPoint {
-    #[tracing::instrument(skip_all)]
     pub fn row(&self) -> BlockRow {
         BlockRow(self.0.row)
     }

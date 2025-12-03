@@ -46,7 +46,6 @@ pub struct WrapSnapshot {
 impl std::ops::Deref for WrapSnapshot {
     type Target = TabSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.tab_snapshot
     }
@@ -130,7 +129,6 @@ impl WrapMap {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn is_rewrapping(&self) -> bool {
         self.background_task.is_some()
     }
@@ -1143,7 +1141,6 @@ impl Transform {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn is_isomorphic(&self) -> bool {
         self.display_text.is_none()
     }
@@ -1152,7 +1149,6 @@ impl Transform {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: ()) -> Self::Summary {
         self.summary.clone()
     }
@@ -1195,34 +1191,28 @@ impl SumTreeExt for SumTree<Transform> {
 }
 
 impl WrapPoint {
-    #[tracing::instrument(skip_all)]
     pub fn new(row: WrapRow, column: u32) -> Self {
         Self(Point::new(row.0, column))
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row(self) -> WrapRow {
         WrapRow(self.0.row)
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn column(self) -> u32 {
         self.0.column
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
-    #[tracing::instrument(skip_all)]
     fn zero() -> Self {
         Default::default()
     }
@@ -1235,7 +1225,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1254,7 +1243,6 @@ impl sum_tree::SeekTarget<'_, TransformSummary, TransformSummary> for TabPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1310,7 +1298,6 @@ mod tests {
     use theme::LoadThemes;
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         // todo this test is flaky
         init_test(cx);
@@ -1546,7 +1533,6 @@ mod tests {
         wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
     }
 
-    #[tracing::instrument(skip_all)]
     fn init_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
@@ -1555,7 +1541,6 @@ mod tests {
         });
     }
 
-    #[tracing::instrument(skip_all)]
     fn wrap_text(
         tab_snapshot: &TabSnapshot,
         wrap_width: Option<Pixels>,
@@ -1585,7 +1570,6 @@ mod tests {
     }
 
     impl WrapSnapshot {
-        #[tracing::instrument(skip_all)]
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
             for _ in 0..5 {
                 let mut end_row = rng.random_range(0..=self.max_point().row().0);

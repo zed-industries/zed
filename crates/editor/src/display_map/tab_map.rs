@@ -32,7 +32,6 @@ impl TabMap {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn set_max_expansion_column(&mut self, column: u32) -> TabSnapshot {
         self.0.max_expansion_column = column;
         self.0.clone()
@@ -173,7 +172,6 @@ pub struct TabSnapshot {
 impl std::ops::Deref for TabSnapshot {
     type Target = FoldSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.fold_snapshot
     }
@@ -472,29 +470,24 @@ impl TabPointCursor<'_> {
 pub struct TabPoint(pub Point);
 
 impl TabPoint {
-    #[tracing::instrument(skip_all)]
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn zero() -> Self {
         Self::new(0, 0)
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row(self) -> u32 {
         self.0.row
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn column(self) -> u32 {
         self.0.column
     }
 }
 
 impl From<Point> for TabPoint {
-    #[tracing::instrument(skip_all)]
     fn from(point: Point) -> Self {
         Self(point)
     }
@@ -699,7 +692,6 @@ mod tests {
     use util;
 
     impl TabSnapshot {
-        #[tracing::instrument(skip_all)]
         fn expected_collapse_tabs(
             &self,
             chars: impl Iterator<Item = char>,
@@ -752,14 +744,12 @@ mod tests {
             )
         }
 
-        #[tracing::instrument(skip_all)]
         pub fn expected_to_tab_point(&self, input: FoldPoint) -> TabPoint {
             let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
             let expanded = self.expected_expand_tabs(chars, input.column());
             TabPoint::new(input.row(), expanded)
         }
 
-        #[tracing::instrument(skip_all)]
         fn expected_expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
             let tab_size = self.tab_size.get();
 
@@ -785,7 +775,6 @@ mod tests {
             expanded_bytes + column.saturating_sub(collapsed_bytes)
         }
 
-        #[tracing::instrument(skip_all)]
         fn expected_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
             let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
             let expanded = output.column();
@@ -800,7 +789,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_expand_tabs(cx: &mut gpui::App) {
         let test_values = [
             ("κg🏀 f\nwo🏀❌by🍐❎β🍗c\tβ❎ \ncλ🎉", 17),
@@ -841,7 +829,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_collapse_tabs(cx: &mut gpui::App) {
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
 
@@ -879,7 +866,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_to_fold_point_panic_reproduction(cx: &mut gpui::App) {
         // This test reproduces a specific panic where to_fold_point returns incorrect results
         let _text = "use macro_rules_attribute::apply;\nuse serde_json::Value;\nuse smol::{\n    io::AsyncReadExt,\n    process::{Command, Stdio},\n};\nuse smol_macros::main;\nuse std::io;\n\nfn test_random() {\n    // Generate a random value\n    let random_value = std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .unwrap()\n        .as_secs()\n        % 100;\n\n    // Create some complex nested data structures\n    let mut vector = Vec::new();\n    for i in 0..random_value {\n        vector.push(i);\n    }\n    ";
@@ -900,7 +886,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_collapse_tabs_random(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 200 characters including tabs
         // to stay within the MAX_EXPANSION_COLUMN limit of 256
@@ -965,7 +950,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_long_lines(cx: &mut gpui::App) {
         let max_expansion_column = 12;
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
@@ -1014,7 +998,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::App) {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
@@ -1030,7 +1013,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_marking_tabs(cx: &mut gpui::App) {
         let input = "\t \thello";
 
@@ -1059,7 +1041,6 @@ mod tests {
             ]
         );
 
-        #[tracing::instrument(skip_all)]
         fn chunks(snapshot: &TabSnapshot, start: TabPoint) -> Vec<(String, bool)> {
             let mut chunks = Vec::new();
             let mut was_tab = false;
@@ -1083,7 +1064,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.random_range(1..=4)).unwrap();
         let len = rng.random_range(0..30);
@@ -1162,7 +1142,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_to_tab_point_random(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.random_range(1..=16)).unwrap();
         let len = rng.random_range(0..=2000);
@@ -1210,7 +1189,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_tab_stop_cursor_utf8(cx: &mut gpui::App) {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -1248,7 +1226,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_tab_stop_with_end_range_utf8(cx: &mut gpui::App) {
         let input = "A\tBC\t"; // DEF\tG\tHI\tJ\tK\tL\tM
 
@@ -1284,7 +1261,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_tab_stop_cursor_random_utf8(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 512 characters including tabs
         let len = rng.random_range(0..=2048);
@@ -1375,7 +1351,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_tab_stop_cursor_utf16(cx: &mut gpui::App) {
         let text = "\r\t😁foo\tb😀arbar🤯bar\t\tbaz\n";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -1414,7 +1389,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_tab_stop_cursor_random_utf16(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 512 characters including tabs
         let len = rng.random_range(0..=2048);
@@ -1615,12 +1589,10 @@ where
         None
     }
 
-    #[tracing::instrument(skip_all)]
     fn byte_offset(&self) -> u32 {
         self.byte_offset
     }
 
-    #[tracing::instrument(skip_all)]
     fn char_offset(&self) -> u32 {
         self.char_offset
     }

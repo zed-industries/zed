@@ -36,7 +36,6 @@ pub struct FoldPlaceholder {
 }
 
 impl Default for FoldPlaceholder {
-    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self {
             render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
@@ -49,7 +48,6 @@ impl Default for FoldPlaceholder {
 
 impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
-    #[tracing::instrument(skip_all)]
     pub fn test() -> Self {
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
@@ -61,7 +59,6 @@ impl FoldPlaceholder {
 }
 
 impl fmt::Debug for FoldPlaceholder {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FoldPlaceholder")
             .field("constrain_width", &self.constrain_width)
@@ -72,7 +69,6 @@ impl fmt::Debug for FoldPlaceholder {
 impl Eq for FoldPlaceholder {}
 
 impl PartialEq for FoldPlaceholder {
-    #[tracing::instrument(skip_all)]
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.render, &other.render) && self.constrain_width == other.constrain_width
     }
@@ -82,28 +78,23 @@ impl PartialEq for FoldPlaceholder {
 pub struct FoldPoint(pub Point);
 
 impl FoldPoint {
-    #[tracing::instrument(skip_all)]
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row(self) -> u32 {
         self.0.row
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn column(self) -> u32 {
         self.0.column
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
@@ -137,7 +128,6 @@ impl FoldPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -658,14 +648,12 @@ pub struct FoldSnapshot {
 impl Deref for FoldSnapshot {
     type Target = InlaySnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.inlay_snapshot
     }
 }
 
 impl FoldSnapshot {
-    #[tracing::instrument(skip_all)]
     pub fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
     }
@@ -676,7 +664,6 @@ impl FoldSnapshot {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(
             FoldOffset(MultiBufferOffset(0))..self.len(),
@@ -688,7 +675,6 @@ impl FoldSnapshot {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn fold_count(&self) -> usize {
         self.folds.items(&self.inlay_snapshot.buffer).len()
     }
@@ -817,7 +803,6 @@ impl FoldSnapshot {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
@@ -1137,7 +1122,6 @@ struct TransformPlaceholder {
 }
 
 impl Transform {
-    #[tracing::instrument(skip_all)]
     fn is_fold(&self) -> bool {
         self.placeholder.is_some()
     }
@@ -1152,14 +1136,12 @@ struct TransformSummary {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: ()) -> Self::Summary {
         self.summary.clone()
     }
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
-    #[tracing::instrument(skip_all)]
     fn zero() -> Self {
         Default::default()
     }
@@ -1175,7 +1157,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
 pub struct FoldId(pub(super) usize);
 
 impl From<FoldId> for ElementId {
-    #[tracing::instrument(skip_all)]
     fn from(val: FoldId) -> Self {
         val.0.into()
     }
@@ -1194,21 +1175,18 @@ pub struct FoldRange(Range<Anchor>);
 impl Deref for FoldRange {
     type Target = Range<Anchor>;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl DerefMut for FoldRange {
-    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
 impl Default for FoldRange {
-    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self(Anchor::min()..Anchor::max())
     }
@@ -1223,7 +1201,6 @@ struct FoldMetadata {
 impl sum_tree::Item for Fold {
     type Summary = FoldSummary;
 
-    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         FoldSummary {
             start: self.range.start,
@@ -1245,7 +1222,6 @@ pub struct FoldSummary {
 }
 
 impl Default for FoldSummary {
-    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self {
             start: Anchor::min(),
@@ -1260,7 +1236,6 @@ impl Default for FoldSummary {
 impl sum_tree::Summary for FoldSummary {
     type Context<'a> = &'a MultiBufferSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
@@ -1290,7 +1265,6 @@ impl sum_tree::Summary for FoldSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
@@ -1303,14 +1277,12 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 }
 
 impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
-    #[tracing::instrument(skip_all)]
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for MultiBufferOffset {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
@@ -1424,7 +1396,6 @@ pub struct ChunkRendererContext<'a, 'b> {
 }
 
 impl fmt::Debug for ChunkRenderer {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ChunkRenderer")
             .field("constrain_width", &self.constrain_width)
@@ -1435,14 +1406,12 @@ impl fmt::Debug for ChunkRenderer {
 impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         self.context
     }
 }
 
 impl DerefMut for ChunkRendererContext<'_, '_> {
-    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -1622,7 +1591,6 @@ impl FoldOffset {
 impl Add for FoldOffset {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
     }
@@ -1631,7 +1599,6 @@ impl Add for FoldOffset {
 impl Sub for FoldOffset {
     type Output = <MultiBufferOffset as Sub>::Output;
 
-    #[tracing::instrument(skip_all)]
     fn sub(self, rhs: Self) -> Self::Output {
         self.0 - rhs.0
     }
@@ -1641,7 +1608,6 @@ impl<T> SubAssign<T> for FoldOffset
 where
     MultiBufferOffset: SubAssign<T>,
 {
-    #[tracing::instrument(skip_all)]
     fn sub_assign(&mut self, rhs: T) {
         self.0 -= rhs;
     }
@@ -1653,14 +1619,12 @@ where
 {
     type Output = Self;
 
-    #[tracing::instrument(skip_all)]
     fn add(self, rhs: T) -> Self::Output {
         Self(self.0 + rhs)
     }
 }
 
 impl AddAssign for FoldOffset {
-    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
@@ -1670,14 +1634,12 @@ impl<T> AddAssign<T> for FoldOffset
 where
     MultiBufferOffset: AddAssign<T>,
 {
-    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: T) {
         self.0 += rhs;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1689,7 +1651,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1701,7 +1662,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -1728,7 +1688,6 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_basic_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
@@ -1808,7 +1767,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_adjacent_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
@@ -1893,7 +1851,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_overlapping_folds(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1911,7 +1868,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_merging_folds_via_edit(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
@@ -1939,7 +1895,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_folds_in_range(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1971,7 +1926,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_folds(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
         let operations = env::var("OPERATIONS")
@@ -2250,7 +2204,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_buffer_rows(cx: &mut gpui::App) {
         let text = sample_text(6, 6, 'a') + "\n";
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -2284,7 +2237,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    #[tracing::instrument(skip_all)]
     fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
 
@@ -2375,14 +2327,12 @@ mod tests {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn init_test(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
     }
 
     impl FoldMap {
-        #[tracing::instrument(skip_all)]
         fn merged_folds(&self) -> Vec<Range<MultiBufferOffset>> {
             let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
             let buffer = &inlay_snapshot.buffer;
@@ -2413,7 +2363,6 @@ mod tests {
             merged_folds
         }
 
-        #[tracing::instrument(skip_all)]
         pub fn randomly_mutate(
             &mut self,
             rng: &mut impl Rng,
