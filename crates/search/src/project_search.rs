@@ -2627,6 +2627,8 @@ pub mod tests {
                 (dp(2, 37)..dp(2, 40), "selection"),
                 (dp(2, 37)..dp(2, 40), "match"),
                 (dp(5, 6)..dp(5, 9), "match"),
+                // TODO: we should be getting selection highlight here after project search
+                // but for some reason we are not getting it here
             ],
         );
         select_match(&search_view, cx, Direction::Next);
