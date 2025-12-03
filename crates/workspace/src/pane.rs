@@ -2591,6 +2591,7 @@ impl Pane {
         let close_side = &settings.close_position;
         let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -2678,12 +2679,6 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
-            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
-                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text)),
-                TabTooltipContent::Custom(element_fn) => {
-                    tab.tooltip(move |window, cx| element_fn(window, cx))
-                }
-            })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
@@ -2750,7 +2745,15 @@ impl Pane {
                         })
                         .flatten(),
                     )
-                    .child(label),
+                    .child(label)
+                    .id(("pane-tab-content", ix))
+                    .map(|this| match tab_tooltip_content {
+                        Some(TabTooltipContent::Text(text)) => this.tooltip(Tooltip::text(text)),
+                        Some(TabTooltipContent::Custom(element_fn)) => {
+                            this.tooltip(move |window, cx| element_fn(window, cx))
+                        }
+                        None => this,
+                    }),
             );
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
