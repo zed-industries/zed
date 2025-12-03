@@ -347,12 +347,13 @@ impl TabSwitcherDelegate {
         };
         cx.subscribe_in(&pane, window, |tab_switcher, _, event, window, cx| {
             match event {
-                PaneEvent::AddItem { .. }
-                | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let query = picker.query(cx);
-                    picker.delegate.update_matches(query, window, cx);
-                    cx.notify();
-                }),
+                PaneEvent::AddItem { .. } | PaneEvent::Remove { .. } => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+                        cx.notify();
+                    })
+                }
                 PaneEvent::RemovedItem { .. } => tab_switcher.picker.update(cx, |picker, cx| {
                     let query = picker.query(cx);
                     picker.delegate.update_matches(query, window, cx);
