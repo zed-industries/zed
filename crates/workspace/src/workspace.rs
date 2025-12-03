@@ -1210,7 +1210,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        if cx.has_global::<TrustedWorktreesStorage>() {
+        let untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
                 let weak_workspace = cx.weak_entity();
                 // TODO kb proper UI to manage paths and show the warning to the user
@@ -1220,56 +1220,24 @@ impl Workspace {
                         weak_workspace
                             .update(cx, |workspace, cx| match e {
                                 session::Event::TrustedWorktree(trusted_path) => {
-                                    workspace
-                                        .dismiss_notification(
-                                            &NotificationId::named(SharedString::new(
-                                                trusted_path.to_string_lossy(),
-                                            )),
-                                            cx,
-                                        );
-                                },
-                                session::Event::UntrustedWorktree(untrusted_path) => {
-                                    workspace
-                                    .show_notification(
-                                        NotificationId::named(SharedString::new(
-                                            untrusted_path.to_string_lossy(),
+                                    workspace.dismiss_notification(
+                                        &NotificationId::named(SharedString::new(
+                                            trusted_path.to_string_lossy(),
                                         )),
                                         cx,
-                                        |cx| {
-                                            let untrusted_path = untrusted_path.clone();
-                                            cx.new(move |cx| {
-                                                MessageNotification::new(
-                                                    format!(
-                                                        "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded.\nMake sure you review project settings for extensions that may be installed automatically."
-                                                    ),
-                                                    cx,
-                                                )
-                                                .primary_message("Trust")
-                                                .primary_icon(IconName::Check)
-                                                .primary_icon_color(Color::Success)
-                                                .primary_on_click({
-                                                    move |_, cx| {
-                                                        if cx.has_global::<TrustedWorktreesStorage>() {
-                                                            cx.update_global::<TrustedWorktreesStorage, _>(
-                                                                |trusted_worktrees_storage, cx| {
-                                                                    trusted_worktrees_storage.trust_path(untrusted_path.clone(), cx)
-                                                                },
-                                                            );
-                                                        }
-                                                    }
-                                                })
-                                                .secondary_message("Do not trust")
-                                                .secondary_icon(IconName::Close)
-                                            })
-                                        },
-                                    )
+                                    );
                                 }
+                                session::Event::UntrustedWorktree(untrusted_path) => workspace
+                                    .show_untrusted_worktree_notification(untrusted_path, cx),
                             })
                             .ok();
                     })
                     .detach();
+                trusted_worktrees_storage.untrusted_worktrees().clone()
             })
-        }
+        } else {
+            HashSet::default()
+        };
 
         cx.observe_global::<SettingsStore>(|_, cx| {
             if ProjectSettings::get_global(cx).session.trust_all_worktrees {
@@ -1541,9 +1509,12 @@ impl Workspace {
             }),
         ];
 
-        cx.defer_in(window, |this, window, cx| {
-            this.update_window_title(window, cx);
-            this.show_initial_notifications(cx);
+        cx.defer_in(window, move |workspace, window, cx| {
+            workspace.update_window_title(window, cx);
+            workspace.show_initial_notifications(cx);
+            for untrusted_path in untrusted_worktrees {
+                workspace.show_untrusted_worktree_notification(&untrusted_path, cx);
+            }
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -6453,6 +6424,55 @@ impl Workspace {
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
+    }
+
+    fn show_untrusted_worktree_notification(
+        &mut self,
+        untrusted_path: &PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .project()
+            .read(cx)
+            .find_worktree(untrusted_path, cx)
+            .is_none()
+        {
+            return;
+        }
+        self
+            .show_notification(
+                NotificationId::named(SharedString::new(
+                    untrusted_path.to_string_lossy(),
+                )),
+                cx,
+                |cx| {
+                    let untrusted_path = untrusted_path.clone();
+                    cx.new(move |cx| {
+                        MessageNotification::new(
+                            format!(
+                                "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded.\nMake sure you review project settings for extensions that may be installed automatically."
+                            ),
+                            cx,
+                        )
+                        .primary_message("Trust")
+                        .primary_icon(IconName::Check)
+                        .primary_icon_color(Color::Success)
+                        .primary_on_click({
+                            move |_, cx| {
+                                if cx.has_global::<TrustedWorktreesStorage>() {
+                                    cx.update_global::<TrustedWorktreesStorage, _>(
+                                        |trusted_worktrees_storage, cx| {
+                                            trusted_worktrees_storage.trust_path(untrusted_path.clone(), cx)
+                                        },
+                                    );
+                                }
+                            }
+                        })
+                        .secondary_message("Do not trust")
+                        .secondary_icon(IconName::Close)
+                    })
+                },
+            );
     }
 }
 

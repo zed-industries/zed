@@ -136,8 +136,7 @@ impl AppSession {
 #[derive(Clone)]
 pub struct TrustedWorktreesStorage {
     trusted: Entity<TrustedWorktrees>,
-    // TODO kb unpub
-    pub untrusted: HashSet<PathBuf>,
+    untrusted: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -261,6 +260,10 @@ impl TrustedWorktreesStorage {
 
             can_trust
         })
+    }
+
+    pub fn untrusted_worktrees(&self) -> &HashSet<PathBuf> {
+        &self.untrusted
     }
 
     pub fn trust_all(&mut self, cx: &mut App) {
