@@ -1500,7 +1500,7 @@ impl SearchableItem for Editor {
             matches,
             move |index, theme| {
                 if active_match_index == Some(*index) {
-                    Hsla::red()
+                    theme.colors().search_active_match_background
                 } else {
                     theme.colors().search_match_background
                 }

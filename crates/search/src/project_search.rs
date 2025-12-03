@@ -1443,18 +1443,8 @@ impl ProjectSearchView {
                 editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
-                editor.highlight_background::<Self>(
-                    &match_ranges,
-                    move |index, theme| {
-                        if new_index == *index {
-                            Hsla::red()
-                        } else {
-                            theme.colors().search_match_background
-                        }
-                    },
-                    cx,
-                );
             });
+            self.highlight_matches(&match_ranges, Some(new_index), cx);
         }
     }
 
@@ -1548,12 +1538,25 @@ impl ProjectSearchView {
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
+        self.highlight_matches(&match_ranges, new_index, cx);
+        if self.active_match_index != new_index {
+            self.active_match_index = new_index;
+            cx.notify();
+        }
+    }
+
+    fn highlight_matches(
+        &self,
+        match_ranges: &[Range<Anchor>],
+        active_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
         self.results_editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
-                &match_ranges,
+                match_ranges,
                 move |index, theme| {
-                    if new_index == Some(*index) {
-                        Hsla::red()
+                    if active_index == Some(*index) {
+                        theme.colors().search_active_match_background
                     } else {
                         theme.colors().search_match_background
                     }
@@ -1561,10 +1564,6 @@ impl ProjectSearchView {
                 cx,
             );
         });
-        if self.active_match_index != new_index {
-            self.active_match_index = new_index;
-            cx.notify();
-        }
     }
 
     pub fn has_matches(&self) -> bool {
