@@ -558,7 +558,7 @@ impl TabSwitcherDelegate {
         });
     }
 
-    /// Udpates the selected index to ensure it matches the pane's active item,
+    /// Updates the selected index to ensure it matches the pane's active item,
     /// as the pane's active item can be indirectly updated and this method
     /// ensures that the picker can react to those changes.
     fn sync_selected_index(&mut self, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
