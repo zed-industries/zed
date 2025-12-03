@@ -2935,6 +2935,58 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    /// Updates git's configuration, adding the directory of the current
+    /// worktree to the `safe.directory` config, ensuring that, even if the user
+    /// that's running the application is not the owner of `.git/`, it can still
+    /// read the repository's contents.
+    pub(crate) fn add_safe_directory(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let worktrees = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+
+        // TODO!: Should we actually allow the user to select the directory to
+        // be added to `safe.directory`? What if the directory for one of the
+        // worktrees is not an unsafe directory?
+        if worktrees.is_empty() || worktrees.len() > 1 {
+            let result = window.prompt(
+                PromptLevel::Warning,
+                "Unable to add safe directory.",
+                Some("No directories, or multiple directories, open."),
+                &["Ok"],
+                cx,
+            );
+
+            // TODO!: Why can't I use `cx.background_spawn` here?
+            return cx
+                .background_executor()
+                .spawn(async move {
+                    result.await.ok();
+                })
+                .detach();
+        }
+
+        if let Some(worktree) = worktrees.first() {
+            let path = worktree.read(cx).abs_path();
+            // TODO!: Remove the `unwrap()` call.
+            let path_arg = String::from(path.to_str().unwrap());
+            let args = vec![
+                String::from("--global"),
+                String::from("--add"),
+                String::from("safe.directory"),
+                path_arg,
+            ];
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                git_panel.update(cx, |git_panel, cx| {
+                    git_panel.project.read(cx).git_config(path, args, cx)
+                })
+            })
+            .detach();
+        }
+    }
+
     fn askpass_delegate(
         &self,
         operation: impl Into<SharedString>,
@@ -4397,12 +4449,12 @@ impl GitPanel {
                 panel_filled_button("Trust Directory")
                     .tooltip(Tooltip::for_action_title_in(
                         format!("git config --global --add safe.directory {}", directory),
-                        &git::Init,
+                        &git::AddSafeDirectory,
                         &self.focus_handle,
                     ))
                     .on_click(move |_, _, cx| {
                         cx.defer(move |cx| {
-                            cx.dispatch_action(&git::Init);
+                            cx.dispatch_action(&git::AddSafeDirectory);
                         })
                     }),
             )
