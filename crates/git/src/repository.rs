@@ -967,7 +967,15 @@ impl GitRepository for RealGitRepository {
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path.as_std_path(), STAGE_NORMAL) {
+                    let path = path.as_std_path();
+                    // `RepoPath` contains a `RelPath` which normalizes `.` into an empty path
+                    // `get_path` unwraps on empty paths though, so undo that normalization here
+                    let path = if path.components().next().is_none() {
+                        ".".as_ref()
+                    } else {
+                        path
+                    };
+                    let oid = match index.get_path(path, STAGE_NORMAL) {
                         Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                         _ => return Ok(None),
                     };
