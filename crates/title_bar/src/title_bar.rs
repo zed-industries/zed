@@ -24,6 +24,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use collections::HashSet;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
@@ -32,8 +33,9 @@ use gpui::{
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
 use remote::RemoteConnectionOptions;
+use session::TrustedWorktreesStorage;
 use settings::{Settings, SettingsLocation};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -134,6 +136,7 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
+    untrusted_worktrees: HashSet<PathBuf>,
 }
 
 impl Render for TitleBar {
@@ -163,6 +166,8 @@ impl Render for TitleBar {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
+                                        .pl_2()
+                                        .children(self.render_restricted_mode(cx))
                                         .children(self.render_project_host(cx))
                                         .child(self.render_project_name(cx))
                                 })
@@ -290,6 +295,45 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        let mut untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
+            let weak_title_bar = cx.weak_entity();
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                subscriptions.push(trusted_worktrees_storage.subscribe(cx, move |e, cx| {
+                    weak_title_bar
+                        .update(cx, |title_bar, cx| match e {
+                            session::Event::TrustedWorktree(abs_path) => {
+                                title_bar.untrusted_worktrees.remove(abs_path);
+                            }
+                            session::Event::UntrustedWorktree(abs_path) => {
+                                title_bar
+                                    .workspace
+                                    .update(cx, |workspace, cx| {
+                                        if workspace
+                                            .project()
+                                            .read(cx)
+                                            .find_worktree(abs_path, cx)
+                                            .is_some()
+                                        {
+                                            title_bar.untrusted_worktrees.insert(abs_path.clone());
+                                        };
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .ok();
+                }));
+                trusted_worktrees_storage.untrusted_worktrees().clone()
+            })
+        } else {
+            HashSet::default()
+        };
+        untrusted_worktrees.retain(|untrusted_path| {
+            workspace
+                .project()
+                .read(cx)
+                .find_worktree(untrusted_path, cx)
+                .is_some()
+        });
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
@@ -315,7 +359,8 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            screen_share_popover_handle: Default::default(),
+            untrusted_worktrees,
+            screen_share_popover_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -393,6 +438,31 @@ impl TitleBar {
                         .boxed_clone(),
                         cx,
                     );
+                })
+                .into_any_element(),
+        )
+    }
+
+    pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.untrusted_worktrees.is_empty()
+            || !cx.has_global::<session::TrustedWorktreesStorage>()
+        {
+            return None;
+        }
+
+        Some(
+            IconButton::new("restricted_mode_trigger", IconName::Warning)
+                .icon_color(Color::Warning)
+                .tooltip(Tooltip::text("Restricted Mode".to_string()))
+                .on_click({
+                    cx.listener(move |title_bar, _, _, cx| {
+                        title_bar
+                            .workspace
+                            .update(cx, |_, _| {
+                                dbg!("TODO kb");
+                            })
+                            .log_err();
+                    })
                 })
                 .into_any_element(),
         )
