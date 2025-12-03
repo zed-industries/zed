@@ -16942,11 +16942,15 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
-        // FIXME this is too early.
+        let mut unpreviewed_original_tab = false;
         let item_id = cx.entity().item_id();
         if !PreviewTabsSettings::get_global(cx).enable_keep_preview_on_code_navigation {
+            // If this setting is set to `false` *and* we navigate away from the current tab,
+            // then the current tab must be unpreviewed. We don't yet know whether we will
+            // navigate away from it, but unpreview it now to make sure it doesn't get closed.
             workspace.update(cx, |workspace, cx| {
                 workspace.active_pane().update(cx, |pane, _| {
+                    unpreviewed_original_tab = pane.is_active_preview_item(item_id);
                     pane.unpreview_item_if_preview(item_id);
                 })
             });
@@ -17024,7 +17028,6 @@ impl Editor {
 
                 anyhow::Ok(Navigated::from_bool(opened))
             } else if num_locations == 0 {
-                // FIXME in this case do we always want to unpreview it?
                 // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
@@ -17032,6 +17035,9 @@ impl Editor {
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(path)) => {
+                        // TODO(andrew): respect preview tab settings
+                        //               `enable_keep_preview_on_code_navigation` and
+                        //               `enable_preview_file_from_code_navigation`
                         workspace
                             .update_in(cx, |workspace, window, cx| {
                                 workspace.open_resolved_path(path, window, cx)
@@ -17042,7 +17048,6 @@ impl Editor {
                     None => Ok(Navigated::No),
                 }
             } else {
-                // FIXME in this case do we always want to unpreview it?
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
                 let target_range = target_ranges.first().unwrap().clone();
 
@@ -17054,10 +17059,8 @@ impl Editor {
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
-                        // FIXME reuse same editor
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
-                        // FIXME not reusing same editor
                         let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
@@ -17068,7 +17071,10 @@ impl Editor {
                                         workspace.active_pane().clone()
                                     };
 
-                                    let allow_preview = PreviewTabsSettings::get_global(cx)
+                                    let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
+                                    let keep_old_preview = preview_tabs_settings
+                                        .enable_keep_preview_on_code_navigation;
+                                    let allow_new_preview = preview_tabs_settings
                                         .enable_preview_file_from_code_navigation;
 
                                     workspace.open_project_item(
@@ -17076,7 +17082,8 @@ impl Editor {
                                         target_buffer.clone(),
                                         true,
                                         true,
-                                        allow_preview,
+                                        keep_old_preview,
+                                        allow_new_preview,
                                         window,
                                         cx,
                                     )
@@ -21904,14 +21911,17 @@ impl Editor {
                         })
                         .flatten()
                         .unwrap_or_else(|| {
-                            let allow_preview =
+                            let keep_old_preview = PreviewTabsSettings::get_global(cx)
+                                .enable_keep_preview_on_code_navigation;
+                            let allow_new_preview =
                                 PreviewTabsSettings::get_global(cx).enable_preview_from_multibuffer;
                             workspace.open_project_item::<Self>(
                                 pane.clone(),
                                 buffer,
                                 true,
                                 true,
-                                allow_preview,
+                                keep_old_preview,
+                                allow_new_preview,
                                 window,
                                 cx,
                             )

@@ -3634,16 +3634,29 @@ impl Workspace {
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
-        allow_preview: bool,
+        keep_old_preview: bool,
+        allow_new_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T>
     where
         T: ProjectItem,
     {
+        let old_item_id = pane.read(cx).active_item().map(|item| item.item_id());
+
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
+            if !keep_old_preview
+                && let Some(old_id) = old_item_id
+                && old_id != item.item_id()
+            {
+                // switching to a different item, so unpreview old active item
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(old_id);
+                });
+            }
+
             self.activate_item(&item, activate_pane, focus_item, window, cx);
-            if !allow_preview {
+            if !allow_new_preview {
                 pane.update(cx, |pane, _| {
                     pane.unpreview_item_if_preview(item.item_id());
                 });
@@ -3657,11 +3670,14 @@ impl Workspace {
             })
         });
         let mut destination_index = None;
-        if allow_preview {
-            pane.update(cx, |pane, cx| {
+        pane.update(cx, |pane, cx| {
+            if !keep_old_preview && let Some(old_id) = old_item_id {
+                pane.unpreview_item_if_preview(old_id);
+            }
+            if allow_new_preview {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
-            });
-        }
+            }
+        });
 
         self.add_item(
             pane,
