@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::Event;
 use credentials_provider::CredentialsProvider;
+use edit_prediction_context2::RelatedFile;
 use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
     App, AppContext as _, Entity, Task,
@@ -49,6 +50,7 @@ impl SweepAi {
         position: language::Anchor,
         events: Vec<Arc<Event>>,
         recent_paths: &VecDeque<ProjectPath>,
+        related_files: Vec<RelatedFile>,
         diagnostic_search_range: Range<Point>,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {

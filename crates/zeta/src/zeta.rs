@@ -23,11 +23,13 @@ use edit_prediction_context2::{
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use futures::channel::{mpsc, oneshot};
 use futures::{AsyncReadExt as _, FutureExt as _, StreamExt as _};
+
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
+use language::language_settings::all_language_settings;
 use language::{
     Anchor, Buffer, DiagnosticSet, File, LanguageServerId, Point, ToOffset as _, ToPoint,
 };
@@ -38,7 +40,7 @@ use project::{DisableAiSettings, Project, ProjectItem as _, ProjectPath, Worktre
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, Settings as _, SettingsStore, update_settings_file};
+use settings::{EditPredictionProvider, Settings, SettingsStore, update_settings_file};
 use std::any::{Any as _, TypeId};
 use std::collections::{VecDeque, hash_map};
 use telemetry_events::EditPredictionRating;
@@ -185,6 +187,7 @@ pub struct Zeta {
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ZetaProject>,
+    use_context: bool,
     options: ZetaOptions,
     update_required: bool,
     debug_tx: Option<mpsc::UnboundedSender<ZetaDebugInfo>>,
@@ -517,11 +520,17 @@ impl Zeta {
         })
         .detach();
 
+        cx.observe_global::<SettingsStore>(|this, cx| {
+            this.use_context = all_language_settings(None, cx).edit_predictions.use_context;
+        })
+        .detach();
+
         Self {
             projects: HashMap::default(),
             client,
             user_store,
             options: DEFAULT_OPTIONS,
+            use_context: all_language_settings(None, cx).edit_predictions.use_context,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -1435,6 +1444,11 @@ impl Zeta {
                 position,
                 events,
                 &zeta_project.recent_paths,
+                if self.use_context {
+                    self.context_for_project(&project, cx).to_vec()
+                } else {
+                    Vec::new()
+                },
                 diagnostic_search_range.clone(),
                 cx,
             ),
@@ -2065,6 +2079,9 @@ impl Zeta {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
+        if !self.use_context {
+            return;
+        }
         let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
