@@ -39,6 +39,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use itertools::Itertools;
+use language::language_settings::{SoftWrap as ConfigSoftWrap, language_settings};
 use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
@@ -1646,6 +1647,16 @@ impl GitPanel {
                 .filter(|message| !message.trim().is_empty());
         } else if message.trim().is_empty() {
             return None;
+        }
+        if git_commit_language.is_some() {
+            let settings = language_settings(
+                git_commit_language.as_ref().map(|lang| lang.name()),
+                None,
+                cx,
+            );
+            if settings.soft_wrap == ConfigSoftWrap::None {
+                return Some(message);
+            }
         }
         let buffer = cx.new(|cx| {
             let mut buffer = Buffer::local(message, cx);
