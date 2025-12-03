@@ -1172,6 +1172,7 @@ pub struct Editor {
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
+    pull_diagnostics_background_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -2316,6 +2317,7 @@ impl Editor {
                 .unwrap_or_default(),
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
+            pull_diagnostics_background_task: Task::ready(()),
             colors: None,
             refresh_colors_task: Task::ready(()),
             inlay_hints: None,
@@ -2492,7 +2494,6 @@ impl Editor {
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
-            editor.update_lsp_data(None, window, cx);
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
@@ -18400,54 +18401,101 @@ impl Editor {
             return None;
         }
         let project = self.project()?.downgrade();
-        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let mut buffers = self.buffer.read(cx).all_buffers();
-        buffers.retain(|buffer| {
-            let buffer_id_to_retain = buffer.read(cx).remote_id();
-            buffer_id.is_none_or(|buffer_id| buffer_id == buffer_id_to_retain)
-                && self.registered_buffers.contains_key(&buffer_id_to_retain)
-        });
-        if buffers.is_empty() {
+
+        let mut edited_buffer_ids = HashSet::default();
+        let mut edited_worktree_ids = HashSet::default();
+        let edited_buffers = match buffer_id {
+            Some(buffer_id) => {
+                let buffer = self.buffer().read(cx).buffer(buffer_id)?;
+                let worktree_id = buffer.read(cx).file().map(|f| f.worktree_id(cx))?;
+                edited_buffer_ids.insert(buffer.read(cx).remote_id());
+                edited_worktree_ids.insert(worktree_id);
+                vec![buffer]
+            }
+            None => self
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    match buffer.file().map(|f| f.worktree_id(cx)) {
+                        Some(worktree_id) => {
+                            edited_buffer_ids.insert(buffer.remote_id());
+                            edited_worktree_ids.insert(worktree_id);
+                            true
+                        }
+                        None => false,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        };
+
+        if edited_buffers.is_empty() {
             self.pull_diagnostics_task = Task::ready(());
+            self.pull_diagnostics_background_task = Task::ready(());
             return None;
         }
 
-        self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor().timer(debounce).await;
-
-            let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
-                buffers
-                    .into_iter()
-                    .filter_map(|buffer| {
-                        project
-                            .update(cx, |project, cx| {
-                                project.lsp_store().update(cx, |lsp_store, cx| {
-                                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
-                                })
-                            })
-                            .ok()
-                    })
-                    .collect::<FuturesUnordered<_>>()
-            }) else {
-                return;
-            };
-
-            while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                match pull_task {
-                    Ok(()) => {
-                        if editor
-                            .update_in(cx, |editor, window, cx| {
-                                editor.update_diagnostics_state(window, cx);
-                            })
-                            .is_err()
-                        {
-                            return;
-                        }
+        let mut already_used_buffers = HashSet::default();
+        let related_open_buffers = self
+            .workspace
+            .as_ref()
+            .and_then(|(workspace, _)| workspace.upgrade())
+            .into_iter()
+            .flat_map(|workspace| workspace.read(cx).panes())
+            .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+            .filter(|editor| editor != &cx.entity())
+            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
+            .filter(|buffer| {
+                let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
+                if already_used_buffers.insert(buffer_id) {
+                    if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
+                        return !edited_buffer_ids.contains(&buffer_id)
+                            && !edited_worktree_ids.contains(&worktree_id);
                     }
-                    Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
                 }
+                false
+            })
+            .collect::<Vec<_>>();
+
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
+        let make_spawn = |buffers: Vec<Entity<Buffer>>, delay: Duration| {
+            if buffers.is_empty() {
+                return Task::ready(());
             }
-        });
+            let project_weak = project.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                cx.background_executor().timer(delay).await;
+
+                let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
+                    buffers
+                        .into_iter()
+                        .filter_map(|buffer| {
+                            project_weak
+                                .update(cx, |project, cx| {
+                                    project.lsp_store().update(cx, |lsp_store, cx| {
+                                        lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                                    })
+                                })
+                                .ok()
+                        })
+                        .collect::<FuturesUnordered<_>>()
+                }) else {
+                    return;
+                };
+
+                while let Some(pull_task) = pull_diagnostics_tasks.next().await {
+                    if let Err(e) = pull_task {
+                        log::error!("Failed to update project diagnostics: {e:#}");
+                    }
+                }
+            })
+        };
+
+        self.pull_diagnostics_task = make_spawn(edited_buffers, debounce);
+        self.pull_diagnostics_background_task = make_spawn(related_open_buffers, debounce * 2);
 
         Some(())
     }
