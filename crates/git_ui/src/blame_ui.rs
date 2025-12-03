@@ -55,6 +55,11 @@ impl BlameRenderer for GitBlameRenderer {
         } else {
             None
         };
+
+        // Split editor clones for different purposes to avoid borrow conflicts
+        let editor_for_mouse_down = editor.clone();
+        let editor_for_tooltip = editor;
+
         Some(
             div()
                 .mr_2()
@@ -81,10 +86,13 @@ impl BlameRenderer for GitBlameRenderer {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
                             move |event, window, cx| {
+                                // Prevent the right-click event from bubbling up to parent elements
+                                cx.stop_propagation();
+
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
-                                    editor.clone(),
+                                    editor_for_mouse_down.clone(),
                                     event.position,
                                     window,
                                     cx,
@@ -107,18 +115,23 @@ impl BlameRenderer for GitBlameRenderer {
                                 )
                             }
                         })
-                        .hoverable_tooltip(move |_window, cx| {
-                            cx.new(|cx| {
-                                CommitTooltip::blame_entry(
-                                    &blame_entry,
-                                    details.clone(),
-                                    repository.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )
-                            })
-                            .into()
-                        }),
+                        .when(
+                            !editor_for_tooltip.read(cx).has_mouse_context_menu(),
+                            |el| {
+                                el.hoverable_tooltip(move |_window, cx| {
+                                    cx.new(|cx| {
+                                        CommitTooltip::blame_entry(
+                                            &blame_entry,
+                                            details.clone(),
+                                            repository.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .into()
+                                })
+                            },
+                        ),
                 )
                 .into_any(),
         )
@@ -399,6 +412,7 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
+        editor.hide_blame_popover(false, cx);
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });
