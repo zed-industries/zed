@@ -2475,7 +2475,9 @@ pub mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
-    use settings::{InlayHintSettingsContent, SettingsStore};
+    use settings::{
+        InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
+    };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
     use workspace::DeploySearch;
@@ -2484,6 +2486,22 @@ pub mod tests {
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         init_test(cx);
+
+        // Overrride active search match color since the fallback theme uses the same color
+        // for normal search match and active one, which can make this test less robust.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        colors: ThemeColorsContent {
+                            search_active_match_background: Some("#ff0000ff".to_string()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                });
+            });
+        });
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
@@ -2505,6 +2523,8 @@ pub mod tests {
         });
 
         perform_search(search_view, "TWO", cx);
+        cx.run_until_parked();
+
         search_view.update(cx, |search_view, window, cx| {
             assert_eq!(
                 search_view
@@ -2513,6 +2533,7 @@ pub mod tests {
                 "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
             );
             let match_background_color = cx.theme().colors().search_match_background;
+            let active_match_background_color = cx.theme().colors().search_active_match_background;
             let selection_background_color = cx.theme().colors().editor_document_highlight_bracket_background;
             assert_eq!(
                 search_view
@@ -2521,7 +2542,7 @@ pub mod tests {
                 &[
                     (
                         DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35),
-                        match_background_color
+                        active_match_background_color
                     ),
                     (
                         DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
@@ -2535,7 +2556,6 @@ pub mod tests {
                         DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
                     ),
-
                 ]
             );
             assert_eq!(search_view.active_match_index, Some(0));
@@ -2549,8 +2569,17 @@ pub mod tests {
             search_view.select_match(Direction::Next, window, cx);
         }).unwrap();
 
+        cx.run_until_parked();
+
         search_view
             .update(cx, |search_view, window, cx| {
+                let match_background_color = cx.theme().colors().search_match_background;
+                let active_match_background_color =
+                    cx.theme().colors().search_active_match_background;
+                let selection_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_document_highlight_bracket_background;
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
                     search_view.results_editor.update(cx, |editor, cx| editor
@@ -2558,12 +2587,52 @@ pub mod tests {
                         .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
+                assert_eq!(
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .all_text_background_highlights(window, cx)),
+                    &[
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            active_match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            match_background_color
+                        ),
+                    ]
+                );
                 search_view.select_match(Direction::Next, window, cx);
             })
             .unwrap();
 
+        cx.run_until_parked();
+
         search_view
             .update(cx, |search_view, window, cx| {
+                let match_background_color = cx.theme().colors().search_match_background;
+                let active_match_background_color =
+                    cx.theme().colors().search_active_match_background;
+                let selection_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_document_highlight_bracket_background;
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
                     search_view.results_editor.update(cx, |editor, cx| editor
@@ -2571,12 +2640,52 @@ pub mod tests {
                         .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
+                assert_eq!(
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .all_text_background_highlights(window, cx)),
+                    &[
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            active_match_background_color
+                        ),
+                    ]
+                );
                 search_view.select_match(Direction::Next, window, cx);
             })
             .unwrap();
 
+        cx.run_until_parked();
+
         search_view
             .update(cx, |search_view, window, cx| {
+                let match_background_color = cx.theme().colors().search_match_background;
+                let active_match_background_color =
+                    cx.theme().colors().search_active_match_background;
+                let selection_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_document_highlight_bracket_background;
                 assert_eq!(search_view.active_match_index, Some(0));
                 assert_eq!(
                     search_view.results_editor.update(cx, |editor, cx| editor
@@ -2584,12 +2693,52 @@ pub mod tests {
                         .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
                 );
+                assert_eq!(
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .all_text_background_highlights(window, cx)),
+                    &[
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            active_match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            match_background_color
+                        ),
+                    ]
+                );
                 search_view.select_match(Direction::Prev, window, cx);
             })
             .unwrap();
 
+        cx.run_until_parked();
+
         search_view
             .update(cx, |search_view, window, cx| {
+                let match_background_color = cx.theme().colors().search_match_background;
+                let active_match_background_color =
+                    cx.theme().colors().search_active_match_background;
+                let selection_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_document_highlight_bracket_background;
                 assert_eq!(search_view.active_match_index, Some(2));
                 assert_eq!(
                     search_view.results_editor.update(cx, |editor, cx| editor
@@ -2597,18 +2746,89 @@ pub mod tests {
                         .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
+                assert_eq!(
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .all_text_background_highlights(window, cx)),
+                    &[
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            active_match_background_color
+                        ),
+                    ]
+                );
                 search_view.select_match(Direction::Prev, window, cx);
             })
             .unwrap();
 
+        cx.run_until_parked();
+
         search_view
-            .update(cx, |search_view, _, cx| {
+            .update(cx, |search_view, window, cx| {
+                let match_background_color = cx.theme().colors().search_match_background;
+                let active_match_background_color =
+                    cx.theme().colors().search_active_match_background;
+                let selection_background_color = cx
+                    .theme()
+                    .colors()
+                    .editor_document_highlight_bracket_background;
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
                     search_view.results_editor.update(cx, |editor, cx| editor
                         .selections
                         .display_ranges(&editor.display_snapshot(cx))),
                     [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
+                );
+                assert_eq!(
+                    search_view.results_editor.update(cx, |editor, cx| editor
+                        .all_text_background_highlights(window, cx)),
+                    &[
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 32)
+                                ..DisplayPoint::new(DisplayRow(2), 35),
+                            match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(2), 37)
+                                ..DisplayPoint::new(DisplayRow(2), 40),
+                            active_match_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            selection_background_color
+                        ),
+                        (
+                            DisplayPoint::new(DisplayRow(5), 6)
+                                ..DisplayPoint::new(DisplayRow(5), 9),
+                            match_background_color
+                        ),
+                    ]
                 );
             })
             .unwrap();
