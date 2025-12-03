@@ -16942,20 +16942,6 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
-        let mut unpreviewed_original_tab = false;
-        let item_id = cx.entity().item_id();
-        if !PreviewTabsSettings::get_global(cx).enable_keep_preview_on_code_navigation {
-            // If this setting is set to `false` *and* we navigate away from the current tab,
-            // then the current tab must be unpreviewed. We don't yet know whether we will
-            // navigate away from it, but unpreview it now to make sure it doesn't get closed.
-            workspace.update(cx, |workspace, cx| {
-                workspace.active_pane().update(cx, |pane, _| {
-                    unpreviewed_original_tab = pane.is_active_preview_item(item_id);
-                    pane.unpreview_item_if_preview(item_id);
-                })
-            });
-        }
-
         cx.spawn_in(window, async move |editor, cx| {
             let locations: Vec<Location> = future::join_all(definitions)
                 .await
