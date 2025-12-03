@@ -840,7 +840,7 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(point, ret))]
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
