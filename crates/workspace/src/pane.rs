@@ -873,10 +873,35 @@ impl Pane {
         self.preview_item_id == Some(item_id)
     }
 
+    /// Promotes the item with the given ID to not be a preview item.
+    /// This does nothing if it wasn't already a preview item.
+    pub fn unpreview_item_if_preview(&mut self, item_id: EntityId) {
+        if self.is_active_preview_item(item_id) {
+            self.preview_item_id = None;
+        }
+    }
+
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
-    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
-        if PreviewTabsSettings::get_global(cx).enabled {
+    ///
+    /// The old preview item (if there was one) is closed and its index is returned.
+    pub fn replace_preview_item_id(
+        &mut self,
+        item_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let idx = self.close_current_preview_item(window, cx);
+        self.set_preview_item_id(Some(item_id), cx);
+        idx
+    }
+
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    ///
+    /// This is a low-level method. Prefer `unpreview_item_if_preview()` or `set_new_preview_item()`.
+    pub(crate) fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
+        if item_id.is_none() || PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
     }
@@ -895,7 +920,7 @@ impl Pane {
             && preview_item.item_id() == item_id
             && !preview_item.preserve_preview(cx)
         {
-            self.set_preview_item_id(None, cx);
+            self.unpreview_item_if_preview(item_id);
         }
     }
 
@@ -936,14 +961,8 @@ impl Pane {
 
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                // If the item is already open, and the item is a preview item
-                // and we are not allowing items to open as preview, mark the item as persistent.
-                if let Some(preview_item_id) = pane.preview_item_id
-                    && let Some(tab) = pane.items.get(index)
-                    && tab.item_id() == preview_item_id
-                    && !allow_preview
-                {
-                    pane.set_preview_item_id(None, cx);
+                if !allow_preview && let Some(item) = pane.items.get(index) {
+                    pane.unpreview_item_if_preview(item.item_id());
                 }
                 if activate {
                     pane.activate_item(index, focus_item, focus_item, window, cx);
@@ -955,7 +974,7 @@ impl Pane {
                                window: &mut Window,
                                cx: &mut Context<Self>| {
             if allow_preview {
-                pane.set_preview_item_id(Some(new_item.item_id()), cx);
+                pane.replace_preview_item_id(new_item.item_id(), window, cx);
             }
 
             if let Some(text) = new_item.telemetry_event_text(cx) {
@@ -1036,6 +1055,7 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        self.set_preview_item_id(None, cx);
 
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
@@ -1981,9 +2001,7 @@ impl Pane {
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
 
-        if self.is_active_preview_item(item.item_id()) {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item.item_id());
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -2194,9 +2212,7 @@ impl Pane {
 
             if can_save {
                 pane.update_in(cx, |pane, window, cx| {
-                    if pane.is_active_preview_item(item.item_id()) {
-                        pane.set_preview_item_id(None, cx);
-                    }
+                    pane.unpreview_item_if_preview(item.item_id());
                     item.save(
                         SaveOptions {
                             format: should_format,
@@ -2450,8 +2466,8 @@ impl Pane {
             let id = self.item_for_index(ix)?.item_id();
             let should_activate = ix == self.active_item_index;
 
-            if matches!(operation, PinOperation::Pin) && self.is_active_preview_item(id) {
-                self.set_preview_item_id(None, cx);
+            if matches!(operation, PinOperation::Pin) {
+                self.unpreview_item_if_preview(id);
             }
 
             match operation {
@@ -2624,12 +2640,9 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
-                    if let Some(id) = pane.preview_item_id
-                        && id == item_id
-                        && event.click_count > 1
-                    {
-                        pane.set_preview_item_id(None, cx);
+                cx.listener(move |pane, event: &MouseDownEvent, _, _| {
+                    if event.click_count > 1 {
+                        pane.unpreview_item_if_preview(item_id);
                     }
                 }),
             )
@@ -3272,11 +3285,7 @@ impl Pane {
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
-        if let Some(preview_item_id) = self.preview_item_id
-            && item_id == preview_item_id
-        {
-            self.set_preview_item_id(None, cx);
-        }
+        self.unpreview_item_if_preview(item_id);
 
         let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
@@ -3788,15 +3797,17 @@ impl Render for Pane {
             .on_action(cx.listener(Self::toggle_pin_tab))
             .on_action(cx.listener(Self::unpin_all_tabs))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
-                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
-                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                        if pane.is_active_preview_item(active_item_id) {
-                            pane.set_preview_item_id(None, cx);
-                        } else {
-                            pane.set_preview_item_id(Some(active_item_id), cx);
+                this.on_action(
+                    cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, window, cx| {
+                        if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                            if pane.is_active_preview_item(active_item_id) {
+                                pane.unpreview_item_if_preview(active_item_id);
+                            } else {
+                                pane.replace_preview_item_id(active_item_id, window, cx);
+                            }
                         }
-                    }
-                }))
+                    }),
+                )
             })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {

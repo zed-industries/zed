@@ -619,9 +619,13 @@ impl VsCodeSettings {
     fn preview_tabs_settings_content(&self) -> Option<PreviewTabsSettingsContent> {
         skip_default(PreviewTabsSettingsContent {
             enabled: self.read_bool("workbench.editor.enablePreview"),
+            enable_preview_from_project_panel: None,
             enable_preview_from_file_finder: self
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
-            enable_preview_from_code_navigation: self
+            enable_preview_from_multibuffer: None,
+            enable_preview_multibuffer_from_code_navigation: None,
+            enable_preview_file_from_code_navigation: None,
+            enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
         })
     }

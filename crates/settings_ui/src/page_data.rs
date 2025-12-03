@@ -3145,7 +3145,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",
-                    description: "Show opened editors as Preview tabs.",
+                    description: "Show opened editors as preview tabs.",
                     field: Box::new(SettingField {
                         json_path: Some("preview_tabs.enabled"),
                         pick: |settings_content| {
@@ -3162,8 +3162,30 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From Project Panel",
+                    description: "Whether to open tabs in preview mode when opened from the project panel with a single click.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_from_project_panel"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_from_project_panel
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_project_panel = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From File Finder",
-                    description: "Whether to open tabs in Preview mode when selected from the file finder.",
+                    description: "Whether to open tabs in preview mode when selected from the file finder.",
                     field: Box::new(SettingField {
                         json_path: Some("preview_tabs.enable_preview_from_file_finder"),
                         pick: |settings_content| {
@@ -3184,22 +3206,88 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Preview From Code Navigation",
-                    description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.",
+                    title: "Enable Preview From Multibuffer",
+                    description: "Whether to open tabs in preview mode when opened from a multibuffer.",
                     field: Box::new(SettingField {
-                        json_path: Some("preview_tabs.enable_preview_from_code_navigation"),
+                        json_path: Some("preview_tabs.enable_preview_from_multibuffer"),
                         pick: |settings_content| {
                             settings_content
                                 .preview_tabs
                                 .as_ref()?
-                                .enable_preview_from_code_navigation
+                                .enable_preview_from_multibuffer
                                 .as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
-                                .enable_preview_from_code_navigation = value;
+                                .enable_preview_from_multibuffer = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview Multibuffer From Code Navigation",
+                    description: "Whether to open tabs in preview mode when code navigation is used to open a multibuffer.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_multibuffer_from_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_multibuffer_from_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_multibuffer_from_code_navigation = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview File From Code Navigation",
+                    description: "Whether to open tabs in preview mode when code navigation is used to open a single file.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_file_from_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_file_from_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_file_from_code_navigation = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Keep Preview On Code Navigation",
+                    description: "Whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_keep_preview_on_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_keep_preview_on_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_keep_preview_on_code_navigation = value;
                         },
                     }),
                     metadata: None,
