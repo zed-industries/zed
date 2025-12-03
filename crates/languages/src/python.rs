@@ -28,6 +28,7 @@ use std::env::consts;
 use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -884,7 +885,7 @@ impl PythonContextProvider {
         variables: &task::TaskVariables,
     ) -> Option<(VariableName, String)> {
         let python_module_name =
-            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?);
+            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?)?;
 
         let unittest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
@@ -941,9 +942,10 @@ impl PythonContextProvider {
         &self,
         variables: &task::TaskVariables,
     ) -> Result<(VariableName, String)> {
-        let python_module_name = python_module_name_from_relative_path(
-            variables.get(&VariableName::RelativeFile).unwrap_or(""),
-        );
+        let python_module_name = variables
+            .get(&VariableName::RelativeFile)
+            .and_then(|module| python_module_name_from_relative_path(module))
+            .unwrap_or_default();
 
         let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
 
@@ -951,12 +953,15 @@ impl PythonContextProvider {
     }
 }
 
-fn python_module_name_from_relative_path(relative_path: &str) -> String {
-    let path_with_dots = relative_path.replace('/', ".");
-    path_with_dots
-        .strip_suffix(".py")
-        .unwrap_or(&path_with_dots)
-        .to_string()
+fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
+    let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
+    let path_with_dots = rel_path.display(PathStyle::Posix).replace('/', ".");
+    Some(
+        path_with_dots
+            .strip_suffix(".py")
+            .map(ToOwned::to_owned)
+            .unwrap_or(path_with_dots),
+    )
 }
 
 fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
@@ -2311,6 +2316,8 @@ mod tests {
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
+    use crate::python::python_module_name_from_relative_path;
+
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -2438,5 +2445,36 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_python_module_name_from_relative_path() {
+        assert_eq!(
+            python_module_name_from_relative_path("foo/bar.py"),
+            Some("foo.bar".to_string())
+        );
+        assert_eq!(
+            python_module_name_from_relative_path("foo/bar"),
+            Some("foo.bar".to_string())
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar.py"),
+                Some("foo.bar".to_string())
+            );
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar"),
+                Some("foo.bar".to_string())
+            );
+        } else {
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar.py"),
+                Some("foo\\bar".to_string())
+            );
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar"),
+                Some("foo\\bar".to_string())
+            );
+        }
     }
 }
