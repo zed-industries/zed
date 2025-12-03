@@ -646,11 +646,10 @@ impl Model {
                 _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            (Model::Claude3_5Sonnet, "us-gov", _) | (Model::Claude3Haiku, "us-gov", _) => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
             (
-                Model::Claude3_7Sonnet
+                Model::Claude3_5Sonnet
+                | Model::Claude3_5Haiku
+                | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking,
