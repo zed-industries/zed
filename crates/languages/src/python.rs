@@ -131,7 +131,10 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             _ => '8',
         };
 
-        item.sort_text = Some(format!("{}{}{}", visibility_priority, kind_priority, item.label));
+        item.sort_text = Some(format!(
+            "{}{}{}",
+            visibility_priority, kind_priority, item.label
+        ));
     }
 }
 
