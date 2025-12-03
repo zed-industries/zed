@@ -614,13 +614,14 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.entity();
+        let view = cx.weak_entity();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |mut menu, window, _| {
+                    ContextMenu::build(window, cx, |mut menu, _, _| {
                         for (layer_ix, layer) in active_buffer.syntax_layers().enumerate() {
+                            let view = view.clone();
                             menu = menu.entry(
                                 format!(
                                     "{} {}",
@@ -628,9 +629,12 @@ impl SyntaxTreeToolbarItemView {
                                     format_node_range(layer.node())
                                 ),
                                 None,
-                                window.handler_for(&view, move |view, window, cx| {
-                                    view.select_layer(layer_ix, window, cx);
-                                }),
+                                move |window, cx| {
+                                    view.update(cx, |view, cx| {
+                                        view.select_layer(layer_ix, window, cx);
+                                    })
+                                    .ok();
+                                },
                             );
                         }
                         menu
