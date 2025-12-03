@@ -3268,7 +3268,7 @@ async fn test_lsp_pull_diagnostics(
                 2,
                 "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
             );
-            for diagnostic in dbg!(all_diagnostics) {
+            for diagnostic in all_diagnostics {
                 assert!(
                     expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
                     "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
