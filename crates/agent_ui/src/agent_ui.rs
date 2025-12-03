@@ -344,9 +344,37 @@ fn init_language_model_settings(cx: &mut App) {
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
         |_, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged(_)
-            | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            language_model::Event::ProviderStateChanged(id) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                eprintln!(
+                    "[{}ms] agent_ui global subscription: ProviderStateChanged for {:?}",
+                    now, id
+                );
+                update_active_language_model_from_settings(cx);
+            }
+            language_model::Event::AddedProvider(id) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                eprintln!(
+                    "[{}ms] agent_ui global subscription: AddedProvider for {:?}",
+                    now, id
+                );
+                update_active_language_model_from_settings(cx);
+            }
+            language_model::Event::RemovedProvider(id) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                eprintln!(
+                    "[{}ms] agent_ui global subscription: RemovedProvider for {:?}",
+                    now, id
+                );
                 update_active_language_model_from_settings(cx);
             }
             _ => {}

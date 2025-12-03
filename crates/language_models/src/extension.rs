@@ -18,11 +18,19 @@ impl ExtensionLanguageModelProxy {
 impl ExtensionLanguageModelProviderProxy for ExtensionLanguageModelProxy {
     fn register_language_model_provider(
         &self,
-        _provider_id: Arc<str>,
+        provider_id: Arc<str>,
         register_fn: LanguageModelProviderRegistration,
         cx: &mut App,
     ) {
+        eprintln!(
+            "ExtensionLanguageModelProxy::register_language_model_provider called for {}",
+            provider_id
+        );
         register_fn(cx);
+        eprintln!(
+            "ExtensionLanguageModelProxy::register_language_model_provider completed for {}",
+            provider_id
+        );
     }
 
     fn unregister_language_model_provider(&self, provider_id: Arc<str>, cx: &mut App) {

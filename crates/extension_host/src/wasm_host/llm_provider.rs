@@ -40,10 +40,11 @@ impl ExtensionLanguageModelProvider {
         extension: WasmExtension,
         provider_info: LlmProviderInfo,
         models: Vec<LlmModelInfo>,
+        is_authenticated: bool,
         cx: &mut App,
     ) -> Self {
         let state = cx.new(|_| ExtensionLlmProviderState {
-            is_authenticated: false,
+            is_authenticated,
             available_models: models,
         });
 
@@ -61,7 +62,9 @@ impl ExtensionLanguageModelProvider {
 
 impl LanguageModelProvider for ExtensionLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId::from(self.provider_id_string())
+        let id = LanguageModelProviderId::from(self.provider_id_string());
+        eprintln!("ExtensionLanguageModelProvider::id() -> {:?}", id);
+        id
     }
 
     fn name(&self) -> LanguageModelProviderName {
@@ -111,10 +114,16 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
+        eprintln!(
+            "ExtensionLanguageModelProvider::provided_models called for {}, returning {} models",
+            self.provider_info.name,
+            state.available_models.len()
+        );
         state
             .available_models
             .iter()
             .map(|model_info| {
+                eprintln!("  - model: {}", model_info.name);
                 Arc::new(ExtensionLanguageModel {
                     extension: self.extension.clone(),
                     model_info: model_info.clone(),

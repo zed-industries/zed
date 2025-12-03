@@ -1364,7 +1364,7 @@ impl ExtensionStore {
             let mut wasm_extensions: Vec<(
                 Arc<ExtensionManifest>,
                 WasmExtension,
-                Vec<(LlmProviderInfo, Vec<LlmModelInfo>)>,
+                Vec<(LlmProviderInfo, Vec<LlmModelInfo>, bool)>,
             )> = Vec::new();
             for extension in extension_entries {
                 if extension.manifest.lib.kind.is_none() {
@@ -1384,8 +1384,14 @@ impl ExtensionStore {
                 match wasm_extension {
                     Ok(wasm_extension) => {
                         // Query for LLM providers if the manifest declares any
+                        // Tuple is (provider_info, models, is_authenticated)
                         let mut llm_providers_with_models = Vec::new();
                         if !extension.manifest.language_model_providers.is_empty() {
+                            eprintln!(
+                                "Extension {} declares {} LLM providers in manifest, querying...",
+                                extension.manifest.id,
+                                extension.manifest.language_model_providers.len()
+                            );
                             let providers_result = wasm_extension
                                 .call(|ext, store| {
                                     async move { ext.call_llm_providers(store).await }.boxed()
@@ -1393,6 +1399,11 @@ impl ExtensionStore {
                                 .await;
 
                             if let Ok(Ok(providers)) = providers_result {
+                                eprintln!(
+                                    "Extension {} returned {} LLM providers",
+                                    extension.manifest.id,
+                                    providers.len()
+                                );
                                 for provider_info in providers {
                                     let models_result = wasm_extension
                                         .call({
@@ -1410,7 +1421,7 @@ impl ExtensionStore {
                                     let models: Vec<LlmModelInfo> = match models_result {
                                         Ok(Ok(Ok(models))) => models,
                                         Ok(Ok(Err(e))) => {
-                                            log::error!(
+                                            eprintln!(
                                                 "Failed to get models for LLM provider {} in extension {}: {}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1419,7 +1430,7 @@ impl ExtensionStore {
                                             Vec::new()
                                         }
                                         Ok(Err(e)) => {
-                                            log::error!(
+                                            eprintln!(
                                                 "Wasm error calling llm_provider_models for {} in extension {}: {:?}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1428,7 +1439,7 @@ impl ExtensionStore {
                                             Vec::new()
                                         }
                                         Err(e) => {
-                                            log::error!(
+                                            eprintln!(
                                                 "Extension call failed for llm_provider_models {} in extension {}: {:?}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1438,8 +1449,40 @@ impl ExtensionStore {
                                         }
                                     };
 
-                                    llm_providers_with_models.push((provider_info, models));
+                                    // Query initial authentication state
+                                    let is_authenticated = wasm_extension
+                                        .call({
+                                            let provider_id = provider_info.id.clone();
+                                            |ext, store| {
+                                                async move {
+                                                    ext.call_llm_provider_is_authenticated(
+                                                        store,
+                                                        &provider_id,
+                                                    )
+                                                    .await
+                                                }
+                                                .boxed()
+                                            }
+                                        })
+                                        .await
+                                        .unwrap_or(Ok(false))
+                                        .unwrap_or(false);
+
+                                    eprintln!(
+                                        "LLM provider {} has {} models, is_authenticated={}",
+                                        provider_info.id,
+                                        models.len(),
+                                        is_authenticated
+                                    );
+                                    llm_providers_with_models
+                                        .push((provider_info, models, is_authenticated));
                                 }
+                            } else {
+                                eprintln!(
+                                    "Failed to get LLM providers from extension {}: {:?}",
+                                    extension.manifest.id,
+                                    providers_result
+                                );
                             }
                         }
 
@@ -1522,28 +1565,34 @@ impl ExtensionStore {
                     }
 
                     // Register LLM providers
-                    for (provider_info, models) in llm_providers_with_models {
+                    for (provider_info, models, is_authenticated) in llm_providers_with_models {
                         let provider_id: Arc<str> =
                             format!("{}:{}", manifest.id, provider_info.id).into();
-                        let wasm_ext = wasm_extension.clone();
+                        let wasm_ext = extension.as_ref().clone();
                         let pinfo = provider_info.clone();
                         let mods = models.clone();
+                        let auth = *is_authenticated;
 
                         this.proxy.register_language_model_provider(
-                            provider_id,
+                            provider_id.clone(),
                             Box::new(move |cx: &mut App| {
+                                eprintln!("register_fn closure called, creating provider");
                                 let provider = Arc::new(ExtensionLanguageModelProvider::new(
-                                    wasm_ext, pinfo, mods, cx,
+                                    wasm_ext, pinfo, mods, auth, cx,
                                 ));
+                                eprintln!("Provider created, registering with registry");
                                 language_model::LanguageModelRegistry::global(cx).update(
                                     cx,
                                     |registry, cx| {
+                                        eprintln!("Inside registry.register_provider");
                                         registry.register_provider(provider, cx);
                                     },
                                 );
+                                eprintln!("Provider registered");
                             }),
                             cx,
                         );
+                        eprintln!("register_language_model_provider call completed for {}", provider_id);
                     }
                 }
 
