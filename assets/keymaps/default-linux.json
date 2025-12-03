@@ -1342,5 +1342,15 @@
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch"
     }
+  },
+  {
+    "context": "Launchpad",
+    "bindings": {
+      "ctrl-1": ["launchpad::OpenRecentProject", 0],
+      "ctrl-2": ["launchpad::OpenRecentProject", 1],
+      "ctrl-3": ["launchpad::OpenRecentProject", 2],
+      "ctrl-4": ["launchpad::OpenRecentProject", 3],
+      "ctrl-5": ["launchpad::OpenRecentProject", 4]
+    }
   }
 ]

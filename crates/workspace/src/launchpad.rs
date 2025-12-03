@@ -2,6 +2,8 @@ use gpui::{
     Action, AnyElement, App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, Styled, WeakEntity, Window,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, ButtonSize, Clickable, Divider, DividerColor, FixedWidth, Headline, Icon, IconName,
@@ -113,6 +115,13 @@ pub struct LaunchpadPage {
     recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>>,
 }
 
+#[derive(PartialEq, Clone, Debug, Deserialize, Serialize, JsonSchema, Action)]
+#[action(namespace = launchpad)]
+#[serde(transparent)]
+pub struct OpenRecentProject {
+    pub index: usize,
+}
+
 impl LaunchpadPage {
     pub fn new(
         workspace: WeakEntity<Workspace>,
@@ -142,6 +151,36 @@ impl LaunchpadPage {
             workspace,
             focus_handle,
             recent_workspaces: None,
+        }
+    }
+
+    fn open_recent_project(
+        &mut self,
+        action: &OpenRecentProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(recent_workspaces) = &self.recent_workspaces {
+            if let Some((_workspace_id, location, paths)) = recent_workspaces.get(action.index) {
+                let paths = paths.clone();
+                let location = location.clone();
+                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+                let workspace = self.workspace.clone();
+
+                if is_local {
+                    let paths = paths.paths().to_vec();
+                    cx.spawn_in(window, async move |_, cx| {
+                        let _ = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace
+                                .open_workspace_for_paths(true, paths, window, cx)
+                                .detach();
+                        });
+                    })
+                    .detach();
+                } else {
+                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
+                }
+            }
         }
     }
 
@@ -208,6 +247,7 @@ impl LaunchpadPage {
 
     fn render_recent_project(
         &self,
+        index: usize,
         workspace_id: WorkspaceId,
         location: &SerializedWorkspaceLocation,
         paths: &PathList,
@@ -227,34 +267,31 @@ impl LaunchpadPage {
             }
         };
 
-        let paths = paths.clone();
-        let is_local = matches!(location, SerializedWorkspaceLocation::Local);
-        let workspace = self.workspace.clone();
-
         ButtonLike::new(("recent-project", i64::from(workspace_id) as u64))
             .full_width()
             .size(ButtonSize::Medium)
             .child(
                 h_flex()
                     .w_full()
-                    .gap_2()
-                    .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
-                    .child(Label::new(title)),
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                            .child(Label::new(title)),
+                    )
+                    .child(
+                        KeyBinding::for_action_in(
+                            &OpenRecentProject { index },
+                            &self.focus_handle,
+                            cx,
+                        )
+                        .size(rems_from_px(12.)),
+                    ),
             )
-            .on_click(cx.listener(move |_, _, window, cx| {
-                if is_local {
-                    let paths = paths.paths().to_vec();
-                    let workspace = workspace.clone();
-                    cx.spawn_in(window, async move |_, cx| {
-                        let _ = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(true, paths, window, cx).detach();
-                        });
-                    })
-                    .detach();
-                } else {
-                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
-                }
-            }))
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(OpenRecentProject { index }.boxed_clone(), cx);
+            })
     }
 }
 
@@ -269,7 +306,8 @@ impl Render for LaunchpadPage {
             .into_iter()
             .flatten()
             .take(5)
-            .map(|(id, loc, paths)| self.render_recent_project(*id, loc, paths, cx))
+            .enumerate()
+            .map(|(index, (id, loc, paths))| self.render_recent_project(index, *id, loc, paths, cx))
             .collect::<Vec<_>>();
 
         h_flex()
@@ -277,23 +315,25 @@ impl Render for LaunchpadPage {
             .justify_center()
             .bg(bg_color)
             .track_focus(&self.focus_handle(cx))
+            .key_context("Launchpad")
+            .on_action(cx.listener(Self::open_recent_project))
             .child(
-            h_flex()
-                .px_12()
-                .py_40()
-                .size_full()
-                .relative()
-                .max_w(px(1100.))
-                .child(
-                    div().size_full().max_w_128().mx_auto().child(header).child(
-                        v_flex()
-                            .mt_10()
-                            .gap_6()
-                            .child(GET_STARTED.render(0, &self.focus_handle, cx))
-                            .child(self.render_recent_project_section(recent_projects, cx)),
+                h_flex()
+                    .px_12()
+                    .py_40()
+                    .size_full()
+                    .relative()
+                    .max_w(px(1100.))
+                    .child(
+                        div().size_full().max_w_128().mx_auto().child(header).child(
+                            v_flex()
+                                .mt_10()
+                                .gap_6()
+                                .child(GET_STARTED.render(0, &self.focus_handle, cx))
+                                .child(self.render_recent_project_section(recent_projects, cx)),
+                        ),
                     ),
-                ),
-        )
+            )
     }
 }
 
