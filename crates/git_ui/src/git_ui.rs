@@ -267,6 +267,14 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+    workspace.register_action(|workspace, _action: &git::AddSafeDirectory, window, cx| {
+        let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            panel.add_safe_directory(window, cx);
+        });
+    });
 }
 
 fn open_modified_files(

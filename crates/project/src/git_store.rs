@@ -1729,6 +1729,19 @@ impl GitStore {
         }
     }
 
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<()>> {
+        match &self.state {
+            GitStoreState::Local { fs, .. } => {
+                let fs = fs.clone();
+                cx.background_executor()
+                    .spawn(async move { fs.git_config(&path, args).await })
+            }
+            GitStoreState::Remote { .. } => {
+                todo!("Implement `git_config` implementation for remote repositories");
+            }
+        }
+    }
+
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,

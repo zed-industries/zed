@@ -151,6 +151,7 @@ pub trait Fs: Send + Sync {
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1083,6 +1084,10 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
+        // TODO!: Refactor to use new `git_config` method below, once
+        // implementation has been finalized and it starts returning the output
+        // of the command, as this caller would need it in order to extract the
+        // default branch name.
         let config = new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
@@ -1126,6 +1131,28 @@ impl Fs for RealFs {
         if !output.status.success() {
             anyhow::bail!(
                 "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<()> {
+        let output = new_smol_command("git")
+            .current_dir(abs_work_directory)
+            .args(
+                [String::from("config")]
+                    .into_iter()
+                    .chain(args)
+                    .collect::<Vec<_>>(),
+            )
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "git config failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
@@ -2751,6 +2778,10 @@ impl Fs for FakeFs {
 
     async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
+    }
+
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<()> {
+        anyhow::bail!("Git config is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {

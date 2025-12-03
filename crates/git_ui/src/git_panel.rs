@@ -4344,7 +4344,9 @@ impl GitPanel {
         let panel_text = match (self.git_access, self.active_repository.is_some()) {
             (GitAccess::No, _) => {
                 // TODO!: What if there's more than one root path? When can that
-                // actually happen?
+                // actually happen? Maybe take a look at `git_init` to see how
+                // that handles the fact that no directory might be open, which
+                // I believe is the case when Zed is open the first time?
                 if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
                     workspace.root_paths(cx).first().cloned()
                 }) {
@@ -4379,23 +4381,22 @@ impl GitPanel {
         // contents.
         //
         // TODO!: What if there's more than one root path? When can that
-        // actually happen?
-        let path = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace.root_paths(cx).first().cloned()
-            })
-            .expect("Should be able to read from workspace")
-            .expect("Should have at least one root path");
+        // actually happen? Maybe take a look at `git_init` to see how
+        // that handles the fact that no directory might be open, which
+        // I believe is the case when Zed is open the first time?
+        let directory = if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
+            workspace.root_paths(cx).first().cloned()
+        }) {
+            path.display().to_string()
+        } else {
+            String::new()
+        };
 
         if matches!(self.git_access, GitAccess::No) {
             button = Some(
                 panel_filled_button("Trust Directory")
                     .tooltip(Tooltip::for_action_title_in(
-                        format!(
-                            "git config --global --add safe.directory {}",
-                            path.display()
-                        ),
+                        format!("git config --global --add safe.directory {}", directory),
                         &git::Init,
                         &self.focus_handle,
                     ))
