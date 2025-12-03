@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/max/zed branch:*)",
+      "Bash(git -C /Users/max/zed log --oneline -20)",
+      "Bash(git -C /Users/max/zed status)",
+      "Bash(git -C /Users/max/zed log:*)",
+      "Bash(find:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(cargo check:*)",
+      "Bash(/Users/max/.cargo/bin/cargo check -p agent)",
+      "Bash(/Users/max/.cargo/bin/cargo check -p zed)",
+      "Bash(./script/clippy:*)",
+      "Bash(/Users/max/.cargo/bin/cargo clippy -p agent --all-targets)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
