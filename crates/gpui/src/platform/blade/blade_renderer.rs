@@ -963,8 +963,15 @@ impl BladeRenderer {
             })) {
                 Ok(sp) => sp,
                 Err(e) => {
-                    log::error!("GPU submit panicked - device lost: {:?}", e);
-                    return Err(anyhow::anyhow!("GPU device crashed during submit"));
+                    let msg = if let Some(s) = e.downcast_ref::<String>() {
+                        s.as_str()
+                    } else if let Some(s) = e.downcast_ref::<&str>() {
+                        *s
+                    } else {
+                        "unknown panic"
+                    };
+                    log::error!("GPU crash: {}", msg);
+                    return Err(anyhow::anyhow!("GPU device crashed during submit: {}", msg));
                 }
             }
         };
