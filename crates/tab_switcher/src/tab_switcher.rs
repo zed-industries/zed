@@ -565,7 +565,14 @@ impl TabSwitcherDelegate {
     /// as the pane's active item can be indirectly updated and this method
     /// ensures that the picker can react to those changes.
     fn sync_selected_index(&mut self, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
-        let Ok(Some(item)) = self.pane.read_with(cx, |pane, _cx| pane.active_item()) else {
+        let item = if self.is_all_panes {
+            self.workspace
+                .read_with(cx, |workspace, cx| workspace.active_item(cx))
+        } else {
+            self.pane.read_with(cx, |pane, _cx| pane.active_item())
+        };
+
+        let Ok(Some(item)) = item else {
             return;
         };
 
