@@ -20,36 +20,29 @@ enum NSCellImagePosition {
 pub struct MacTray {
     visible: bool,
     pub(crate) ns_status_bar: id,
-    pub(crate) ns_menu: Option<id>,
 }
 
 impl MacTray {
     pub(crate) fn create(tray: &Tray, ns_menu: Option<id>) -> Self {
         let mut this = Self {
-            ns_status_bar: Self::create_status_bar(ns_menu),
-            ns_menu,
+            ns_status_bar: Self::create_status_bar(),
             visible: tray.visible,
         };
         this.update(tray, ns_menu);
         this
     }
 
-    fn create_status_bar(ns_menu: Option<id>) -> id {
+    fn create_status_bar() -> id {
         unsafe {
             let ns_status_bar =
                 NSStatusBar::systemStatusBar(nil).statusItemWithLength_(NSVariableStatusItemLength);
             let _: () = msg_send![ns_status_bar, retain];
-
-            if let Some(ns_menu) = &ns_menu {
-                let _: () = msg_send![ns_status_bar, setMenu: *ns_menu];
-            }
 
             ns_status_bar
         }
     }
 
     pub(crate) fn update(&mut self, tray: &Tray, ns_menu: Option<id>) {
-        self.ns_menu = ns_menu;
         self.set_visible(tray.visible);
         if !tray.visible {
             return;
@@ -57,6 +50,10 @@ impl MacTray {
 
         unsafe {
             let button = self.ns_status_bar.button();
+
+            if let Some(ns_menu) = &ns_menu {
+                let _: () = msg_send![self.ns_status_bar, setMenu: *ns_menu];
+            }
 
             let tooltip = NSString::alloc(nil).init_str(
                 tray.tooltip
@@ -98,7 +95,7 @@ impl MacTray {
 
         self.visible = visible;
         if visible {
-            self.ns_status_bar = Self::create_status_bar(self.ns_menu)
+            self.ns_status_bar = Self::create_status_bar()
         } else {
             self.remove();
         }

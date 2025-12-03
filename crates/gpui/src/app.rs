@@ -634,7 +634,6 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
-    pub(crate) tray: Option<Tray>,
     quit_mode: QuitMode,
     quitting: bool,
 }
@@ -710,7 +709,6 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
-                tray: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -1926,14 +1924,8 @@ impl App {
             None
         };
 
-        self.tray = Some(tray.clone());
         self.platform
             .set_tray(tray, menu_items, &self.keymap.borrow())
-    }
-
-    /// Gets the system tray of the application.
-    pub fn tray(&self) -> Option<&Tray> {
-        self.tray.as_ref()
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.

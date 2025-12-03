@@ -178,7 +178,8 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
-    system_tray: Option<MacTray>,
+    tray: Option<MacTray>,
+    tray_menu: Option<id>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -219,7 +220,8 @@ impl MacPlatform {
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
-            system_tray: None,
+            tray: None,
+            tray_menu: None,
             on_keyboard_layout_change: None,
             menus: None,
             keyboard_mapper,
@@ -953,26 +955,24 @@ impl Platform for MacPlatform {
     fn set_tray(&self, mut tray: Tray, menu: Option<Vec<MenuItem>>, keymap: &Keymap) {
         let mut state = self.0.lock();
 
-        let mut menu_id = None;
         if let Some(menu) = menu {
             unsafe {
                 let app: id = msg_send![APP_CLASS, sharedApplication];
                 let actions = &mut state.menu_actions;
                 let new = Self::create_menu(menu, NSWindow::delegate(app), actions, keymap);
-                menu_id = Some(new);
+                if let Some(tray_menu) = state.tray_menu {
+                    CFRelease(tray_menu as _);
+                }
+                state.tray_menu = Some(new);
             }
         }
 
-        if let Some(system_tray) = &mut state.system_tray {
-            if let Some(ns_menu) = system_tray.ns_menu {
-                unsafe {
-                    CFRelease(ns_menu as _);
-                }
-            }
-            system_tray.update(&tray, menu_id);
+        let tray_menu = state.tray_menu.clone();
+        if let Some(mac_tray) = &mut state.tray {
+            mac_tray.update(&tray, tray_menu);
         } else {
-            let mut new_tray = MacTray::create(&tray, menu_id);
-            state.system_tray = Some(new_tray);
+            let mut new_tray = MacTray::create(&tray, tray_menu);
+            state.tray = Some(new_tray);
         }
     }
 
