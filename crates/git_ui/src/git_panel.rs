@@ -4014,7 +4014,7 @@ impl GitPanel {
                     context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone())
             }
 
-            let mut context_menu = context_menu
+            context_menu = context_menu
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone());
