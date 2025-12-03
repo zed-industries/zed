@@ -1,6 +1,6 @@
 How to use our internal tools to profile and keep Zed fast.
 
-# Flamechart/CPU profiling
+# Rough quick CPU profiling (Flamechart)
 
 See what the CPU spends the most time on. Strongly recommend you use
 [samply](https://github.com/mstange/samply). It opens an interactive profile in
@@ -11,6 +11,38 @@ See [samply](https://github.com/mstange/samply)'s README on how to install and r
 The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
 
 <img width="851" height="613" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
+
+# In depth CPU profiling (Tracing)
+
+See how long each annotated function call took and its arguments (if
+configured).
+
+Annotate any function you need appear in the profile with instrument. For more
+details see
+[tracing-instrument](https://docs.rs/tracing/latest/tracing/attr.instrument.html):
+
+```rust
+#[instrument(skip_all)]
+fn should_appear_in_profile(kitty: Cat) {
+    sleep(QUITE_LONG)
+}
+```
+
+Then either compile Zed in debug mode or with `--profile release-tracing`.
+
+## One time Setup/Building the profiler:
+
+- Clone the repo at git@github.com:wolfpld/tracy.git
+- `cd profiler && mkdir build && cd build`
+- Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
+- Build the profiler: `ninja`
+- [Optional] move the profiler somewhere nice like ~/.local/bin on linux
+
+## Usage
+
+Open the profiler (tracy-profiler), you should see zed in the list of `Discovered clients` click it.
+
+To find functions that take a long time follow this image:
 
 # Task/Async profiling
 
@@ -24,10 +56,10 @@ look at the results live.
 ## Setup/Building the importer:
 
 - Clone the repo at git@github.com:zed-industries/tracy.git on v0.12.2 branch
-- `cd profiler && mkdir build && cd build`
+- `cd import && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
 - Build the importer: `ninja`
-- Run the impoter on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof /path/to/output.tracy`
+- Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof /path/to/output.tracy`
 - Open the trace in tracy:
   - If you're on windows download the v0.12.2 version from the releases on the upstream repo
   - If you're on other platforms open it on the website: https://tracy.nereid.pl/ (the version might mismatch so your luck might vary, we need to host our own ideally..)
