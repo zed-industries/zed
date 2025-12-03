@@ -13,8 +13,8 @@ use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Hsla,
-    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
+    ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
