@@ -46,7 +46,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
-    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
+    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator,
     PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
     right_click_menu,
 };
@@ -396,6 +396,7 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+    launchpad: Option<Entity<crate::launchpad::LaunchpadPage>>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -540,6 +541,7 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            launchpad: None,
         }
     }
 
@@ -625,6 +627,10 @@ impl Pane {
             {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
+            }
+        } else if let Some(launchpad) = self.launchpad.as_ref() {
+            if self.focus_handle.is_focused(window) {
+                launchpad.read(cx).focus_handle(cx).focus(window);
             }
         }
     }
@@ -3915,10 +3921,13 @@ impl Render for Pane {
                             if has_worktrees {
                                 placeholder
                             } else {
-                                placeholder.child(
-                                    Label::new("Open a file or project to get started.")
-                                        .color(Color::Muted),
-                                )
+                                if self.launchpad.is_none() {
+                                    let workspace = self.workspace.clone();
+                                    self.launchpad = Some(cx.new(|cx| {
+                                        crate::launchpad::LaunchpadPage::new(workspace, window, cx)
+                                    }));
+                                }
+                                placeholder.child(self.launchpad.clone().unwrap())
                             }
                         }
                     })
