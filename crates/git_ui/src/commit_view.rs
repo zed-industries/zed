@@ -68,6 +68,7 @@ struct GitBlob {
     path: RepoPath,
     worktree_id: WorktreeId,
     is_deleted: bool,
+    display_name: Arc<str>,
 }
 
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
@@ -157,6 +158,7 @@ impl CommitView {
             });
             editor
         });
+        let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let first_worktree_id = project
             .read(cx)
@@ -180,10 +182,20 @@ impl CommitView {
                             .or(first_worktree_id)
                     })?
                     .context("project has no worktrees")?;
+                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let file_name = file
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| file.path.display(PathStyle::Posix).to_string());
+                let display_name: Arc<str> =
+                    Arc::from(format!("{short_sha} - {file_name}").into_boxed_str());
+
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
                     is_deleted,
                     worktree_id,
+                    display_name,
                 }) as Arc<dyn language::File>;
 
                 let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
@@ -647,7 +659,7 @@ impl language::File for GitBlob {
     }
 
     fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
-        self.path.file_name().unwrap()
+        self.display_name.as_ref()
     }
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
