@@ -63,9 +63,8 @@ pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
     /// Enables the experimental edit prediction context retrieval system.
-    #[schemars(skip)]
     #[serde(default)]
-    pub edit_prediction_context_retrieval: bool,
+    pub experimental_edit_prediction_context_retrieval: bool,
 }
 
 /// The provider that supplies edit predictions.
