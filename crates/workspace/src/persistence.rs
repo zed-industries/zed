@@ -20,7 +20,10 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
-use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
+use remote::{
+    DockerExecConnectionOptions, RemoteConnectionOptions, SshConnectionOptions,
+    WslConnectionOptions,
+};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -728,9 +731,9 @@ impl WorkspaceDb {
     pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
-        ssh_project_id: RemoteConnectionId,
+        remote_project_id: RemoteConnectionId,
     ) -> Option<SerializedWorkspace> {
-        self.workspace_for_roots_internal(worktree_roots, Some(ssh_project_id))
+        self.workspace_for_roots_internal(worktree_roots, Some(remote_project_id))
     }
 
     pub(crate) fn workspace_for_roots_internal<P: AsRef<Path>>(
@@ -806,9 +809,20 @@ impl WorkspaceDb {
             order: paths_order,
         });
 
+        let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
+            self.remote_connection(remote_connection_id)
+                .context("Get remote connection")
+                .log_err()
+        } else {
+            None
+        };
+
         Some(SerializedWorkspace {
             id: workspace_id,
-            location: SerializedWorkspaceLocation::Local,
+            location: match remote_connection_options {
+                Some(options) => SerializedWorkspaceLocation::Remote(options),
+                None => SerializedWorkspaceLocation::Local,
+            },
             paths,
             center_group: self
                 .get_center_pane_group(workspace_id)
@@ -1126,9 +1140,12 @@ impl WorkspaceDb {
                 distro = Some(options.distro_name);
                 user = options.user;
             }
-            RemoteConnectionOptions::DockerExec(_opts) => {
-                kind = RemoteConnectionKind::Ssh; // TODO
-                user = None;
+            RemoteConnectionOptions::DockerExec(options) => {
+                kind = RemoteConnectionKind::DockerExec;
+                // Container ID should uniquely identify the remote connection
+                host = Some(options.container_id);
+                user = Some(options.name);
+                distro = Some(options.working_directory); // OK this is getting silly
             }
         }
         Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
@@ -1299,6 +1316,14 @@ impl WorkspaceDb {
                 username: user,
                 ..Default::default()
             })),
+            RemoteConnectionKind::DockerExec => Some(RemoteConnectionOptions::DockerExec(
+                DockerExecConnectionOptions {
+                    container_id: host?,
+                    name: user?,
+                    upload_binary_over_docker_exec: false, // TODO
+                    working_directory: distro?,
+                },
+            )),
         }
     }
 

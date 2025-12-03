@@ -437,7 +437,7 @@ impl RemoteConnection for DockerExecConnection {
     fn start_proxy(
         &self,
         unique_identifier: String,
-        _reconnect: bool,
+        reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
@@ -473,6 +473,9 @@ impl RemoteConnection for DockerExecConnection {
         docker_args.push("proxy");
         docker_args.push("--identifier");
         docker_args.push(&unique_identifier);
+        if reconnect {
+            docker_args.push("--reconnect");
+        }
 
         // if reconnect {
         //     proxy_args.push("--reconnect".to_owned());
@@ -553,7 +556,7 @@ impl RemoteConnection for DockerExecConnection {
         true
     }
 
-    // This provides a TTY, but normall we can't count on one.
+    // This provides a TTY, but normally we can't count on one.
     fn build_command(
         &self,
         program: Option<String>,
@@ -594,11 +597,6 @@ impl RemoteConnection for DockerExecConnection {
             }
         }
 
-        let mut env_str = String::new();
-
-        for (k, v) in env.iter() {
-            write!(env_str, "{}={}", k, v)?; // TODO shell escaping
-        }
         write!(exec, "exec env ")?;
 
         let mut inner_program = Vec::new();
@@ -621,9 +619,9 @@ impl RemoteConnection for DockerExecConnection {
             the_args.push(parsed_working_dir.unwrap());
         }
 
-        if env_str != "" {
+        for (k, v) in env.iter() {
             the_args.push("-e".to_string());
-            the_args.push(env_str);
+            the_args.push(format!("{}={}", k, v));
         }
 
         the_args.push("-it".to_string());
