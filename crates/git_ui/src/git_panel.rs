@@ -4011,15 +4011,21 @@ impl GitPanel {
 
             if entry.status.is_created() {
                 context_menu =
-                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
+                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone())
+            }
+
+            let mut context_menu = context_menu
+                .separator()
+                .action("Open Diff", Confirm.boxed_clone())
+                .action("Open File", SecondaryConfirm.boxed_clone());
+
+            if !entry.status.is_created() {
+                context_menu = context_menu
+                    .separator()
+                    .action("File History", Box::new(git::FileHistory));
             }
 
             context_menu
-                .separator()
-                .action("Open Diff", Confirm.boxed_clone())
-                .action("Open File", SecondaryConfirm.boxed_clone())
-                .separator()
-                .action("File History", Box::new(git::FileHistory))
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
