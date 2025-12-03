@@ -347,13 +347,24 @@ impl TabSwitcherDelegate {
         };
         cx.subscribe_in(&workspace, window, |tab_switcher, _, event, window, cx| {
             match event {
-                WorkspaceEvent::PaneAdded(_)
-                | WorkspaceEvent::PaneRemoved
-                | WorkspaceEvent::ItemAdded { .. }
-                | WorkspaceEvent::ItemRemoved { .. } => {
+                WorkspaceEvent::ItemAdded { .. } | WorkspaceEvent::PaneRemoved => {
                     tab_switcher.picker.update(cx, |picker, cx| {
                         let query = picker.query(cx);
                         picker.delegate.update_matches(query, window, cx);
+                        cx.notify();
+                    })
+                }
+                WorkspaceEvent::ItemRemoved { .. } => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+
+                        // When the Tab Switcher is being used and an item is
+                        // removed, there's a chance that the new selected index
+                        // will not match the actual tab that is now being displayed
+                        // by the pane, as such, the selected index needs to be
+                        // updated to match the pane's state.
+                        picker.delegate.sync_selected_index(cx);
                         cx.notify();
                     })
                 }
@@ -543,10 +554,32 @@ impl TabSwitcherDelegate {
         let Some(pane) = tab_match.pane.upgrade() else {
             return;
         };
+
         pane.update(cx, |pane, cx| {
             pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, window, cx)
                 .detach_and_log_err(cx);
         });
+    }
+
+    /// Updates the selected index to ensure it matches the pane's active item,
+    /// as the pane's active item can be indirectly updated and this method
+    /// ensures that the picker can react to those changes.
+    fn sync_selected_index(&mut self, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
+        let Ok(Some(item)) = self.pane.read_with(cx, |pane, _cx| pane.active_item()) else {
+            return;
+        };
+
+        let item_id = item.item_id();
+        let Some((index, _tab_match)) = self
+            .matches
+            .iter()
+            .enumerate()
+            .find(|(_index, tab_match)| tab_match.item.item_id() == item_id)
+        else {
+            return;
+        };
+
+        self.selected_index = index;
     }
 }
 

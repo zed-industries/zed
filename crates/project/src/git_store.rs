@@ -1130,6 +1130,7 @@ impl GitStore {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         let origin_url = backend
                             .remote_url(&remote)
+                            .await
                             .with_context(|| format!("remote \"{remote}\" not found"))?;
 
                         let sha = backend.head_sha().await.context("reading HEAD SHA")?;
@@ -5447,7 +5448,8 @@ impl Repository {
                 git_hosting_providers::register_additional_providers(
                     git_hosting_provider_registry,
                     state.backend.clone(),
-                );
+                )
+                .await;
             }
             let state = RepositoryState::Local(state);
             let mut jobs = VecDeque::new();
@@ -6052,8 +6054,8 @@ async fn compute_snapshot(
     }
 
     // Used by edit prediction data collection
-    let remote_origin_url = backend.remote_url("origin");
-    let remote_upstream_url = backend.remote_url("upstream");
+    let remote_origin_url = backend.remote_url("origin").await;
+    let remote_upstream_url = backend.remote_url("upstream").await;
 
     let snapshot = RepositorySnapshot {
         id,

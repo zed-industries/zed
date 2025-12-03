@@ -619,12 +619,9 @@ pub struct Thread {
 impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
-        acp::PromptCapabilities {
-            meta: None,
-            image,
-            audio: false,
-            embedded_context: true,
-        }
+        acp::PromptCapabilities::new()
+            .image(image)
+            .embedded_context(true)
     }
 
     pub fn new(
@@ -640,7 +637,7 @@ impl Thread {
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
-            id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
+            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
             updated_at: Utc::now(),
             title: None,
@@ -737,17 +734,11 @@ impl Thread {
         let Some(tool) = tool else {
             stream
                 .0
-                .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
-                    meta: None,
-                    id: acp::ToolCallId(tool_use.id.to_string().into()),
-                    title: tool_use.name.to_string(),
-                    kind: acp::ToolKind::Other,
-                    status: acp::ToolCallStatus::Failed,
-                    content: Vec::new(),
-                    locations: Vec::new(),
-                    raw_input: Some(tool_use.input.clone()),
-                    raw_output: None,
-                })))
+                .unbounded_send(Ok(ThreadEvent::ToolCall(
+                    acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
+                        .status(acp::ToolCallStatus::Failed)
+                        .raw_input(tool_use.input.clone()),
+                )))
                 .ok();
             return;
         };
@@ -775,24 +766,20 @@ impl Thread {
                 .log_err();
         }
 
-        stream.update_tool_call_fields(
-            &tool_use.id,
-            acp::ToolCallUpdateFields {
-                status: Some(
-                    tool_result
-                        .as_ref()
-                        .map_or(acp::ToolCallStatus::Failed, |result| {
-                            if result.is_error {
-                                acp::ToolCallStatus::Failed
-                            } else {
-                                acp::ToolCallStatus::Completed
-                            }
-                        }),
-                ),
-                raw_output: output,
-                ..Default::default()
+        let mut fields = acp::ToolCallUpdateFields::new().status(tool_result.as_ref().map_or(
+            acp::ToolCallStatus::Failed,
+            |result| {
+                if result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                }
             },
-        );
+        ));
+        if let Some(output) = output {
+            fields = fields.raw_output(output);
+        }
+        stream.update_tool_call_fields(&tool_use.id, fields);
     }
 
     pub fn from_db(
@@ -1272,18 +1259,15 @@ impl Thread {
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
 
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields {
-                        status: Some(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        }),
-                        raw_output: tool_result.output.clone(),
-                        ..Default::default()
-                    },
-                );
+                let mut fields = acp::ToolCallUpdateFields::new().status(if tool_result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                });
+                if let Some(output) = &tool_result.output {
+                    fields = fields.raw_output(output.clone());
+                }
+                event_stream.update_tool_call_fields(&tool_result.tool_use_id, fields);
                 this.update(cx, |this, _cx| {
                     this.pending_message()
                         .tool_results
@@ -1560,12 +1544,10 @@ impl Thread {
         } else {
             event_stream.update_tool_call_fields(
                 &tool_use.id,
-                acp::ToolCallUpdateFields {
-                    title: Some(title.into()),
-                    kind: Some(kind),
-                    raw_input: Some(tool_use.input.clone()),
-                    ..Default::default()
-                },
+                acp::ToolCallUpdateFields::new()
+                    .title(title)
+                    .kind(kind)
+                    .raw_input(tool_use.input.clone()),
             );
         }
 
@@ -1587,10 +1569,9 @@ impl Thread {
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
             ToolCallEventStream::new(tool_use.id.clone(), event_stream.clone(), Some(fs));
-        tool_event_stream.update_fields(acp::ToolCallUpdateFields {
-            status: Some(acp::ToolCallStatus::InProgress),
-            ..Default::default()
-        });
+        tool_event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
@@ -2381,19 +2362,13 @@ impl ThreadEventStream {
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
-        acp::ToolCall {
-            meta: Some(serde_json::json!({
-                "tool_name": tool_name
-            })),
-            id: acp::ToolCallId(id.to_string().into()),
-            title,
-            kind,
-            status: acp::ToolCallStatus::Pending,
-            content: vec![],
-            locations: vec![],
-            raw_input: Some(input),
-            raw_output: None,
-        }
+        acp::ToolCall::new(id.to_string(), title)
+            .kind(kind)
+            .raw_input(input)
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                tool_name.into(),
+            )]))
     }
 
     fn update_tool_call_fields(
@@ -2403,12 +2378,7 @@ impl ThreadEventStream {
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate {
-                    meta: None,
-                    id: acp::ToolCallId(tool_use_id.to_string().into()),
-                    fields,
-                }
-                .into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
             )))
             .ok();
     }
@@ -2471,7 +2441,7 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp_thread::ToolCallUpdateDiff {
-                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
                     diff,
                 }
                 .into(),
@@ -2489,33 +2459,26 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: acp::ToolCallUpdate {
-                        meta: None,
-                        id: acp::ToolCallId(self.tool_use_id.to_string().into()),
-                        fields: acp::ToolCallUpdateFields {
-                            title: Some(title.into()),
-                            ..Default::default()
-                        },
-                    },
+                    tool_call: acp::ToolCallUpdate::new(
+                        self.tool_use_id.to_string(),
+                        acp::ToolCallUpdateFields::new().title(title),
+                    ),
                     options: vec![
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("always_allow".into()),
-                            name: "Always Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowAlways,
-                            meta: None,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow".into()),
-                            name: "Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowOnce,
-                            meta: None,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("deny".into()),
-                            name: "Deny".into(),
-                            kind: acp::PermissionOptionKind::RejectOnce,
-                            meta: None,
-                        },
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("always_allow"),
+                            "Always Allow",
+                            acp::PermissionOptionKind::AllowAlways,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("allow"),
+                            "Allow",
+                            acp::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp::PermissionOption::new(
+                            acp::PermissionOptionId::new("deny"),
+                            "Deny",
+                            acp::PermissionOptionKind::RejectOnce,
+                        ),
                     ],
                     response: response_tx,
                 },
@@ -2660,7 +2623,15 @@ impl UserMessageContent {
                     // TODO
                     Self::Text("[blob]".to_string())
                 }
+                other => {
+                    log::warn!("Unexpected content type: {:?}", other);
+                    Self::Text("[unknown]".to_string())
+                }
             },
+            other => {
+                log::warn!("Unexpected content type: {:?}", other);
+                Self::Text("[unknown]".to_string())
+            }
         }
     }
 }
@@ -2668,32 +2639,15 @@ impl UserMessageContent {
 impl From<UserMessageContent> for acp::ContentBlock {
     fn from(content: UserMessageContent) -> Self {
         match content {
-            UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
-                text,
-                annotations: None,
-                meta: None,
-            }),
-            UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
-                data: image.source.to_string(),
-                mime_type: "image/png".to_string(),
-                meta: None,
-                annotations: None,
-                uri: None,
-            }),
-            UserMessageContent::Mention { uri, content } => {
-                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                    meta: None,
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            meta: None,
-                            mime_type: None,
-                            text: content,
-                            uri: uri.to_uri().to_string(),
-                        },
-                    ),
-                    annotations: None,
-                })
+            UserMessageContent::Text(text) => text.into(),
+            UserMessageContent::Image(image) => {
+                acp::ContentBlock::Image(acp::ImageContent::new(image.source, "image/png"))
             }
+            UserMessageContent::Mention { uri, content } => acp::ContentBlock::Resource(
+                acp::EmbeddedResource::new(acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(content, uri.to_uri().to_string()),
+                )),
+            ),
         }
     }
 }

@@ -90,6 +90,7 @@ pub fn register_notifications(
                             disk_based_sources: Cow::Borrowed(
                                 &adapter.disk_based_diagnostic_sources,
                             ),
+                            registration_id: None,
                         }],
                         |_, diag, _| !is_inactive_region(diag),
                         cx,
