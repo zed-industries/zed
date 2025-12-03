@@ -1199,6 +1199,20 @@ impl Extension {
         }
     }
 
+    pub async fn call_llm_provider_settings_markdown(
+        &self,
+        store: &mut Store<WasmState>,
+        provider_id: &str,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_7_0(ext) => {
+                ext.call_llm_provider_settings_markdown(store, provider_id)
+                    .await
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub async fn call_llm_provider_is_authenticated(
         &self,
         store: &mut Store<WasmState>,

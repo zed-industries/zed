@@ -180,6 +180,10 @@ world extension {
     /// Returns the models available for a provider.
     export llm-provider-models: func(provider-id: string) -> result<list<model-info>, string>;
 
+    /// Returns markdown content to display in the provider's settings UI.
+    /// This can include setup instructions, links to documentation, etc.
+    export llm-provider-settings-markdown: func(provider-id: string) -> option<string>;
+
     /// Check if the provider is authenticated.
     export llm-provider-is-authenticated: func(provider-id: string) -> bool;
 

@@ -288,6 +288,12 @@ pub trait Extension: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Returns markdown content to display in the provider's settings UI.
+    /// This can include setup instructions, links to documentation, etc.
+    fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
+        None
+    }
+
     /// Check if the provider is authenticated.
     fn llm_provider_is_authenticated(&self, _provider_id: &str) -> bool {
         false
@@ -616,6 +622,10 @@ impl wit::Guest for Component {
 
     fn llm_provider_models(provider_id: String) -> Result<Vec<LlmModelInfo>, String> {
         extension().llm_provider_models(&provider_id)
+    }
+
+    fn llm_provider_settings_markdown(provider_id: String) -> Option<String> {
+        extension().llm_provider_settings_markdown(&provider_id)
     }
 
     fn llm_provider_is_authenticated(provider_id: String) -> bool {
