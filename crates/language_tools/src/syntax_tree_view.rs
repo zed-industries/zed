@@ -459,7 +459,7 @@ impl SyntaxTreeView {
                                         editor.clear_background_highlights::<Self>(cx);
                                         editor.highlight_background::<Self>(
                                             &[range],
-                                            |theme| {
+                                            |_, theme| {
                                                 theme
                                                     .colors()
                                                     .editor_document_highlight_write_background
