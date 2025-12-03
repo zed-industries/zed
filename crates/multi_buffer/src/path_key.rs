@@ -6,7 +6,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
-use util::{post_inc, rel_path::RelPath};
+use util::{debug_panic, post_inc, rel_path::RelPath};
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
@@ -67,6 +67,26 @@ impl MultiBuffer {
     pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
         self.excerpts_by_path.keys()
     }
+
+    
+    // need:
+    // MultiBuffer::add_inverted_diff
+    // 
+    // SplittableEditor will handle:
+    // - creating diff base buffers
+    // - calling add_diff on one side and add_inverted_diff on the other side
+    // - calling set_excerpts_for_path on both sides (using the diff base buffers for the LHS)
+    //   - and translating excerpt ranges for the LHS
+    // - we have to make very sure that at all times, the sequence of excerpts on the two sides is the same
+    
+    // let b = Buffer::new(text);
+    // let mb = MutliBuffer::new([b1, b2, b3], ...);
+    // mb.attach_diff_hunks(...);
+    // let mb2 = mb.inverted();
+    //
+    // fn inverted(&self) -> Self {
+    //
+    // }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
@@ -153,6 +173,7 @@ impl MultiBuffer {
         }
     }
 
+    // FIXME need to sync excerpt removal to the follower
     pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
         self.remove_excerpts(
             self.excerpts_for_buffer(buffer, cx)
@@ -273,6 +294,14 @@ impl MultiBuffer {
         (result, added_a_new_excerpt)
     }
 
+    // SplittableEditor (SplitEditor | Editor)
+    //   - lhs: Editor
+    //     - mb: MultiBuffer
+    //   - rhs: Editor
+    //     - mb: MultiBuffer
+    //
+    // editor.rhs.mb.follower = Some(editor.lhs.mb)
+    // editor.lhs.mb.has_inverted_diffs = true
     fn update_path_excerpts(
         &mut self,
         path: PathKey,
@@ -293,7 +322,7 @@ impl MultiBuffer {
             .get(&path)
             .cloned()
             .unwrap_or_default();
-        let mut new_iter = new.into_iter().peekable();
+        let mut new_iter = new.iter().cloned().peekable();
         let mut existing_iter = existing.into_iter().peekable();
 
         let mut excerpt_ids = Vec::new();
@@ -427,7 +456,47 @@ impl MultiBuffer {
             let snapshot = &*self.snapshot.get_mut();
             let mut excerpt_ids: Vec<_> = excerpt_ids.iter().dedup().cloned().collect();
             excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
-            self.excerpts_by_path.insert(path, excerpt_ids);
+            self.excerpts_by_path.insert(path.clone(), excerpt_ids);
+        }
+
+        if let Some(follower) = &self.follower {
+            if let Some(diff) = snapshot.diffs.get(&buffer_snapshot.remote_id()) {
+                follower.update(cx, |follower, cx| {
+                    let Some(base_text_buffer) = follower
+                        .base_text_buffers_by_main_buffer_id
+                        .get(&buffer_snapshot.remote_id())
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    let new = new
+                        .into_iter()
+                        .map(|range| {
+                            let point_to_base_text_point = |point: Point| {
+                                let row = diff.row_to_base_text_row(point.row, buffer_snapshot);
+                                let column = diff.base_text().line_len(row);
+                                Point::new(row, column)
+                            };
+                            ExcerptRange {
+                                primary: point_to_base_text_point(range.primary.start)
+                                    ..point_to_base_text_point(range.primary.end),
+                                context: point_to_base_text_point(range.context.start)
+                                    ..point_to_base_text_point(range.context.end),
+                            }
+                        })
+                        .collect();
+                    let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
+                    follower.update_path_excerpts(
+                        path,
+                        base_text_buffer,
+                        &base_text_buffer_snapshot,
+                        new,
+                        cx,
+                    );
+                });
+            } else {
+                // FIXME
+            }
         }
 
         (excerpt_ids, added_a_new_excerpt)

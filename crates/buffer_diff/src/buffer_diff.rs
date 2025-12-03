@@ -36,7 +36,6 @@ pub struct BufferDiffSnapshot {
 #[derive(Clone)]
 struct BufferDiffInner {
     hunks: SumTree<InternalDiffHunk>,
-    // Used for making staging mo
     pending_hunks: SumTree<PendingHunk>,
     base_text: language::BufferSnapshot,
     base_text_exists: bool,

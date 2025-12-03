@@ -87,6 +87,8 @@ pub struct MultiBuffer {
     /// The writing capability of the multi-buffer.
     capability: Capability,
     buffer_changed_since_sync: Rc<Cell<bool>>,
+    follower: Option<Entity<MultiBuffer>>,
+    base_text_buffers_by_main_buffer_id: HashMap<BufferId, Entity<Buffer>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -506,20 +508,14 @@ struct BufferState {
 
 struct DiffState {
     diff: Entity<BufferDiff>,
-    base_text_buffer_id: Option<BufferId>,
+    is_inverted: bool,
     _subscription: gpui::Subscription,
 }
 
 #[derive(Clone)]
 struct DiffStateSnapshot {
     diff: BufferDiffSnapshot,
-    base_text_buffer_id: Option<BufferId>,
-}
-
-impl DiffStateSnapshot {
-    fn is_inverted(&self) -> bool {
-        self.base_text_buffer_id.is_some()
-    }
+    is_inverted: bool,
 }
 
 // FIXME
@@ -548,13 +544,13 @@ impl DiffState {
                 _ => {}
             }),
             diff,
-            base_text_buffer_id: None,
+            is_inverted: false,
         }
     }
 
     fn new_inverted(
         diff: Entity<BufferDiff>,
-        base_text_buffer_id: BufferId,
+        base_text_buffer: Entity<Buffer>,
         cx: &mut Context<MultiBuffer>,
     ) -> Self {
         DiffState {
@@ -567,7 +563,7 @@ impl DiffState {
                         this.inverted_buffer_diff_changed(
                             diff,
                             base_text_changed_range,
-                            base_text_buffer_id,
+                            base_text_buffer.clone(),
                             cx,
                         )
                     }
@@ -578,7 +574,7 @@ impl DiffState {
                 _ => {}
             }),
             diff,
-            base_text_buffer_id: Some(base_text_buffer_id),
+            is_inverted: true,
         }
     }
 
@@ -607,12 +603,24 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+// follower: None
+// - BufferContent(Some)
+// - BufferContent(None)
+// - DeletedHunk
+//
+// follower: Some
+// - BufferContent(Some)
+// - BufferContent(None)
+
 #[derive(Debug, Clone)]
 enum DiffTransform {
+    // RealText
     BufferContent {
         summary: MBTextSummary,
+        // modified_hunk_info
         inserted_hunk_info: Option<DiffTransformHunkInfo>,
     },
+    // ExpandedHunkText
     DeletedHunk {
         summary: TextSummary,
         buffer_id: BufferId,
@@ -2322,27 +2330,25 @@ impl MultiBuffer {
         });
     }
 
+    // FIXME should take main_text_buffer_id right?
     fn inverted_buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
         diff_change_range: Range<usize>,
-        base_text_buffer_id: BufferId,
+        base_text_buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let diff = diff.read(cx);
-        let new_diff = diff.snapshot(cx);
+        let base_text_buffer_id = base_text_buffer.read(cx).remote_id();
         let snapshot = self.snapshot.get_mut();
+        let new_diff = diff.read(cx).snapshot(cx);
         let base_text_changed = snapshot
             .diffs
             .get(&base_text_buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_eq(old_diff));
         if base_text_changed {
-            let Some(base_text_buffer) = self.buffers.get(&base_text_buffer_id) else {
-                return;
-            };
-            base_text_buffer.buffer.update(cx, |buffer, cx| {
-                // FIXME take the rope directly
-                buffer.set_text(new_diff.base_text().text(), cx);
+            base_text_buffer.update(cx, |buffer, cx| {
+                // FIXME use the rope directly
+                buffer.set_text(diff.read(cx).base_text().text(), cx);
             });
         }
         self.sync_mut(cx);
@@ -2352,9 +2358,13 @@ impl MultiBuffer {
         };
         self.buffer_changed_since_sync.replace(true);
         let mut snapshot = self.snapshot.get_mut();
-        snapshot
-            .diffs
-            .insert_or_replace(base_text_buffer_id, new_diff);
+        snapshot.diffs.insert_or_replace(
+            base_text_buffer_id,
+            DiffStateSnapshot {
+                diff: new_diff,
+                is_inverted: true,
+            },
+        );
 
         let mut excerpt_edits = Vec::new();
         for locator in &buffer_state.excerpts {
@@ -2556,10 +2566,26 @@ impl MultiBuffer {
             text::Anchor::min_max_range_for_buffer(buffer_id),
             cx,
         );
-        self.diffs.insert(buffer_id, DiffState::new(diff, cx));
-    }
+        self.diffs
+            .insert(buffer_id, DiffState::new(diff.clone(), cx));
 
-    // FIXME add_inverted_diff
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, cx| {
+                let diff_change_range = 0..diff.read(cx).base_text().len();
+                let base_text_buffer: Entity<Buffer> = create_base_text_buffer(&diff);
+                follower.inverted_buffer_diff_changed(
+                    diff,
+                    diff_change_range,
+                    base_text_buffer.clone(),
+                    cx,
+                );
+                follower.diffs.insert(
+                    base_text_buffer.read(cx).remote_id(),
+                    DiffState::new_inverted(diff, base_text_buffer, cx),
+                );
+            });
+        }
+    }
 
     pub fn diff_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
         self.diffs.get(&buffer_id).map(|state| state.diff.clone())
@@ -3226,7 +3252,7 @@ impl MultiBuffer {
                     excerpt_buffer_start + edit.new.end.saturating_sub(excerpt_start);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
 
-                if diff.is_inverted() {
+                if diff.is_inverted {
                     for hunk in
                         diff.hunks_intersecting_base_text_range(edit_buffer_start..edit_buffer_end)
                     {
@@ -3245,6 +3271,7 @@ impl MultiBuffer {
                             hunk_excerpt_start,
                             *end_of_current_insert,
                         );
+                        // FIXME record that the status for this region should be "deleted"
                         if !hunk_buffer_range.is_empty() {
                             let hunk_info = DiffTransformHunkInfo {
                                 excerpt_id: excerpt.id,
