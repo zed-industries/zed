@@ -468,6 +468,12 @@ struct SerializedProjectPanel {
     width: Option<Pixels>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct ClipboardMetadata {
+    operation: String,
+    file_paths: Vec<String>,
+}
+
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
     icon: Option<SharedString>,
@@ -2619,9 +2625,14 @@ impl ProjectPanel {
             .collect::<Vec<_>>();
 
         if !file_paths.is_empty() {
-            let operation = if is_cut { "CUT" } else { "COPY" };
-            let clipboard_text = format!("ZED_CLIPBOARD:{}\n{}", operation, file_paths.join("\n"));
-            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
+            let metadata = ClipboardMetadata {
+                operation: if is_cut { "CUT" } else { "COPY" }.to_string(),
+                file_paths,
+            };
+            cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                String::new(),
+                metadata,
+            ));
         }
     }
 
@@ -2631,21 +2642,21 @@ impl ProjectPanel {
             return true;
         }
 
-        // Check system clipboard for Zed clipboard data or file paths
+        // Check system clipboard for Zed clipboard data
         if let Some(clipboard_item) = cx.read_from_clipboard() {
-            if let Some(text) = clipboard_item.text() {
-                // Check if it's Zed clipboard data
-                if text.starts_with("ZED_CLIPBOARD:") {
-                    return true;
-                }
-                // Check if it contains file paths (newline-separated paths)
-                if text.lines().any(|line| Path::new(line).exists()) {
-                    return true;
-                }
-            }
+            clipboard_item
+                .entries()
+                .first()
+                .and_then(|entry| match entry {
+                    gpui::ClipboardEntry::String(clipboard_string) => {
+                        clipboard_string.metadata_json::<ClipboardMetadata>()
+                    }
+                    _ => None,
+                })
+                .is_some()
+        } else {
+            false
         }
-
-        false
     }
 
     fn create_paste_path(
@@ -2726,30 +2737,27 @@ impl ProjectPanel {
 
     fn parse_system_clipboard(&self, cx: &Context<Self>) -> Option<(Vec<String>, bool)> {
         let clipboard_item = cx.read_from_clipboard()?;
-        let text = clipboard_item.text()?;
 
-        // Check if it's Zed clipboard data
-        if let Some(content) = text.strip_prefix("ZED_CLIPBOARD:") {
-            let mut lines = content.lines();
-            let operation = lines.next()?;
-            let is_cut = operation == "CUT";
-            let file_paths: Vec<String> = lines.map(|s| s.to_string()).collect();
-            if !file_paths.is_empty() {
-                return Some((file_paths, is_cut));
-            }
+        let ClipboardMetadata {
+            operation,
+            file_paths,
+        } = clipboard_item
+            .entries()
+            .first()
+            .and_then(|entry| match entry {
+                gpui::ClipboardEntry::String(clipboard_string) => {
+                    clipboard_string.metadata_json::<ClipboardMetadata>()
+                }
+                _ => None,
+            })?;
+
+        let is_cut = operation == "CUT";
+
+        if !file_paths.is_empty() {
+            Some((file_paths, is_cut))
         } else {
-            // Try to parse as plain file paths
-            let file_paths: Vec<String> = text
-                .lines()
-                .filter(|line| !line.trim().is_empty() && Path::new(line).exists())
-                .map(|s| s.to_string())
-                .collect();
-            if !file_paths.is_empty() {
-                return Some((file_paths, false));
-            }
+            None
         }
-
-        None
     }
 
     fn paste_from_local_clipboard(
