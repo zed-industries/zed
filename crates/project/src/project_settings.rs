@@ -4,7 +4,7 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
@@ -17,6 +17,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use session::TrustedWorktreesStorage;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
@@ -628,9 +629,9 @@ impl SettingsObserver {
             .detach();
 
         let weak_settings_observer = cx.weak_entity();
-        let _trusted_worktrees_watcher =
-            get_trusted_worktrees_storage(cx).map(|trusted_worktrees| {
-                trusted_worktrees.subscribe(cx, move |e, cx| match e {
+        let _trusted_worktrees_watcher = if cx.has_global::<TrustedWorktreesStorage>() {
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
+                let watcher = trusted_worktrees.subscribe(cx, move |e, cx| match e {
                     session::Event::TrustedWorktree(trusted_path) => {
                         weak_settings_observer
                             .update(cx, |settings_observer, cx| {
@@ -672,8 +673,12 @@ impl SettingsObserver {
                             .ok();
                     }
                     session::Event::UntrustedWorktree(_) => {}
-                })
-            });
+                });
+                Some(watcher)
+            })
+        } else {
+            None
+        };
 
         Self {
             worktree_store,
@@ -1034,12 +1039,16 @@ impl SettingsObserver {
             match kind {
                 LocalSettingsKind::Settings => {
                     if *can_trust_worktree.get_or_init(|| {
-                        get_trusted_worktrees_storage(cx)
-                            .map(|trusted_worktrees_storage| {
-                                trusted_worktrees_storage
-                                    .can_trust_path(worktree_abs_path.as_ref(), cx)
-                            })
-                            .unwrap_or(true)
+                        if cx.has_global::<TrustedWorktreesStorage>() {
+                            cx.update_global::<TrustedWorktreesStorage, _>(
+                                |trusted_worktrees_storage, cx| {
+                                    trusted_worktrees_storage
+                                        .can_trust_path(worktree_abs_path.as_ref(), cx)
+                                },
+                            )
+                        } else {
+                            true
+                        }
                     }) {
                         apply_local_settings(worktree_id, &directory, kind, &file_content, cx)
                     } else {
@@ -1241,14 +1250,6 @@ impl SettingsObserver {
             }
         })
     }
-}
-
-fn get_trusted_worktrees_storage(cx: &App) -> Option<session::TrustedWorktreesStorage> {
-    let storage = cx.try_global::<session::TrustedWorktreesStorage>().cloned();
-    if storage.is_none() {
-        log::warn!("Found no trusted worktrees storage");
-    }
-    storage
 }
 
 fn apply_local_settings(
