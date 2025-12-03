@@ -627,7 +627,8 @@ impl settings::Settings for AllLanguageSettings {
         let use_edit_prediction_context = all_languages
             .features
             .as_ref()
-            .map_or(false, |f| f.experimental_edit_prediction_context_retrieval);
+            .and_then(|f| f.experimental_edit_prediction_context_retrieval)
+            .unwrap_or_default();
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
