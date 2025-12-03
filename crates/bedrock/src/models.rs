@@ -647,7 +647,8 @@ impl Model {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             (
-                Model::Claude3_5Sonnet
+                Model::Claude3Haiku
+                | Model::Claude3_5Sonnet
                 | Model::Claude3_5Haiku
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
