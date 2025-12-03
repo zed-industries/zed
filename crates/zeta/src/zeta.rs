@@ -243,9 +243,7 @@ impl ContextMode {
 #[derive(Debug)]
 pub enum ZetaDebugInfo {
     ContextRetrievalStarted(ZetaContextRetrievalStartedDebugInfo),
-    SearchQueriesGenerated(ZetaSearchQueryDebugInfo),
-    SearchQueriesExecuted(ZetaContextRetrievalDebugInfo),
-    ContextRetrievalFinished(ZetaContextRetrievalDebugInfo),
+    ContextRetrievalFinished(ZetaContextRetrievalFinishedDebugInfo),
     EditPredictionRequested(ZetaEditPredictionDebugInfo),
 }
 
@@ -257,9 +255,10 @@ pub struct ZetaContextRetrievalStartedDebugInfo {
 }
 
 #[derive(Debug)]
-pub struct ZetaContextRetrievalDebugInfo {
+pub struct ZetaContextRetrievalFinishedDebugInfo {
     pub project_entity_id: EntityId,
     pub timestamp: Instant,
+    pub metadata: Vec<(&'static str, SharedString)>,
 }
 
 #[derive(Debug)]
@@ -270,13 +269,6 @@ pub struct ZetaEditPredictionDebugInfo {
     pub position: language::Anchor,
     pub local_prompt: Result<String, String>,
     pub response_rx: oneshot::Receiver<(Result<open_ai::Response, String>, Duration)>,
-}
-
-#[derive(Debug)]
-pub struct ZetaSearchQueryDebugInfo {
-    pub project: Entity<Project>,
-    pub timestamp: Instant,
-    pub search_queries: Vec<SearchToolQuery>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -676,14 +668,49 @@ impl Zeta {
                                             .ok();
                                     }
                                 }
-                                RelatedExcerptStoreEvent::FinishedRefresh => {
+                                RelatedExcerptStoreEvent::FinishedRefresh {
+                                    cache_hit_count,
+                                    cache_miss_count,
+                                    mean_definition_latency,
+                                    max_definition_latency,
+                                } => {
                                     if let Some(debug_tx) = this.debug_tx.clone() {
                                         debug_tx
                                             .unbounded_send(
                                                 ZetaDebugInfo::ContextRetrievalFinished(
-                                                    ZetaContextRetrievalDebugInfo {
+                                                    ZetaContextRetrievalFinishedDebugInfo {
                                                         project_entity_id: entity_id,
                                                         timestamp: Instant::now(),
+                                                        metadata: vec![
+                                                            (
+                                                                "Cache Hits",
+                                                                format!(
+                                                                    "{}/{}",
+                                                                    cache_hit_count,
+                                                                    cache_hit_count
+                                                                        + cache_miss_count
+                                                                )
+                                                                .into(),
+                                                            ),
+                                                            (
+                                                                "Max LSP Time",
+                                                                format!(
+                                                                    "{} ms",
+                                                                    max_definition_latency
+                                                                        .as_millis()
+                                                                )
+                                                                .into(),
+                                                            ),
+                                                            (
+                                                                "Mean LSP Time",
+                                                                format!(
+                                                                    "{} ms",
+                                                                    mean_definition_latency
+                                                                        .as_millis()
+                                                                )
+                                                                .into(),
+                                                            ),
+                                                        ],
                                                     },
                                                 ),
                                             )
@@ -2152,12 +2179,14 @@ impl Zeta {
             }
         };
 
+        let retrieval_started_at = Instant::now();
+
         if let Some(debug_tx) = &debug_tx {
             debug_tx
                 .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
                     ZetaContextRetrievalStartedDebugInfo {
                         project_entity_id: project.entity_id(),
-                        timestamp: Instant::now(),
+                        timestamp: retrieval_started_at,
                         search_prompt: prompt.clone(),
                     },
                 ))
@@ -2250,19 +2279,8 @@ impl Zeta {
                 queries.extend(input.queries);
             }
 
-            if let Some(debug_tx) = &debug_tx {
-                debug_tx
-                    .unbounded_send(ZetaDebugInfo::SearchQueriesGenerated(
-                        ZetaSearchQueryDebugInfo {
-                            project: project.clone(),
-                            timestamp: Instant::now(),
-                            search_queries: queries.clone(),
-                        },
-                    ))
-                    .ok();
-            }
-
             log::trace!("Running retrieval search: {queries:#?}");
+            let query_generation_finished_at = Instant::now();
 
             let related_excerpts_result = retrieval_search::run_retrieval_searches(
                 queries,
@@ -2274,17 +2292,7 @@ impl Zeta {
             .await;
 
             log::trace!("Search queries executed");
-
-            if let Some(debug_tx) = &debug_tx {
-                debug_tx
-                    .unbounded_send(ZetaDebugInfo::SearchQueriesExecuted(
-                        ZetaContextRetrievalDebugInfo {
-                            project_entity_id: project.entity_id(),
-                            timestamp: Instant::now(),
-                        },
-                    ))
-                    .ok();
-            }
+            let query_execution_finished_at = Instant::now();
 
             this.update(cx, |this, _cx| {
                 let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
@@ -2300,9 +2308,28 @@ impl Zeta {
                     if let Some(debug_tx) = &this.debug_tx {
                         debug_tx
                             .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
-                                ZetaContextRetrievalDebugInfo {
+                                ZetaContextRetrievalFinishedDebugInfo {
                                     project_entity_id: project.entity_id(),
                                     timestamp: Instant::now(),
+                                    metadata: vec![
+                                        (
+                                            "query_generation",
+                                            format!(
+                                                "{:?}",
+                                                query_generation_finished_at - retrieval_started_at
+                                            )
+                                            .into(),
+                                        ),
+                                        (
+                                            "search_execution",
+                                            format!(
+                                                "{:?}",
+                                                query_execution_finished_at
+                                                    - query_execution_finished_at
+                                            )
+                                            .into(),
+                                        ),
+                                    ],
                                 },
                             ))
                             .ok();

@@ -7,7 +7,12 @@ use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope,
 use project::{LocationLink, Project, ProjectPath};
 use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
-use std::{collections::hash_map, ops::Range, sync::Arc, time::Duration};
+use std::{
+    collections::hash_map,
+    ops::Range,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
@@ -25,7 +30,12 @@ pub struct RelatedExcerptStore {
 
 pub enum RelatedExcerptStoreEvent {
     StartedRefresh,
-    FinishedRefresh,
+    FinishedRefresh {
+        cache_hit_count: usize,
+        cache_miss_count: usize,
+        mean_definition_latency: Duration,
+        max_definition_latency: Duration,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -36,7 +46,7 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss(Option<Task<Result<Option<Vec<LocationLink>>>>>),
+    CacheMiss(Task<Result<Option<Vec<LocationLink>>>>),
 }
 
 #[derive(Debug)]
@@ -186,23 +196,27 @@ impl RelatedExcerptStore {
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-        let Some(project) = this.update(cx, |this, cx| {
-            cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
-            this.project.upgrade()
-        })?
-        else {
+        let (project, snapshot) = this.read_with(cx, |this, cx| {
+            (this.project.upgrade(), buffer.read(cx).snapshot())
+        })?;
+        let Some(project) = project else {
             return Ok(());
         };
+
+        this.update(cx, |_, cx| {
+            cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
+        })?;
+
         let identifiers = cx
             .background_spawn(async move { identifiers_for_position(&snapshot, position) })
             .await;
 
         let async_cx = cx.clone();
+        let start_time = Instant::now();
         let futures = this.update(cx, |this, cx| {
             identifiers
                 .into_iter()
-                .map(|identifier| {
+                .filter_map(|identifier| {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
@@ -211,19 +225,20 @@ impl RelatedExcerptStore {
                                 .update(cx, |project, cx| {
                                     project.definitions(&buffer, identifier.range.start, cx)
                                 })
-                                .ok(),
+                                .ok()?,
                         )
                     };
 
                     let cx = async_cx.clone();
                     let project = project.clone();
-                    async move {
+                    Some(async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
-                                Some((identifier, cache_entry))
+                                Some((identifier, cache_entry, None))
                             }
                             DefinitionTask::CacheMiss(task) => {
-                                let locations = task?.await.log_err()??;
+                                let locations = task.await.log_err()??;
+                                let duration = start_time.elapsed();
                                 cx.update(|cx| {
                                     (
                                         identifier,
@@ -235,28 +250,46 @@ impl RelatedExcerptStore {
                                                 })
                                                 .collect(),
                                         }),
+                                        Some(duration),
                                     )
                                 })
                                 .ok()
                             }
                         }
-                    }
+                    })
                 })
                 .collect::<Vec<_>>()
         })?;
 
-        let new_cache = future::join_all(futures)
-            .await
-            .into_iter()
-            .flatten()
-            .collect::<HashMap<_, _>>();
+        let mut cache_hit_count = 0;
+        let mut cache_miss_count = 0;
+        let mut mean_definition_latency = Duration::ZERO;
+        let mut max_definition_latency = Duration::ZERO;
+        let mut new_cache = HashMap::default();
+        new_cache.reserve(futures.len());
+        for (identifier, entry, duration) in future::join_all(futures).await.into_iter().flatten() {
+            new_cache.insert(identifier, entry);
+            if let Some(duration) = duration {
+                cache_hit_count += 1;
+                mean_definition_latency += duration;
+                max_definition_latency = max_definition_latency.max(duration);
+            } else {
+                cache_miss_count += 1;
+            }
+        }
+        mean_definition_latency /= cache_miss_count.max(1) as u32;
 
         let (new_cache, related_files) = rebuild_related_files(new_cache, cx).await?;
 
         this.update(cx, |this, cx| {
             this.cache = new_cache;
             this.related_files = related_files;
-            cx.emit(RelatedExcerptStoreEvent::FinishedRefresh);
+            cx.emit(RelatedExcerptStoreEvent::FinishedRefresh {
+                cache_hit_count,
+                cache_miss_count,
+                mean_definition_latency,
+                max_definition_latency,
+            });
         })?;
 
         anyhow::Ok(())
