@@ -520,17 +520,12 @@ impl Zeta {
         })
         .detach();
 
-        cx.observe_global::<SettingsStore>(|this, cx| {
-            this.use_context = all_language_settings(None, cx).edit_predictions.use_context;
-        })
-        .detach();
-
-        Self {
+        let mut this = Self {
             projects: HashMap::default(),
             client,
             user_store,
             options: DEFAULT_OPTIONS,
-            use_context: all_language_settings(None, cx).edit_predictions.use_context,
+            use_context: false,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -556,7 +551,22 @@ impl Zeta {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
-        }
+        };
+
+        this.enable_or_disable_context_retrieval(cx);
+        let weak_this = cx.weak_entity();
+        cx.on_flags_ready(move |_, cx| {
+            weak_this
+                .update(cx, |this, cx| this.enable_or_disable_context_retrieval(cx))
+                .ok();
+        })
+        .detach();
+        cx.observe_global::<SettingsStore>(|this, cx| {
+            this.enable_or_disable_context_retrieval(cx);
+        })
+        .detach();
+
+        this
     }
 
     pub fn set_edit_prediction_model(&mut self, model: ZetaEditPredictionModel) {
@@ -2508,6 +2518,11 @@ impl Zeta {
         );
         self.client.telemetry().flush_events().detach();
         cx.notify();
+    }
+
+    fn enable_or_disable_context_retrieval(&mut self, cx: &mut Context<'_, Zeta>) {
+        self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
+            && all_language_settings(None, cx).edit_predictions.use_context;
     }
 }
 

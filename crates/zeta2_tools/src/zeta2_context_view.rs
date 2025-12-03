@@ -12,17 +12,17 @@ use editor::{Editor, PathKey};
 use futures::StreamExt as _;
 use gpui::{
     Animation, AnimationExt, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ParentElement as _, SharedString, Styled as _, Task, TextAlign, Window, actions,
-    pulsating_between,
+    Focusable, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, Task, TextAlign, Window, actions, div, pulsating_between,
 };
 use multi_buffer::MultiBuffer;
 use project::Project;
 use text::OffsetRangeExt;
 use ui::{
-    ButtonCommon, Clickable, Color, Disableable, FluentBuilder as _, Icon, IconButton, IconName,
-    IconSize, InteractiveElement, IntoElement, ListHeader, ListItem, StyledTypography, div, h_flex,
-    v_flex,
+    ButtonCommon, Clickable, Disableable, FluentBuilder as _, IconButton, IconName,
+    StyledTypography as _, h_flex, v_flex,
 };
+
 use workspace::Item;
 use zeta::{
     Zeta, ZetaContextRetrievalFinishedDebugInfo, ZetaContextRetrievalStartedDebugInfo,
