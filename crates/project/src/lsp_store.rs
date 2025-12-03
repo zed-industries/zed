@@ -308,6 +308,7 @@ impl LocalLspStore {
         language_name: &LanguageName,
         cx: &mut App,
     ) -> LanguageServerId {
+        log::info!("Getting or inserting lsp for: {}", language_name);
         let key = LanguageServerSeed {
             worktree_id: worktree_handle.read(cx).id(),
             name: disposition.server_name.clone(),
@@ -324,6 +325,11 @@ impl LocalLspStore {
                 .into_iter()
                 .find(|adapter| adapter.name() == disposition.server_name)
                 .expect("To find LSP adapter");
+            log::info!(
+                "got an lsp adapter for {}: {}",
+                language_name,
+                adapter.name()
+            );
             let new_language_server_id = self.start_language_server(
                 worktree_handle,
                 delegate,
@@ -2435,6 +2441,7 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) {
         let buffer = buffer_handle.read(cx);
+        let project_path = buffer.project_path(cx);
         let buffer_id = buffer.remote_id();
 
         let Some(file) = File::from_dyn(buffer.file()) else {
@@ -2475,6 +2482,15 @@ impl LocalLspStore {
                 let delegate: Arc<dyn ManifestDelegate> =
                     Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
 
+                self.lsp_tree.instances.iter().for_each(|(a, b)| {
+                    b.roots.iter().for_each(|(a, b)| {
+                        log::info!(
+                            "fallback walk: worktree {:?}, has servers: {:?}",
+                            a,
+                            b.iter().map(|(a, (_, c))| (a, c)).collect::<Vec<_>>()
+                        );
+                    });
+                });
                 let servers = self
                     .lsp_tree
                     .walk(
@@ -2485,8 +2501,30 @@ impl LocalLspStore {
                         cx,
                     )
                     .collect::<Vec<_>>();
+                log::info!(
+                    "walking servers fallback: {:?}",
+                    servers
+                        .iter()
+                        .map(|e| e
+                            .name()
+                            .map(|e| e.to_string())
+                            .unwrap_or("unknown".to_string()))
+                        .collect::<Vec<_>>()
+                );
                 (false, lsp_delegate, servers)
             });
+        log::info!(
+            "[-] registering servers and adapters for {} {:?}: {:?}",
+            reused,
+            project_path,
+            servers
+                .iter()
+                .map(|e| e
+                    .name()
+                    .map(|e| e.to_string())
+                    .unwrap_or("unknown".to_string()))
+                .collect::<Vec<_>>()
+        );
         let servers_and_adapters = servers
             .into_iter()
             .filter_map(|server_node| {
@@ -2610,8 +2648,19 @@ impl LocalLspStore {
         impl FnOnce(&mut LanguageServerTree) -> Vec<LanguageServerTreeNode> + use<'lang_name>,
     )> {
         if worktree.read(cx).is_visible() {
+            log::info!("worktree not visible");
             return None;
         }
+
+        server_tree.instances.iter().for_each(|(a, b)| {
+            b.roots.iter().for_each(|(a, b)| {
+                log::info!(
+                    "worktree {:?}, has servers: {:?}",
+                    a,
+                    b.iter().map(|(a, (_, c))| (a, c)).collect::<Vec<_>>()
+                );
+            });
+        });
 
         let worktree_store = self.worktree_store.read(cx);
         let servers = server_tree
@@ -2630,6 +2679,10 @@ impl LocalLspStore {
                     .map(move |(_, (server_node, server_languages))| {
                         (worktree_id, server_node, server_languages)
                     })
+                    .map(|(a, b, c)| {
+                        log::info!("checking server languages for: {:?}, got: {:?}", b.id(), c);
+                        (a, b, c)
+                    })
                     .filter(|(_, _, server_languages)| server_languages.contains(language_name))
                     .map(|(worktree_id, server_node, _)| {
                         (
@@ -2646,6 +2699,13 @@ impl LocalLspStore {
             })
             .into_values()
             .max_by_key(|servers| servers.len())?;
+        log::info!(
+            "reusing servers: {:?}",
+            servers
+                .iter()
+                .map(|e| e.name().map(|e| e.to_string()).unwrap_or("unk".to_string()))
+                .collect::<Vec<_>>()
+        );
 
         let worktree_id = worktree.read(cx).id();
         let apply = move |tree: &mut LanguageServerTree| {
@@ -3891,6 +3951,14 @@ impl LspStore {
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
+        log::info!(
+            "creating new local workspace with languages: {:?}",
+            languages
+                .all_lsp_adapters()
+                .iter()
+                .map(|e| e.name())
+                .collect::<Vec<_>>()
+        );
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -4162,6 +4230,10 @@ impl LspStore {
         ignore_refcounts: bool,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
+        log::info!(
+            "registering buffer with language servers, only: {:?}",
+            only_register_servers
+        );
         let buffer_id = buffer.read(cx).remote_id();
         let handle = cx.new(|_| buffer.clone());
         if let Some(local) = self.as_local_mut() {
@@ -4715,6 +4787,7 @@ impl LspStore {
     }
 
     fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
+        log::info!("refreshing server tree");
         let buffer_store = self.buffer_store.clone();
         let Some(local) = self.as_local_mut() else {
             return;
@@ -4743,7 +4816,17 @@ impl LspStore {
 
         let mut messages_to_report = Vec::new();
         let (new_tree, to_stop) = {
+            local.lsp_tree.instances.iter().for_each(|(a, b)| {
+                b.roots.iter().for_each(|(a, b)| {
+                    log::info!(
+                        "before rebase: worktree {:?}, has servers: {:?}",
+                        a,
+                        b.iter().map(|(a, (_, c))| (a, c)).collect::<Vec<_>>()
+                    );
+                });
+            });
             let mut rebase = local.lsp_tree.rebase();
+
             let buffers = buffer_store
                 .read(cx)
                 .buffers()
@@ -4857,6 +4940,17 @@ impl LspStore {
             cx.emit(message);
         }
         local.lsp_tree = new_tree;
+
+        local.lsp_tree.instances.iter().for_each(|(a, b)| {
+            b.roots.iter().for_each(|(a, b)| {
+                log::info!(
+                    "after rebase: worktree {:?}, has servers: {:?}",
+                    a,
+                    b.iter().map(|(a, (_, c))| (a, c)).collect::<Vec<_>>()
+                );
+            });
+        });
+
         for (id, _) in to_stop {
             self.stop_local_language_server(id, cx).detach();
         }

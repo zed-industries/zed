@@ -405,6 +405,11 @@ impl LanguageRegistry {
     }
 
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
+        log::info!(
+            "Registering lsp adapter for language {}, adapter: {}",
+            language_name,
+            adapter.name()
+        );
         let mut state = self.state.write();
 
         if adapter.is_extension()

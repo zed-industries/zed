@@ -255,9 +255,18 @@ impl LanguageServerTree {
             .iter()
             .map(|lsp_adapter| lsp_adapter.name.clone())
             .collect::<Vec<_>>();
+        log::info!(
+            "available language servers: {:?}, available adapters: {:?}",
+            available_language_servers,
+            available_lsp_adapters
+                .iter()
+                .map(|adapter| adapter.name())
+                .collect::<Vec<_>>()
+        );
 
         let desired_language_servers =
             settings.customized_language_servers(&available_language_servers);
+        log::info!("desired {:?}", desired_language_servers);
         let adapters_with_settings = desired_language_servers
             .into_iter()
             .filter_map(|desired_adapter| {
@@ -285,6 +294,13 @@ impl LanguageServerTree {
                 Some((adapter.name(), (adapter_settings, adapter)))
             })
             .collect::<IndexMap<_, _>>();
+        log::info!(
+            "adapters after desired: {:?}",
+            adapters_with_settings
+                .values()
+                .map(|(_, adapter)| adapter.name())
+                .collect::<Vec<_>>()
+        );
         // After starting all the language servers, reorder them to reflect the desired order
         // based on the settings.
         //
