@@ -23,9 +23,9 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    ModalView, Pane, SaveIntent, Workspace,
+    Event as WorkspaceEvent, ModalView, Pane, SaveIntent, Workspace,
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
-    pane::{Event as PaneEvent, render_item_indicator, tab_details},
+    pane::{render_item_indicator, tab_details},
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
@@ -322,7 +322,7 @@ impl TabSwitcherDelegate {
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
     ) -> Self {
-        Self::subscribe_to_updates(&pane, window, cx);
+        Self::subscribe_to_updates(&workspace, window, cx);
         Self {
             select_last,
             tab_switcher,
@@ -338,22 +338,25 @@ impl TabSwitcherDelegate {
     }
 
     fn subscribe_to_updates(
-        pane: &WeakEntity<Pane>,
+        workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
     ) {
-        let Some(pane) = pane.upgrade() else {
+        let Some(workspace) = workspace.upgrade() else {
             return;
         };
-        cx.subscribe_in(&pane, window, |tab_switcher, _, event, window, cx| {
+        cx.subscribe_in(&workspace, window, |tab_switcher, _, event, window, cx| {
             match event {
-                PaneEvent::AddItem { .. }
-                | PaneEvent::RemovedItem { .. }
-                | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let query = picker.query(cx);
-                    picker.delegate.update_matches(query, window, cx);
-                    cx.notify();
-                }),
+                WorkspaceEvent::PaneAdded(_)
+                | WorkspaceEvent::PaneRemoved
+                | WorkspaceEvent::ItemAdded { .. }
+                | WorkspaceEvent::ItemRemoved { .. } => {
+                    tab_switcher.picker.update(cx, |picker, cx| {
+                        let query = picker.query(cx);
+                        picker.delegate.update_matches(query, window, cx);
+                        cx.notify();
+                    })
+                }
                 _ => {}
             };
         })
