@@ -9,6 +9,7 @@ pub mod pane_group;
 mod path_list;
 mod persistence;
 pub mod searchable;
+mod security_modal;
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
@@ -129,11 +130,14 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::persistence::{
-    SerializedAxis,
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
-};
 use crate::{item::ItemBufferKind, notifications::NotificationId};
+use crate::{
+    persistence::{
+        SerializedAxis,
+        model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    },
+    security_modal::SecurityModal,
+};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -268,9 +272,13 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
-        /// Enables advanced features for the current worktree.
-        TrustCurrentWorktree,
-        // TODO kb another action to clear trust for all worktrees + docs
+        /// If any worktrees are in restricted mode, shows a modal with possible actions.
+        /// TODO kb docs
+        ShowWorktreeSecurity,
+        /// Clears all trusted worktrees, placing them in restricted mode on next open.
+        /// Requires restart to take effect on already opened projects.
+        /// TODO kb docs
+        ClearTrustedWorktrees,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1210,33 +1218,30 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
+        if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                let weak_workspace = cx.weak_entity();
-                // TODO kb proper UI to manage paths and show the warning to the user
                 // TODO kb Is it ok that remote projects' worktrees are identified by abs path only?
                 trusted_worktrees_storage
-                    .subscribe(cx, move |e, cx| {
-                        weak_workspace
-                            .update(cx, |workspace, cx| match e {
-                                session::Event::TrustedWorktree(trusted_path) => {
-                                    workspace.dismiss_notification(
-                                        &NotificationId::named(SharedString::new(
-                                            trusted_path.to_string_lossy(),
-                                        )),
-                                        cx,
-                                    );
+                    .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
+                        session::Event::TrustedWorktree(trusted_path) => {
+                            if let Some(security_modal) =
+                                workspace.active_modal::<SecurityModal>(cx)
+                            {
+                                let remove = security_modal.update(cx, |security_modal, _| {
+                                    security_modal.paths.remove(trusted_path);
+                                    security_modal.paths.is_empty()
+                                });
+                                if remove {
+                                    workspace.hide_modal(window, cx);
                                 }
-                                session::Event::UntrustedWorktree(untrusted_path) => workspace
-                                    .show_untrusted_worktree_notification(untrusted_path, cx),
-                            })
-                            .ok();
+                            }
+                        }
+                        session::Event::UntrustedWorktree(_) => {
+                            workspace.show_worktree_security_modal(window, cx)
+                        }
                     })
                     .detach();
-                trusted_worktrees_storage.untrusted_worktrees().clone()
             })
-        } else {
-            HashSet::default()
         };
 
         cx.observe_global::<SettingsStore>(|_, cx| {
@@ -1512,9 +1517,7 @@ impl Workspace {
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.update_window_title(window, cx);
             workspace.show_initial_notifications(cx);
-            for untrusted_path in untrusted_worktrees {
-                workspace.show_untrusted_worktree_notification(&untrusted_path, cx);
-            }
+            workspace.show_worktree_security_modal(window, cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -5965,29 +5968,21 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &TrustCurrentWorktree, _, cx| {
-                    if let Some(active_item) = workspace.active_item(cx) {
-                        if cx.has_global::<TrustedWorktreesStorage>() {
-                            for trusted_path in active_item
-                                .project_paths(cx)
-                                .into_iter()
-                                .map(|project_path| project_path.worktree_id)
-                                .unique()
-                                .filter_map(|worktree_id| {
-                                    workspace.absolute_path_of_worktree(worktree_id, cx)
-                                })
-                                .collect::<Vec<_>>()
-                            {
-                                cx.update_global::<TrustedWorktreesStorage, _>(
-                                    |trusted_worktrees_storage, cx| {
-                                        trusted_worktrees_storage.trust_path(trusted_path, cx)
-                                    },
-                                );
-                            }
-                        }
-                    }
+                |workspace: &mut Workspace, _: &ShowWorktreeSecurity, window, cx| {
+                    workspace.show_worktree_security_modal(window, cx);
                 },
             ))
+            .on_action(
+                cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
+                    if cx.has_global::<TrustedWorktreesStorage>() {
+                        cx.update_global::<TrustedWorktreesStorage, _>(
+                            |trusted_worktrees_storage, cx| {
+                                trusted_worktrees_storage.clear_trusted_paths(cx);
+                            },
+                        );
+                    }
+                }),
+            )
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
@@ -6426,53 +6421,40 @@ impl Workspace {
         });
     }
 
-    fn show_untrusted_worktree_notification(
-        &mut self,
-        untrusted_path: &PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .project()
-            .read(cx)
-            .find_worktree(untrusted_path, cx)
-            .is_none()
-        {
-            return;
-        }
-        self
-            .show_notification(
-                NotificationId::named(SharedString::new(
-                    untrusted_path.to_string_lossy(),
-                )),
-                cx,
-                |cx| {
-                    let untrusted_path = untrusted_path.clone();
-                    cx.new(move |cx| {
-                        MessageNotification::new(
-                            format!(
-                                "Workspace {untrusted_path:?} is not trusted.\nProject local settings will not be loaded.\nMake sure you review project settings for extensions that may be installed automatically."
-                            ),
-                            cx,
-                        )
-                        .primary_message("Trust")
-                        .primary_icon(IconName::Check)
-                        .primary_icon_color(Color::Success)
-                        .primary_on_click({
-                            move |_, cx| {
-                                if cx.has_global::<TrustedWorktreesStorage>() {
-                                    cx.update_global::<TrustedWorktreesStorage, _>(
-                                        |trusted_worktrees_storage, cx| {
-                                            trusted_worktrees_storage.trust_path(untrusted_path.clone(), cx)
-                                        },
-                                    );
-                                }
-                            }
-                        })
-                        .secondary_message("Do not trust")
-                        .secondary_icon(IconName::Close)
+    pub fn show_worktree_security_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                trusted_worktrees_storage
+                    .untrusted_worktrees()
+                    .iter()
+                    .filter(|untrusted_path| {
+                        self.project()
+                            .read(cx)
+                            .find_worktree(untrusted_path, cx)
+                            .is_some()
                     })
-                },
-            );
+                    .cloned()
+                    .collect()
+            })
+        } else {
+            HashSet::default()
+        };
+
+        if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
+            let remove = security_modal.update(cx, |security_modal, cx| {
+                security_modal.paths.extend(untrusted_worktrees);
+                let remove = security_modal.paths.is_empty();
+                cx.notify();
+                remove
+            });
+            if remove {
+                self.hide_modal(window, cx);
+            }
+        } else if !untrusted_worktrees.is_empty() {
+            self.toggle_modal(window, cx, |_, _| SecurityModal {
+                paths: untrusted_worktrees,
+            });
+        }
     }
 }
 
