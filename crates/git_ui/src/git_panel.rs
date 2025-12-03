@@ -2646,7 +2646,7 @@ impl GitPanel {
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+            let prompt_answer = match fs.git_clone(path.as_path(), &repo).await {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
