@@ -17,7 +17,7 @@ categories = ["gui"]
 workspace = true
 
 [features]
-default = ["font-kit", "wayland", "x11", "windows-manifest"]
+default = ["font-kit", "wayland", "x11", "windows-manifest", "http-client"]
 test-support = [
     "leak-detection",
     "collections/test-support",
@@ -79,6 +79,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
+http-client = ["http_client/client"]
 
 [lib]
 path = "src/gpui.rs"

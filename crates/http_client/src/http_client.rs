@@ -1,23 +1,19 @@
-mod async_body;
-pub mod github;
-pub mod github_download;
+use std::sync::Arc;
+#[cfg(feature = "test-support")]
+use std::{any::type_name, fmt};
 
-pub use anyhow::{Result, anyhow};
-pub use async_body::{AsyncBody, Inner};
+use anyhow::{Result, anyhow};
 use derive_more::Deref;
-use http::HeaderValue;
-pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
-
 use futures::{
     FutureExt as _,
     future::{self, BoxFuture},
 };
+use http::{HeaderValue, Method, Request, Response, request::Builder};
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::sync::Arc;
-#[cfg(feature = "test-support")]
-use std::{any::type_name, fmt};
-pub use url::{Host, Url};
+use url::Url;
+
+use crate::AsyncBody;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {

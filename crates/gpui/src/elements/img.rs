@@ -4,9 +4,13 @@ use crate::{
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
-use anyhow::{Context as _, Result};
 
-use futures::{AsyncReadExt, Future};
+#[cfg(feature = "http-client")]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(feature = "http-client")]
+use futures::AsyncReadExt;
+use futures::Future;
 use image::{
     AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
@@ -593,6 +597,7 @@ impl Asset for ImageAssetLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
+        #[cfg(feature = "http-client")]
         let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?
         // let scale_factor = cx.scale_factor();
@@ -601,6 +606,7 @@ impl Asset for ImageAssetLoader {
         async move {
             let bytes = match source.clone() {
                 Resource::Path(uri) => fs::read(uri.as_ref())?,
+                #[cfg(feature = "http-client")]
                 Resource::Uri(uri) => {
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
@@ -619,6 +625,10 @@ impl Asset for ImageAssetLoader {
                         });
                     }
                     body
+                }
+                #[cfg(not(feature = "http-client"))]
+                Resource::Uri(_) => {
+                    return Err(ImageCacheError::NotEnabled);
                 }
                 Resource::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
@@ -706,6 +716,9 @@ pub enum ImageCacheError {
     /// Some other kind of error occurred
     #[error("error: {0}")]
     Other(#[from] Arc<anyhow::Error>),
+    /// The feature `http-client` is not enabled.
+    #[error("the feature `http-client` is not enabled")]
+    NotEnabled,
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),

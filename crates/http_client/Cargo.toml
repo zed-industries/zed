@@ -10,10 +10,11 @@ description = "A HTTP client library for Zed and GPUI"
 workspace = true
 
 [features]
+client = ["dep:reqwest"]
 test-support = []
 
 [lib]
-path = "src/http_client.rs"
+path = "src/lib.rs"
 doctest = true
 
 [dependencies]
@@ -28,7 +29,7 @@ http-body.workspace = true
 http.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true

@@ -129,10 +129,16 @@ impl TestAppContext {
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
+        #[cfg(feature = "http-client")]
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        let mut app = App::new_app(
+            platform.clone(),
+            asset_source,
+            #[cfg(feature = "http-client")]
+            http_client,
+        );
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
