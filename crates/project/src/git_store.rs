@@ -5887,8 +5887,8 @@ impl Repository {
     pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
-                RepositoryState::Remote { .. } => todo!(),
-                RepositoryState::Local { backend, .. } => match backend.status(&[]).await {
+                RepositoryState::Remote(..) => todo!(),
+                RepositoryState::Local(state) => match state.backend.status(&[]).await {
                     Ok(_) => GitAccess::Yes,
                     Err(_) => GitAccess::No,
                 },
