@@ -60,6 +60,7 @@ members = [
     "crates/zeta2_tools",
     "crates/editor",
     "crates/eval",
+    "crates/eval_utils",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -289,6 +290,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
@@ -441,7 +443,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
+agent-client-protocol = { version = "=0.8.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -510,7 +512,7 @@ fork = "0.4.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "e5f883040530b4df36437f140084ee5cc7c1c9be" }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "09acfdf2bd5c1d6254abefd609c808ff73547b2c" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
@@ -674,7 +676,7 @@ toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.10", features = ["wasm"] }
-tree-sitter-bash = "0.25.0"
+tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-css = "0.23"

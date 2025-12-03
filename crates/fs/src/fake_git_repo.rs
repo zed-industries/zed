@@ -152,8 +152,8 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> Option<String> {
-        None
+    fn remote_url(&self, _name: &str) -> BoxFuture<'_, Option<String>> {
+        async move { None }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {

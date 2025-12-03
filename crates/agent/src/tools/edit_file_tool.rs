@@ -273,14 +273,9 @@ impl AgentTool for EditFileTool {
         };
         let abs_path = project.read(cx).absolute_path(&project_path, cx);
         if let Some(abs_path) = abs_path.clone() {
-            event_stream.update_fields(ToolCallUpdateFields {
-                locations: Some(vec![acp::ToolCallLocation {
-                    path: abs_path,
-                    line: None,
-                    meta: None,
-                }]),
-                ..Default::default()
-            });
+            event_stream.update_fields(
+                ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path)]),
+            );
         }
 
         let authorize = self.authorize(&input, &event_stream, cx);
@@ -389,10 +384,11 @@ impl AgentTool for EditFileTool {
                                 range.start.to_point(&buffer.snapshot()).row
                             }).ok();
                             if let Some(abs_path) = abs_path.clone() {
-                                event_stream.update_fields(ToolCallUpdateFields {
-                                    locations: Some(vec![ToolCallLocation { path: abs_path, line, meta: None }]),
-                                    ..Default::default()
-                                });
+                                let mut location = ToolCallLocation::new(abs_path);
+                                if let Some(line) = line {
+                                    location = location.line(line);
+                                }
+                                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
                             }
                             emitted_location = true;
                         }

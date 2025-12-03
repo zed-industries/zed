@@ -719,6 +719,7 @@ impl CodegenAlternative {
                             output_tokens = usage.output_tokens,
                         )
                     }
+
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
                 })
