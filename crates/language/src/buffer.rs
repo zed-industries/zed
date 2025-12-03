@@ -32,7 +32,6 @@ use gpui::{
     Task, TaskLabel, TextStyle,
 };
 
-use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
@@ -45,7 +44,7 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::{BTreeMap, BTreeSet, hash_map},
+    collections::{BTreeMap, BTreeSet},
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -4236,7 +4235,6 @@ impl BufferSnapshot {
 
         let mut new_bracket_matches = HashMap::default();
         let mut all_bracket_matches = HashMap::default();
-        let mut bracket_matches_to_color = HashMap::default();
 
         for chunk in tree_sitter_data
             .chunks
@@ -4253,7 +4251,10 @@ impl BufferSnapshot {
             let bracket_matches = match tree_sitter_data.brackets_by_chunks[chunk.id].take() {
                 Some(cached_brackets) => cached_brackets,
                 None => {
-                    let mut bracket_pairs_ends = Vec::new();
+                    let mut all_brackets = Vec::new();
+                    let mut opens = Vec::new();
+                    let mut color_pairs = Vec::new();
+
                     let mut matches =
                         self.syntax
                             .matches(chunk_range.clone(), &self.text, |grammar| {
@@ -4265,100 +4266,76 @@ impl BufferSnapshot {
                         .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                         .collect::<Vec<_>>();
 
-                    let chunk_range = chunk_range.clone();
-                    let tree_sitter_matches = iter::from_fn(|| {
-                        while let Some(mat) = matches.peek() {
-                            let mut open = None;
-                            let mut close = None;
-                            let depth = mat.depth;
-                            let config = configs[mat.grammar_index];
-                            let pattern = &config.patterns[mat.pattern_index];
-                            for capture in mat.captures {
-                                if capture.index == config.open_capture_ix {
-                                    open = Some(capture.node.byte_range());
-                                } else if capture.index == config.close_capture_ix {
-                                    close = Some(capture.node.byte_range());
-                                }
+                    while let Some(mat) = matches.peek() {
+                        let mut open = None;
+                        let mut close = None;
+                        let syntax_layer_depth = mat.depth;
+                        let config = configs[mat.grammar_index];
+                        let pattern = &config.patterns[mat.pattern_index];
+                        for capture in mat.captures {
+                            if capture.index == config.open_capture_ix {
+                                open = Some(capture.node.byte_range());
+                            } else if capture.index == config.close_capture_ix {
+                                close = Some(capture.node.byte_range());
                             }
-
-                            matches.advance();
-
-                            let Some((open_range, close_range)) = open.zip(close) else {
-                                continue;
-                            };
-
-                            let bracket_range = open_range.start..=close_range.end;
-                            if !bracket_range.overlaps(&chunk_range) {
-                                continue;
-                            }
-
-                            if !pattern.rainbow_exclude
-                                // Also, certain languages have "brackets" that are not brackets, e.g. tags. and such
-                                // bracket will match the entire tag with all text inside.
-                                // For now, avoid highlighting any pair that has more than single char in each bracket.
-                                // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                                && (open_range.len() == 1 || close_range.len() == 1)
-                            {
-                                // Certain tree-sitter grammars may return more bracket pairs than needed:
-                                // see `test_markdown_bracket_colorization` for a set-up that returns pairs with the same start bracket and different end one.
-                                // Pick the pair with the shortest range in case of ambiguity.
-                                match bracket_matches_to_color.entry(open_range.clone()) {
-                                    hash_map::Entry::Vacant(v) => {
-                                        v.insert(close_range.clone());
-                                    }
-                                    hash_map::Entry::Occupied(mut o) => {
-                                        let previous_close_range = o.get();
-                                        let previous_length =
-                                            previous_close_range.end - open_range.start;
-                                        let new_length = close_range.end - open_range.start;
-                                        if new_length < previous_length {
-                                            o.insert(close_range.clone());
-                                        }
-                                    }
-                                }
-                            }
-                            return Some((open_range, close_range, pattern, depth));
                         }
-                        None
-                    })
-                    .sorted_by_key(|(open_range, _, _, _)| open_range.start)
-                    .collect::<Vec<_>>();
 
-                    let new_matches = tree_sitter_matches
-                        .into_iter()
-                        .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
-                            let participates_in_colorizing =
-                                bracket_matches_to_color.get(&open_range).is_some_and(
-                                    |close_range_to_color| close_range_to_color == &close_range,
-                                );
-                            let color_index = if participates_in_colorizing {
-                                while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
-                                    if last_bracket_end <= open_range.start {
-                                        bracket_pairs_ends.pop();
-                                    } else {
-                                        break;
-                                    }
-                                }
+                        matches.advance();
 
-                                let bracket_depth = bracket_pairs_ends.len();
-                                bracket_pairs_ends.push(close_range.end);
-                                Some(bracket_depth)
-                            } else {
-                                None
-                            };
+                        let Some((open_range, close_range)) = open.zip(close) else {
+                            continue;
+                        };
 
-                            BracketMatch {
-                                open_range,
-                                close_range,
-                                syntax_layer_depth,
-                                newline_only: pattern.newline_only,
-                                color_index,
-                            }
-                        })
-                        .collect::<Vec<_>>();
+                        let bracket_range = open_range.start..=close_range.end;
+                        if !bracket_range.overlaps(&chunk_range) {
+                            continue;
+                        }
 
-                    new_bracket_matches.insert(chunk.id, new_matches.clone());
-                    new_matches
+                        let index = all_brackets.len();
+                        all_brackets.push(BracketMatch {
+                            open_range: open_range.clone(),
+                            close_range: close_range.clone(),
+                            newline_only: pattern.newline_only,
+                            syntax_layer_depth,
+                            color_index: None,
+                        });
+
+                        // Certain languages have "brackets" that are not brackets, e.g. tags. and such
+                        // bracket will match the entire tag with all text inside.
+                        // For now, avoid highlighting any pair that has more than single char in each bracket.
+                        // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                        let should_color = !pattern.rainbow_exclude
+                            && (open_range.len() == 1 || close_range.len() == 1);
+                        if should_color {
+                            opens.push(open_range.clone());
+                            color_pairs.push((open_range, close_range, index));
+                        }
+                    }
+
+                    opens.sort_by_key(|r| (r.start, r.end));
+                    opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
+                    color_pairs.sort_by_key(|(_, close, _)| close.end);
+
+                    let mut open_stack = Vec::new();
+                    let mut open_index = 0;
+                    for (open, close, index) in color_pairs {
+                        while open_index < opens.len() && opens[open_index].start < close.start {
+                            open_stack.push(opens[open_index].clone());
+                            open_index += 1;
+                        }
+
+                        if open_stack.last() == Some(&open) {
+                            let depth_index = open_stack.len() - 1;
+                            all_brackets[index].color_index = Some(depth_index);
+                            open_stack.pop();
+                        }
+                    }
+
+                    all_brackets.sort_by_key(|bracket_match| {
+                        (bracket_match.open_range.start, bracket_match.open_range.end)
+                    });
+                    new_bracket_matches.insert(chunk.id, all_brackets.clone());
+                    all_brackets
                 }
             };
             all_bracket_matches.insert(chunk.row_range(), bracket_matches);
