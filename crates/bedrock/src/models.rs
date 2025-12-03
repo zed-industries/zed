@@ -589,45 +589,96 @@ impl Model {
         region: &str,
         allow_global: bool,
     ) -> anyhow::Result<String> {
-        let region_group = if allow_global {
-            "global"
-        } else if region.starts_with("us-gov-") {
+        // List derived from here:
+        // https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html#inference-profiles-support-system
+        let model_id = self.request_id();
+
+        let supports_global = matches!(
+            self,
+            Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
+                | Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking
+        );
+
+        let region_group = if region.starts_with("us-gov-") {
             "us-gov"
-        } else if region.starts_with("us-") {
-            "us"
+        } else if region.starts_with("us-")
+            || region.starts_with("ca-")
+            || region.starts_with("sa-")
+        {
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "us"
+            }
         } else if region.starts_with("eu-") {
-            "eu"
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "eu"
+            }
         } else if region.starts_with("ap-") || region == "me-central-1" || region == "me-south-1" {
-            "apac"
-        } else if region.starts_with("ca-") || region.starts_with("sa-") {
-            // Canada and South America regions - default to US profiles
-            "us"
+            if allow_global && supports_global {
+                "global"
+            } else {
+                "apac"
+            }
         } else {
             anyhow::bail!("Unsupported Region {region}");
         };
 
-        let model_id = self.request_id();
+        match (self, region_group, region) {
+            (Model::Custom { .. }, _, _) => Ok(self.request_id().into()),
 
-        match (self, region_group) {
-            // Custom models can't have CRI IDs
-            (Model::Custom { .. }, _) => Ok(self.request_id().into()),
+            (
+                Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
+                | Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking,
+                "global",
+                _,
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Global inference - available for most models when users opt in
-            (_, "global") => Ok(format!("{}.{}", region_group, model_id)),
-
-            // Models with US Gov only
-            (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
+            (Model::Claude3_5Sonnet, "us-gov", _) | (Model::Claude3Haiku, "us-gov", _) => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
+            (
+                Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking,
+                "us-gov",
+                _,
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Available everywhere
-            (Model::AmazonNovaLite | Model::AmazonNovaMicro | Model::AmazonNovaPro, _) => {
-                Ok(format!("{}.{}", region_group, model_id))
+            (
+                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                "apac",
+                "ap-southeast-2" | "ap-southeast-4",
+            ) => Ok(format!("au.{}", model_id)),
+
+            (
+                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                "apac",
+                "ap-northeast-1" | "ap-northeast-3",
+            ) => Ok(format!("jp.{}", model_id)),
+
+            (Model::AmazonNovaLite, "us", r) if r.starts_with("ca-") => {
+                Ok(format!("ca.{}", model_id))
             }
 
-            // Models in US
             (
                 Model::AmazonNovaPremier
+                | Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
                 | Model::Claude3_5Haiku
                 | Model::ClaudeHaiku4_5
                 | Model::Claude3_5Sonnet
@@ -664,16 +715,18 @@ impl Model {
                 | Model::PalmyraWriterX4
                 | Model::PalmyraWriterX5,
                 "us",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models available in EU
             (
-                Model::Claude3_5Sonnet
+                Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
+                | Model::Claude3_5Sonnet
                 | Model::ClaudeHaiku4_5
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4
-                | Model::ClaudeSonnet4Thinking
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
                 | Model::Claude3Haiku
@@ -682,26 +735,26 @@ impl Model {
                 | Model::MetaLlama323BInstructV1
                 | Model::MistralPixtralLarge2502V1,
                 "eu",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models available in APAC
             (
-                Model::Claude3_5Sonnet
+                Model::AmazonNovaLite
+                | Model::AmazonNovaMicro
+                | Model::AmazonNovaPro
+                | Model::Claude3_5Sonnet
                 | Model::Claude3_5SonnetV2
                 | Model::ClaudeHaiku4_5
-                | Model::Claude3Haiku
-                | Model::Claude3Sonnet
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4
-                | Model::ClaudeSonnet4Thinking
-                | Model::ClaudeSonnet4_5
-                | Model::ClaudeSonnet4_5Thinking,
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet,
                 "apac",
+                _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Any other combination is not supported
-            _ => Ok(self.request_id().into()),
+            _ => Ok(model_id.into()),
         }
     }
 }
@@ -863,6 +916,13 @@ mod tests {
             "custom.my-model-v1:0"
         );
 
+        // Test that models without global support fall back to regional when allow_global is true
+        assert_eq!(
+            Model::AmazonNovaPro.cross_region_inference_id("us-east-1", true)?,
+            "us.amazon.nova-pro-v1:0",
+            "Nova Pro should fall back to regional profile even when allow_global is true"
+        );
+
         Ok(())
     }
 
@@ -904,21 +964,21 @@ mod tests {
 
 #[test]
 fn test_global_inference_ids() -> anyhow::Result<()> {
-    // Test global inference for models when allow_global is true
+    // Test global inference for models that support it when allow_global is true
     assert_eq!(
         Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
         "global.anthropic.claude-sonnet-4-20250514-v1:0"
     );
     assert_eq!(
-        Model::AmazonNovaPro.cross_region_inference_id("eu-west-1", true)?,
-        "global.amazon.nova-pro-v1:0"
+        Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
+        "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
     );
     assert_eq!(
-        Model::Claude3_5SonnetV2.cross_region_inference_id("ap-south-1", true)?,
-        "global.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        Model::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
+        "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     );
 
-    // Test that global is not used when allow_global is false
+    // Test that regional prefix is used when allow_global is false
     assert_eq!(
         Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", false)?,
         "us.anthropic.claude-sonnet-4-20250514-v1:0"
