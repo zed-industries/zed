@@ -29,7 +29,6 @@ fn test_empty_singleton(cx: &mut App) {
         [RowInfo {
             buffer_id: Some(buffer_id),
             buffer_row: Some(0),
-            base_text_row: None,
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
             expand_info: None,
@@ -2511,38 +2510,6 @@ impl ReferenceMultibuffer {
                             .iter()
                             .find(|e| e.id == region.excerpt_id.unwrap())
                             .map(|e| e.buffer.clone());
-                        let base_text_row = match region.status {
-                            None => Some(
-                                main_buffer
-                                    .as_ref()
-                                    .map(|main_buffer| {
-                                        let diff = self
-                                            .diffs
-                                            .get(&main_buffer.read(cx).remote_id())
-                                            .unwrap();
-                                        let buffer_row = buffer_row.unwrap();
-                                        BaseTextRow(
-                                            diff.read(cx).snapshot(cx).row_to_base_text_row(
-                                                buffer_row,
-                                                &main_buffer.read(cx).snapshot(),
-                                            ),
-                                        )
-                                    })
-                                    .unwrap_or_default(),
-                            ),
-                            Some(DiffHunkStatus {
-                                kind: DiffHunkStatusKind::Added,
-                                ..
-                            }) => None,
-                            Some(DiffHunkStatus {
-                                kind: DiffHunkStatusKind::Deleted,
-                                ..
-                            }) => Some(BaseTextRow(buffer_row.unwrap())),
-                            Some(DiffHunkStatus {
-                                kind: DiffHunkStatusKind::Modified,
-                                ..
-                            }) => unreachable!(),
-                        };
                         let is_excerpt_start = region_ix == 0
                             || &regions[region_ix - 1].excerpt_id != &region.excerpt_id
                             || regions[region_ix - 1].range.is_empty();
@@ -2589,7 +2556,6 @@ impl ReferenceMultibuffer {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
-                            base_text_row,
                             wrapped_buffer_row: None,
 
                             multibuffer_row: Some(multibuffer_row),
@@ -3815,70 +3781,6 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             "
         },
     );
-}
-
-#[gpui::test]
-async fn test_base_text_line_numbers(cx: &mut TestAppContext) {
-    let base_text = indoc! {"
-        one
-        two
-        three
-        four
-        five
-        six
-    "};
-    let buffer_text = indoc! {"
-        two
-        THREE
-        five
-        six
-        SEVEN
-    "};
-    let multibuffer = cx.update(|cx| MultiBuffer::build_simple(buffer_text, cx));
-    multibuffer.update(cx, |multibuffer, cx| {
-        let buffer = multibuffer.all_buffers().into_iter().next().unwrap();
-        let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
-        multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.add_diff(diff, cx);
-    });
-    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
-        (multibuffer.snapshot(cx), multibuffer.subscribe())
-    });
-
-    assert_new_snapshot(
-        &multibuffer,
-        &mut snapshot,
-        &mut subscription,
-        cx,
-        indoc! {"
-            - one
-              two
-            - three
-            - four
-            + THREE
-              five
-              six
-            + SEVEN
-        "},
-    );
-    let base_text_rows = snapshot
-        .row_infos(MultiBufferRow(0))
-        .map(|row_info| row_info.base_text_row)
-        .collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
-        base_text_rows,
-        vec![
-            Some(BaseTextRow(0)),
-            Some(BaseTextRow(1)),
-            Some(BaseTextRow(2)),
-            Some(BaseTextRow(3)),
-            None,
-            Some(BaseTextRow(4)),
-            Some(BaseTextRow(5)),
-            None,
-            Some(BaseTextRow(6)),
-        ]
-    )
 }
 
 #[track_caller]

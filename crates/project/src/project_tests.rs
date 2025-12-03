@@ -7571,6 +7571,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7613,6 +7614,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7669,6 +7671,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -7710,6 +7713,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged {
         changed_range: Some(changed_range),
+        base_text_changed_range: _,
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
