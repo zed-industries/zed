@@ -86,7 +86,6 @@ impl BlameRenderer for GitBlameRenderer {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
                             move |event, window, cx| {
-                                // Prevent the right-click event from bubbling up to parent elements
                                 cx.stop_propagation();
 
                                 deploy_blame_entry_context_menu(
