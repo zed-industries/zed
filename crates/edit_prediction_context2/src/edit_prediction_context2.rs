@@ -270,11 +270,11 @@ impl RelatedExcerptStore {
         for (identifier, entry, duration) in future::join_all(futures).await.into_iter().flatten() {
             new_cache.insert(identifier, entry);
             if let Some(duration) = duration {
-                cache_hit_count += 1;
+                cache_miss_count += 1;
                 mean_definition_latency += duration;
                 max_definition_latency = max_definition_latency.max(duration);
             } else {
-                cache_miss_count += 1;
+                cache_hit_count += 1;
             }
         }
         mean_definition_latency /= cache_miss_count.max(1) as u32;
@@ -442,8 +442,8 @@ fn identifiers_for_position(buffer: &BufferSnapshot, position: Anchor) -> Vec<Id
             {
                 let name = buffer.text_for_range(node_range.clone()).collect();
                 identifiers.push(Identifier {
-                    range: buffer.anchor_before(node_range.start)
-                        ..buffer.anchor_after(node_range.end),
+                    range: buffer.anchor_after(node_range.start)
+                        ..buffer.anchor_before(node_range.end),
                     name,
                 });
                 last_range = Some(node_range);
