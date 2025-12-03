@@ -551,12 +551,33 @@ impl SystemWindowTabController {
     }
 }
 
+pub(crate) enum GpuiMode {
+    Test { skip_drawing: bool },
+    Production,
+}
+
+impl GpuiMode {
+    pub fn test() -> Self {
+        GpuiMode::Test {
+            skip_drawing: false,
+        }
+    }
+
+    pub(crate) fn skip_drawing(&self) -> bool {
+        match self {
+            GpuiMode::Test { skip_drawing } => *skip_drawing,
+            GpuiMode::Production => false,
+        }
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
+    pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
@@ -635,6 +656,7 @@ impl App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
+                mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
                 pending_updates: 0,

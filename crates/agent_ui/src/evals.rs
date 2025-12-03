@@ -8,9 +8,9 @@ use language_model::{LanguageModelRegistry, SelectedModel};
 use rand::{SeedableRng as _, rngs::StdRng};
 
 #[test]
-// #[cfg_attr(not(feature = "unit-eval"), ignore)]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
 fn eval_single_cursor_edit() {
-    eval_utils::eval(10, 1.0, NoProcessor, move || {
+    eval_utils::eval(20, 1.0, NoProcessor, move || {
         run_eval(
             &EvalInput {
                 prompt: "Rename this variable to buffer_text".to_string(),
@@ -58,6 +58,7 @@ fn run_eval(
 ) -> eval_utils::EvalOutput<()> {
     let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
+    cx.skip_drawing();
 
     let buffer_text = run_inline_assistant_test(
         input.buffer.clone(),
