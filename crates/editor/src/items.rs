@@ -1498,13 +1498,9 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |index, theme| {
-                if let Some(active_index) = active_match_index {
-                    if &active_index == index {
-                        Hsla::red()
-                    } else {
-                        theme.colors().search_match_background
-                    }
+            move |index, theme| {
+                if active_match_index == Some(*index) {
+                    Hsla::red()
                 } else {
                     theme.colors().search_match_background
                 }

@@ -1445,8 +1445,8 @@ impl ProjectSearchView {
                 });
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |index, theme| {
-                        if new_index == index {
+                    move |index, theme| {
+                        if new_index == *index {
                             Hsla::red()
                         } else {
                             theme.colors().search_match_background
@@ -1541,17 +1541,18 @@ impl ProjectSearchView {
 
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
+        let match_ranges = self.entity.read(cx).match_ranges.clone();
         let new_index = active_match_index(
             Direction::Next,
-            &self.entity.read(cx).match_ranges,
+            &match_ranges,
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
         self.results_editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
-                &self.entity.read(cx).match_ranges,
-                |index, theme| {
-                    if new_index == index {
+                &match_ranges,
+                move |index, theme| {
+                    if new_index == Some(*index) {
                         Hsla::red()
                     } else {
                         theme.colors().search_match_background
