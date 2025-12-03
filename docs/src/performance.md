@@ -41,8 +41,10 @@ Then either compile Zed in debug mode or with `--profile release-tracing`.
 ## Usage
 
 Open the profiler (tracy-profiler), you should see zed in the list of `Discovered clients` click it.
+<img width="392" height="287" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" />
 
 To find functions that take a long time follow this image:
+<img width="888" height="1159" alt="image" src="https://github.com/user-attachments/assets/77087617-f53a-4331-863d-e59f8a5b6f0b" />
 
 # Task/Async profiling
 
