@@ -1476,18 +1476,8 @@ impl AcpThreadView {
                     .iter()
                     .any(|method| method.id.0.as_ref() == "claude-login")
                 {
-                    available_commands.push(acp::AvailableCommand {
-                        name: "login".to_owned(),
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
-                    available_commands.push(acp::AvailableCommand {
-                        name: "logout".to_owned(),
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
+                    available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
+                    available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
                 }
 
                 let has_commands = !available_commands.is_empty();
@@ -2562,7 +2552,7 @@ impl AcpThreadView {
                 acp::ToolKind::Think => IconName::ToolThink,
                 acp::ToolKind::Fetch => IconName::ToolWeb,
                 acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
-                acp::ToolKind::Other => IconName::ToolHammer,
+                acp::ToolKind::Other | _ => IconName::ToolHammer,
             })
         }
         .size(IconSize::Small)
@@ -2814,7 +2804,7 @@ impl AcpThreadView {
             })
             .gap_0p5()
             .children(options.iter().map(move |option| {
-                let option_id = SharedString::from(option.id.0.clone());
+                let option_id = SharedString::from(option.option_id.0.clone());
                 Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| {
                         let (this, action) = match option.kind {
@@ -2830,7 +2820,7 @@ impl AcpThreadView {
                                 this.icon(IconName::Close).icon_color(Color::Error),
                                 Some(&RejectOnce as &dyn Action),
                             ),
-                            acp::PermissionOptionKind::RejectAlways => {
+                            acp::PermissionOptionKind::RejectAlways | _ => {
                                 (this.icon(IconName::Close).icon_color(Color::Error), None)
                             }
                         };
@@ -2855,7 +2845,7 @@ impl AcpThreadView {
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
-                        let option_id = option.id.clone();
+                        let option_id = option.option_id.clone();
                         let option_kind = option.kind;
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
@@ -3543,7 +3533,7 @@ impl AcpThreadView {
                                                 );
 
                                                 this.authenticate(
-                                                    acp::AuthMethodId(method_id.clone()),
+                                                    acp::AuthMethodId::new(method_id.clone()),
                                                     window,
                                                     cx,
                                                 )
@@ -3837,10 +3827,6 @@ impl AcpThreadView {
                             .text_xs()
                             .text_color(cx.theme().colors().text_muted)
                             .child(match entry.status {
-                                acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
                                 acp::PlanEntryStatus::InProgress => {
                                     Icon::new(IconName::TodoProgress)
                                         .size(IconSize::Small)
@@ -3852,6 +3838,12 @@ impl AcpThreadView {
                                     Icon::new(IconName::TodoComplete)
                                         .size(IconSize::Small)
                                         .color(Color::Success)
+                                        .into_any_element()
+                                }
+                                acp::PlanEntryStatus::Pending | _ => {
+                                    Icon::new(IconName::TodoPending)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
                                         .into_any_element()
                                 }
                             })
@@ -4427,7 +4419,7 @@ impl AcpThreadView {
 
         self.authorize_tool_call(
             tool_call.id.clone(),
-            option.id.clone(),
+            option.option_id.clone(),
             option.kind,
             window,
             cx,
@@ -6243,27 +6235,18 @@ pub(crate) mod tests {
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp::ToolCallId("1".into());
-        let tool_call = acp::ToolCall {
-            id: tool_call_id.clone(),
-            title: "Label".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Pending,
-            content: vec!["hi".into()],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call_id = acp::ToolCallId::new("1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Label")
+            .kind(acp::ToolKind::Edit)
+            .content(vec!["hi".into()]);
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
-                vec![acp::PermissionOption {
-                    id: acp::PermissionOptionId("1".into()),
-                    name: "Allow".into(),
-                    kind: acp::PermissionOptionKind::AllowOnce,
-                    meta: None,
-                }],
+                vec![acp::PermissionOption::new(
+                    "1".into(),
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )],
             )]));
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
@@ -6482,10 +6465,7 @@ pub(crate) mod tests {
         fn default_response() -> Self {
             let conn = StubAgentConnection::new();
             conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-                acp::ContentChunk {
-                    content: "Default response".into(),
-                    meta: None,
-                },
+                acp::ContentChunk::new("Default response".into()),
             )]);
             Self::new(conn)
         }
@@ -6542,13 +6522,13 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId("test".into()),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                        meta: None,
-                    }),
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
                     cx,
                 )
             })))
@@ -6606,13 +6586,13 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId("test".into()),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                        meta: None,
-                    }),
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
                     cx,
                 )
             })))
@@ -6636,10 +6616,7 @@ pub(crate) mod tests {
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
-            Task::ready(Ok(acp::PromptResponse {
-                stop_reason: acp::StopReason::Refusal,
-                meta: None,
-            }))
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::Refusal)))
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
@@ -6707,24 +6684,14 @@ pub(crate) mod tests {
             .unwrap();
 
         // First user message
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
-            id: acp::ToolCallId("tool1".into()),
-            title: "Edit file 1".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Completed,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/test1.txt".into(),
-                    old_text: Some("old content 1".into()),
-                    new_text: "new content 1".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        })]);
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool1", "Edit file 1")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test1.txt", "new content 1").old_text("old content 1"),
+                )]),
+        )]);
 
         thread
             .update(cx, |thread, cx| thread.send_raw("Give me a diff", cx))
@@ -6750,24 +6717,14 @@ pub(crate) mod tests {
         });
 
         // Second user message
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
-            id: acp::ToolCallId("tool2".into()),
-            title: "Edit file 2".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Completed,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/test2.txt".into(),
-                    old_text: Some("old content 2".into()),
-                    new_text: "new content 2".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        })]);
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool2", "Edit file 2")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test2.txt", "new content 2").old_text("old content 2"),
+                )]),
+        )]);
 
         thread
             .update(cx, |thread, cx| thread.send_raw("Another one", cx))
@@ -6841,14 +6798,7 @@ pub(crate) mod tests {
         let connection = StubAgentConnection::new();
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
@@ -6934,14 +6884,7 @@ pub(crate) mod tests {
         let connection = StubAgentConnection::new();
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) =
@@ -6981,14 +6924,7 @@ pub(crate) mod tests {
 
         // Send
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "New Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("New Response".into()),
         )]);
 
         user_message_editor.update_in(cx, |_editor, window, cx| {
@@ -7076,14 +7012,7 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: acp::ContentBlock::Text(acp::TextContent {
-                        text: "Response".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Response".into())),
                 cx,
             );
             connection.end_turn(session_id, acp::StopReason::EndTurn);
@@ -7135,10 +7064,9 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "Message 1 resp".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 1 resp".into(),
+                )),
                 cx,
             );
         });
@@ -7172,10 +7100,7 @@ pub(crate) mod tests {
             // Simulate a response sent after beginning to cancel
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "onse".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("onse".into())),
                 cx,
             );
         });
@@ -7206,10 +7131,9 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "Message 2 response".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 2 response".into(),
+                )),
                 cx,
             );
             connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
@@ -7248,14 +7172,7 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
@@ -7334,14 +7251,7 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;

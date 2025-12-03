@@ -152,15 +152,12 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
+        let mut location = acp::ToolCallLocation::new(&abs_path);
+        if let Some(line) = input.start_line {
+            location = location.line(line.saturating_sub(1));
+        }
 
-        event_stream.update_fields(ToolCallUpdateFields {
-            locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path.clone(),
-                line: input.start_line.map(|line| line.saturating_sub(1)),
-                meta: None,
-            }]),
-            ..Default::default()
-        });
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -289,12 +286,9 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields {
-                        content: Some(vec![acp::ToolCallContent::Content {
-                            content: markdown.into(),
-                        }]),
-                        ..Default::default()
-                    })
+                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+                    ]));
                 }
             })?;
 

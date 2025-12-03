@@ -303,13 +303,12 @@ impl ExampleInstance {
                 let context_server_registry = cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
                 let thread = if let Some(json) = &meta.existing_thread_json {
-                    let session_id = acp::SessionId(
+                    let session_id = acp::SessionId::new(
                         rand::rng()
                             .sample_iter(&distr::Alphanumeric)
                             .take(7)
                             .map(char::from)
-                            .collect::<String>()
-                            .into(),
+                            .collect::<String>(),
                     );
 
                     let db_thread = agent::DbThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
@@ -640,7 +639,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         cx.spawn(async move |cx| {
             let language_registry =
                 project.read_with(cx, |project, _cx| project.languages().clone())?;
-            let id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+            let id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
             let terminal =
                 acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
                     .await?;
