@@ -29,6 +29,8 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() -> anyhow::Result<()> {
+    gpui::STARTUP_TIME.get_or_init(|| std::time::Instant::now());
+
     let cli = Cli::parse();
 
     if let Some(socket_path) = &cli.askpass {

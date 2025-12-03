@@ -298,6 +298,11 @@ impl RemoteBufferStore {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
         cx.spawn(async move |this, cx| {
+            log::info!(
+                "sending open buffer by path: {}",
+                path.display(PathStyle::Posix)
+            );
+            let st = Instant::now();
             let response = client
                 .request(proto::OpenBufferByPath {
                     project_id,
@@ -305,6 +310,8 @@ impl RemoteBufferStore {
                     path: path.to_proto(),
                 })
                 .await?;
+            let end = Instant::now();
+            log::info!("open buffer by path took: {:?}s", (end - st).as_secs_f64());
             let buffer_id = BufferId::new(response.buffer_id)?;
 
             let buffer = this
@@ -619,60 +626,130 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
+            let total_start = Instant::now();
             let path = path.clone();
+            let load_file_start = Instant::now();
             let buffer = match load_file.await.with_context(|| {
                 format!("Could not open path: {}", path.display(PathStyle::local()))
             }) {
                 Ok(loaded) => {
+                    let load_file_elapsed = load_file_start.elapsed();
+
+                    let reserve_entity_start = Instant::now();
                     let reservation = cx.reserve_entity::<Buffer>()?;
+                    let reserve_entity_elapsed = reserve_entity_start.elapsed();
+
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+                    let text_buffer_start = Instant::now();
                     let text_buffer = cx
                         .background_spawn(async move {
                             text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
                         })
                         .await;
-                    cx.insert_entity(reservation, |_| {
+                    let text_buffer_elapsed = text_buffer_start.elapsed();
+
+                    let insert_entity_start = Instant::now();
+                    let buffer = cx.insert_entity(reservation, |_| {
                         Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
-                    })?
+                    })?;
+                    let insert_entity_elapsed = insert_entity_start.elapsed();
+
+                    let add_buffer_start = Instant::now();
+                    this.update(cx, |this, cx| {
+                        this.add_buffer(buffer.clone(), cx)?;
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                            this.path_to_buffer_id.insert(
+                                ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path.clone(),
+                                },
+                                buffer_id,
+                            );
+                            let this = this.as_local_mut().unwrap();
+                            if let Some(entry_id) = file.entry_id {
+                                this.local_buffer_ids_by_entry_id
+                                    .insert(entry_id, buffer_id);
+                            }
+                        }
+
+                        anyhow::Ok(())
+                    })??;
+                    let add_buffer_elapsed = add_buffer_start.elapsed();
+                    let total_elapsed = total_start.elapsed();
+
+                    log::info!(
+                        "{:?} LocalBufferStore::open_buffer timings: load file took: {}s, reserve entity took: {}s, text buffer new took: {}s, insert entity took: {}s, add buffer took: {}s, total took: {}s",
+                        path.display(PathStyle::Posix),
+                        load_file_elapsed.as_secs_f64(),
+                        reserve_entity_elapsed.as_secs_f64(),
+                        text_buffer_elapsed.as_secs_f64(),
+                        insert_entity_elapsed.as_secs_f64(),
+                        add_buffer_elapsed.as_secs_f64(),
+                        total_elapsed.as_secs_f64()
+                    );
+
+                    buffer
                 }
-                Err(error) if is_not_found_error(&error) => cx.new(|cx| {
-                    let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
-                    Buffer::build(
-                        text_buffer,
-                        Some(Arc::new(File {
-                            worktree,
-                            path,
-                            disk_state: DiskState::New,
-                            entry_id: None,
-                            is_local: true,
-                            is_private: false,
-                        })),
-                        Capability::ReadWrite,
-                    )
-                })?,
+                Err(error) if is_not_found_error(&error) => {
+                    let load_file_elapsed = load_file_start.elapsed();
+
+                    let new_buffer_start = Instant::now();
+                    let buffer = cx.new(|cx| {
+                        let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+                        let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
+                        Buffer::build(
+                            text_buffer,
+                            Some(Arc::new(File {
+                                worktree,
+                                path: path.clone(),
+                                disk_state: DiskState::New,
+                                entry_id: None,
+                                is_local: true,
+                                is_private: false,
+                            })),
+                            Capability::ReadWrite,
+                        )
+                    })?;
+                    let new_buffer_elapsed = new_buffer_start.elapsed();
+
+                    let add_buffer_start = Instant::now();
+                    this.update(cx, |this, cx| {
+                        this.add_buffer(buffer.clone(), cx)?;
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                            this.path_to_buffer_id.insert(
+                                ProjectPath {
+                                    worktree_id: file.worktree_id(cx),
+                                    path: file.path.clone(),
+                                },
+                                buffer_id,
+                            );
+                            let this = this.as_local_mut().unwrap();
+                            if let Some(entry_id) = file.entry_id {
+                                this.local_buffer_ids_by_entry_id
+                                    .insert(entry_id, buffer_id);
+                            }
+                        }
+
+                        anyhow::Ok(())
+                    })??;
+                    let add_buffer_elapsed = add_buffer_start.elapsed();
+                    let total_elapsed = total_start.elapsed();
+
+                    log::info!(
+                        "{:?} LocalBufferStore::open_buffer (not found) timings: load file took: {}s, new buffer took: {}s, add buffer took: {}s, total took: {}s",
+                        path.display(PathStyle::Posix),
+                        load_file_elapsed.as_secs_f64(),
+                        new_buffer_elapsed.as_secs_f64(),
+                        add_buffer_elapsed.as_secs_f64(),
+                        total_elapsed.as_secs_f64()
+                    );
+
+                    buffer
+                }
                 Err(e) => return Err(e),
             };
-            this.update(cx, |this, cx| {
-                this.add_buffer(buffer.clone(), cx)?;
-                let buffer_id = buffer.read(cx).remote_id();
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    this.path_to_buffer_id.insert(
-                        ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        },
-                        buffer_id,
-                    );
-                    let this = this.as_local_mut().unwrap();
-                    if let Some(entry_id) = file.entry_id {
-                        this.local_buffer_ids_by_entry_id
-                            .insert(entry_id, buffer_id);
-                    }
-                }
-
-                anyhow::Ok(())
-            })??;
 
             Ok(buffer)
         })
@@ -819,6 +896,11 @@ impl BufferStore {
             hash_map::Entry::Occupied(e) => e.get().clone(),
             hash_map::Entry::Vacant(entry) => {
                 let path = project_path.path.clone();
+                log::info!(
+                    "[-] opening buffer for path {}",
+                    path.display(PathStyle::Posix)
+                );
+                let total_start = Instant::now();
                 let Some(worktree) = self
                     .worktree_store
                     .read(cx)
@@ -826,28 +908,55 @@ impl BufferStore {
                 else {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
+                let worktree_lookup_elapsed = total_start.elapsed();
+                let load_buffer_start = Instant::now();
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
-                    BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
+                    BufferStoreState::Local(this) => this.open_buffer(path.clone(), worktree, cx),
+                    BufferStoreState::Remote(this) => this.open_buffer(path.clone(), worktree, cx),
                 };
+                let load_buffer_task_elapsed = load_buffer_start.elapsed();
+                let setup_elapsed = total_start.elapsed();
+                log::info!(
+                    "{:?} open_buffer setup timings: worktree lookup took: {}s, load buffer task creation took: {}s, total setup took: {}s",
+                    path.display(PathStyle::Posix),
+                    worktree_lookup_elapsed.as_secs_f64(),
+                    load_buffer_task_elapsed.as_secs_f64(),
+                    setup_elapsed.as_secs_f64()
+                );
 
                 entry
                     .insert(
                         // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
+                            let spawn_start = Instant::now();
                             let load_result = load_buffer.await;
-                            this.update(cx, |this, cx| {
+                            let load_buffer_await_elapsed = spawn_start.elapsed();
+
+                            let update_start = Instant::now();
+                            let result = this.update(cx, |this, cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
 
                                 let buffer = load_result.map_err(Arc::new)?;
                                 cx.emit(BufferStoreEvent::BufferOpened {
                                     buffer: buffer.clone(),
-                                    project_path,
+                                    project_path: project_path.clone(),
                                 });
 
                                 Ok(buffer)
-                            })?
+                            })?;
+                            let update_elapsed = update_start.elapsed();
+                            let total_spawn_elapsed = spawn_start.elapsed();
+
+                            log::info!(
+                                "{:?} open_buffer async timings: load buffer await took: {}s, update took: {}s, total async took: {}s",
+                                path.display(PathStyle::Posix),
+                                load_buffer_await_elapsed.as_secs_f64(),
+                                update_elapsed.as_secs_f64(),
+                                total_spawn_elapsed.as_secs_f64()
+                            );
+
+                            result
                         })
                         .shared(),
                     )

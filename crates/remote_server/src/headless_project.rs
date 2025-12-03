@@ -37,6 +37,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -506,23 +507,54 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::OpenBufferByPath>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
+        log::info!("received open buffer by path: {}", message.payload.path);
+
+        let st = Instant::now();
+
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let st1 = Instant::now();
+
         let path = RelPath::from_proto(&message.payload.path)?;
-        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
+        let path1 = path.clone();
+        let st2 = Instant::now();
+
+        let (buffer_store, buffer, returning_at) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
+            let upd_st = Instant::now();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
+                let open_st = Instant::now();
+                let ret = buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx);
+                let open_end = Instant::now();
+                log::info!("open buffer took {:?}", (open_end - open_st).as_secs_f64());
+                ret
             });
-            anyhow::Ok((buffer_store, buffer))
+            let upd_end = Instant::now();
+            log::info!("update buffer took {:?}", (upd_end - upd_st).as_secs_f64());
+            let returning_at = Instant::now();
+            anyhow::Ok((buffer_store, buffer, returning_at))
         })??;
+        let st3 = Instant::now();
 
         let buffer = buffer.await?;
+        let st4 = Instant::now();
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
         buffer_store.update(&mut cx, |buffer_store, cx| {
             buffer_store
                 .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
         })?;
+
+        let end = Instant::now();
+
+        log::info!(
+            "created buffer for path {}, st1 {:?}, st2 {:?}, st3 {:?}, st4 {:?} responding after {:?}",
+            path1.display(PathStyle::Posix),
+            (st2 - st1).as_secs_f64(),
+            (st3 - st2).as_secs_f64(),
+            (st4 - st3).as_secs_f64(),
+            (end - st4).as_secs_f64(),
+            (end - st).as_secs_f64()
+        );
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),

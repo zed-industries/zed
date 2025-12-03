@@ -22,8 +22,8 @@ use git::{
     COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
-    Task,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, FutureExt,
+    Priority, STARTUP_TIME, SerializedThreadTaskTimings, Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -1319,7 +1319,9 @@ impl LocalWorktree {
         let is_private = self.is_path_private(path.as_ref());
 
         let this = cx.weak_entity();
-        cx.background_spawn(async move {
+        let bg_executor = cx.background_executor().clone();
+        cx.background_executor().spawn_with_priority(Priority::High, async move {
+            let total_start = std::time::Instant::now();
             // WARN: Temporary workaround for #27283.
             //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
             //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
@@ -1334,12 +1336,21 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
+            let metadata_check_elapsed = total_start.elapsed();
+
+            let load_start = std::time::Instant::now();
             let text = fs.load(&abs_path).await?;
+            let load_elapsed = load_start.elapsed();
 
             let worktree = this.upgrade().context("worktree was dropped")?;
-            let file = match None {
-                Some(entry) => File::for_entry(entry, worktree),
-                None => {
+            let entry_await_start = std::time::Instant::now();
+            let entry_result = entry.with_timeout(Duration::from_millis(5), &bg_executor).await;
+            let entry_await_elapsed = entry_await_start.elapsed();
+
+            let entry_analyze_start = std::time::Instant::now();
+            let file = match entry_result {
+                Ok(Ok(Some(entry))) => File::for_entry(entry, worktree),
+                Ok(Ok(None)) | Err(_) => {
                     let metadata = fs
                         .metadata(&abs_path)
                         .await
@@ -1359,8 +1370,23 @@ impl LocalWorktree {
                         is_local: true,
                         is_private,
                     })
-                }
+                },
+                Ok(Err(e)) => Err(e)?,
             };
+            let entry_analyze_elapsed = entry_analyze_start.elapsed();
+            let total_elapsed = total_start.elapsed();
+
+            log::info!(
+                "{:?} load_file timings: metadata check took: {}s, file load took: {}s, entry await took: {}s, entry analyze took: {}s, total took: {}s",
+                abs_path,
+                metadata_check_elapsed.as_secs_f64(),
+                load_elapsed.as_secs_f64(),
+                entry_await_elapsed.as_secs_f64(),
+                entry_analyze_elapsed.as_secs_f64(),
+                total_elapsed.as_secs_f64()
+            );
+
+            // save_hang_trace(&abs_path.file_name().map(|e| e.to_string_lossy().to_string()).unwrap_or("unknown".to_string()), &bg_executor);
 
             Ok(LoadedFile { file, text })
         })
@@ -1701,17 +1727,31 @@ impl LocalWorktree {
         } else {
             vec![path.clone()]
         };
-        let t0 = Instant::now();
+        let total_start = Instant::now();
         let mut refresh = self.refresh_entries_for_paths(paths);
         // todo(lw): Hot foreground spawn
         cx.spawn(async move |this, cx| {
+            let refresh_start = Instant::now();
             refresh.recv().await;
-            log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
+            let refresh_elapsed = refresh_start.elapsed();
+
+            let read_start = Instant::now();
             let new_entry = this.read_with(cx, |this, _| {
                 this.entry_for_path(&path).cloned().with_context(|| {
                     format!("Could not find entry in worktree for {path:?} after refresh")
                 })
             })??;
+            let read_elapsed = read_start.elapsed();
+            let total_elapsed = total_start.elapsed();
+
+            log::info!(
+                "{:?} refresh_entry timings: refresh await took: {}s, read entry took: {}s, total took: {}s",
+                path,
+                refresh_elapsed.as_secs_f64(),
+                read_elapsed.as_secs_f64(),
+                total_elapsed.as_secs_f64()
+            );
+
             Ok(Some(new_entry))
         })
     }
@@ -3786,13 +3826,18 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
+        let total_start = std::time::Instant::now();
         log::debug!("rescanning paths {:?}", request.relative_paths);
 
         request.relative_paths.sort_unstable();
+        let load_paths_start = std::time::Instant::now();
         self.forcibly_load_paths(&request.relative_paths).await;
+        let load_paths_elapsed = load_paths_start.elapsed();
 
+        let canonicalize_start = std::time::Instant::now();
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
+        let canonicalize_elapsed = canonicalize_start.elapsed();
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
@@ -3812,15 +3857,21 @@ impl BackgroundScanner {
             })
             .collect::<Vec<_>>();
 
+        let update_scan_id_start = std::time::Instant::now();
+        let scan_id_lock_elapsed;
         {
+            let lock_start = std::time::Instant::now();
             let mut state = self.state.lock().await;
+            scan_id_lock_elapsed = lock_start.elapsed();
             let is_idle = state.snapshot.completed_scan_id == state.snapshot.scan_id;
             state.snapshot.scan_id += 1;
             if is_idle {
                 state.snapshot.completed_scan_id = state.snapshot.scan_id;
             }
         }
+        let update_scan_id_elapsed = update_scan_id_start.elapsed();
 
+        let reload_entries_start = std::time::Instant::now();
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
@@ -3829,8 +3880,26 @@ impl BackgroundScanner {
             None,
         )
         .await;
+        let reload_entries_elapsed = reload_entries_start.elapsed();
 
-        self.send_status_update(scanning, request.done).await
+        let send_status_start = std::time::Instant::now();
+        let result = self.send_status_update(scanning, request.done).await;
+        let send_status_elapsed = send_status_start.elapsed();
+        let total_elapsed = total_start.elapsed();
+
+        log::info!(
+            "{:?} process_scan_request timings: load paths took: {}s, canonicalize took: {}s, scan id lock took: {}s, update scan id took: {}s, reload entries took: {}s, send status took: {}s, total took: {}s",
+            request.relative_paths,
+            load_paths_elapsed.as_secs_f64(),
+            canonicalize_elapsed.as_secs_f64(),
+            scan_id_lock_elapsed.as_secs_f64(),
+            update_scan_id_elapsed.as_secs_f64(),
+            reload_entries_elapsed.as_secs_f64(),
+            send_status_elapsed.as_secs_f64(),
+            total_elapsed.as_secs_f64()
+        );
+
+        result
     }
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
@@ -4044,7 +4113,9 @@ impl BackgroundScanner {
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
+        let total_start = std::time::Instant::now();
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        let enqueue_start = std::time::Instant::now();
         {
             let mut state = self.state.lock().await;
             let root_path = state.snapshot.abs_path.clone();
@@ -4069,11 +4140,29 @@ impl BackgroundScanner {
             }
             drop(scan_job_tx);
         }
+        let enqueue_elapsed = enqueue_start.elapsed();
+
+        let scan_dirs_start = std::time::Instant::now();
         while let Ok(job) = scan_job_rx.recv().await {
             self.scan_dir(&job).await.log_err();
         }
+        let scan_dirs_elapsed = scan_dirs_start.elapsed();
 
-        !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty()
+        let finalize_start = std::time::Instant::now();
+        let result = !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty();
+        let finalize_elapsed = finalize_start.elapsed();
+        let total_elapsed = total_start.elapsed();
+
+        log::info!(
+            "{:?} forcibly_load_paths timings: enqueue scan dirs took: {}s, scan dirs took: {}s, finalize took: {}s, total took: {}s",
+            paths,
+            enqueue_elapsed.as_secs_f64(),
+            scan_dirs_elapsed.as_secs_f64(),
+            finalize_elapsed.as_secs_f64(),
+            total_elapsed.as_secs_f64()
+        );
+
+        result
     }
 
     async fn scan_dirs(
@@ -5607,4 +5696,38 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
         }
     };
     (repository_dir_abs_path, common_dir_abs_path)
+}
+
+fn save_hang_trace(name: &str, background_executor: &gpui::BackgroundExecutor) {
+    let hang_time = chrono::Local::now();
+
+    let thread_timings = background_executor.dispatcher.get_all_timings();
+    let thread_timings = thread_timings
+        .into_iter()
+        .map(|mut timings| {
+            SerializedThreadTaskTimings::convert(*STARTUP_TIME.get().unwrap(), timings)
+        })
+        .collect::<Vec<_>>();
+
+    let trace_path = paths::hang_traces_dir().join(&format!(
+        "hang-{}-{}.miniprof",
+        hang_time.format("%Y-%m-%d_%H-%M-%S"),
+        name
+    ));
+
+    let Some(timings) = serde_json::to_string(&thread_timings)
+        .context("hang timings serialization")
+        .log_err()
+    else {
+        return;
+    };
+
+    std::fs::write(&trace_path, timings)
+        .context("hang trace file writing")
+        .log_err();
+
+    log::info!(
+        "hang detected, trace file saved at: {}",
+        trace_path.display()
+    );
 }
