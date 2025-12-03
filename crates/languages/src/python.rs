@@ -101,9 +101,41 @@ impl FromStr for TestRunner {
 /// The problem with it is that Pyright adjusts the sort text based on previous resolutions (items for which we've issued `completion/resolve` call have their sortText adjusted),
 /// which - long story short - makes completion items list non-stable. Pyright probably relies on VSCode's implementation detail.
 /// see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
+///
+/// upd 02.12.25:
+/// Decided to ignore Pyright's sortText() completely and to manually sort all entries
 fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     for item in items {
-        item.sort_text.take();
+        let is_dunder = item.label.starts_with("__") && item.label.ends_with("__");
+
+        let visibility_priority = if is_dunder {
+            '3'
+        } else if item.label.starts_with("__") {
+            '2' // private non-dunder
+        } else if item.label.starts_with('_') {
+            '1' // protected
+        } else {
+            '0' // public
+        };
+
+        // Kind priority within same visibility level
+        let kind_priority = match item.kind {
+            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '0',
+            Some(lsp::CompletionItemKind::FIELD) => '1',
+            Some(lsp::CompletionItemKind::PROPERTY) => '2',
+            Some(lsp::CompletionItemKind::VARIABLE) => '3',
+            Some(lsp::CompletionItemKind::CONSTANT) => '4',
+            Some(lsp::CompletionItemKind::METHOD) => '5',
+            Some(lsp::CompletionItemKind::FUNCTION) => '5',
+            Some(lsp::CompletionItemKind::CLASS) => '6',
+            Some(lsp::CompletionItemKind::MODULE) => '7',
+            _ => '8',
+        };
+
+        item.sort_text = Some(format!(
+            "{}{}{}",
+            visibility_priority, kind_priority, item.label
+        ));
     }
 }
 
