@@ -36,6 +36,7 @@ pub struct FoldPlaceholder {
 }
 
 impl Default for FoldPlaceholder {
+    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self {
             render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
@@ -48,6 +49,7 @@ impl Default for FoldPlaceholder {
 
 impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
+    #[tracing::instrument(skip_all)]
     pub fn test() -> Self {
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
@@ -59,6 +61,7 @@ impl FoldPlaceholder {
 }
 
 impl fmt::Debug for FoldPlaceholder {
+    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FoldPlaceholder")
             .field("constrain_width", &self.constrain_width)
@@ -69,6 +72,7 @@ impl fmt::Debug for FoldPlaceholder {
 impl Eq for FoldPlaceholder {}
 
 impl PartialEq for FoldPlaceholder {
+    #[tracing::instrument(skip_all)]
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.render, &other.render) && self.constrain_width == other.constrain_width
     }
@@ -78,27 +82,33 @@ impl PartialEq for FoldPlaceholder {
 pub struct FoldPoint(pub Point);
 
 impl FoldPoint {
+    #[tracing::instrument(skip_all)]
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn row(self) -> u32 {
         self.0.row
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn column(self) -> u32 {
         self.0.column
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn to_inlay_point(self, snapshot: &FoldSnapshot) -> InlayPoint {
         let (start, _, _) = snapshot
             .transforms
@@ -107,6 +117,7 @@ impl FoldPoint {
         InlayPoint(start.1.0 + overshoot)
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn to_offset(self, snapshot: &FoldSnapshot) -> FoldOffset {
         let (start, _, item) = snapshot
             .transforms
@@ -126,10 +137,12 @@ impl FoldPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.output.lines;
     }
@@ -138,6 +151,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
 pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 
 impl FoldMapWriter<'_> {
+    #[tracing::instrument(skip_all)]
     pub(crate) fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
@@ -202,6 +216,7 @@ impl FoldMapWriter<'_> {
     }
 
     /// Removes any folds with the given ranges.
+    #[tracing::instrument(skip_all)]
     pub(crate) fn remove_folds<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -215,6 +230,7 @@ impl FoldMapWriter<'_> {
     }
 
     /// Removes any folds whose ranges intersect the given ranges.
+    #[tracing::instrument(skip_all)]
     pub(crate) fn unfold_intersecting<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -225,6 +241,7 @@ impl FoldMapWriter<'_> {
 
     /// Removes any folds that intersect the given ranges and for which the given predicate
     /// returns true.
+    #[tracing::instrument(skip_all)]
     fn remove_folds_with<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -277,6 +294,7 @@ impl FoldMapWriter<'_> {
         (self.0.snapshot.clone(), edits)
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) fn update_fold_widths(
         &mut self,
         new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
@@ -326,6 +344,7 @@ pub struct FoldMap {
 }
 
 impl FoldMap {
+    #[tracing::instrument(skip_all)]
     pub fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
         let this = Self {
             snapshot: FoldSnapshot {
@@ -350,6 +369,7 @@ impl FoldMap {
         (this, snapshot)
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn read(
         &mut self,
         inlay_snapshot: InlaySnapshot,
@@ -360,6 +380,7 @@ impl FoldMap {
         (self.snapshot.clone(), edits)
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) fn write(
         &mut self,
         inlay_snapshot: InlaySnapshot,
@@ -369,6 +390,7 @@ impl FoldMap {
         (FoldMapWriter(self), snapshot, edits)
     }
 
+    #[tracing::instrument(skip_all)]
     fn check_invariants(&self) {
         if cfg!(test) {
             assert_eq!(
@@ -398,6 +420,7 @@ impl FoldMap {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     fn sync(
         &mut self,
         inlay_snapshot: InlaySnapshot,
@@ -635,21 +658,25 @@ pub struct FoldSnapshot {
 impl Deref for FoldSnapshot {
     type Target = InlaySnapshot;
 
+    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.inlay_snapshot
     }
 }
 
 impl FoldSnapshot {
+    #[tracing::instrument(skip_all)]
     pub fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
     }
 
+    #[tracing::instrument(skip_all)]
     fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
         self.fold_metadata_by_id.get(fold_id)?.width
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.chunks(
             FoldOffset(MultiBufferOffset(0))..self.len(),
@@ -661,10 +688,12 @@ impl FoldSnapshot {
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn fold_count(&self) -> usize {
         self.folds.items(&self.inlay_snapshot.buffer).len()
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
         let mut summary = MBTextSummary::default();
 
@@ -718,6 +747,7 @@ impl FoldSnapshot {
         summary
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn to_fold_point(&self, point: InlayPoint, bias: Bias) -> FoldPoint {
         let (start, end, item) = self
             .transforms
@@ -734,6 +764,7 @@ impl FoldSnapshot {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn fold_point_cursor(&self) -> FoldPointCursor<'_> {
         let cursor = self
             .transforms
@@ -741,10 +772,12 @@ impl FoldSnapshot {
         FoldPointCursor { cursor }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn len(&self) -> FoldOffset {
         FoldOffset(self.transforms.summary().output.len)
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn line_len(&self, row: u32) -> u32 {
         let line_start = FoldPoint::new(row, 0).to_offset(self).0;
         let line_end = if row >= self.max_point().row() {
@@ -755,6 +788,7 @@ impl FoldSnapshot {
         (line_end - line_start) as u32
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn row_infos(&self, start_row: u32) -> FoldRows<'_> {
         if start_row > self.transforms.summary().output.lines.row {
             panic!("invalid display row {}", start_row);
@@ -777,15 +811,18 @@ impl FoldSnapshot {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn max_point(&self) -> FoldPoint {
         FoldPoint(self.transforms.summary().output.lines)
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
         T: ToOffset,
@@ -800,6 +837,7 @@ impl FoldSnapshot {
         })
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn intersects_fold<T>(&self, offset: T) -> bool
     where
         T: ToOffset,
@@ -812,6 +850,7 @@ impl FoldSnapshot {
         item.is_some_and(|t| t.placeholder.is_some())
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         let mut inlay_point = self
             .inlay_snapshot
@@ -840,6 +879,7 @@ impl FoldSnapshot {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<FoldOffset>,
@@ -884,6 +924,7 @@ impl FoldSnapshot {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         self.chunks(
             start.to_offset(self)..self.len(),
@@ -893,6 +934,7 @@ impl FoldSnapshot {
         .flat_map(|chunk| chunk.text.chars())
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn chunks_at(&self, start: FoldPoint) -> FoldChunks<'_> {
         self.chunks(
             start.to_offset(self)..self.len(),
@@ -902,6 +944,7 @@ impl FoldSnapshot {
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn clip_offset(&self, offset: FoldOffset, bias: Bias) -> FoldOffset {
         if offset > self.len() {
             self.len()
@@ -910,6 +953,7 @@ impl FoldSnapshot {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn clip_point(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
         let (start, end, item) = self
             .transforms
@@ -939,6 +983,7 @@ pub struct FoldPointCursor<'transforms> {
 }
 
 impl FoldPointCursor<'_> {
+    #[tracing::instrument(skip_all)]
     pub fn map(&mut self, point: InlayPoint, bias: Bias) -> FoldPoint {
         let cursor = &mut self.cursor;
         if cursor.did_seek() {
@@ -1092,6 +1137,7 @@ struct TransformPlaceholder {
 }
 
 impl Transform {
+    #[tracing::instrument(skip_all)]
     fn is_fold(&self) -> bool {
         self.placeholder.is_some()
     }
@@ -1106,16 +1152,19 @@ struct TransformSummary {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
+    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: ()) -> Self::Summary {
         self.summary.clone()
     }
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
+    #[tracing::instrument(skip_all)]
     fn zero() -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
@@ -1126,6 +1175,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
 pub struct FoldId(pub(super) usize);
 
 impl From<FoldId> for ElementId {
+    #[tracing::instrument(skip_all)]
     fn from(val: FoldId) -> Self {
         val.0.into()
     }
@@ -1144,18 +1194,21 @@ pub struct FoldRange(Range<Anchor>);
 impl Deref for FoldRange {
     type Target = Range<Anchor>;
 
+    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl DerefMut for FoldRange {
+    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
 impl Default for FoldRange {
+    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self(Anchor::min()..Anchor::max())
     }
@@ -1170,6 +1223,7 @@ struct FoldMetadata {
 impl sum_tree::Item for Fold {
     type Summary = FoldSummary;
 
+    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         FoldSummary {
             start: self.range.start,
@@ -1191,6 +1245,7 @@ pub struct FoldSummary {
 }
 
 impl Default for FoldSummary {
+    #[tracing::instrument(skip_all)]
     fn default() -> Self {
         Self {
             start: Anchor::min(),
@@ -1205,10 +1260,12 @@ impl Default for FoldSummary {
 impl sum_tree::Summary for FoldSummary {
     type Context<'a> = &'a MultiBufferSnapshot;
 
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.min_start.cmp(&self.min_start, buffer) == Ordering::Less {
             self.min_start = other.min_start;
@@ -1233,10 +1290,12 @@ impl sum_tree::Summary for FoldSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         self.0.start = summary.start;
         self.0.end = summary.end;
@@ -1244,16 +1303,19 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
 }
 
 impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
+    #[tracing::instrument(skip_all)]
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for MultiBufferOffset {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: &MultiBufferSnapshot) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         *self += summary.count;
     }
@@ -1267,6 +1329,7 @@ pub struct FoldRows<'a> {
 }
 
 impl FoldRows<'_> {
+    #[tracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left);
@@ -1280,6 +1343,7 @@ impl FoldRows<'_> {
 impl Iterator for FoldRows<'_> {
     type Item = RowInfo;
 
+    #[tracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         let mut traversed_fold = false;
         while self.fold_point > self.cursor.end().0 {
@@ -1360,6 +1424,7 @@ pub struct ChunkRendererContext<'a, 'b> {
 }
 
 impl fmt::Debug for ChunkRenderer {
+    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ChunkRenderer")
             .field("constrain_width", &self.constrain_width)
@@ -1370,12 +1435,14 @@ impl fmt::Debug for ChunkRenderer {
 impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
+    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         self.context
     }
 }
 
 impl DerefMut for ChunkRendererContext<'_, '_> {
+    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -1391,6 +1458,7 @@ pub struct FoldChunks<'a> {
 }
 
 impl FoldChunks<'_> {
+    #[tracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
         self.transform_cursor.seek(&range.start, Bias::Right);
 
@@ -1425,6 +1493,7 @@ impl FoldChunks<'_> {
 impl<'a> Iterator for FoldChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[tracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_offset >= self.max_output_offset {
             return None;
@@ -1524,6 +1593,7 @@ impl<'a> Iterator for FoldChunks<'a> {
 pub struct FoldOffset(pub MultiBufferOffset);
 
 impl FoldOffset {
+    #[tracing::instrument(skip_all)]
     pub fn to_point(self, snapshot: &FoldSnapshot) -> FoldPoint {
         let (start, _, item) = snapshot
             .transforms
@@ -1539,6 +1609,7 @@ impl FoldOffset {
     }
 
     #[cfg(test)]
+    #[tracing::instrument(skip_all)]
     pub fn to_inlay_offset(self, snapshot: &FoldSnapshot) -> InlayOffset {
         let (start, _, _) = snapshot
             .transforms
@@ -1551,6 +1622,7 @@ impl FoldOffset {
 impl Add for FoldOffset {
     type Output = Self;
 
+    #[tracing::instrument(skip_all)]
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
     }
@@ -1559,6 +1631,7 @@ impl Add for FoldOffset {
 impl Sub for FoldOffset {
     type Output = <MultiBufferOffset as Sub>::Output;
 
+    #[tracing::instrument(skip_all)]
     fn sub(self, rhs: Self) -> Self::Output {
         self.0 - rhs.0
     }
@@ -1568,6 +1641,7 @@ impl<T> SubAssign<T> for FoldOffset
 where
     MultiBufferOffset: SubAssign<T>,
 {
+    #[tracing::instrument(skip_all)]
     fn sub_assign(&mut self, rhs: T) {
         self.0 -= rhs;
     }
@@ -1579,12 +1653,14 @@ where
 {
     type Output = Self;
 
+    #[tracing::instrument(skip_all)]
     fn add(self, rhs: T) -> Self::Output {
         Self(self.0 + rhs)
     }
 }
 
 impl AddAssign for FoldOffset {
+    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
@@ -1594,36 +1670,43 @@ impl<T> AddAssign<T> for FoldOffset
 where
     MultiBufferOffset: AddAssign<T>,
 {
+    #[tracing::instrument(skip_all)]
     fn add_assign(&mut self, rhs: T) {
         self.0 += rhs;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.output.len;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.input.lines;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
+    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
+    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.input.len;
     }
@@ -1645,6 +1728,7 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_basic_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
@@ -1724,6 +1808,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_adjacent_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
@@ -1808,6 +1893,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_overlapping_folds(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1825,6 +1911,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_merging_folds_via_edit(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
@@ -1852,6 +1939,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_folds_in_range(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1883,6 +1971,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
+    #[tracing::instrument(skip_all)]
     fn test_random_folds(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
         let operations = env::var("OPERATIONS")
@@ -2161,6 +2250,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[tracing::instrument(skip_all)]
     fn test_buffer_rows(cx: &mut gpui::App) {
         let text = sample_text(6, 6, 'a') + "\n";
         let buffer = MultiBuffer::build_simple(&text, cx);
@@ -2194,6 +2284,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
+    #[tracing::instrument(skip_all)]
     fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
 
@@ -2284,12 +2375,14 @@ mod tests {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     fn init_test(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
     }
 
     impl FoldMap {
+        #[tracing::instrument(skip_all)]
         fn merged_folds(&self) -> Vec<Range<MultiBufferOffset>> {
             let inlay_snapshot = self.snapshot.inlay_snapshot.clone();
             let buffer = &inlay_snapshot.buffer;
@@ -2320,6 +2413,7 @@ mod tests {
             merged_folds
         }
 
+        #[tracing::instrument(skip_all)]
         pub fn randomly_mutate(
             &mut self,
             rng: &mut impl Rng,

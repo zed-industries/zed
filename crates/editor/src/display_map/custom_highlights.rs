@@ -30,6 +30,7 @@ struct HighlightEndpoint {
 }
 
 impl<'a> CustomHighlightsChunks<'a> {
+    #[tracing::instrument(skip_all)]
     pub fn new(
         range: Range<MultiBufferOffset>,
         language_aware: bool,
@@ -51,6 +52,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn seek(&mut self, new_range: Range<MultiBufferOffset>) {
         self.highlight_endpoints =
             create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
@@ -108,6 +110,7 @@ fn create_highlight_endpoints(
 impl<'a> Iterator for CustomHighlightsChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[tracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_highlight_endpoint = MultiBufferOffset(usize::MAX);
         while let Some(endpoint) = self.highlight_endpoints.peek().copied() {
@@ -161,12 +164,14 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
 }
 
 impl PartialOrd for HighlightEndpoint {
+    #[tracing::instrument(skip_all)]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for HighlightEndpoint {
+    #[tracing::instrument(skip_all)]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.offset
             .cmp(&other.offset)
@@ -185,6 +190,7 @@ mod tests {
     use util::RandomCharIter;
 
     #[gpui::test(iterations = 100)]
+    #[tracing::instrument(skip_all)]
     fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
         // Generate random buffer using existing test infrastructure
         let len = rng.random_range(10..10000);
