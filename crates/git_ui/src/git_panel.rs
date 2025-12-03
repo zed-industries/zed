@@ -4004,28 +4004,21 @@ impl GitPanel {
             "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            let mut context_menu = context_menu
+            let is_created = entry.status.is_created();
+            context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone());
-
-            if entry.status.is_created() {
-                context_menu =
-                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone())
-            }
-
-            context_menu = context_menu
+                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .gitignore",
+                    git::AddToGitignore.boxed_clone(),
+                )
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
-                .action("Open File", SecondaryConfirm.boxed_clone());
-
-            if !entry.status.is_created() {
-                context_menu = context_menu
-                    .separator()
-                    .action("File History", Box::new(git::FileHistory));
-            }
-
-            context_menu
+                .action("Open File", SecondaryConfirm.boxed_clone())
+                .separator()
+                .action_disabled_when(is_created, "File History", Box::new(git::FileHistory))
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
