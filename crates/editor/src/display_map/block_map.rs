@@ -117,7 +117,6 @@ pub enum BlockPlacement<T> {
 }
 
 impl<T> BlockPlacement<T> {
-    #[tracing::instrument(skip_all)]
     pub fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
@@ -127,7 +126,6 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn end(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
@@ -137,7 +135,6 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn as_ref(&self) -> BlockPlacement<&T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
@@ -147,7 +144,6 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn map<R>(self, mut f: impl FnMut(T) -> R) -> BlockPlacement<R> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
@@ -160,7 +156,6 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn tie_break(&self) -> u8 {
         match self {
             BlockPlacement::Replace(_) => 0,
@@ -240,7 +235,6 @@ pub struct BlockProperties<P> {
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlockProperties")
             .field("placement", &self.placement)
@@ -287,7 +281,6 @@ pub enum BlockId {
 }
 
 impl From<BlockId> for ElementId {
-    #[tracing::instrument(skip_all)]
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
@@ -300,7 +293,6 @@ impl From<BlockId> for ElementId {
 }
 
 impl std::fmt::Display for BlockId {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(id) => write!(f, "Block({id:?})"),
@@ -334,7 +326,6 @@ pub enum Block {
 }
 
 impl Block {
-    #[tracing::instrument(skip_all)]
     pub fn id(&self) -> BlockId {
         match self {
             Block::Custom(block) => BlockId::Custom(block.id),
@@ -350,7 +341,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn has_height(&self) -> bool {
         match self {
             Block::Custom(block) => block.height.is_some(),
@@ -360,7 +350,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn height(&self) -> u32 {
         match self {
             Block::Custom(block) => block.height.unwrap_or(0),
@@ -370,7 +359,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn style(&self) -> BlockStyle {
         match self {
             Block::Custom(block) => block.style,
@@ -380,7 +368,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn place_above(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Above(_)),
@@ -390,7 +377,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn place_near(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Near(_)),
@@ -400,7 +386,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn place_below(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(
@@ -413,7 +398,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn is_replacement(&self) -> bool {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Replace(_)),
@@ -423,7 +407,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     fn is_header(&self) -> bool {
         match self {
             Block::Custom(_) => false,
@@ -433,7 +416,6 @@ impl Block {
         }
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn is_buffer_header(&self) -> bool {
         match self {
             Block::Custom(_) => false,
@@ -445,7 +427,6 @@ impl Block {
 }
 
 impl Debug for Block {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
@@ -1015,7 +996,6 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot:
 }
 
 impl BlockPoint {
-    #[tracing::instrument(skip_all)]
     pub fn new(row: BlockRow, column: u32) -> Self {
         Self(Point::new(row.0, column))
     }
@@ -1024,14 +1004,12 @@ impl BlockPoint {
 impl Deref for BlockPoint {
     type Target = Point;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl std::ops::DerefMut for BlockPoint {
-    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -1040,14 +1018,12 @@ impl std::ops::DerefMut for BlockPoint {
 impl Deref for BlockMapReader<'_> {
     type Target = BlockSnapshot;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         &self.snapshot
     }
 }
 
 impl DerefMut for BlockMapReader<'_> {
-    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.snapshot
     }
@@ -1278,7 +1254,6 @@ impl BlockMapWriter<'_> {
         self.remove(blocks_to_remove);
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId) {
         self.0.buffers_with_disabled_headers.insert(buffer_id);
     }
@@ -1972,14 +1947,12 @@ impl Iterator for BlockRows<'_> {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    #[tracing::instrument(skip_all)]
     fn summary(&self, _cx: ()) -> Self::Summary {
         self.summary.clone()
     }
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
-    #[tracing::instrument(skip_all)]
     fn zero() -> Self {
         Default::default()
     }
@@ -1996,7 +1969,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapRow {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -2008,7 +1980,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapRow {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
-    #[tracing::instrument(skip_all)]
     fn zero(_cx: ()) -> Self {
         Default::default()
     }
@@ -2022,14 +1993,12 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
 impl Deref for BlockContext<'_, '_> {
     type Target = App;
 
-    #[tracing::instrument(skip_all)]
     fn deref(&self) -> &Self::Target {
         self.app
     }
 }
 
 impl DerefMut for BlockContext<'_, '_> {
-    #[tracing::instrument(skip_all)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.app
     }
@@ -2051,14 +2020,12 @@ impl CustomBlock {
         *self.placement.end()
     }
 
-    #[tracing::instrument(skip_all)]
     pub fn style(&self) -> BlockStyle {
         self.style
     }
 }
 
 impl Debug for CustomBlock {
-    #[tracing::instrument(skip_all)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Block")
             .field("id", &self.id)
@@ -2105,7 +2072,6 @@ mod tests {
     use util::RandomCharIter;
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_offset_for_row() {
         assert_eq!(offset_for_row("", RowDelta(0)), (RowDelta(0), 0));
         assert_eq!(offset_for_row("", RowDelta(1)), (RowDelta(0), 0));
@@ -2132,7 +2098,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_basic_blocks(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -2303,7 +2268,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_multibuffer_headers_and_footers(cx: &mut App) {
         init_test(cx);
 
@@ -2372,7 +2336,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_replace_with_heights(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -2473,7 +2436,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -2517,7 +2479,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_replace_lines(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -2653,7 +2614,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -3021,7 +2981,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_basic_buffer_fold(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -3077,7 +3036,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 60)]
-    #[tracing::instrument(skip_all)]
     fn test_random_blocks(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
         cx.update(init_test);
 
@@ -3704,7 +3662,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_remove_intersecting_replace_blocks_edge_case(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -3745,7 +3702,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_folded_buffer_with_near_blocks(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -3791,7 +3747,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[tracing::instrument(skip_all)]
     fn test_folded_buffer_with_near_blocks_on_last_line(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
@@ -3836,7 +3791,6 @@ mod tests {
         assert_eq!(blocks_snapshot.text(), "");
     }
 
-    #[tracing::instrument(skip_all)]
     fn init_test(cx: &mut gpui::App) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
@@ -3845,7 +3799,6 @@ mod tests {
     }
 
     impl Block {
-        #[tracing::instrument(skip_all)]
         fn as_custom(&self) -> Option<&CustomBlock> {
             match self {
                 Block::Custom(block) => Some(block),
@@ -3855,7 +3808,6 @@ mod tests {
     }
 
     impl BlockSnapshot {
-        #[tracing::instrument(skip_all)]
         fn to_point(&self, point: BlockPoint, bias: Bias) -> Point {
             self.wrap_snapshot
                 .to_point(self.to_wrap_point(point, bias), bias)
