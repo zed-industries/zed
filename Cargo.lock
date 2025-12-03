@@ -3782,6 +3782,7 @@ dependencies = [
  "task",
  "theme",
  "ui",
+ "url",
  "util",
  "workspace",
  "zlog",
