@@ -631,7 +631,7 @@ impl SettingsObserver {
         let weak_settings_observer = cx.weak_entity();
         let _trusted_worktrees_watcher = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
-                let watcher = trusted_worktrees.subscribe(cx, move |e, cx| match e {
+                let watcher = trusted_worktrees.subscribe(cx, move |_, e, cx| match e {
                     session::Event::TrustedWorktree(trusted_path) => {
                         weak_settings_observer
                             .update(cx, |settings_observer, cx| {

@@ -6,7 +6,8 @@ use std::{
 use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, Task, WindowId,
+    App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, Task, Window,
+    WindowId,
 };
 use util::ResultExt;
 
@@ -202,17 +203,38 @@ impl TrustedWorktrees {
             cx.emit(Event::TrustedWorktree(abs_path));
         }
     }
+
+    fn clear(&mut self, cx: &App) {
+        self.worktree_roots.clear();
+        self.serialization_task = cx.background_spawn(async move {
+            KEY_VALUE_STORE
+                .write_kvp(TRUSTED_WORKSPACES_KEY.to_string(), String::new())
+                .await
+                .log_err();
+        });
+    }
 }
 
 impl Global for TrustedWorktreesStorage {}
 
 impl TrustedWorktreesStorage {
-    pub fn subscribe(
+    pub fn subscribe<T: 'static>(
         &self,
-        cx: &mut App,
-        mut on_event: impl FnMut(&Event, &mut App) + 'static,
+        cx: &mut Context<T>,
+        mut on_event: impl FnMut(&mut T, &Event, &mut Context<T>) + 'static,
     ) -> Subscription {
-        cx.subscribe(&self.trusted, move |_, e, cx| on_event(e, cx))
+        cx.subscribe(&self.trusted, move |t, _, e, cx| on_event(t, e, cx))
+    }
+
+    pub fn subscribe_in<T: 'static>(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<T>,
+        mut on_event: impl FnMut(&mut T, &Event, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        cx.subscribe_in(&self.trusted, window, move |t, _, e, window, cx| {
+            on_event(t, e, window, cx)
+        })
     }
 
     /// Adds a worktree absolute path to the trusted list.
@@ -270,6 +292,12 @@ impl TrustedWorktreesStorage {
         for untrusted_path in std::mem::take(&mut self.untrusted) {
             self.trust_path(untrusted_path, cx);
         }
+    }
+
+    pub fn clear_trusted_paths(&self, cx: &mut App) {
+        self.trusted.update(cx, |trusted_worktrees, cx| {
+            trusted_worktrees.clear(cx);
+        });
     }
 }
 
