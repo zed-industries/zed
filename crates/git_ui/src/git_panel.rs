@@ -4334,38 +4334,90 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel_text = match (self.git_access, self.active_repository.is_some()) {
+            (GitAccess::No, _) => {
+                // TODO!: What if there's more than one root path? When can that
+                // actually happen?
+                if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
+                    workspace.root_paths(cx).first().cloned()
+                }) {
+                    format!(
+                        "Detected dubious ownership in repository at {}",
+                        path.display()
+                    )
+                } else {
+                    String::from("Detected dubious ownership in repository")
+                }
+            }
+            (_, false) => String::from("No Git repositories"),
+            (_, true) => String::from("No changes to commit"),
+        };
+
         h_flex().h_full().flex_grow().justify_center().child(
             v_flex()
                 .gap_2()
-                .child(h_flex().w_full().justify_around().child(
-                    if self.active_repository.is_some() {
-                        "No changes to commit"
-                    } else {
-                        "No Git repositories"
-                    },
-                ))
-                .children({
-                    let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-                    (worktree_count > 0 && self.active_repository.is_none()).then(|| {
-                        h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
-                    })
-                })
+                .child(h_flex().w_full().justify_around().child(panel_text))
+                .children(self.render_empty_state_button(cx))
                 .text_ui_sm(cx)
                 .mx_auto()
                 .text_color(Color::Placeholder.color(cx)),
         )
+    }
+
+    fn render_empty_state_button(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let mut button: Option<Button> = None;
+
+        // When working within an unsafe repository, we'll show the user the
+        // button to trust this directory so that they can read the repository's
+        // contents.
+        //
+        // TODO!: What if there's more than one root path? When can that
+        // actually happen?
+        let path = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.root_paths(cx).first().cloned()
+            })
+            .expect("Should be able to read from workspace")
+            .expect("Should have at least one root path");
+
+        if matches!(self.git_access, GitAccess::No) {
+            button = Some(
+                panel_filled_button("Trust Directory")
+                    .tooltip(Tooltip::for_action_title_in(
+                        format!(
+                            "git config --global --add safe.directory {}",
+                            path.display()
+                        ),
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    }),
+            )
+        }
+
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if button.is_none() && worktree_count > 0 && self.active_repository.is_none() {
+            button = Some(
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    }),
+            );
+        }
+
+        button.and_then(|button| Some(h_flex().w_full().justify_around().child(button)))
     }
 
     fn render_buffer_header_controls(
