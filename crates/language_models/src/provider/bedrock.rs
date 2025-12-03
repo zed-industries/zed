@@ -553,7 +553,9 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| (state.get_region(), state.get_allow_global())) else {
+        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| {
+            (state.get_region(), state.get_allow_global())
+        }) else {
             return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
         };
 
