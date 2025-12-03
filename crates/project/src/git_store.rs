@@ -5448,7 +5448,8 @@ impl Repository {
                 git_hosting_providers::register_additional_providers(
                     git_hosting_provider_registry,
                     state.backend.clone(),
-                ).await;
+                )
+                .await;
             }
             let state = RepositoryState::Local(state);
             let mut jobs = VecDeque::new();

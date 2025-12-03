@@ -1088,12 +1088,13 @@ impl GitRepository for RealGitRepository {
     fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
         let repo = self.repository.clone();
         let name = name.to_owned();
-        self.executor.spawn(async move {
-            let repo = repo.lock();
-            let remote = repo.find_remote(&name).ok()?;
-            remote.url().map(|url| url.to_string())
-        })
-        .boxed()
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                let remote = repo.find_remote(&name).ok()?;
+                remote.url().map(|url| url.to_string())
+            })
+            .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -1489,9 +1490,12 @@ impl GitRepository for RealGitRepository {
                         &path,
                         &content,
                         remote_url,
-                    ).await
-                    }).await
-        }.boxed()
+                    )
+                    .await
+                })
+                .await
+        }
+        .boxed()
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
