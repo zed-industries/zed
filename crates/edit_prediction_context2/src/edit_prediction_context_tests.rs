@@ -33,7 +33,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     related_excerpt_store.update(cx, |store, cx| {
         let position = {
             let buffer = buffer.read(cx);
-            let offset = buffer.text().find("todo!").unwrap();
+            let offset = buffer.text().find("todo").unwrap();
             buffer.anchor_before(offset)
         };
 
@@ -236,7 +236,7 @@ fn test_project_1() -> serde_json::Value {
             pub fn set_company(&mut self, company: Arc<Company>) {
                 self.company = company;
                 if company.owner != self.company.owner {
-                    log("new owner", company.owner.get_first_name()); todo!();
+                    log("new owner", company.owner.get_first_name()); todo();
                 }
             }
         }
