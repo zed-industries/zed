@@ -46,7 +46,7 @@ impl PlatformTitleBar {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(window: &mut Window, cx: Option<&mut Context<Self>>) -> Pixels {
+    pub fn height(_window: &mut Window, cx: Option<&mut Context<Self>>) -> Pixels {
         if let Some(cx) = cx
             && TitleBarSettings::get_global(cx).show_tab_bar
         {
