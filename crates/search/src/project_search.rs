@@ -2568,7 +2568,7 @@ pub mod tests {
 
         init_test(cx);
 
-        // Overrride active search match color since the fallback theme uses the same color
+        // Override active search match color since the fallback theme uses the same color
         // for normal search match and active one, which can make this test less robust.
         cx.update(|cx| {
             SettingsStore::update_global(cx, |settings, cx| {
