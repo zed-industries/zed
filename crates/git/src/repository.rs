@@ -1471,7 +1471,6 @@ impl GitRepository for RealGitRepository {
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
-        let repository = self.repository.clone();
         let executor = self.executor.clone();
 
         async move {
