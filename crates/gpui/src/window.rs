@@ -2006,7 +2006,9 @@ impl Window {
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
-        self.draw_roots(cx);
+        if !cx.mode.skip_drawing() {
+            self.draw_roots(cx);
+        }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 

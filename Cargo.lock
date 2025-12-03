@@ -159,6 +159,7 @@ dependencies = [
  "derive_more 0.99.20",
  "editor",
  "env_logger 0.11.8",
+ "eval_utils",
  "fs",
  "futures 0.3.31",
  "git",
@@ -327,6 +328,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
+ "clock",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -334,6 +336,7 @@ dependencies = [
  "context_server",
  "db",
  "editor",
+ "eval_utils",
  "extension",
  "extension_host",
  "feature_flags",
@@ -342,6 +345,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "gpui_tokio",
  "html_to_markdown",
  "http_client",
  "image",
@@ -369,6 +373,7 @@ dependencies = [
  "proto",
  "rand 0.9.2",
  "release_channel",
+ "reqwest_client",
  "rope",
  "rules_library",
  "schemars",
@@ -5773,6 +5778,15 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+]
+
+[[package]]
+name = "eval_utils"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "serde",
+ "smol",
 ]
 
 [[package]]

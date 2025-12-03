@@ -13,7 +13,8 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = ["gpui/test-support", "language/test-support"]
+test-support = ["gpui/test-support", "language/test-support", "reqwest_client"]
+unit-eval = []
 
 [dependencies]
 acp_thread.workspace = true
@@ -47,6 +48,7 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 indoc.workspace = true
@@ -98,14 +100,17 @@ workspace.workspace = true
 zed_actions.workspace = true
 image.workspace = true
 async-fs.workspace = true
+reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
+clock.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+eval_utils.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
@@ -115,5 +120,6 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 rand.workspace = true
+reqwest_client.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true

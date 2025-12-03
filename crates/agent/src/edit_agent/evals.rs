@@ -4,7 +4,7 @@ use crate::{
 };
 use Role::*;
 use client::{Client, UserStore};
-use collections::HashMap;
+use eval_utils::{EvalOutput, EvalOutputProcessor, OutcomeKind};
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext, Timer};
@@ -20,15 +20,61 @@ use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use std::{
-    cmp::Reverse,
     fmt::{self, Display},
-    io::Write as _,
     path::Path,
     str::FromStr,
-    sync::mpsc,
     time::Duration,
 };
 use util::path;
+
+#[derive(Default, Clone, Debug)]
+struct EditAgentOutputProcessor {
+    mismatched_tag_threshold: f32,
+    cumulative_tags: usize,
+    cumulative_mismatched_tags: usize,
+    eval_outputs: Vec<EvalOutput<EditEvalMetadata>>,
+}
+
+fn mismatched_tag_threshold(mismatched_tag_threshold: f32) -> EditAgentOutputProcessor {
+    EditAgentOutputProcessor {
+        mismatched_tag_threshold,
+        cumulative_tags: 0,
+        cumulative_mismatched_tags: 0,
+        eval_outputs: Vec::new(),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EditEvalMetadata {
+    tags: usize,
+    mismatched_tags: usize,
+}
+
+impl EvalOutputProcessor for EditAgentOutputProcessor {
+    type Metadata = EditEvalMetadata;
+
+    fn process(&mut self, output: &EvalOutput<Self::Metadata>) {
+        if matches!(output.outcome, OutcomeKind::Passed | OutcomeKind::Failed) {
+            self.cumulative_mismatched_tags += output.metadata.mismatched_tags;
+            self.cumulative_tags += output.metadata.tags;
+            self.eval_outputs.push(output.clone());
+        }
+    }
+
+    fn assert(&mut self) {
+        let mismatched_tag_ratio =
+            self.cumulative_mismatched_tags as f32 / self.cumulative_tags as f32;
+        if mismatched_tag_ratio > self.mismatched_tag_threshold {
+            for eval_output in &self.eval_outputs {
+                println!("{}", eval_output.data);
+            }
+            panic!(
+                "Too many mismatched tags: {:?}",
+                self.cumulative_mismatched_tags
+            );
+        }
+    }
+}
 
 #[test]
 #[cfg_attr(not(feature = "unit-eval"), ignore)]
@@ -55,22 +101,19 @@ fn eval_extract_handle_command_output() {
         include_str!("evals/fixtures/extract_handle_command_output/possible-07.diff"),
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
-    eval(
-        100,
-        0.95,
-        0.05,
-        EvalInput::from_conversation(
+    eval_utils::eval(100, 0.95, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(formatdoc! {"
-                        Read the `{input_file_path}` file and extract a method in
-                        the final stanza of `run_git_blame` to deal with command failures,
-                        call it `handle_command_output` and take the std::process::Output as the only parameter.
-                        Do not document the method and do not add any comments.
+                            Read the `{input_file_path}` file and extract a method in
+                            the final stanza of `run_git_blame` to deal with command failures,
+                            call it `handle_command_output` and take the std::process::Output as the only parameter.
+                            Do not document the method and do not add any comments.
 
-                        Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
-                    "})],
+                            Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -102,9 +145,9 @@ fn eval_extract_handle_command_output() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::assert_diff_any(possible_diffs),
-        ),
-    );
+            EvalAssertion::assert_diff_any(possible_diffs.clone()),
+        ))
+    });
 }
 
 #[test]
@@ -122,18 +165,16 @@ fn eval_delete_run_git_blame() {
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
     let edit_description = "Delete the `run_git_blame` function.";
-    eval(
-        100,
-        0.95,
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(100, 0.95, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(formatdoc! {"
-                        Read the `{input_file_path}` file and delete `run_git_blame`. Just that
-                        one function, not its usages.
-                    "})],
+                            Read the `{input_file_path}` file and delete `run_git_blame`. Just that
+                            one function, not its usages.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -166,8 +207,8 @@ fn eval_delete_run_git_blame() {
             ],
             Some(input_file_content.into()),
             EvalAssertion::assert_eq(output_file_content),
-        ),
-    );
+        ))
+    });
 }
 
 #[test]
@@ -185,18 +226,16 @@ fn eval_translate_doc_comments() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
-    eval(
-        200,
-        1.,
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(200, 1., mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(formatdoc! {"
-                        Read the {input_file_path} file and edit it (without overwriting it),
-                        translating all the doc comments to italian.
-                    "})],
+                            Read the {input_file_path} file and edit it (without overwriting it),
+                            translating all the doc comments to italian.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -229,8 +268,8 @@ fn eval_translate_doc_comments() {
             ],
             Some(input_file_content.into()),
             EvalAssertion::judge_diff("Doc comments were translated to Italian"),
-        ),
-    );
+        ))
+    });
 }
 
 #[test]
@@ -249,33 +288,31 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
     let edit_description = "Update compile_parser_to_wasm to use wasi-sdk instead of emscripten";
-    eval(
-        100,
-        0.95,
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(100, 0.95, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(formatdoc! {"
-                        Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
-                        Use `ureq` to download the SDK for the current platform and architecture.
-                        Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
-                        Compile the parser to wasm using the `bin/clang` executable (or `bin/clang.exe` on windows)
-                        that's inside of the archive.
-                        Don't re-download the SDK if that executable already exists.
+                            Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
+                            Use `ureq` to download the SDK for the current platform and architecture.
+                            Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
+                            Compile the parser to wasm using the `bin/clang` executable (or `bin/clang.exe` on windows)
+                            that's inside of the archive.
+                            Don't re-download the SDK if that executable already exists.
 
-                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
+                            Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
 
-                        Here are the available wasi-sdk assets:
-                        - wasi-sdk-25.0-x86_64-macos.tar.gz
-                        - wasi-sdk-25.0-arm64-macos.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-linux.tar.gz
-                        - wasi-sdk-25.0-arm64-linux.tar.gz
-                        - wasi-sdk-25.0-x86_64-windows.tar.gz
-                    "})],
+                            Here are the available wasi-sdk assets:
+                            - wasi-sdk-25.0-x86_64-macos.tar.gz
+                            - wasi-sdk-25.0-arm64-macos.tar.gz
+                            - wasi-sdk-25.0-x86_64-linux.tar.gz
+                            - wasi-sdk-25.0-arm64-linux.tar.gz
+                            - wasi-sdk-25.0-x86_64-linux.tar.gz
+                            - wasi-sdk-25.0-arm64-linux.tar.gz
+                            - wasi-sdk-25.0-x86_64-windows.tar.gz
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -352,11 +389,11 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
             ],
             Some(input_file_content.into()),
             EvalAssertion::judge_diff(indoc! {"
-                - The compile_parser_to_wasm method has been changed to use wasi-sdk
-                - ureq is used to download the SDK for current platform and architecture
-            "}),
-        ),
-    );
+                    - The compile_parser_to_wasm method has been changed to use wasi-sdk
+                    - ureq is used to download the SDK for current platform and architecture
+                "}),
+        ))
+    });
 }
 
 #[test]
@@ -380,11 +417,8 @@ fn eval_disable_cursor_blinking() {
         include_str!("evals/fixtures/disable_cursor_blinking/possible-03.diff"),
         include_str!("evals/fixtures/disable_cursor_blinking/possible-04.diff"),
     ];
-    eval(
-        100,
-        0.51,
-        0.05,
-        EvalInput::from_conversation(
+    eval_utils::eval(100, 0.51, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
                 message(
@@ -421,10 +455,10 @@ fn eval_disable_cursor_blinking() {
                 message(
                     User,
                     [text(indoc! {"
-                        Comment out the lines that interact with the BlinkManager.
-                        Keep the outer `update` blocks, but comments everything that's inside (including if statements).
-                        Don't add additional comments.
-                    "})],
+                            Comment out the lines that interact with the BlinkManager.
+                            Keep the outer `update` blocks, but comments everything that's inside (including if statements).
+                            Don't add additional comments.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -440,9 +474,9 @@ fn eval_disable_cursor_blinking() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::assert_diff_any(possible_diffs),
-        ),
-    );
+            EvalAssertion::assert_diff_any(possible_diffs.clone()),
+        ))
+    });
 }
 
 #[test]
@@ -467,20 +501,16 @@ fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
-    eval(
-        100,
-        0.95,
-        // For whatever reason, this eval produces more mismatched tags.
-        // Increasing for now, let's see if we can bring this down.
-        0.25,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(100, 0.95, mismatched_tag_threshold(0.25), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(indoc! {"
-                        Introduce a new `from_pixels` constructor in Canvas and
-                        also add tests for it in the same file.
-                    "})],
+                            Introduce a new `from_pixels` constructor in Canvas and
+                            also add tests for it in the same file.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -545,92 +575,92 @@ fn eval_from_pixels_constructor() {
                         "tool_4",
                         "grep",
                         indoc! {"
-                            Found 6 matches:
+                                Found 6 matches:
 
-                            ## Matches in font-kit/src/loaders/core_text.rs
+                                ## Matches in font-kit/src/loaders/core_text.rs
 
-                            ### mod test › L926-936
-                            ```
-                            mod test {
-                                use super::Font;
-                                use crate::properties::{Stretch, Weight};
+                                ### mod test › L926-936
+                                ```
+                                mod test {
+                                    use super::Font;
+                                    use crate::properties::{Stretch, Weight};
 
-                                #[cfg(feature = \"source\")]
-                                use crate::source::SystemSource;
+                                    #[cfg(feature = \"source\")]
+                                    use crate::source::SystemSource;
 
-                                static TEST_FONT_POSTSCRIPT_NAME: &'static str = \"ArialMT\";
+                                    static TEST_FONT_POSTSCRIPT_NAME: &'static str = \"ArialMT\";
 
-                                #[cfg(feature = \"source\")]
-                                #[test]
-                            ```
+                                    #[cfg(feature = \"source\")]
+                                    #[test]
+                                ```
 
-                            55 lines remaining in ancestor node. Read the file to see all.
+                                55 lines remaining in ancestor node. Read the file to see all.
 
-                            ### mod test › L947-951
-                            ```
-                                }
+                                ### mod test › L947-951
+                                ```
+                                    }
 
-                                #[test]
-                                fn test_core_text_to_css_font_weight() {
-                                    // Exact matches
-                            ```
+                                    #[test]
+                                    fn test_core_text_to_css_font_weight() {
+                                        // Exact matches
+                                ```
 
-                            ### mod test › L959-963
-                            ```
-                                }
+                                ### mod test › L959-963
+                                ```
+                                    }
 
-                                #[test]
-                                fn test_core_text_to_css_font_stretch() {
-                                    // Exact matches
-                            ```
+                                    #[test]
+                                    fn test_core_text_to_css_font_stretch() {
+                                        // Exact matches
+                                ```
 
-                            ## Matches in font-kit/src/loaders/freetype.rs
+                                ## Matches in font-kit/src/loaders/freetype.rs
 
-                            ### mod test › L1238-1248
-                            ```
-                            mod test {
-                                use crate::loaders::freetype::Font;
+                                ### mod test › L1238-1248
+                                ```
+                                mod test {
+                                    use crate::loaders::freetype::Font;
 
-                                static PCF_FONT_PATH: &str = \"resources/tests/times-roman-pcf/timR12.pcf\";
-                                static PCF_FONT_POSTSCRIPT_NAME: &str = \"Times-Roman\";
+                                    static PCF_FONT_PATH: &str = \"resources/tests/times-roman-pcf/timR12.pcf\";
+                                    static PCF_FONT_POSTSCRIPT_NAME: &str = \"Times-Roman\";
 
-                                #[test]
-                                fn get_pcf_postscript_name() {
-                                    let font = Font::from_path(PCF_FONT_PATH, 0).unwrap();
-                                    assert_eq!(font.postscript_name().unwrap(), PCF_FONT_POSTSCRIPT_NAME);
-                                }
-                            ```
+                                    #[test]
+                                    fn get_pcf_postscript_name() {
+                                        let font = Font::from_path(PCF_FONT_PATH, 0).unwrap();
+                                        assert_eq!(font.postscript_name().unwrap(), PCF_FONT_POSTSCRIPT_NAME);
+                                    }
+                                ```
 
-                            1 lines remaining in ancestor node. Read the file to see all.
+                                1 lines remaining in ancestor node. Read the file to see all.
 
-                            ## Matches in font-kit/src/sources/core_text.rs
+                                ## Matches in font-kit/src/sources/core_text.rs
 
-                            ### mod test › L265-275
-                            ```
-                            mod test {
-                                use crate::properties::{Stretch, Weight};
+                                ### mod test › L265-275
+                                ```
+                                mod test {
+                                    use crate::properties::{Stretch, Weight};
 
-                                #[test]
-                                fn test_css_to_core_text_font_weight() {
-                                    // Exact matches
-                                    assert_eq!(super::css_to_core_text_font_weight(Weight(100.0)), -0.7);
-                                    assert_eq!(super::css_to_core_text_font_weight(Weight(400.0)), 0.0);
-                                    assert_eq!(super::css_to_core_text_font_weight(Weight(700.0)), 0.4);
-                                    assert_eq!(super::css_to_core_text_font_weight(Weight(900.0)), 0.8);
+                                    #[test]
+                                    fn test_css_to_core_text_font_weight() {
+                                        // Exact matches
+                                        assert_eq!(super::css_to_core_text_font_weight(Weight(100.0)), -0.7);
+                                        assert_eq!(super::css_to_core_text_font_weight(Weight(400.0)), 0.0);
+                                        assert_eq!(super::css_to_core_text_font_weight(Weight(700.0)), 0.4);
+                                        assert_eq!(super::css_to_core_text_font_weight(Weight(900.0)), 0.8);
 
-                            ```
+                                ```
 
-                            27 lines remaining in ancestor node. Read the file to see all.
+                                27 lines remaining in ancestor node. Read the file to see all.
 
-                            ### mod test › L278-282
-                            ```
-                                }
+                                ### mod test › L278-282
+                                ```
+                                    }
 
-                                #[test]
-                                fn test_css_to_core_text_font_stretch() {
-                                    // Exact matches
-                            ```
-                        "},
+                                    #[test]
+                                    fn test_css_to_core_text_font_stretch() {
+                                        // Exact matches
+                                ```
+                            "},
                     )],
                 ),
                 message(
@@ -648,11 +678,11 @@ fn eval_from_pixels_constructor() {
             ],
             Some(input_file_content.into()),
             EvalAssertion::judge_diff(indoc! {"
-                    - The diff contains a new `from_pixels` constructor
-                    - The diff contains new tests for the `from_pixels` constructor
-                "}),
-        ),
-    );
+                        - The diff contains a new `from_pixels` constructor
+                        - The diff contains new tests for the `from_pixels` constructor
+                    "}),
+        ))
+    });
 }
 
 #[test]
@@ -670,11 +700,9 @@ fn eval_zode() {
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
-    eval(
-        50,
-        1.,
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(50, 1., mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
                 message(
@@ -733,7 +761,7 @@ fn eval_zode() {
                     ],
                 ),
             ],
-            input_content,
+            input_content.clone(),
             EvalAssertion::new(async move |sample, _, _cx| {
                 let invalid_starts = [' ', '`', '\n'];
                 let mut message = String::new();
@@ -758,8 +786,8 @@ fn eval_zode() {
                     })
                 }
             }),
-        ),
-    );
+        ))
+    });
 }
 
 #[test]
@@ -777,19 +805,17 @@ fn eval_add_overwrite_test() {
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
     let edit_description = "Add a new test for overwriting a file in action_log.rs";
-    eval(
-        200,
-        0.5, // TODO: make this eval better
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(200, 0.5, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(
                     User,
                     [text(indoc! {"
-                        Introduce a new test in `action_log.rs` to test overwriting a file.
-                        That is, a file already exists, but we call `buffer_created` as if the file were new.
-                        Take inspiration from all the other tests in the file.
-                    "})],
+                            Introduce a new test in `action_log.rs` to test overwriting a file.
+                            That is, a file already exists, but we call `buffer_created` as if the file were new.
+                            Take inspiration from all the other tests in the file.
+                        "})],
                 ),
                 message(
                     Assistant,
@@ -809,81 +835,81 @@ fn eval_add_overwrite_test() {
                         "tool_1",
                         "read_file",
                         indoc! {"
-                            pub struct ActionLog [L13-20]
-                             tracked_buffers [L15]
-                             edited_since_project_diagnostics_check [L17]
-                             project [L19]
-                            impl ActionLog [L22-498]
-                             pub fn new [L24-30]
-                             pub fn project [L32-34]
-                             pub fn checked_project_diagnostics [L37-39]
-                             pub fn has_edited_files_since_project_diagnostics_check [L42-44]
-                             fn track_buffer_internal [L46-101]
-                             fn handle_buffer_event [L103-116]
-                             fn handle_buffer_edited [L118-123]
-                             fn handle_buffer_file_changed [L125-158]
-                             async fn maintain_diff [L160-264]
-                             pub fn buffer_read [L267-269]
-                             pub fn buffer_created [L272-276]
-                             pub fn buffer_edited [L279-287]
-                             pub fn will_delete_buffer [L289-304]
-                             pub fn keep_edits_in_range [L306-364]
-                             pub fn reject_edits_in_ranges [L366-459]
-                             pub fn keep_all_edits [L461-473]
-                             pub fn changed_buffers [L476-482]
-                             pub fn stale_buffers [L485-497]
-                            fn apply_non_conflicting_edits [L500-561]
-                            fn diff_snapshots [L563-585]
-                            fn point_to_row_edit [L587-614]
-                            enum ChangeAuthor [L617-620]
-                             User [L618]
-                             Agent [L619]
-                            enum TrackedBufferStatus [L623-627]
-                             Created [L624]
-                             Modified [L625]
-                             Deleted [L626]
-                            struct TrackedBuffer [L629-641]
-                             buffer [L630]
-                             base_text [L631]
-                             unreviewed_changes [L632]
-                             status [L633]
-                             version [L634]
-                             diff [L635]
-                             snapshot [L636]
-                             diff_update [L637]
-                             _open_lsp_handle [L638]
-                             _maintain_diff [L639]
-                             _subscription [L640]
-                            impl TrackedBuffer [L643-657]
-                             fn has_changes [L644-650]
-                             fn schedule_diff_update [L652-656]
-                            pub struct ChangedBuffer [L659-661]
-                             pub diff [L660]
-                            mod tests [L664-1574]
-                             fn init_logger [L678-682]
-                             fn init_test [L684-691]
-                             async fn test_keep_edits [L694-769]
-                             async fn test_deletions [L772-854]
-                             async fn test_overlapping_user_edits [L857-951]
-                             async fn test_creating_files [L954-1010]
-                             async fn test_deleting_files [L1013-1120]
-                             async fn test_reject_edits [L1123-1255]
-                             async fn test_reject_multiple_edits [L1258-1331]
-                             async fn test_reject_deleted_file [L1334-1388]
-                             async fn test_reject_created_file [L1391-1443]
-                             async fn test_random_diffs [L1446-1535]
-                              fn quiesce [L1510-1534]
-                             struct HunkStatus [L1538-1542]
-                              range [L1539]
-                              diff_status [L1540]
-                              old_text [L1541]
-                             fn unreviewed_hunks [L1544-1573]
+                                pub struct ActionLog [L13-20]
+                                 tracked_buffers [L15]
+                                 edited_since_project_diagnostics_check [L17]
+                                 project [L19]
+                                impl ActionLog [L22-498]
+                                 pub fn new [L24-30]
+                                 pub fn project [L32-34]
+                                 pub fn checked_project_diagnostics [L37-39]
+                                 pub fn has_edited_files_since_project_diagnostics_check [L42-44]
+                                 fn track_buffer_internal [L46-101]
+                                 fn handle_buffer_event [L103-116]
+                                 fn handle_buffer_edited [L118-123]
+                                 fn handle_buffer_file_changed [L125-158]
+                                 async fn maintain_diff [L160-264]
+                                 pub fn buffer_read [L267-269]
+                                 pub fn buffer_created [L272-276]
+                                 pub fn buffer_edited [L279-287]
+                                 pub fn will_delete_buffer [L289-304]
+                                 pub fn keep_edits_in_range [L306-364]
+                                 pub fn reject_edits_in_ranges [L366-459]
+                                 pub fn keep_all_edits [L461-473]
+                                 pub fn changed_buffers [L476-482]
+                                 pub fn stale_buffers [L485-497]
+                                fn apply_non_conflicting_edits [L500-561]
+                                fn diff_snapshots [L563-585]
+                                fn point_to_row_edit [L587-614]
+                                enum ChangeAuthor [L617-620]
+                                 User [L618]
+                                 Agent [L619]
+                                enum TrackedBufferStatus [L623-627]
+                                 Created [L624]
+                                 Modified [L625]
+                                 Deleted [L626]
+                                struct TrackedBuffer [L629-641]
+                                 buffer [L630]
+                                 base_text [L631]
+                                 unreviewed_changes [L632]
+                                 status [L633]
+                                 version [L634]
+                                 diff [L635]
+                                 snapshot [L636]
+                                 diff_update [L637]
+                                 _open_lsp_handle [L638]
+                                 _maintain_diff [L639]
+                                 _subscription [L640]
+                                impl TrackedBuffer [L643-657]
+                                 fn has_changes [L644-650]
+                                 fn schedule_diff_update [L652-656]
+                                pub struct ChangedBuffer [L659-661]
+                                 pub diff [L660]
+                                mod tests [L664-1574]
+                                 fn init_logger [L678-682]
+                                 fn init_test [L684-691]
+                                 async fn test_keep_edits [L694-769]
+                                 async fn test_deletions [L772-854]
+                                 async fn test_overlapping_user_edits [L857-951]
+                                 async fn test_creating_files [L954-1010]
+                                 async fn test_deleting_files [L1013-1120]
+                                 async fn test_reject_edits [L1123-1255]
+                                 async fn test_reject_multiple_edits [L1258-1331]
+                                 async fn test_reject_deleted_file [L1334-1388]
+                                 async fn test_reject_created_file [L1391-1443]
+                                 async fn test_random_diffs [L1446-1535]
+                                  fn quiesce [L1510-1534]
+                                 struct HunkStatus [L1538-1542]
+                                  range [L1539]
+                                  diff_status [L1540]
+                                  old_text [L1541]
+                                 fn unreviewed_hunks [L1544-1573]
 
-                            Showing symbols 1-69 (total symbols: 69)
+                                Showing symbols 1-69 (total symbols: 69)
 
-                            Using the line numbers in this outline, you can call this tool again while specifying
-                            the start_line and end_line fields to see the implementations of symbols in the outline.
-                        "},
+                                Using the line numbers in this outline, you can call this tool again while specifying
+                                the start_line and end_line fields to see the implementations of symbols in the outline.
+                            "},
                     )],
                 ),
                 message(
@@ -963,17 +989,17 @@ fn eval_add_overwrite_test() {
                     Assistant,
                     [
                         text(indoc! {"
-                            Based on my understanding of the existing tests and code, I'll now create a new test for overwriting a file. In this test, we'll:
+                                Based on my understanding of the existing tests and code, I'll now create a new test for overwriting a file. In this test, we'll:
 
-                            1. Create a file
-                            2. Open a buffer for it
-                            3. Track it in the action log
-                            4. Modify the buffer
-                            5. Call `buffer_created` again as if the file were new
-                            6. Check that the changes are properly tracked
+                                1. Create a file
+                                2. Open a buffer for it
+                                3. Track it in the action log
+                                4. Modify the buffer
+                                5. Call `buffer_created` again as if the file were new
+                                6. Check that the changes are properly tracked
 
-                            Let's write the test:
-                        "}),
+                                Let's write the test:
+                            "}),
                         tool_use(
                             "tool_5",
                             "edit_file",
@@ -990,8 +1016,8 @@ fn eval_add_overwrite_test() {
             EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        ),
-    );
+        ))
+    });
 }
 
 #[test]
@@ -1016,20 +1042,18 @@ fn eval_create_empty_file() {
 
     let input_file_content = None;
     let expected_output_content = String::new();
-    eval(
-        100,
-        0.99,
-        0.05,
-        EvalInput::from_conversation(
+
+    eval_utils::eval(100, 0.99, mismatched_tag_threshold(0.05), move || {
+        run_eval(EvalInput::from_conversation(
             vec![
                 message(User, [text("Create a second empty todo file ")]),
                 message(
                     Assistant,
                     [
                         text(formatdoc! {"
-                        I'll help you create a second empty todo file.
-                        First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
-                        "}),
+                            I'll help you create a second empty todo file.
+                            First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
+                            "}),
                         tool_use(
                             "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
                             "list_directory",
@@ -1051,8 +1075,8 @@ fn eval_create_empty_file() {
                     Assistant,
                     [
                         text(formatdoc! {"
-                        I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO3` in the same directory:
-                    "}),
+                            I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO3` in the same directory:
+                        "}),
                         tool_use(
                             "toolu_01Tb3iQ9griqSYMmVuykQPWU",
                             "edit_file",
@@ -1065,12 +1089,12 @@ fn eval_create_empty_file() {
                     ],
                 ),
             ],
-            input_file_content,
+            input_file_content.clone(),
             // Bad behavior is to write something like
             // "I'll create an empty TODO3 file as requested."
-            EvalAssertion::assert_eq(expected_output_content),
-        ),
-    );
+            EvalAssertion::assert_eq(expected_output_content.clone()),
+        ))
+    });
 }
 
 fn message(
@@ -1312,115 +1336,44 @@ impl EvalAssertion {
     }
 }
 
-fn eval(
-    iterations: usize,
-    expected_pass_ratio: f32,
-    mismatched_tag_threshold: f32,
-    mut eval: EvalInput,
-) {
-    let mut evaluated_count = 0;
-    let mut failed_count = 0;
-    report_progress(evaluated_count, failed_count, iterations);
-
-    let (tx, rx) = mpsc::channel();
-
-    // Cache the last message in the conversation, and run one instance of the eval so that
-    // all the next ones are cached.
-    eval.conversation.last_mut().unwrap().cache = true;
-    run_eval(eval.clone(), tx.clone());
-
-    let executor = gpui::background_executor();
-    let semaphore = Arc::new(smol::lock::Semaphore::new(32));
-    for _ in 1..iterations {
-        let eval = eval.clone();
-        let tx = tx.clone();
-        let semaphore = semaphore.clone();
-        executor
-            .spawn(async move {
-                let _guard = semaphore.acquire().await;
-                run_eval(eval, tx)
-            })
-            .detach();
-    }
-    drop(tx);
-
-    let mut failed_evals = HashMap::default();
-    let mut errored_evals = HashMap::default();
-    let mut eval_outputs = Vec::new();
-    let mut cumulative_parser_metrics = EditParserMetrics::default();
-    while let Ok(output) = rx.recv() {
-        match output {
-            Ok(output) => {
-                cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
-                eval_outputs.push(output.clone());
-                if output.assertion.score < 80 {
-                    failed_count += 1;
-                    failed_evals
-                        .entry(output.sample.text_after.clone())
-                        .or_insert(Vec::new())
-                        .push(output);
-                }
-            }
-            Err(error) => {
-                failed_count += 1;
-                *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
-            }
-        }
-
-        evaluated_count += 1;
-        report_progress(evaluated_count, failed_count, iterations);
-    }
-
-    let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
-    println!("Actual pass ratio: {}\n", actual_pass_ratio);
-    if actual_pass_ratio < expected_pass_ratio {
-        let mut errored_evals = errored_evals.into_iter().collect::<Vec<_>>();
-        errored_evals.sort_by_key(|(_, count)| Reverse(*count));
-        for (error, count) in errored_evals {
-            println!("Eval errored {} times. Error: {}", count, error);
-        }
-
-        let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
-        failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
-        for (_buffer_output, failed_evals) in failed_evals {
-            let eval_output = failed_evals.first().unwrap();
-            println!("Eval failed {} times", failed_evals.len());
-            println!("{}", eval_output);
-        }
-
-        panic!(
-            "Actual pass ratio: {}\nExpected pass ratio: {}",
-            actual_pass_ratio, expected_pass_ratio
-        );
-    }
-
-    let mismatched_tag_ratio =
-        cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    if mismatched_tag_ratio > mismatched_tag_threshold {
-        for eval_output in eval_outputs {
-            println!("{}", eval_output);
-        }
-        panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
-    }
-}
-
-fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
+fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<EditEvalMetadata> {
     let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
     let mut cx = TestAppContext::build(dispatcher, None);
-    let output = cx.executor().block_test(async {
+    let result = cx.executor().block_test(async {
         let test = EditAgentTest::new(&mut cx).await;
         test.eval(eval, &mut cx).await
     });
-    tx.send(output).unwrap();
+    match result {
+        Ok(output) => eval_utils::EvalOutput {
+            data: output.to_string(),
+            outcome: if output.assertion.score < 80 {
+                eval_utils::OutcomeKind::Failed
+            } else {
+                eval_utils::OutcomeKind::Passed
+            },
+            metadata: EditEvalMetadata {
+                tags: output.sample.edit_output.parser_metrics.tags,
+                mismatched_tags: output.sample.edit_output.parser_metrics.mismatched_tags,
+            },
+        },
+        Err(e) => eval_utils::EvalOutput {
+            data: format!("{e:?}"),
+            outcome: eval_utils::OutcomeKind::Error,
+            metadata: EditEvalMetadata {
+                tags: 0,
+                mismatched_tags: 0,
+            },
+        },
+    }
 }
 
 #[derive(Clone)]
-struct EvalOutput {
+struct EditEvalOutput {
     sample: EvalSample,
     assertion: EvalAssertionOutcome,
 }
 
-impl Display for EvalOutput {
+impl Display for EditEvalOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Score: {:?}", self.assertion.score)?;
         if let Some(message) = self.assertion.message.as_ref() {
@@ -1437,22 +1390,6 @@ impl Display for EvalOutput {
         writeln!(f, "Raw Edits:\n{}", self.sample.edit_output.raw_edits)?;
         Ok(())
     }
-}
-
-fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usize) {
-    let passed_count = evaluated_count - failed_count;
-    let passed_ratio = if evaluated_count == 0 {
-        0.0
-    } else {
-        passed_count as f64 / evaluated_count as f64
-    };
-    print!(
-        "\r\x1b[KEvaluated {}/{} ({:.2}% passed)",
-        evaluated_count,
-        iterations,
-        passed_ratio * 100.0
-    );
-    std::io::stdout().flush().unwrap();
 }
 
 struct EditAgentTest {
@@ -1550,7 +1487,10 @@ impl EditAgentTest {
         })
     }
 
-    async fn eval(&self, eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+    async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EditEvalOutput> {
+        // Make sure the last message in the conversation is cached.
+        eval.conversation.last_mut().unwrap().cache = true;
+
         let path = self
             .project
             .read_with(cx, |project, cx| {
@@ -1656,7 +1596,7 @@ impl EditAgentTest {
             .run(&sample, self.judge_model.clone(), cx)
             .await?;
 
-        Ok(EvalOutput { assertion, sample })
+        Ok(EditEvalOutput { assertion, sample })
     }
 }
 
