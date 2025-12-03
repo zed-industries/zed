@@ -355,7 +355,7 @@ impl HistoryStore {
                 .take(MAX_RECENTLY_OPENED_ENTRIES)
                 .flat_map(|entry| match entry {
                     SerializedRecentOpen::AcpThread(id) => Some(HistoryEntryId::AcpThread(
-                        acp::SessionId(id.as_str().into()),
+                        acp::SessionId::new(id.as_str()),
                     )),
                     SerializedRecentOpen::TextThread(file_name) => Some(
                         HistoryEntryId::TextThread(text_threads_dir().join(file_name).into()),
