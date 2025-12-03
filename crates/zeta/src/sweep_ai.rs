@@ -122,6 +122,19 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
+            let retrieval_chunks = related_files
+                .iter()
+                .flat_map(|related_file| {
+                    related_file.excerpts.iter().map(|excerpt| FileChunk {
+                        file_path: related_file.path.path.as_unix_str().to_string(),
+                        start_line: excerpt.point_range.start.row as usize,
+                        end_line: excerpt.point_range.end.row as usize,
+                        content: excerpt.text.to_string(),
+                        timestamp: None,
+                    })
+                })
+                .collect();
+
             let diagnostic_entries = snapshot.diagnostics_in_range(diagnostic_search_range, false);
             let mut diagnostic_content = String::new();
             let mut diagnostic_count = 0;
@@ -170,7 +183,7 @@ impl SweepAi {
                 multiple_suggestions: false,
                 branch: None,
                 file_chunks,
-                retrieval_chunks: vec![],
+                retrieval_chunks,
                 recent_user_actions: vec![],
                 use_bytes: true,
                 // TODO
@@ -322,7 +335,7 @@ struct AutocompleteRequest {
     pub cursor_position: usize,
     pub original_file_contents: String,
     pub file_chunks: Vec<FileChunk>,
-    pub retrieval_chunks: Vec<RetrievalChunk>,
+    pub retrieval_chunks: Vec<FileChunk>,
     pub recent_user_actions: Vec<UserAction>,
     pub multiple_suggestions: bool,
     pub privacy_mode_enabled: bool,
@@ -337,15 +350,6 @@ struct FileChunk {
     pub end_line: usize,
     pub content: String,
     pub timestamp: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RetrievalChunk {
-    pub file_path: String,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub content: String,
-    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
