@@ -28,7 +28,7 @@ fn should_appear_in_profile(kitty: Cat) {
 }
 ```
 
-Then either compile Zed in debug mode or with `--profile release-tracing`.
+Then either compile Zed in debug mode or with `cargo r --release --no-default-features`
 
 ## One time Setup/Building the profiler:
 

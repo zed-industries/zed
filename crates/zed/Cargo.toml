@@ -18,6 +18,9 @@ path = "src/zed-main.rs"
 name = "zed"
 path = "src/main.rs"
 
+[features]
+default = ["tracing/release_max_level_off"]
+
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
