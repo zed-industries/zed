@@ -389,6 +389,8 @@ pub enum RestoreOnStartupBehavior {
     /// Restore all workspaces that were open when quitting Zed.
     #[default]
     LastSession,
+    /// Open the Launchpad.
+    Launchpad,
 }
 
 #[with_fallible_options]

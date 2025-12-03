@@ -2,6 +2,7 @@ pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
+pub mod launchpad;
 mod modal_layer;
 pub mod notifications;
 pub mod pane;
