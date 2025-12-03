@@ -1100,13 +1100,22 @@
   "preview_tabs": {
     // Whether preview tabs should be enabled.
     // Preview tabs allow you to open files in preview mode, where they close automatically
-    // when you switch to another file unless you explicitly pin them.
+    // when you open another preview tab.
     // This is useful for quickly viewing files without cluttering your workspace.
     "enabled": true,
+    // Whether to open tabs in preview mode when opened from the project panel with a single click.
+    "enable_preview_from_project_panel": true,
     // Whether to open tabs in preview mode when selected from the file finder.
     "enable_preview_from_file_finder": false,
-    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-    "enable_preview_from_code_navigation": false
+    // Whether to open tabs in preview mode when opened from a multibuffer.
+    "enable_preview_from_multibuffer": true,
+    // Whether to open tabs in preview mode when code navigation is used to open a multibuffer.
+    "enable_preview_multibuffer_from_code_navigation": false,
+    // Whether to open tabs in preview mode when code navigation is used to open a single file.
+    "enable_preview_file_from_code_navigation": true,
+    // Whether to keep tabs in preview mode when code navigation is used to navigate away from them.
+    // If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
+    "enable_keep_preview_on_code_navigation": false
   },
   // Settings related to the file finder.
   "file_finder": {

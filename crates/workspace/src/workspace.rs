@@ -3636,14 +3636,33 @@ impl Workspace {
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
+        keep_old_preview: bool,
+        allow_new_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T>
     where
         T: ProjectItem,
     {
+        let old_item_id = pane.read(cx).active_item().map(|item| item.item_id());
+
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
+            if !keep_old_preview
+                && let Some(old_id) = old_item_id
+                && old_id != item.item_id()
+            {
+                // switching to a different item, so unpreview old active item
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(old_id);
+                });
+            }
+
             self.activate_item(&item, activate_pane, focus_item, window, cx);
+            if !allow_new_preview {
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(item.item_id());
+                });
+            }
             return item;
         }
 
@@ -3652,16 +3671,14 @@ impl Workspace {
                 T::for_project_item(self.project().clone(), Some(pane), project_item, window, cx)
             })
         });
-        let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation
-                && let Some(preview_item_id) = pane.preview_item_id()
-                && preview_item_id != item_id
-            {
-                destination_index = pane.close_current_preview_item(window, cx);
+            if !keep_old_preview && let Some(old_id) = old_item_id {
+                pane.unpreview_item_if_preview(old_id);
             }
-            pane.set_preview_item_id(Some(item.item_id()), cx)
+            if allow_new_preview {
+                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+            }
         });
 
         self.add_item(

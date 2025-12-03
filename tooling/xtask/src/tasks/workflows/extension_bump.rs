@@ -23,15 +23,12 @@ pub(crate) fn extension_bump() -> Workflow {
     let force_bump = WorkflowInput::bool("force-bump", None);
 
     let (app_id, app_secret) = extension_workflow_secrets();
-
-    let test_extension = extension_tests::check_extension();
     let (check_bump_needed, needs_bump, current_version) = check_bump_needed();
 
     let needs_bump = needs_bump.as_job_output(&check_bump_needed);
     let current_version = current_version.as_job_output(&check_bump_needed);
 
-    let dependencies = [&test_extension, &check_bump_needed];
-
+    let dependencies = [&check_bump_needed];
     let bump_version = bump_extension_version(
         &dependencies,
         &current_version,
@@ -72,7 +69,6 @@ pub(crate) fn extension_bump() -> Workflow {
             "ZED_EXTENSION_CLI_SHA",
             extension_tests::ZED_EXTENSION_CLI_SHA,
         ))
-        .add_job(test_extension.name, test_extension.job)
         .add_job(check_bump_needed.name, check_bump_needed.job)
         .add_job(bump_version.name, bump_version.job)
         .add_job(create_label.name, create_label.job)

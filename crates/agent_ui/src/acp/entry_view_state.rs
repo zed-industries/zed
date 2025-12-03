@@ -432,24 +432,11 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let tool_call = acp::ToolCall {
-            id: acp::ToolCallId("tool".into()),
-            title: "Tool call".into(),
-            kind: acp::ToolKind::Other,
-            status: acp::ToolCallStatus::InProgress,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/hello.txt".into(),
-                    old_text: Some("hi world".into()),
-                    new_text: "hello world".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call = acp::ToolCall::new("tool", "Tool call")
+            .status(acp::ToolCallStatus::InProgress)
+            .content(vec![acp::ToolCallContent::Diff(
+                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+            )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {

@@ -2861,10 +2861,24 @@ Configuration object for defining settings profiles. Example:
 ```json [settings]
 "preview_tabs": {
   "enabled": true,
+  "enable_preview_from_project_panel": true,
   "enable_preview_from_file_finder": false,
-  "enable_preview_from_code_navigation": false,
+  "enable_preview_from_multibuffer": true,
+  "enable_preview_multibuffer_from_code_navigation": false,
+  "enable_preview_file_from_code_navigation": true,
+  "enable_keep_preview_on_code_navigation": false,
 }
 ```
+
+### Enable preview from project panel
+
+- Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
+- Setting: `enable_preview_from_project_panel`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Enable preview from file finder
 
@@ -2876,10 +2890,40 @@ Configuration object for defining settings profiles. Example:
 
 `boolean` values
 
-### Enable preview from code navigation
+### Enable preview from multibuffer
 
-- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-- Setting: `enable_preview_from_code_navigation`
+- Description: Determines whether to open files in preview mode when opened from a multibuffer.
+- Setting: `enable_preview_from_multibuffer`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable preview multibuffer from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a multibuffer.
+- Setting: `enable_preview_multibuffer_from_code_navigation`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Enable preview file from code navigation
+
+- Description: Determines whether to open tabs in preview mode when code navigation is used to open a single file.
+- Setting: `enable_preview_file_from_code_navigation`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable keep preview on code navigation
+
+- Description: Determines whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
+- Setting: `enable_keep_preview_on_code_navigation`
 - Default: `false`
 
 **Options**
