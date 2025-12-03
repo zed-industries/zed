@@ -525,7 +525,8 @@ fn unstable_version_notification(cx: &mut App) {
     });
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+// todo!()
+#[cfg(any(target_os = "freebsd"))]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(

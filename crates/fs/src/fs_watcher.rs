@@ -1,4 +1,6 @@
 use notify::EventKind;
+#[cfg(target_os = "linux")]
+use notify::{INotifyWatcher, Watcher};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -249,6 +251,11 @@ fn handle_event(event: Result<notify::Event, notify::Error>) {
 
 pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     let result = FS_WATCHER_INSTANCE.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        {
+            let watcher = INotifyWatcher::new(event_handler, config);
+        }
+        #[cfg(not(linux))]
         notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
             state: Mutex::new(WatcherState {
                 watchers: Default::default(),

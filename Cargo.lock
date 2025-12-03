@@ -6413,6 +6413,7 @@ dependencies = [
  "gpui",
  "ignore",
  "is_executable",
+ "inotify 0.11.0",
  "libc",
  "log",
  "notify 8.2.0",
@@ -8256,8 +8257,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f37dccff2791ab604f9babef0ba14fbe0be30bd368dc541e2b08d07c8aa908f3"
 dependencies = [
  "bitflags 2.9.4",
+ "futures-core",
  "inotify-sys",
  "libc",
+ "tokio",
 ]
 
 [[package]]
@@ -10448,7 +10451,8 @@ dependencies = [
 [[package]]
 name = "notify"
 version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
 dependencies = [
  "bitflags 2.9.4",
  "fsevent-sys 4.1.0",
@@ -10476,7 +10480,6 @@ dependencies = [
 [[package]]
 name = "notify-types"
 version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
 
 [[package]]
 name = "now"
@@ -21982,3 +21985,7 @@ dependencies = [
  "syn 2.0.106",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "notify"
+version = "8.0.0"

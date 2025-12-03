@@ -1,7 +1,10 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod linux_watcher;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
@@ -420,7 +423,7 @@ impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
             bundled_git_binary_path: git_binary_path,
-            executor,
+            executor: executor.clone(),
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
         }
@@ -1003,7 +1006,44 @@ impl Fs for RealFs {
         )
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    async fn watch(
+        &self,
+        path: &Path,
+        _: Duration,
+    ) -> (
+        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        Arc<dyn Watcher>,
+    ) {
+        use util::{ResultExt as _, paths::SanitizedPath};
+
+        let watcher = linux_watcher::LinuxWatcher::new(self.executor.clone());
+        watcher.add(path).unwrap();
+
+        // Check if path is a symlink and follow the target parent
+        if let Some(mut target) = self.read_link(path).await.ok() {
+            dbg!("we got a symlink");
+            log::trace!("watch symlink {path:?} -> {target:?}");
+            // Check if symlink target is relative path, if so make it absolute
+            if target.is_relative()
+                && let Some(parent) = path.parent()
+            {
+                target = parent.join(target);
+                if let Ok(canonical) = self.canonicalize(&target).await {
+                    target = SanitizedPath::new(&canonical).as_path().to_path_buf();
+                }
+            }
+            watcher.add(&target).ok();
+            if let Some(parent) = target.parent() {
+                watcher.add(parent).log_err();
+            }
+        }
+
+        let stream = watcher.events();
+        (stream, Arc::new(watcher) as _)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     async fn watch(
         &self,
         path: &Path,
@@ -1016,6 +1056,7 @@ impl Fs for RealFs {
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
@@ -3378,12 +3419,7 @@ mod tests {
     async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
         // With the file handle still open, the file should be replaced
         // https://github.com/zed-industries/zed/issues/30054
-        let fs = RealFs {
-            bundled_git_binary_path: None,
-            executor,
-            next_job_id: Arc::new(AtomicUsize::new(0)),
-            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-        };
+        let fs = RealFs::new(None, executor);
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
         let mut file = std::fs::File::create_new(&file_to_be_replaced).unwrap();
@@ -3398,12 +3434,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
-        let fs = RealFs {
-            bundled_git_binary_path: None,
-            executor,
-            next_job_id: Arc::new(AtomicUsize::new(0)),
-            job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-        };
+        let fs = RealFs::new(None, executor);
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();

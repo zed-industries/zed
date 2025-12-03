@@ -703,7 +703,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fs::fs_watcher::global(|_| {}).unwrap();
 
     cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
