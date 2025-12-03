@@ -1017,7 +1017,7 @@ impl Fs for RealFs {
     ) {
         use util::{ResultExt as _, paths::SanitizedPath};
 
-        let watcher = linux_watcher::LinuxWatcher::new(self.executor.clone());
+        let (watcher, stream) = linux_watcher::LinuxWatcher::init(self.executor.clone());
         watcher.add(path).unwrap();
 
         // Check if path is a symlink and follow the target parent
@@ -1039,7 +1039,6 @@ impl Fs for RealFs {
             }
         }
 
-        let stream = watcher.events();
         (stream, Arc::new(watcher) as _)
     }
 

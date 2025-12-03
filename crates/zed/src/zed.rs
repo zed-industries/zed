@@ -379,7 +379,7 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         initialize_file_watcher(window, cx);
 
         if let Some(specs) = window.gpu_specs() {

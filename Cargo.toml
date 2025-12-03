@@ -775,8 +775,8 @@ features = [
 ]
 
 [patch.crates-io]
-notify = { path = "../notify/notify" }
-notify-types = { path = "../notify/notify-types" }
+#notify = { path = "../notify/notify" }
+#notify-types = { path = "../notify/notify-types" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 
