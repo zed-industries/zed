@@ -3,7 +3,8 @@ use std::sync::Arc;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance, hsla};
 
 use crate::{
-    AccentColors, Appearance, DEFAULT_DARK_THEME, PlayerColors, StatusColors,
+    AccentColors, Appearance, DARK_ADDED_COLOR, DARK_MODIFIED_COLOR, DARK_REMOVED_COLOR,
+    DARK_WORD_ADDED_COLOR, DARK_WORD_DELETED_COLOR, DEFAULT_DARK_THEME, PlayerColors, StatusColors,
     StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeColorsRefinement,
     ThemeFamily, ThemeStyles, default_color_scales,
 };
@@ -69,37 +70,6 @@ pub(crate) fn zed_default_dark() -> Theme {
     let red = hsla(355. / 360., 65. / 100., 65. / 100., 1.0);
     let teal = hsla(187. / 360., 47. / 100., 55. / 100., 1.0);
     let yellow = hsla(39. / 360., 67. / 100., 69. / 100., 1.0);
-
-    const ADDED_COLOR: Hsla = Hsla {
-        h: 134. / 360.,
-        s: 0.55,
-        l: 0.40,
-        a: 1.0,
-    };
-    const WORD_ADDED_COLOR: Hsla = Hsla {
-        h: 134. / 360.,
-        s: 0.55,
-        l: 0.40,
-        a: 0.35,
-    };
-    const MODIFIED_COLOR: Hsla = Hsla {
-        h: 48. / 360.,
-        s: 0.76,
-        l: 0.47,
-        a: 1.0,
-    };
-    const REMOVED_COLOR: Hsla = Hsla {
-        h: 350. / 360.,
-        s: 0.88,
-        l: 0.25,
-        a: 1.0,
-    };
-    const WORD_DELETED_COLOR: Hsla = Hsla {
-        h: 350. / 360.,
-        s: 0.88,
-        l: 0.25,
-        a: 0.80,
-    };
 
     let player = PlayerColors::dark();
     Theme {
@@ -237,14 +207,14 @@ pub(crate) fn zed_default_dark() -> Theme {
                 minimap_thumb_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
                 link_text_hover: blue,
-                version_control_added: ADDED_COLOR,
-                version_control_deleted: REMOVED_COLOR,
-                version_control_modified: MODIFIED_COLOR,
-                version_control_renamed: MODIFIED_COLOR,
+                version_control_added: DARK_ADDED_COLOR,
+                version_control_deleted: DARK_REMOVED_COLOR,
+                version_control_modified: DARK_MODIFIED_COLOR,
+                version_control_renamed: DARK_MODIFIED_COLOR,
                 version_control_conflict: crate::orange().light().step_12(),
                 version_control_ignored: crate::gray().light().step_12(),
-                version_control_word_added: WORD_ADDED_COLOR,
-                version_control_word_deleted: WORD_DELETED_COLOR,
+                version_control_word_added: DARK_WORD_ADDED_COLOR,
+                version_control_word_deleted: DARK_WORD_DELETED_COLOR,
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
 
