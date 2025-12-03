@@ -348,26 +348,23 @@ impl TabSwitcherDelegate {
         cx.subscribe_in(&pane, window, |tab_switcher, _, event, window, cx| {
             match event {
                 PaneEvent::AddItem { .. }
-                | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
                     let query = picker.query(cx);
                     picker.delegate.update_matches(query, window, cx);
                     cx.notify();
                 }),
-                PaneEvent::ActivateItem { .. } => {
-                    // The pane's activate item has changed, which can be caused
-                    // by the deletion of an entry in the picker, so the tab
-                    // switcher should react and update the currently selected
-                    // index.
-                    //
-                    // TODO!: Do we care about the fields of the event? Would
-                    // those change the functionality in a significant way? I
-                    // guess we don't care if `local: false`? Unless the tab
-                    // switcher also works in remote projects?
-                    tab_switcher.picker.update(cx, |picker, cx| {
-                        picker.delegate.sync_selected_index(cx);
-                    });
-                }
+                PaneEvent::RemovedItem { .. } => tab_switcher.picker.update(cx, |picker, cx| {
+                    let query = picker.query(cx);
+                    picker.delegate.update_matches(query, window, cx);
+
+                    // When the Tab Switcher is being used and an item is
+                    // removed, there's a chance that the new selected index
+                    // will not match the actual tab that is now being displayed
+                    // by the pane, as such, the selected index needs to be
+                    // updated to match the pane's state.
+                    picker.delegate.sync_selected_index(cx);
+                    cx.notify();
+                }),
                 _ => {}
             };
         })
@@ -555,10 +552,6 @@ impl TabSwitcherDelegate {
             return;
         };
 
-        // TODO!: Should we just spawn a background task here that both closes
-        // the item, awaits its closure and then updates the
-        // `TabSwitcherDelegate.selected_index` according to the index of the
-        // next active item?
         pane.update(cx, |pane, cx| {
             pane.close_item_by_id(tab_match.item.item_id(), SaveIntent::Close, window, cx)
                 .detach_and_log_err(cx);
