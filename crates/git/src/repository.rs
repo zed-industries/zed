@@ -420,7 +420,7 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
-    fn remote_url(&self, name: &str) -> Option<String>;
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -1085,10 +1085,16 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn remote_url(&self, name: &str) -> Option<String> {
-        let repo = self.repository.lock();
-        let remote = repo.find_remote(name).ok()?;
-        remote.url().map(|url| url.to_string())
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let repo = self.repository.clone();
+        let name = name.to_owned();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                let remote = repo.find_remote(&name).ok()?;
+                remote.url().map(|url| url.to_string())
+            })
+            .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -1465,23 +1471,30 @@ impl GitRepository for RealGitRepository {
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
 
-        let remote_url = self
-            .remote_url("upstream")
-            .or_else(|| self.remote_url("origin"));
-
-        self.executor
-            .spawn(async move {
-                crate::blame::Blame::for_path(
-                    &git_binary_path,
-                    &working_directory?,
-                    &path,
-                    &content,
-                    remote_url,
-                )
+        async move {
+            let remote_url = if let Some(remote_url) = self.remote_url("upstream").await {
+                Some(remote_url)
+            } else if let Some(remote_url) = self.remote_url("origin").await {
+                Some(remote_url)
+            } else {
+                None
+            };
+            executor
+                .spawn(async move {
+                    crate::blame::Blame::for_path(
+                        &git_binary_path,
+                        &working_directory?,
+                        &path,
+                        &content,
+                        remote_url,
+                    )
+                    .await
+                })
                 .await
-            })
-            .boxed()
+        }
+        .boxed()
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
