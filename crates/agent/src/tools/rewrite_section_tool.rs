@@ -1,3 +1,5 @@
+//! This tool is intended for use with the inline assistant, not the agent panel.
+
 use std::sync::Arc;
 
 use agent_client_protocol as acp;
@@ -48,11 +50,6 @@ impl AgentTool for RewriteSectionTool {
         _event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        todo!()
-        // let now = match input.timezone {
-        //     Timezone::Utc => Utc::now().to_rfc3339(),
-        //     Timezone::Local => Local::now().to_rfc3339(),
-        // };
-        // Task::ready(Ok(format!("The current datetime is {now}.")))
+        unimplemented!("This function is not used by the inline assistant")
     }
 }

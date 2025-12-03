@@ -1,7 +1,7 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent::{
     AgentTool as _, FailureMessageInput, FailureMessageTool, RewriteSectionInput,
-    RewriteSectionTool, SystemPromptTemplate, Template, Templates,
+    RewriteSectionTool,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
@@ -16,17 +16,16 @@ use futures::{
     future::{LocalBoxFuture, Shared},
     join,
 };
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolUse, Role,
+    LanguageModel, LanguageModelCompletionError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelTextStream, Role,
     report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use prompt_store::{ProjectContext, PromptBuilder};
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{
@@ -304,7 +303,7 @@ impl CodegenAlternative {
             diff: Diff::default(),
             telemetry,
             builder,
-            active: false,
+            active: active,
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
@@ -376,15 +375,10 @@ impl CodegenAlternative {
         let provider_id = model.provider_id();
 
         if cx.has_flag::<InlineAssistantV2FeatureFlag>() {
-            // if false {
-            // let request = self.build_request_v2(&model, user_prompt, context_task, cx)?;
             let request = self.build_request(&model, user_prompt, context_task, cx)?;
-            let tool_use = cx
-                .spawn(async move |_, cx| {
-                    Ok(model.stream_completion_tool(request.await, cx).await?)
-                })
-                // .boxed_local();
-                ;
+            let tool_use = cx.spawn(async move |_, cx| {
+                Ok(model.stream_completion_tool(request.await, cx).await?)
+            });
             self.handle_tool_use(telemetry_id, provider_id.to_string(), api_key, tool_use, cx);
         } else {
             let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
@@ -471,7 +465,6 @@ impl CodegenAlternative {
 
             user_message.content.push(user_prompt.into());
             messages.push(user_message);
-            dbg!(&messages);
 
             let tools = vec![
                 LanguageModelRequestTool {
@@ -486,7 +479,7 @@ impl CodegenAlternative {
                 },
             ];
 
-            let req = LanguageModelRequest {
+            LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
@@ -497,9 +490,7 @@ impl CodegenAlternative {
                 temperature,
                 messages,
                 thinking_allowed: false,
-            };
-            dbg!(&req);
-            req
+            }
         }))
     }
 
@@ -550,7 +541,6 @@ impl CodegenAlternative {
                 range.start.0..range.end.0,
             )
             .context("generating content prompt")?;
-        dbg!(&prompt);
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
@@ -644,15 +634,8 @@ impl CodegenAlternative {
         let completion = Arc::new(Mutex::new(String::new()));
         let completion_clone = completion.clone();
 
-        dbg!("AAA 0");
         self.generation = cx.spawn(async move |codegen, cx| {
-            dbg!("AAA 1");
             let stream = stream.await;
-            dbg!("AAA 2");
-
-            // use futures::stream::StreamExt;
-            // let all_chunks: Vec<Result<String, _>> = stream.unwrap().collect().await;
-            // dbg!(&all_chunks);
 
             let token_usage = stream
                 .as_ref()
@@ -662,19 +645,16 @@ impl CodegenAlternative {
                 .as_ref()
                 .ok()
                 .and_then(|stream| stream.message_id.clone());
-            dbg!("AAA 3");
             let generate = async {
                 let model_telemetry_id = model_telemetry_id.clone();
                 let model_provider_id = model_provider_id.clone();
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                 let executor = cx.background_executor().clone();
                 let message_id = message_id.clone();
-                dbg!("AAA 4");
                 let line_based_stream_diff: Task<anyhow::Result<()>> =
                     cx.background_spawn(async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
-                        dbg!("AAA 5");
                         let diff = async {
                             let chunks = StripInvalidSpans::new(
                                 stream?.stream.map_err(|error| error.into()),
@@ -688,14 +668,11 @@ impl CodegenAlternative {
                             let mut line_indent = None;
                             let mut first_line = true;
 
-                            dbg!("AAA 6");
                             while let Some(chunk) = chunks.next().await {
-                                dbg!("AAA 7");
                                 if response_latency.is_none() {
                                     response_latency = Some(request_start.elapsed());
                                 }
                                 let chunk = chunk?;
-                                dbg!(&chunk);
                                 completion_clone.lock().push_str(&chunk);
 
                                 let mut lines = chunk.split('\n').peekable();
@@ -1065,19 +1042,21 @@ impl CodegenAlternative {
         self.status = CodegenStatus::Pending;
 
         self.generation = cx.spawn(async move |codegen, cx| {
+            let finish_with_status = |status: CodegenStatus, cx: &mut AsyncApp| {
+                let _ = codegen.update(cx, |this, cx| {
+                    this.status = status;
+                    cx.emit(CodegenEvent::Finished);
+                    cx.notify();
+                });
+            };
+
             let tool_use = tool_use.await;
-            dbg!(&tool_use);
 
             match tool_use {
                 Ok(tool_use) if tool_use.name.as_ref() == "rewrite_section" => {
-                    eprintln!("Received tool use: {:?}", tool_use);
-
                     // Parse the input JSON into RewriteSectionInput
                     match serde_json::from_value::<RewriteSectionInput>(tool_use.input) {
                         Ok(input) => {
-                            eprintln!("Description: {}", input.description);
-                            eprintln!("Replacement text length: {}", input.replacement_text.len());
-
                             // Store the description if non-empty
                             let description = if !input.description.trim().is_empty() {
                                 Some(input.description.clone())
@@ -1103,20 +1082,11 @@ impl CodegenAlternative {
                                 diff_task.await;
                             }
 
-                            let _ = codegen.update(cx, |this, cx| {
-                                this.status = CodegenStatus::Done;
-                                cx.emit(CodegenEvent::Finished);
-                                cx.notify();
-                            });
+                            finish_with_status(CodegenStatus::Done, cx);
                             return;
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse RewriteSectionInput: {:?}", e);
-                            let _ = codegen.update(cx, |this, cx| {
-                                this.status = CodegenStatus::Error(e.into());
-                                cx.emit(CodegenEvent::Finished);
-                                cx.notify();
-                            });
+                            finish_with_status(CodegenStatus::Error(e.into()), cx);
                             return;
                         }
                     }
@@ -1125,44 +1095,26 @@ impl CodegenAlternative {
                     // Handle failure message tool use
                     match serde_json::from_value::<FailureMessageInput>(tool_use.input) {
                         Ok(input) => {
-                            eprintln!("Failure message: {}", input.message);
-
-                            let _ = codegen.update(cx, |this, cx| {
+                            let _ = codegen.update(cx, |this, _cx| {
                                 // Store the failure message as the tool description
                                 this.tool_description = Some(input.message);
-                                this.status = CodegenStatus::Done;
-                                cx.emit(CodegenEvent::Finished);
-                                cx.notify();
                             });
+                            finish_with_status(CodegenStatus::Done, cx);
                             return;
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse FailureMessageInput: {:?}", e);
-                            let _ = codegen.update(cx, |this, cx| {
-                                this.status = CodegenStatus::Error(e.into());
-                                cx.emit(CodegenEvent::Finished);
-                                cx.notify();
-                            });
+                            finish_with_status(CodegenStatus::Error(e.into()), cx);
                             return;
                         }
                     }
                 }
-                Ok(tool_use) => {
-                    eprintln!("Unexpected tool {}", tool_use.name);
-
-                    let _ = codegen.update(cx, |this, cx| {
-                        this.status = CodegenStatus::Done;
-                        cx.emit(CodegenEvent::Finished);
-                    });
+                Ok(_tool_use) => {
+                    // Unexpected tool.
+                    finish_with_status(CodegenStatus::Done, cx);
                     return;
                 }
                 Err(e) => {
-                    eprintln!("Failed to get tool use: {:?}", e);
-                    let _ = codegen.update(cx, |this, cx| {
-                        this.status = CodegenStatus::Error(e.into());
-                        cx.emit(CodegenEvent::Finished);
-                        cx.notify();
-                    });
+                    finish_with_status(CodegenStatus::Error(e.into()), cx);
                     return;
                 }
             }

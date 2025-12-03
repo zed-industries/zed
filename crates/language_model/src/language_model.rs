@@ -670,7 +670,6 @@ pub trait LanguageModel: Send + Sync {
                 .chain(events.filter_map({
                     let last_token_usage = last_token_usage.clone();
                     move |result| {
-                        dbg!(&result);
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {

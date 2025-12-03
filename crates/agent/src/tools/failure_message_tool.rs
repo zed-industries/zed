@@ -1,3 +1,5 @@
+//! This tool is intended for use with the inline assistant, not the agent panel.
+
 use std::sync::Arc;
 
 use agent_client_protocol as acp;
@@ -43,6 +45,6 @@ impl AgentTool for FailureMessageTool {
         _event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        todo!()
+        unimplemented!("This function is not used by the inline assistant")
     }
 }
