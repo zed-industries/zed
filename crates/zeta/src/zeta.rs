@@ -998,6 +998,11 @@ impl Zeta {
         reason: EditPredictionRejectReason,
         was_shown: bool,
     ) {
+        match self.edit_prediction_model {
+            ZetaEditPredictionModel::Zeta1 | ZetaEditPredictionModel::Zeta2 => {}
+            ZetaEditPredictionModel::Sweep => return,
+        }
+
         self.reject_predictions_tx
             .unbounded_send(EditPredictionRejection {
                 request_id: prediction_id.to_string(),
