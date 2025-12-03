@@ -132,7 +132,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.output.lines;
     }
@@ -1146,7 +1145,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
@@ -1240,7 +1238,6 @@ impl sum_tree::Summary for FoldSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.min_start.cmp(&self.min_start, buffer) == Ordering::Less {
             self.min_start = other.min_start;
@@ -1269,7 +1266,6 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         self.0.start = summary.start;
         self.0.end = summary.end;
@@ -1287,7 +1283,6 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for MultiBufferOffset {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         *self += summary.count;
     }
@@ -1644,7 +1639,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.output.len;
     }
@@ -1655,7 +1649,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.input.lines;
     }
@@ -1666,7 +1659,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.input.len;
     }

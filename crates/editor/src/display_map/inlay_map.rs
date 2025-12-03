@@ -78,7 +78,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
@@ -146,7 +145,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.output.len;
     }
@@ -176,7 +174,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.output.lines;
     }
@@ -187,7 +184,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for MultiBufferOffset {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += summary.input.len;
     }
@@ -198,7 +194,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += &summary.input.lines;
     }

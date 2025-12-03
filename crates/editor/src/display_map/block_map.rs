@@ -529,7 +529,7 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(edits))]
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: WrapPatch) {
         let _timer = zlog::time!("BlockMap::sync").warn_if_gt(std::time::Duration::from_millis(50));
 
@@ -1954,7 +1954,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &Self) {
         if summary.longest_row_chars > self.longest_row_chars {
             self.longest_row = self.output_rows + summary.longest_row;
@@ -1970,7 +1969,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapRow {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += summary.input_rows;
     }
@@ -1981,7 +1979,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += summary.output_rows;
     }

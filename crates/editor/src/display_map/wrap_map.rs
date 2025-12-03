@@ -1217,7 +1217,6 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self) {
         self.input += &other.input;
         self.output += &other.output;
@@ -1229,7 +1228,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.input.lines;
     }
@@ -1247,7 +1245,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.output.lines;
     }

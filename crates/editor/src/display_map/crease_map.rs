@@ -384,7 +384,6 @@ impl sum_tree::Summary for ItemSummary {
         Default::default()
     }
 
-    #[tracing::instrument(skip_all)]
     fn add_summary(&mut self, other: &Self, _snapshot: &MultiBufferSnapshot) {
         self.range = other.range.clone();
     }
