@@ -5,6 +5,7 @@ mod display;
 mod display_link;
 mod events;
 mod keyboard;
+mod system_tray;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;

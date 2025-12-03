@@ -38,6 +38,7 @@ mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
+mod system_tray;
 mod tab_stop;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
@@ -98,6 +99,7 @@ pub use style::*;
 pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
+pub use system_tray::*;
 pub(crate) use tab_stop::*;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]

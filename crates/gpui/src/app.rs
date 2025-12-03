@@ -40,8 +40,9 @@ use crate::{
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    SystemTray, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1914,6 +1915,18 @@ impl App {
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow())
+    }
+
+    /// Sets the system tray icon and menu for the application.
+    pub fn set_tray(&mut self, tray: SystemTray) {
+        let menu_items = if let Some(build) = tray.menu_builder.as_ref() {
+            Some(build(self))
+        } else {
+            None
+        };
+
+        self.platform
+            .set_tray(tray, menu_items, &self.keymap.borrow())
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.

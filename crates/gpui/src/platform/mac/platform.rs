@@ -9,7 +9,8 @@ use crate::{
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
+    PlatformWindow, Result, SystemMenuType, SystemTray, Task, WindowAppearance, WindowParams, hash,
+    platform::mac::system_tray::MacSystemTray,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -178,6 +179,7 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
+    system_tray: Option<MacSystemTray>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -218,6 +220,7 @@ impl MacPlatform {
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
+            system_tray: None,
             on_keyboard_layout_change: None,
             menus: None,
             keyboard_mapper,
@@ -279,18 +282,17 @@ impl MacPlatform {
         }
     }
 
-    unsafe fn create_dock_menu(
-        &self,
+    unsafe fn create_menu(
         menu_items: Vec<MenuItem>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
         unsafe {
-            let dock_menu = NSMenu::new(nil);
-            dock_menu.setDelegate_(delegate);
+            let menu = NSMenu::new(nil);
+            menu.setDelegate_(delegate);
             for item_config in menu_items {
-                dock_menu.addItem_(Self::create_menu_item(
+                menu.addItem_(Self::create_menu_item(
                     &item_config,
                     delegate,
                     actions,
@@ -298,7 +300,7 @@ impl MacPlatform {
                 ));
             }
 
-            dock_menu
+            menu
         }
     }
 
@@ -942,10 +944,36 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let new = self.create_dock_menu(menu, NSWindow::delegate(app), actions, keymap);
+            let new = Self::create_menu(menu, NSWindow::delegate(app), actions, keymap);
             if let Some(old) = state.dock_menu.replace(new) {
                 CFRelease(old as _)
             }
+        }
+    }
+
+    fn set_tray(&self, mut tray: SystemTray, menu: Option<Vec<MenuItem>>, keymap: &Keymap) {
+        let mut state = self.0.lock();
+
+        let mut menu_id = None;
+        if let Some(menu) = menu {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                let actions = &mut state.menu_actions;
+                let new = Self::create_menu(menu, NSWindow::delegate(app), actions, keymap);
+                menu_id = Some(new);
+            }
+        }
+
+        if let Some(system_tray) = &mut state.system_tray {
+            if let Some(ns_menu) = system_tray.ns_menu {
+                unsafe {
+                    CFRelease(ns_menu as _);
+                }
+            }
+            system_tray.update(&tray, menu_id);
+        } else {
+            let mut new_tray = MacSystemTray::create(&tray, menu_id);
+            state.system_tray = Some(new_tray);
         }
     }
 
