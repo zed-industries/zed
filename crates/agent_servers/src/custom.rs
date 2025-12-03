@@ -80,7 +80,7 @@ impl crate::AgentServer for CustomAgentServer {
 
         settings
             .as_ref()
-            .and_then(|s| s.default_model().map( acp::ModelId::new))
+            .and_then(|s| s.default_model().map(acp::ModelId::new))
     }
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
