@@ -1487,6 +1487,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1497,7 +1498,13 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.colors().search_match_background,
+            move |index, theme| {
+                if active_match_index == Some(*index) {
+                    theme.colors().search_active_match_background
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
             cx,
         );
         if updated {

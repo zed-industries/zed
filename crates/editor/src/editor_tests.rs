@@ -16978,7 +16978,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
                 anchor_range(Point::new(8, 4)..Point::new(8, 6)),
             ],
-            |_| Hsla::red(),
+            |_, _| Hsla::red(),
             cx,
         );
         editor.highlight_background::<Type2>(
@@ -16988,7 +16988,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),
                 anchor_range(Point::new(9, 5)..Point::new(9, 8)),
             ],
-            |_| Hsla::green(),
+            |_, _| Hsla::green(),
             cx,
         );
 
@@ -23973,7 +23973,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |theme| theme.colors().editor_document_highlight_read_background,
+            |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
@@ -24051,7 +24051,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |theme| theme.colors().editor_document_highlight_read_background,
+            |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
@@ -27299,7 +27299,7 @@ let result = variable * 2;",
 
         editor.highlight_background::<DocumentHighlightRead>(
             &anchor_ranges,
-            |theme| theme.colors().editor_document_highlight_read_background,
+            |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
