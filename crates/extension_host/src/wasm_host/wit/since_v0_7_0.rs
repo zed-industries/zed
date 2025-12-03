@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use credentials_provider::CredentialsProvider;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
@@ -1132,12 +1133,16 @@ impl ExtensionImports for WasmState {
         provider_id: String,
     ) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
-        let credential_key = format!("{}:{}", extension_id, provider_id);
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
 
         self.on_main_thread(move |cx| {
             async move {
-                let task = cx.update(|cx| cx.read_credentials(&credential_key))?;
-                let result = task.await.ok().flatten();
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                let result = credentials_provider
+                    .read_credentials(&credential_key, cx)
+                    .await
+                    .ok()
+                    .flatten();
                 Ok(result.map(|(_, password)| String::from_utf8_lossy(&password).to_string()))
             }
             .boxed_local()
@@ -1151,14 +1156,15 @@ impl ExtensionImports for WasmState {
         value: String,
     ) -> wasmtime::Result<Result<(), String>> {
         let extension_id = self.manifest.id.clone();
-        let credential_key = format!("{}:{}", extension_id, provider_id);
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
 
         self.on_main_thread(move |cx| {
             async move {
-                let task = cx.update(|cx| {
-                    cx.write_credentials(&credential_key, "api_key", value.as_bytes())
-                })?;
-                task.await.map_err(|e| anyhow::anyhow!("{}", e))
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                credentials_provider
+                    .write_credentials(&credential_key, "api_key", value.as_bytes(), cx)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))
             }
             .boxed_local()
         })
@@ -1171,12 +1177,15 @@ impl ExtensionImports for WasmState {
         provider_id: String,
     ) -> wasmtime::Result<Result<(), String>> {
         let extension_id = self.manifest.id.clone();
-        let credential_key = format!("{}:{}", extension_id, provider_id);
+        let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
 
         self.on_main_thread(move |cx| {
             async move {
-                let task = cx.update(|cx| cx.delete_credentials(&credential_key))?;
-                task.await.map_err(|e| anyhow::anyhow!("{}", e))
+                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx))?;
+                credentials_provider
+                    .delete_credentials(&credential_key, cx)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{}", e))
             }
             .boxed_local()
         })
