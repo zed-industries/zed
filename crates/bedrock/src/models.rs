@@ -649,7 +649,6 @@ impl Model {
             (
                 Model::Claude3Haiku
                 | Model::Claude3_5Sonnet
-                | Model::Claude3_5Haiku
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4_5
