@@ -155,7 +155,6 @@ impl TitleBar {
 
         h_flex()
             .id("collaborator-list")
-            .w_full()
             .gap_1()
             .overflow_x_scroll()
             .when_some(

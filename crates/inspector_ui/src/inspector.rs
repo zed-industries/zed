@@ -57,7 +57,7 @@ fn render_inspector(
     let ui_font = theme::setup_ui_font(window, cx);
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
-    let toolbar_height = PlatformTitleBar::height(window);
+    let toolbar_height = PlatformTitleBar::height(window, None);
 
     v_flex()
         .size_full()

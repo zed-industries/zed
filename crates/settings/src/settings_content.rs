@@ -290,6 +290,11 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Whether to show the tab bar in the title bar.
+    /// Need to restart for changes to apply
+    ///
+    /// Default: false
+    pub show_tab_bar: Option<bool>,
 }
 
 /// Configuration of audio in Zed.

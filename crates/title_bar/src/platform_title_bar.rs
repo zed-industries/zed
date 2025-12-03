@@ -4,9 +4,10 @@ use gpui::{
 };
 use smallvec::SmallVec;
 use std::mem;
-use ui::prelude::*;
+use ui::{Tab, prelude::*};
 
 use crate::{
+    Settings, TitleBarSettings,
     platforms::{platform_linux, platform_mac, platform_windows},
     system_window_tabs::SystemWindowTabs,
 };
@@ -34,14 +35,26 @@ impl PlatformTitleBar {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn height(window: &mut Window) -> Pixels {
-        (1.75 * window.rem_size()).max(px(34.))
+    pub fn height(window: &mut Window, cx: Option<&mut Context<Self>>) -> Pixels {
+        if let Some(cx) = cx
+            && TitleBarSettings::get_global(cx).show_tab_bar
+        {
+            Tab::container_height(cx)
+        } else {
+            (1.75 * window.rem_size()).max(px(34.))
+        }
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(_window: &mut Window) -> Pixels {
-        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
-        px(32.)
+    pub fn height(window: &mut Window, cx: Option<&mut Context<Self>>) -> Pixels {
+        if let Some(cx) = cx
+            && TitleBarSettings::get_global(cx).show_tab_bar
+        {
+            Tab::container_height(cx)
+        } else {
+            // todo(windows) instead of hard coded size report the actual size to the Windows platform API
+            px(32.)
+        }
     }
 
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
@@ -68,7 +81,7 @@ impl Render for PlatformTitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
-        let height = Self::height(window);
+        let height = Self::height(window, Some(cx));
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);

@@ -72,6 +72,7 @@ use std::{
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use title_bar::title_bar_settings::TitleBarSettings;
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -315,6 +316,10 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
     };
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
+    #[cfg(target_os = "macos")]
+    let is_movable = !TitleBarSettings::get_global(cx).show_tab_bar;
+    #[cfg(not(target_os = "macos"))]
+    let is_movable = true;
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -326,7 +331,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        is_movable: true,
+        is_movable,
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
@@ -350,8 +355,27 @@ pub fn initialize_workspace(
     cx: &mut App,
 ) {
     let mut _on_close_subscription = bind_on_window_closed(cx);
+    let mut old_title_bar_settings = *TitleBarSettings::get_global(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
         _on_close_subscription = bind_on_window_closed(cx);
+
+        let new_title_bar_settings = *TitleBarSettings::get_global(cx);
+        if new_title_bar_settings.show_tab_bar != old_title_bar_settings.show_tab_bar {
+            old_title_bar_settings = new_title_bar_settings;
+            struct TitleBarSettingsChanged;
+            show_app_notification(
+                NotificationId::unique::<TitleBarSettingsChanged>(),
+                cx,
+                |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(
+                            "Please restart Zed for changes to take effect.",
+                            cx,
+                        )
+                    })
+                },
+            );
+        }
     })
     .detach();
 

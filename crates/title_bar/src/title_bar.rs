@@ -4,7 +4,7 @@ mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
 mod system_window_tabs;
-mod title_bar_settings;
+pub mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -177,6 +177,35 @@ impl Render for TitleBar {
 
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
+        if let Ok(pane) = self
+            .workspace
+            .read_with(cx, |workspace, _cx| workspace.active_pane().clone())
+        {
+            let tab_bar = pane.update(cx, |pane, pane_cx| {
+                if title_bar_settings.show_tab_bar {
+                    pane.set_should_display_tab_bar(|_, _| false);
+                    Some((pane.render_tab_bar.clone())(pane, window, pane_cx))
+                } else {
+                    pane.set_should_display_tab_bar(|_, _| true);
+                    None
+                }
+            });
+
+            if let Some(tab_bar) = tab_bar {
+                children.push(
+                    div()
+                        .id("tab-bar-container")
+                        .h_full()
+                        .w_full()
+                        .px_1()
+                        .overflow_x_hidden()
+                        .child(tab_bar)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .into_any_element(),
+                );
+            }
+        }
+
         if title_bar_settings.show_onboarding_banner {
             children.push(self.banner.clone().into_any_element())
         }
@@ -217,10 +246,13 @@ impl Render for TitleBar {
                 );
             });
 
-            let height = PlatformTitleBar::height(window);
-            let title_bar_color = self.platform_titlebar.update(cx, |platform_titlebar, cx| {
-                platform_titlebar.title_bar_color(window, cx)
-            });
+            let (height, title_bar_color) =
+                self.platform_titlebar.update(cx, |platform_titlebar, cx| {
+                    (
+                        PlatformTitleBar::height(window, Some(cx)),
+                        platform_titlebar.title_bar_color(window, cx),
+                    )
+                });
 
             v_flex()
                 .w_full()
