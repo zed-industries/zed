@@ -38,12 +38,12 @@ mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
-mod system_tray;
 mod tab_stop;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 mod text_system;
+mod tray;
 mod util;
 mod view;
 mod window;
@@ -99,12 +99,12 @@ pub use style::*;
 pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
-pub use system_tray::*;
 pub(crate) use tab_stop::*;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
+pub use tray::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};

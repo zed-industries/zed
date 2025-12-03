@@ -2,8 +2,8 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, SystemTray, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    TestDisplay, TestWindow, Tray, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -373,7 +373,7 @@ impl Platform for TestPlatform {
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
-    fn set_tray(&self, _tray: SystemTray, _menu: Option<Vec<crate::MenuItem>>, _keymap: &Keymap) {}
+    fn set_tray(&self, _tray: Tray, _menu: Option<Vec<crate::MenuItem>>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}
 

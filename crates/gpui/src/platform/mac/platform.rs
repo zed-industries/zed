@@ -7,10 +7,9 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    MacDisplay, MacTray, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, SystemTray, Task, WindowAppearance, WindowParams, hash,
-    platform::mac::system_tray::MacSystemTray,
+    PlatformWindow, Result, SystemMenuType, Task, Tray, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -179,7 +178,7 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
-    system_tray: Option<MacSystemTray>,
+    system_tray: Option<MacTray>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -951,7 +950,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn set_tray(&self, mut tray: SystemTray, menu: Option<Vec<MenuItem>>, keymap: &Keymap) {
+    fn set_tray(&self, mut tray: Tray, menu: Option<Vec<MenuItem>>, keymap: &Keymap) {
         let mut state = self.0.lock();
 
         let mut menu_id = None;
@@ -972,7 +971,7 @@ impl Platform for MacPlatform {
             }
             system_tray.update(&tray, menu_id);
         } else {
-            let mut new_tray = MacSystemTray::create(&tray, menu_id);
+            let mut new_tray = MacTray::create(&tray, menu_id);
             state.system_tray = Some(new_tray);
         }
     }

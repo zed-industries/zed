@@ -40,9 +40,8 @@ use crate::{
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemTray, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Tray, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -635,6 +634,7 @@ pub struct App {
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    pub(crate) tray: Option<Tray>,
     quit_mode: QuitMode,
     quitting: bool,
 }
@@ -710,6 +710,7 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
+                tray: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -1918,15 +1919,21 @@ impl App {
     }
 
     /// Sets the system tray icon and menu for the application.
-    pub fn set_tray(&mut self, tray: SystemTray) {
+    pub fn set_tray(&mut self, tray: Tray) {
         let menu_items = if let Some(build) = tray.menu_builder.as_ref() {
             Some(build(self))
         } else {
             None
         };
 
+        self.tray = Some(tray.clone());
         self.platform
             .set_tray(tray, menu_items, &self.keymap.borrow())
+    }
+
+    /// Gets the system tray of the application.
+    pub fn tray(&self) -> Option<&Tray> {
+        self.tray.as_ref()
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
