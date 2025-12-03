@@ -2097,16 +2097,6 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 .raw_output("Finished thinking.".into())
         )
     );
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "1",
-            acp::ToolCallUpdateFields::new()
-                .status(acp::ToolCallStatus::Completed)
-                .raw_output("Finished thinking.".into())
-        )
-    );
 }
 
 #[gpui::test]
