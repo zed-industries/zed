@@ -283,7 +283,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         "CSS",
         "ERB",
         "HTML+ERB",
-        "HTML/ERB",
         "HEEX",
         "HTML",
         "JavaScript",
