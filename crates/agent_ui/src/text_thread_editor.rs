@@ -2622,11 +2622,13 @@ impl SearchableItem for TextThreadEditor {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.update_matches(matches, window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.update_matches(matches, active_match_index, window, cx)
+        });
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {

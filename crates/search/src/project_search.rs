@@ -1443,6 +1443,17 @@ impl ProjectSearchView {
                 editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
+                editor.highlight_background::<Self>(
+                    &match_ranges,
+                    |index, theme| {
+                        if new_index == index {
+                            Hsla::red()
+                        } else {
+                            theme.colors().search_match_background
+                        }
+                    },
+                    cx,
+                );
             });
         }
     }
@@ -1518,11 +1529,6 @@ impl ProjectSearchView {
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
-                editor.highlight_background::<Self>(
-                    &match_ranges,
-                    |theme| theme.colors().search_match_background,
-                    cx,
-                );
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
@@ -1541,6 +1547,19 @@ impl ProjectSearchView {
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
+        self.results_editor.update(cx, |editor, cx| {
+            editor.highlight_background::<Self>(
+                &self.entity.read(cx).match_ranges,
+                |index, theme| {
+                    if new_index == index {
+                        Hsla::red()
+                    } else {
+                        theme.colors().search_match_background
+                    }
+                },
+                cx,
+            );
+        });
         if self.active_match_index != new_index {
             self.active_match_index = new_index;
             cx.notify();

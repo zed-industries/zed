@@ -13,8 +13,8 @@ use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
-    ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Hsla,
+    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
@@ -1487,6 +1487,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1497,7 +1498,17 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.colors().search_match_background,
+            |index, theme| {
+                if let Some(active_index) = active_match_index {
+                    if &active_index == index {
+                        Hsla::red()
+                    } else {
+                        theme.colors().search_match_background
+                    }
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
             cx,
         );
         if updated {
