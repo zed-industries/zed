@@ -296,32 +296,30 @@ impl TitleBar {
         );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
         let mut untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
-            let weak_title_bar = cx.weak_entity();
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                subscriptions.push(trusted_worktrees_storage.subscribe(cx, move |e, cx| {
-                    weak_title_bar
-                        .update(cx, |title_bar, cx| match e {
-                            session::Event::TrustedWorktree(abs_path) => {
-                                title_bar.untrusted_worktrees.remove(abs_path);
-                            }
-                            session::Event::UntrustedWorktree(abs_path) => {
-                                title_bar
-                                    .workspace
-                                    .update(cx, |workspace, cx| {
-                                        if workspace
-                                            .project()
-                                            .read(cx)
-                                            .find_worktree(abs_path, cx)
-                                            .is_some()
-                                        {
-                                            title_bar.untrusted_worktrees.insert(abs_path.clone());
-                                        };
-                                    })
-                                    .ok();
-                            }
-                        })
-                        .ok();
-                }));
+                subscriptions.push(trusted_worktrees_storage.subscribe(
+                    cx,
+                    move |title_bar, e, cx| match e {
+                        session::Event::TrustedWorktree(abs_path) => {
+                            title_bar.untrusted_worktrees.remove(abs_path);
+                        }
+                        session::Event::UntrustedWorktree(abs_path) => {
+                            title_bar
+                                .workspace
+                                .update(cx, |workspace, cx| {
+                                    if workspace
+                                        .project()
+                                        .read(cx)
+                                        .find_worktree(abs_path, cx)
+                                        .is_some()
+                                    {
+                                        title_bar.untrusted_worktrees.insert(abs_path.clone());
+                                    };
+                                })
+                                .ok();
+                        }
+                    },
+                ));
                 trusted_worktrees_storage.untrusted_worktrees().clone()
             })
         } else {
@@ -455,11 +453,11 @@ impl TitleBar {
                 .icon_color(Color::Warning)
                 .tooltip(Tooltip::text("Restricted Mode".to_string()))
                 .on_click({
-                    cx.listener(move |title_bar, _, _, cx| {
+                    cx.listener(move |title_bar, _, window, cx| {
                         title_bar
                             .workspace
-                            .update(cx, |_, _| {
-                                dbg!("TODO kb");
+                            .update(cx, |workspace, cx| {
+                                workspace.show_worktree_security_modal(window, cx)
                             })
                             .log_err();
                     })
