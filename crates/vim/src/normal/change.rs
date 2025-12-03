@@ -122,7 +122,7 @@ impl Vim {
                 });
                 if objects_found {
                     let kind = match object.target_visual_mode(vim.mode, around) {
-                        crate::state::Mode::VisualLine => MotionKind::Linewise,
+                        Mode::VisualLine => MotionKind::Linewise,
                         _ => MotionKind::Exclusive,
                     };
                     vim.copy_selections_content(editor, kind, window, cx);
