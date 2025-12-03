@@ -584,8 +584,14 @@ impl Model {
         }
     }
 
-    pub fn cross_region_inference_id(&self, region: &str) -> anyhow::Result<String> {
-        let region_group = if region.starts_with("us-gov-") {
+    pub fn cross_region_inference_id(
+        &self,
+        region: &str,
+        allow_global: bool,
+    ) -> anyhow::Result<String> {
+        let region_group = if allow_global {
+            "global"
+        } else if region.starts_with("us-gov-") {
             "us-gov"
         } else if region.starts_with("us-") {
             "us"
@@ -605,6 +611,9 @@ impl Model {
         match (self, region_group) {
             // Custom models can't have CRI IDs
             (Model::Custom { .. }, _) => Ok(self.request_id().into()),
+
+            // Global inference - available for most models when users opt in
+            (_, "global") => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models with US Gov only
             (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
@@ -705,15 +714,15 @@ mod tests {
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         // Test US regions
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("us-east-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("us-west-2")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-west-2", false)?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::AmazonNovaPro.cross_region_inference_id("us-east-2")?,
+            Model::AmazonNovaPro.cross_region_inference_id("us-east-2", false)?,
             "us.amazon.nova-pro-v1:0"
         );
         Ok(())
@@ -723,19 +732,19 @@ mod tests {
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         // Test European regions
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1")?,
+            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1")?,
+            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
+            Model::Claude3Sonnet.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-3-sonnet-20240229-v1:0"
         );
         assert_eq!(
-            Model::AmazonNovaMicro.cross_region_inference_id("eu-north-1")?,
+            Model::AmazonNovaMicro.cross_region_inference_id("eu-north-1", false)?,
             "eu.amazon.nova-micro-v1:0"
         );
         Ok(())
@@ -745,15 +754,15 @@ mod tests {
     fn test_apac_region_inference_ids() -> anyhow::Result<()> {
         // Test Asia-Pacific regions
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1", false)?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2", false)?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::AmazonNovaLite.cross_region_inference_id("ap-south-1")?,
+            Model::AmazonNovaLite.cross_region_inference_id("ap-south-1", false)?,
             "apac.amazon.nova-lite-v1:0"
         );
         Ok(())
@@ -763,11 +772,11 @@ mod tests {
     fn test_gov_region_inference_ids() -> anyhow::Result<()> {
         // Test Government regions
         assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1")?,
+            Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1", false)?,
             "us-gov.anthropic.claude-3-5-sonnet-20240620-v1:0"
         );
         assert_eq!(
-            Model::Claude3Haiku.cross_region_inference_id("us-gov-west-1")?,
+            Model::Claude3Haiku.cross_region_inference_id("us-gov-west-1", false)?,
             "us-gov.anthropic.claude-3-haiku-20240307-v1:0"
         );
         Ok(())
@@ -777,15 +786,15 @@ mod tests {
     fn test_meta_models_inference_ids() -> anyhow::Result<()> {
         // Test Meta models
         assert_eq!(
-            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1", false)?,
             "meta.llama3-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama3170BInstructV1.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama3170BInstructV1.cross_region_inference_id("us-east-1", false)?,
             "us.meta.llama3-1-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
+            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1", false)?,
             "eu.meta.llama3-2-1b-instruct-v1:0"
         );
         Ok(())
@@ -796,11 +805,11 @@ mod tests {
         // Mistral models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::MistralMistralLarge2402V1.cross_region_inference_id("us-east-1")?,
+            Model::MistralMistralLarge2402V1.cross_region_inference_id("us-east-1", false)?,
             "mistral.mistral-large-2402-v1:0"
         );
         assert_eq!(
-            Model::MistralMixtral8x7BInstructV0.cross_region_inference_id("eu-west-1")?,
+            Model::MistralMixtral8x7BInstructV0.cross_region_inference_id("eu-west-1", false)?,
             "mistral.mixtral-8x7b-instruct-v0:1"
         );
         Ok(())
@@ -811,11 +820,11 @@ mod tests {
         // AI21 models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::AI21J2UltraV1.cross_region_inference_id("us-east-1")?,
+            Model::AI21J2UltraV1.cross_region_inference_id("us-east-1", false)?,
             "ai21.j2-ultra-v1"
         );
         assert_eq!(
-            Model::AI21JambaInstructV1.cross_region_inference_id("eu-west-1")?,
+            Model::AI21JambaInstructV1.cross_region_inference_id("eu-west-1", false)?,
             "ai21.jamba-instruct-v1:0"
         );
         Ok(())
@@ -826,11 +835,11 @@ mod tests {
         // Cohere models don't follow the regional prefix pattern,
         // so they should return their original IDs
         assert_eq!(
-            Model::CohereCommandRV1.cross_region_inference_id("us-east-1")?,
+            Model::CohereCommandRV1.cross_region_inference_id("us-east-1", false)?,
             "cohere.command-r-v1:0"
         );
         assert_eq!(
-            Model::CohereCommandTextV14_4k.cross_region_inference_id("ap-southeast-1")?,
+            Model::CohereCommandTextV14_4k.cross_region_inference_id("ap-southeast-1", false)?,
             "cohere.command-text-v14:7:4k"
         );
         Ok(())
@@ -850,7 +859,7 @@ mod tests {
 
         // Custom model should return its name unchanged
         assert_eq!(
-            custom_model.cross_region_inference_id("us-east-1")?,
+            custom_model.cross_region_inference_id("us-east-1", false)?,
             "custom.my-model-v1:0"
         );
 
@@ -891,4 +900,29 @@ mod tests {
             Model::ClaudeSonnet4Thinking.request_id()
         );
     }
+}
+
+#[test]
+fn test_global_inference_ids() -> anyhow::Result<()> {
+    // Test global inference for models when allow_global is true
+    assert_eq!(
+        Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
+        "global.anthropic.claude-sonnet-4-20250514-v1:0"
+    );
+    assert_eq!(
+        Model::AmazonNovaPro.cross_region_inference_id("eu-west-1", true)?,
+        "global.amazon.nova-pro-v1:0"
+    );
+    assert_eq!(
+        Model::Claude3_5SonnetV2.cross_region_inference_id("ap-south-1", true)?,
+        "global.anthropic.claude-3-5-sonnet-20241022-v2:0"
+    );
+
+    // Test that global is not used when allow_global is false
+    assert_eq!(
+        Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", false)?,
+        "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    );
+
+    Ok(())
 }
