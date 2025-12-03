@@ -3258,7 +3258,9 @@ async fn test_lsp_pull_diagnostics(
                 .diagnostics_in_range(MultiBufferOffset(0)..snapshot.len())
                 .collect::<Vec<_>>();
             let expected_messages = [
-                expected_workspace_pull_diagnostics_lib_message,
+                // Despite workspace diagnostics provided,
+                // the currently open file's diagnostics should be preferred, as LSP suggests.
+                expected_pull_diagnostic_lib_message,
                 expected_push_diagnostic_lib_message,
             ];
             assert_eq!(
@@ -3266,7 +3268,7 @@ async fn test_lsp_pull_diagnostics(
                 2,
                 "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
             );
-            for diagnostic in all_diagnostics {
+            for diagnostic in dbg!(all_diagnostics) {
                 assert!(
                     expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
                     "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
