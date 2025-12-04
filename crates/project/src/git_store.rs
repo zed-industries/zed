@@ -442,7 +442,6 @@ impl GitStore {
         let mut watchers = vec![];
         for path in paths {
             let fs = fs.clone();
-            // let path = environment.read(cx).
             let watch_task = cx.spawn(async move |this, cx| {
                 let watcher = fs.watch(&path, Duration::from_millis(100));
                 let (mut watcher, _) = watcher.await;
