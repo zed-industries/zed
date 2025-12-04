@@ -1310,14 +1310,7 @@ impl SshConnectionOptions {
             result.push('@');
         }
 
-        if let Some(port) = self.port {
-            result.push_str(&self.host.to_safe_string());
-            result.push(':');
-            result.push_str(&port.to_string());
-        } else {
-            result.push_str(&self.host.to_string());
-        }
-
+        result.push_str(&self.host.to_string());
         result
     }
 
@@ -1330,6 +1323,11 @@ impl SshConnectionOptions {
 
         if let Some(timeout) = self.connection_timeout {
             args.extend(["-o".to_string(), format!("ConnectTimeout={}", timeout)]);
+        }
+
+        if let Some(port) = self.port {
+            args.push("-p".to_string());
+            args.push(port.to_string());
         }
 
         if let Some(forwards) = &self.port_forwards {
