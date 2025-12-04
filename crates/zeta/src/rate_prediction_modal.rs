@@ -1,4 +1,4 @@
-use crate::{EditPrediction, EditPredictionRating, Zeta};
+use crate::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use cloud_zeta2_prompt::write_codeblock;
 use editor::{Editor, ExcerptRange, MultiBuffer};
@@ -35,7 +35,7 @@ actions!(
 );
 
 pub struct RatePredictionsModal {
-    zeta: Entity<Zeta>,
+    zeta: Entity<EditPredictionStore>,
     language_registry: Arc<LanguageRegistry>,
     active_prediction: Option<ActivePrediction>,
     selected_index: usize,
@@ -68,7 +68,7 @@ impl RatePredictionView {
 
 impl RatePredictionsModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-        if let Some(zeta) = Zeta::try_global(cx) {
+        if let Some(zeta) = EditPredictionStore::try_global(cx) {
             let language_registry = workspace.app_state().languages.clone();
             workspace.toggle_modal(window, cx, |window, cx| {
                 RatePredictionsModal::new(zeta, language_registry, window, cx)
@@ -79,7 +79,7 @@ impl RatePredictionsModal {
     }
 
     pub fn new(
-        zeta: Entity<Zeta>,
+        zeta: Entity<EditPredictionStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Self>,

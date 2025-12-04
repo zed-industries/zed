@@ -101,7 +101,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 }
 
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
-    if let Some(zeta) = zeta::Zeta::try_global(cx) {
+    if let Some(zeta) = zeta::EditPredictionStore::try_global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
@@ -203,7 +203,7 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
-            let zeta = zeta::Zeta::global(client, &user_store, cx);
+            let zeta = zeta::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()
                 && let Some(buffer) = &singleton_buffer
@@ -214,16 +214,16 @@ fn assign_edit_prediction_provider(
                         if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<SweepFeatureFlag>()
                         {
-                            zeta::ZetaEditPredictionModel::Sweep
+                            zeta::EditPredictionModel::Sweep
                         } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<Zeta2FeatureFlag>()
                         {
-                            zeta::ZetaEditPredictionModel::Zeta2
+                            zeta::EditPredictionModel::Zeta2
                         } else {
                             return false;
                         }
                     } else if user_store.read(cx).current_user().is_some() {
-                        zeta::ZetaEditPredictionModel::Zeta1
+                        zeta::EditPredictionModel::Zeta1
                     } else {
                         return false;
                     };

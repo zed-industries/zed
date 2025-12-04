@@ -7,10 +7,10 @@ use gpui::{App, Entity, prelude::*};
 use language::ToPoint as _;
 use project::Project;
 
-use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel};
+use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
 
 pub struct ZedEditPredictionDelegate {
-    zeta: Entity<Zeta>,
+    zeta: Entity<EditPredictionStore>,
     project: Entity<Project>,
 }
 
@@ -23,7 +23,7 @@ impl ZedEditPredictionDelegate {
         user_store: &Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let zeta = Zeta::global(client, user_store, cx);
+        let zeta = EditPredictionStore::global(client, user_store, cx);
         zeta.update(cx, |zeta, cx| {
             zeta.register_project(&project, cx);
         });
@@ -77,7 +77,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         cx: &App,
     ) -> bool {
         let zeta = self.zeta.read(cx);
-        if zeta.edit_prediction_model == ZetaEditPredictionModel::Sweep {
+        if zeta.edit_prediction_model == EditPredictionModel::Sweep {
             zeta.has_sweep_api_token()
         } else {
             true

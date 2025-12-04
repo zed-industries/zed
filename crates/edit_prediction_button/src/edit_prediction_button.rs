@@ -318,7 +318,7 @@ impl Render for EditPredictionButton {
                 );
 
                 let sweep_missing_token = is_sweep
-                    && !zeta::Zeta::try_global(cx)
+                    && !zeta::EditPredictionStore::try_global(cx)
                         .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
 
                 let zeta_icon = match (is_sweep, enabled) {
@@ -600,7 +600,7 @@ impl EditPredictionButton {
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
-                        let has_api_token = zeta::Zeta::try_global(cx)
+                        let has_api_token = zeta::EditPredictionStore::try_global(cx)
                             .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
 
                         let should_open_modal = !has_api_token || is_current;

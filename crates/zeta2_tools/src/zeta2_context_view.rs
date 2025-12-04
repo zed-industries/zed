@@ -25,14 +25,14 @@ use ui::{
 
 use workspace::Item;
 use zeta::{
-    Zeta, ZetaContextRetrievalFinishedDebugInfo, ZetaContextRetrievalStartedDebugInfo,
-    ZetaDebugInfo,
+    ContextRetrievalFinishedDebugEvent, ContextRetrievalStartedDebugEvent, DebugEvent,
+    EditPredictionStore,
 };
 
 pub struct Zeta2ContextView {
     empty_focus_handle: FocusHandle,
     project: Entity<Project>,
-    zeta: Entity<Zeta>,
+    zeta: Entity<EditPredictionStore>,
     runs: VecDeque<RetrievalRun>,
     current_ix: usize,
     _update_task: Task<Result<()>>,
@@ -64,7 +64,7 @@ impl Zeta2ContextView {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let zeta = Zeta::global(client, user_store, cx);
+        let zeta = EditPredictionStore::global(client, user_store, cx);
 
         let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info());
         let _update_task = cx.spawn_in(window, async move |this, cx| {
@@ -88,28 +88,28 @@ impl Zeta2ContextView {
 
     fn handle_zeta_event(
         &mut self,
-        event: ZetaDebugInfo,
+        event: DebugEvent,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            ZetaDebugInfo::ContextRetrievalStarted(info) => {
+            DebugEvent::ContextRetrievalStarted(info) => {
                 if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_started(info, window, cx);
                 }
             }
-            ZetaDebugInfo::ContextRetrievalFinished(info) => {
+            DebugEvent::ContextRetrievalFinished(info) => {
                 if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
-            ZetaDebugInfo::EditPredictionRequested(_) => {}
+            DebugEvent::EditPredictionRequested(_) => {}
         }
     }
 
     fn handle_context_retrieval_started(
         &mut self,
-        info: ZetaContextRetrievalStartedDebugInfo,
+        info: ContextRetrievalStartedDebugEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -141,7 +141,7 @@ impl Zeta2ContextView {
 
     fn handle_context_retrieval_finished(
         &mut self,
-        info: ZetaContextRetrievalFinishedDebugInfo,
+        info: ContextRetrievalFinishedDebugEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -3,7 +3,7 @@ mod input_excerpt;
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, ZedUpdateRequiredError, Zeta,
+    EditPredictionId, EditPredictionStore, ZedUpdateRequiredError,
     prediction::{EditPredictionInputs, EditPredictionResult},
 };
 use anyhow::{Context as _, Result};
@@ -30,14 +30,14 @@ pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
 pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
 pub(crate) fn request_prediction_with_zeta1(
-    zeta: &mut Zeta,
+    zeta: &mut EditPredictionStore,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
     snapshot: BufferSnapshot,
     position: language::Anchor,
     events: Vec<Arc<Event>>,
     trigger: PredictEditsRequestTrigger,
-    cx: &mut Context<Zeta>,
+    cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
@@ -102,7 +102,7 @@ pub(crate) fn request_prediction_with_zeta1(
 
         let http_client = client.http_client();
 
-        let response = Zeta::send_api_request::<PredictEditsResponse>(
+        let response = EditPredictionStore::send_api_request::<PredictEditsResponse>(
             |request| {
                 let uri = if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
                     predict_edits_url

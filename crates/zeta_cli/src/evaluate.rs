@@ -9,7 +9,7 @@ use anyhow::Result;
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
-use zeta::{Zeta, udiff::DiffLine};
+use zeta::{EditPredictionStore, udiff::DiffLine};
 
 use crate::{
     EvaluateArguments, PredictionOptions,
@@ -154,7 +154,7 @@ pub async fn run_evaluate_one(
     example: NamedExample,
     repetition_ix: Option<u16>,
     project: Entity<Project>,
-    zeta: Entity<Zeta>,
+    zeta: Entity<EditPredictionStore>,
     prediction_options: PredictionOptions,
     predict: bool,
     cx: &mut AsyncApp,

@@ -190,7 +190,6 @@ fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
             min_bytes: args.min_excerpt_bytes,
             target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
         },
-        max_diagnostic_bytes: args.max_diagnostic_bytes,
         max_prompt_bytes: args.max_prompt_bytes,
         prompt_format: args.prompt_format.into(),
         file_indexing_parallelism: args.file_indexing_parallelism,
@@ -372,7 +371,11 @@ async fn zeta2_context(
     let output = cx
         .update(|cx| {
             let zeta = cx.new(|cx| {
-                zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                zeta::EditPredictionStore::new(
+                    app_state.client.clone(),
+                    app_state.user_store.clone(),
+                    cx,
+                )
             });
             zeta.update(cx, |zeta, cx| {
                 zeta.set_options(zeta2_args_to_options(&args.zeta2_args));

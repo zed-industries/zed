@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta::{EvalCache, EvalCacheEntryKind, EvalCacheKey, Zeta};
+use zeta::{EditPredictionStore, EvalCache, EvalCacheEntryKind, EvalCacheKey};
 
 pub async fn run_predict(
     args: PredictArguments,
@@ -42,15 +42,16 @@ pub fn setup_zeta(
     project: &Entity<Project>,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<Entity<Zeta>> {
-    let zeta =
-        cx.new(|cx| zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx))?;
+) -> Result<Entity<EditPredictionStore>> {
+    let zeta = cx.new(|cx| {
+        zeta::EditPredictionStore::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+    })?;
 
     zeta.update(cx, |zeta, _cx| {
         let model = match provider {
-            PredictionProvider::Zeta1 => zeta::ZetaEditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2 => zeta::ZetaEditPredictionModel::Zeta2,
-            PredictionProvider::Sweep => zeta::ZetaEditPredictionModel::Sweep,
+            PredictionProvider::Zeta1 => zeta::EditPredictionModel::Zeta1,
+            PredictionProvider::Zeta2 => zeta::EditPredictionModel::Zeta2,
+            PredictionProvider::Sweep => zeta::EditPredictionModel::Sweep,
         };
         zeta.set_edit_prediction_model(model);
     })?;
@@ -75,7 +76,7 @@ pub fn setup_zeta(
 pub async fn perform_predict(
     example: NamedExample,
     project: Entity<Project>,
-    zeta: Entity<Zeta>,
+    zeta: Entity<EditPredictionStore>,
     repetition_ix: Option<u16>,
     options: PredictionOptions,
     cx: &mut AsyncApp,
@@ -139,14 +140,14 @@ pub async fn perform_predict(
                 let mut retrieval_finished_at = None;
                 while let Some(event) = debug_rx.next().await {
                     match event {
-                        zeta::ZetaDebugInfo::ContextRetrievalStarted(info) => {
+                        zeta::DebugEvent::ContextRetrievalStarted(info) => {
                             start_time = Some(info.timestamp);
                             fs::write(
                                 example_run_dir.join("search_prompt.md"),
                                 &info.search_prompt,
                             )?;
                         }
-                        zeta::ZetaDebugInfo::ContextRetrievalFinished(info) => {
+                        zeta::DebugEvent::ContextRetrievalFinished(info) => {
                             retrieval_finished_at = Some(info.timestamp);
                             for (key, value) in &info.metadata {
                                 if *key == "search_queries" {
@@ -157,7 +158,7 @@ pub async fn perform_predict(
                                 }
                             }
                         }
-                        zeta::ZetaDebugInfo::EditPredictionRequested(request) => {
+                        zeta::DebugEvent::EditPredictionRequested(request) => {
                             let prediction_started_at = Instant::now();
                             start_time.get_or_insert(prediction_started_at);
                             let prompt = request.local_prompt.unwrap_or_default();
