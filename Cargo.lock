@@ -5107,6 +5107,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction"
+version = "0.1.0"
+dependencies = [
+ "ai_onboarding",
+ "anyhow",
+ "arrayvec",
+ "brotli",
+ "buffer_diff",
+ "client",
+ "clock",
+ "cloud_api_types",
+ "cloud_llm_client",
+ "cloud_zeta2_prompt",
+ "collections",
+ "command_palette_hooks",
+ "copilot",
+ "credentials_provider",
+ "ctor",
+ "db",
+ "edit_prediction_context",
+ "edit_prediction_types",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "log",
+ "lsp",
+ "markdown",
+ "menu",
+ "open_ai",
+ "parking_lot",
+ "postage",
+ "pretty_assertions",
+ "project",
+ "rand 0.9.2",
+ "regex",
+ "release_channel",
+ "semver",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "strsim",
+ "strum 0.27.2",
+ "telemetry",
+ "telemetry_events",
+ "theme",
+ "thiserror 2.0.17",
+ "ui",
+ "util",
+ "uuid",
+ "workspace",
+ "worktree",
+ "zed_actions",
+ "zlog",
+]
+
+[[package]]
 name = "edit_prediction_button"
 version = "0.1.0"
 dependencies = [
@@ -5115,6 +5178,7 @@ dependencies = [
  "cloud_llm_client",
  "codestral",
  "copilot",
+ "edit_prediction",
  "edit_prediction_types",
  "editor",
  "feature_flags",
@@ -5138,7 +5202,6 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -20316,6 +20379,7 @@ dependencies = [
  "debugger_tools",
  "debugger_ui",
  "diagnostics",
+ "edit_prediction",
  "edit_prediction_button",
  "editor",
  "env_logger 0.11.8",
@@ -20427,7 +20491,6 @@ dependencies = [
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",
- "zeta",
  "zeta2_tools",
  "zlog",
  "zlog_settings",
@@ -20741,69 +20804,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeta"
-version = "0.1.0"
-dependencies = [
- "ai_onboarding",
- "anyhow",
- "arrayvec",
- "brotli",
- "buffer_diff",
- "client",
- "clock",
- "cloud_api_types",
- "cloud_llm_client",
- "cloud_zeta2_prompt",
- "collections",
- "command_palette_hooks",
- "copilot",
- "credentials_provider",
- "ctor",
- "db",
- "edit_prediction_context",
- "edit_prediction_types",
- "editor",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "itertools 0.14.0",
- "language",
- "language_model",
- "log",
- "lsp",
- "markdown",
- "menu",
- "open_ai",
- "parking_lot",
- "postage",
- "pretty_assertions",
- "project",
- "rand 0.9.2",
- "regex",
- "release_channel",
- "semver",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "strsim",
- "strum 0.27.2",
- "telemetry",
- "telemetry_events",
- "theme",
- "thiserror 2.0.17",
- "ui",
- "util",
- "uuid",
- "workspace",
- "worktree",
- "zed_actions",
- "zlog",
-]
-
-[[package]]
 name = "zeta2_tools"
 version = "0.1.0"
 dependencies = [
@@ -20811,6 +20811,7 @@ dependencies = [
  "clap",
  "client",
  "collections",
+ "edit_prediction",
  "editor",
  "feature_flags",
  "futures 0.3.31",
@@ -20827,7 +20828,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zeta",
  "zlog",
 ]
 
@@ -20843,6 +20843,7 @@ dependencies = [
  "cloud_zeta2_prompt",
  "collections",
  "debug_adapter_extension",
+ "edit_prediction",
  "edit_prediction_context",
  "extension",
  "fs",
@@ -20873,7 +20874,6 @@ dependencies = [
  "toml 0.8.23",
  "util",
  "watch",
- "zeta",
  "zlog",
 ]
 

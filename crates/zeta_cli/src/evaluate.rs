@@ -6,17 +6,17 @@ use std::{
 };
 
 use anyhow::Result;
+use edit_prediction::{EditPredictionStore, udiff::DiffLine};
 use gpui::{AsyncApp, Entity};
 use project::Project;
 use util::ResultExt as _;
-use zeta::{EditPredictionStore, udiff::DiffLine};
 
 use crate::{
     EvaluateArguments, PredictionOptions,
     example::{Example, NamedExample},
     headless::ZetaCliAppState,
     paths::print_run_data_dir,
-    predict::{PredictionDetails, perform_predict, setup_zeta},
+    predict::{PredictionDetails, perform_predict, setup_store},
 };
 
 #[derive(Debug)]
@@ -45,7 +45,7 @@ pub async fn run_evaluate(
             let project = example.setup_project(&app_state, cx).await.unwrap();
 
             let providers = (0..args.repetitions)
-                .map(|_| setup_zeta(args.options.provider, &project, &app_state, cx).unwrap())
+                .map(|_| setup_store(args.options.provider, &project, &app_state, cx).unwrap())
                 .collect::<Vec<_>>();
 
             let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
@@ -53,7 +53,7 @@ pub async fn run_evaluate(
             let tasks = providers
                 .into_iter()
                 .enumerate()
-                .map(move |(repetition_ix, zeta)| {
+                .map(move |(repetition_ix, store)| {
                     let repetition_ix = (args.repetitions > 1).then(|| repetition_ix as u16);
                     let example = example.clone();
                     let project = project.clone();
@@ -65,7 +65,7 @@ pub async fn run_evaluate(
                             example,
                             repetition_ix,
                             project,
-                            zeta,
+                            store,
                             options,
                             !args.skip_prediction,
                             cx,
@@ -154,7 +154,7 @@ pub async fn run_evaluate_one(
     example: NamedExample,
     repetition_ix: Option<u16>,
     project: Entity<Project>,
-    zeta: Entity<EditPredictionStore>,
+    store: Entity<EditPredictionStore>,
     prediction_options: PredictionOptions,
     predict: bool,
     cx: &mut AsyncApp,
@@ -162,7 +162,7 @@ pub async fn run_evaluate_one(
     let predict_result = perform_predict(
         example.clone(),
         project,
-        zeta,
+        store,
         repetition_ix,
         prediction_options,
         cx,

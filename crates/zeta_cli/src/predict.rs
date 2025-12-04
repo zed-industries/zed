@@ -7,6 +7,7 @@ use crate::{
 use ::serde::Serialize;
 use anyhow::{Context, Result, anyhow};
 use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
+use edit_prediction::{EditPredictionStore, EvalCache, EvalCacheEntryKind, EvalCacheKey};
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
 use project::Project;
@@ -18,7 +19,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use zeta::{EditPredictionStore, EvalCache, EvalCacheEntryKind, EvalCacheKey};
 
 pub async fn run_predict(
     args: PredictArguments,
@@ -27,9 +27,9 @@ pub async fn run_predict(
 ) {
     let example = NamedExample::load(args.example_path).unwrap();
     let project = example.setup_project(app_state, cx).await.unwrap();
-    let zeta = setup_zeta(args.options.provider, &project, app_state, cx).unwrap();
+    let store = setup_store(args.options.provider, &project, app_state, cx).unwrap();
     let _edited_buffers = example.apply_edit_history(&project, cx).await.unwrap();
-    let result = perform_predict(example, project, zeta, None, args.options, cx)
+    let result = perform_predict(example, project, store, None, args.options, cx)
         .await
         .unwrap();
     result.write(args.format, std::io::stdout()).unwrap();
@@ -37,46 +37,50 @@ pub async fn run_predict(
     print_run_data_dir(true, std::io::stdout().is_terminal());
 }
 
-pub fn setup_zeta(
+pub fn setup_store(
     provider: PredictionProvider,
     project: &Entity<Project>,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<EditPredictionStore>> {
-    let zeta = cx.new(|cx| {
-        zeta::EditPredictionStore::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+    let store = cx.new(|cx| {
+        edit_prediction::EditPredictionStore::new(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        )
     })?;
 
-    zeta.update(cx, |zeta, _cx| {
+    store.update(cx, |store, _cx| {
         let model = match provider {
-            PredictionProvider::Zeta1 => zeta::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2 => zeta::EditPredictionModel::Zeta2,
-            PredictionProvider::Sweep => zeta::EditPredictionModel::Sweep,
+            PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
+            PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
+            PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
         };
-        zeta.set_edit_prediction_model(model);
+        store.set_edit_prediction_model(model);
     })?;
 
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
 
     cx.subscribe(&buffer_store, {
         let project = project.clone();
-        let zeta = zeta.clone();
+        let store = store.clone();
         move |_, event, cx| match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                zeta.update(cx, |zeta, cx| zeta.register_buffer(&buffer, &project, cx));
+                store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
             }
             _ => {}
         }
     })?
     .detach();
 
-    anyhow::Ok(zeta)
+    anyhow::Ok(store)
 }
 
 pub async fn perform_predict(
     example: NamedExample,
     project: Entity<Project>,
-    zeta: Entity<EditPredictionStore>,
+    store: Entity<EditPredictionStore>,
     repetition_ix: Option<u16>,
     options: PredictionOptions,
     cx: &mut AsyncApp,
@@ -109,8 +113,8 @@ pub async fn perform_predict(
     std::os::windows::fs::symlink_dir(&example_run_dir, &*LATEST_EXAMPLE_RUN_DIR)
         .context("creating latest link")?;
 
-    zeta.update(cx, |zeta, _cx| {
-        zeta.with_eval_cache(Arc::new(RunCache {
+    store.update(cx, |store, _cx| {
+        store.with_eval_cache(Arc::new(RunCache {
             example_run_dir: example_run_dir.clone(),
             cache_mode,
         }));
@@ -122,16 +126,16 @@ pub async fn perform_predict(
 
     let prompt_format = options.zeta2.prompt_format;
 
-    zeta.update(cx, |zeta, _cx| {
-        let mut options = zeta.options().clone();
+    store.update(cx, |store, _cx| {
+        let mut options = store.options().clone();
         options.prompt_format = prompt_format.into();
-        zeta.set_options(options);
+        store.set_options(options);
     })?;
 
     let mut debug_task = gpui::Task::ready(Ok(()));
 
     if options.provider == crate::PredictionProvider::Zeta2 {
-        let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info())?;
+        let mut debug_rx = store.update(cx, |store, _| store.debug_info())?;
 
         debug_task = cx.background_spawn({
             let result = result.clone();
@@ -140,14 +144,14 @@ pub async fn perform_predict(
                 let mut retrieval_finished_at = None;
                 while let Some(event) = debug_rx.next().await {
                     match event {
-                        zeta::DebugEvent::ContextRetrievalStarted(info) => {
+                        edit_prediction::DebugEvent::ContextRetrievalStarted(info) => {
                             start_time = Some(info.timestamp);
                             fs::write(
                                 example_run_dir.join("search_prompt.md"),
                                 &info.search_prompt,
                             )?;
                         }
-                        zeta::DebugEvent::ContextRetrievalFinished(info) => {
+                        edit_prediction::DebugEvent::ContextRetrievalFinished(info) => {
                             retrieval_finished_at = Some(info.timestamp);
                             for (key, value) in &info.metadata {
                                 if *key == "search_queries" {
@@ -158,7 +162,7 @@ pub async fn perform_predict(
                                 }
                             }
                         }
-                        zeta::DebugEvent::EditPredictionRequested(request) => {
+                        edit_prediction::DebugEvent::EditPredictionRequested(request) => {
                             let prediction_started_at = Instant::now();
                             start_time.get_or_insert(prediction_started_at);
                             let prompt = request.local_prompt.unwrap_or_default();
@@ -194,7 +198,8 @@ pub async fn perform_predict(
 
                             let response =
                                 request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                            let response = zeta::text_from_response(response).unwrap_or_default();
+                            let response =
+                                edit_prediction::text_from_response(response).unwrap_or_default();
                             let prediction_finished_at = Instant::now();
                             fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 
@@ -213,14 +218,14 @@ pub async fn perform_predict(
             }
         });
 
-        zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context(&project, &cursor_buffer, cursor_anchor, cx)
+        store.update(cx, |store, cx| {
+            store.refresh_context(&project, &cursor_buffer, cursor_anchor, cx)
         })?;
     }
 
-    let prediction = zeta
-        .update(cx, |zeta, cx| {
-            zeta.request_prediction(
+    let prediction = store
+        .update(cx, |store, cx| {
+            store.request_prediction(
                 &project,
                 &cursor_buffer,
                 cursor_anchor,

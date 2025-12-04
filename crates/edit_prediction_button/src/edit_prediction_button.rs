@@ -8,6 +8,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
 use copilot::{Copilot, Status};
+use edit_prediction::{RateCompletions, SweepFeatureFlag, Zeta2FeatureFlag};
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
 };
@@ -45,7 +46,6 @@ use workspace::{
     notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
-use zeta::{RateCompletions, SweepFeatureFlag, Zeta2FeatureFlag};
 
 actions!(
     edit_prediction,
@@ -318,16 +318,16 @@ impl Render for EditPredictionButton {
                 );
 
                 let sweep_missing_token = is_sweep
-                    && !zeta::EditPredictionStore::try_global(cx)
-                        .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
+                    && !edit_prediction::EditPredictionStore::try_global(cx)
+                        .map_or(false, |ep_store| ep_store.read(cx).has_sweep_api_token());
 
-                let zeta_icon = match (is_sweep, enabled) {
+                let ep_icon = match (is_sweep, enabled) {
                     (true, _) => IconName::SweepAi,
                     (false, true) => IconName::ZedPredict,
                     (false, false) => IconName::ZedPredictDisabled,
                 };
 
-                if zeta::should_show_upsell_modal() {
+                if edit_prediction::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
@@ -335,7 +335,7 @@ impl Render for EditPredictionButton {
                     };
 
                     return div().child(
-                        IconButton::new("zed-predict-pending-button", zeta_icon)
+                        IconButton::new("zed-predict-pending-button", ep_icon)
                             .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
@@ -380,7 +380,7 @@ impl Render for EditPredictionButton {
                     None
                 };
 
-                let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
+                let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
                     .when_some(indicator_color, |this, color| {
                         this.indicator(Indicator::dot().color(color))
@@ -420,13 +420,13 @@ impl Render for EditPredictionButton {
 
                 let this = cx.weak_entity();
 
-                let mut popover_menu = PopoverMenu::new("zeta")
+                let mut popover_menu = PopoverMenu::new("edit-prediction")
                     .when(user.is_some(), |popover_menu| {
                         let this = this.clone();
 
                         popover_menu.menu(move |window, cx| {
                             this.update(cx, |this, cx| {
-                                this.build_zeta_context_menu(provider, window, cx)
+                                this.build_edit_prediction_context_menu(provider, window, cx)
                             })
                             .ok()
                         })
@@ -600,8 +600,8 @@ impl EditPredictionButton {
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
-                        let has_api_token = zeta::EditPredictionStore::try_global(cx)
-                            .map_or(false, |zeta| zeta.read(cx).has_sweep_api_token());
+                        let has_api_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .map_or(false, |ep_store| ep_store.read(cx).has_sweep_api_token());
 
                         let should_open_modal = !has_api_token || is_current;
 
@@ -1017,7 +1017,7 @@ impl EditPredictionButton {
         })
     }
 
-    fn build_zeta_context_menu(
+    fn build_edit_prediction_context_menu(
         &self,
         provider: EditPredictionProvider,
         window: &mut Window,

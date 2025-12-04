@@ -23,16 +23,16 @@ use ui::{
     StyledTypography as _, h_flex, v_flex,
 };
 
-use workspace::Item;
-use zeta::{
+use edit_prediction::{
     ContextRetrievalFinishedDebugEvent, ContextRetrievalStartedDebugEvent, DebugEvent,
     EditPredictionStore,
 };
+use workspace::Item;
 
 pub struct Zeta2ContextView {
     empty_focus_handle: FocusHandle,
     project: Entity<Project>,
-    zeta: Entity<EditPredictionStore>,
+    store: Entity<EditPredictionStore>,
     runs: VecDeque<RetrievalRun>,
     current_ix: usize,
     _update_task: Task<Result<()>>,
@@ -64,13 +64,13 @@ impl Zeta2ContextView {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let zeta = EditPredictionStore::global(client, user_store, cx);
+        let store = EditPredictionStore::global(client, user_store, cx);
 
-        let mut debug_rx = zeta.update(cx, |zeta, _| zeta.debug_info());
+        let mut debug_rx = store.update(cx, |store, _| store.debug_info());
         let _update_task = cx.spawn_in(window, async move |this, cx| {
             while let Some(event) = debug_rx.next().await {
                 this.update_in(cx, |this, window, cx| {
-                    this.handle_zeta_event(event, window, cx)
+                    this.handle_store_event(event, window, cx)
                 })?;
             }
             Ok(())
@@ -81,12 +81,12 @@ impl Zeta2ContextView {
             project,
             runs: VecDeque::new(),
             current_ix: 0,
-            zeta,
+            store,
             _update_task,
         }
     }
 
-    fn handle_zeta_event(
+    fn handle_store_event(
         &mut self,
         event: DebugEvent,
         window: &mut gpui::Window,
@@ -154,7 +154,7 @@ impl Zeta2ContextView {
 
         let project = self.project.clone();
         let related_files = self
-            .zeta
+            .store
             .read(cx)
             .context_for_project(&self.project, cx)
             .to_vec();

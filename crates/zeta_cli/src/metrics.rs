@@ -1,5 +1,5 @@
 use collections::{HashMap, HashSet};
-use zeta::udiff::DiffLine;
+use edit_prediction::udiff::DiffLine;
 
 type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
@@ -287,7 +287,7 @@ fn count_ngrams(text: &str, n: usize) -> Counts {
 #[cfg(test)]
 mod test {
     use super::*;
-    use zeta::udiff::DiffLine;
+    use edit_prediction::udiff::DiffLine;
 
     #[test]
     fn test_delta_chr_f_perfect_match() {

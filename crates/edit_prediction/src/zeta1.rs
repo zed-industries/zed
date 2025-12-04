@@ -30,7 +30,7 @@ pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
 pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
 pub(crate) fn request_prediction_with_zeta1(
-    zeta: &mut EditPredictionStore,
+    store: &mut EditPredictionStore,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
     snapshot: BufferSnapshot,
@@ -41,12 +41,12 @@ pub(crate) fn request_prediction_with_zeta1(
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
-    let client = zeta.client.clone();
-    let llm_token = zeta.llm_token.clone();
+    let client = store.client.clone();
+    let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
-        let can_collect_file = zeta.can_collect_file(project, file, cx);
+        let can_collect_file = store.can_collect_file(project, file, cx);
         let git_info = if can_collect_file {
             git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
@@ -155,8 +155,8 @@ pub(crate) fn request_prediction_with_zeta1(
             Err(err) => {
                 if err.is::<ZedUpdateRequiredError>() {
                     cx.update(|cx| {
-                        this.update(cx, |zeta, _cx| {
-                            zeta.update_required = true;
+                        this.update(cx, |ep_store, _cx| {
+                            ep_store.update_required = true;
                         })
                         .ok();
 

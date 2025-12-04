@@ -50,7 +50,7 @@ terminal_view.workspace = true
 toml.workspace = true
 util.workspace = true
 watch.workspace = true
-zeta = { workspace = true, features = ["eval-support"] }
+edit_prediction = { workspace = true, features = ["eval-support"] }
 zlog.workspace = true
 
 [dev-dependencies]

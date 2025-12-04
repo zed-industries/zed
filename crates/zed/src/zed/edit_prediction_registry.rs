@@ -2,6 +2,7 @@ use client::{Client, UserStore};
 use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
 use copilot::{Copilot, CopilotEditPredictionDelegate};
+use edit_prediction::{SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
@@ -14,7 +15,6 @@ use settings::{
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
 use ui::Window;
-use zeta::{SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -59,7 +59,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     })
     .detach();
 
-    cx.on_action(clear_zeta_edit_history);
+    cx.on_action(clear_edit_prediction_store_edit_history);
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     cx.subscribe(&user_store, {
@@ -100,9 +100,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 }
 
-fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
-    if let Some(zeta) = zeta::EditPredictionStore::try_global(cx) {
-        zeta.update(cx, |zeta, _| zeta.clear_history());
+fn clear_edit_prediction_store_edit_history(_: &edit_prediction::ClearHistory, cx: &mut App) {
+    if let Some(ep_store) = edit_prediction::EditPredictionStore::try_global(cx) {
+        ep_store.update(cx, |ep_store, _| ep_store.clear_history());
     }
 }
 
@@ -203,33 +203,33 @@ fn assign_edit_prediction_provider(
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
-            let zeta = zeta::EditPredictionStore::global(client, &user_store, cx);
+            let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project()
                 && let Some(buffer) = &singleton_buffer
                 && buffer.read(cx).file().is_some()
             {
-                let has_model = zeta.update(cx, |zeta, cx| {
+                let has_model = ep_store.update(cx, |ep_store, cx| {
                     let model = if let EditPredictionProvider::Experimental(name) = value {
                         if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<SweepFeatureFlag>()
                         {
-                            zeta::EditPredictionModel::Sweep
+                            edit_prediction::EditPredictionModel::Sweep
                         } else if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                             && cx.has_flag::<Zeta2FeatureFlag>()
                         {
-                            zeta::EditPredictionModel::Zeta2
+                            edit_prediction::EditPredictionModel::Zeta2
                         } else {
                             return false;
                         }
                     } else if user_store.read(cx).current_user().is_some() {
-                        zeta::EditPredictionModel::Zeta1
+                        edit_prediction::EditPredictionModel::Zeta1
                     } else {
                         return false;
                     };
 
-                    zeta.set_edit_prediction_model(model);
-                    zeta.register_buffer(buffer, project, cx);
+                    ep_store.set_edit_prediction_model(model);
+                    ep_store.register_buffer(buffer, project, cx);
                     true
                 });
 

@@ -14,6 +14,7 @@ use anyhow::{Context as _, Result, anyhow};
 use clap::ValueEnum;
 use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
+use edit_prediction::udiff::OpenedBuffers;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
@@ -25,7 +26,6 @@ use project::{Project, ProjectPath};
 use pulldown_cmark::CowStr;
 use serde::{Deserialize, Serialize};
 use util::{paths::PathStyle, rel_path::RelPath};
-use zeta::udiff::OpenedBuffers;
 
 use crate::paths::{REPOS_DIR, WORKTREES_DIR};
 
@@ -481,7 +481,7 @@ impl NamedExample {
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<OpenedBuffers<'_>> {
-        zeta::udiff::apply_diff(&self.example.edit_history, project, cx).await
+        edit_prediction::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
 }
 

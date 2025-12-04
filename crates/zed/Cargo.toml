@@ -74,6 +74,7 @@ gpui = { workspace = true, features = [
 gpui_tokio.workspace = true
 rayon.workspace = true
 
+edit_prediction.workspace = true
 edit_prediction_button.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
@@ -160,7 +161,6 @@ web_search_providers.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
-zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
 chrono.workspace = true

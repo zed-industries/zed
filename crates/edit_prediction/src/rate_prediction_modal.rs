@@ -35,7 +35,7 @@ actions!(
 );
 
 pub struct RatePredictionsModal {
-    zeta: Entity<EditPredictionStore>,
+    ep_store: Entity<EditPredictionStore>,
     language_registry: Arc<LanguageRegistry>,
     active_prediction: Option<ActivePrediction>,
     selected_index: usize,
@@ -68,10 +68,10 @@ impl RatePredictionView {
 
 impl RatePredictionsModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-        if let Some(zeta) = EditPredictionStore::try_global(cx) {
+        if let Some(ep_store) = EditPredictionStore::try_global(cx) {
             let language_registry = workspace.app_state().languages.clone();
             workspace.toggle_modal(window, cx, |window, cx| {
-                RatePredictionsModal::new(zeta, language_registry, window, cx)
+                RatePredictionsModal::new(ep_store, language_registry, window, cx)
             });
 
             telemetry::event!("Rate Prediction Modal Open", source = "Edit Prediction");
@@ -79,15 +79,15 @@ impl RatePredictionsModal {
     }
 
     pub fn new(
-        zeta: Entity<EditPredictionStore>,
+        ep_store: Entity<EditPredictionStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
+        let subscription = cx.observe(&ep_store, |_, _, cx| cx.notify());
 
         Self {
-            zeta,
+            ep_store,
             language_registry,
             selected_index: 0,
             focus_handle: cx.focus_handle(),
@@ -113,7 +113,7 @@ impl RatePredictionsModal {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
-            self.zeta.read(cx).shown_predictions().count(),
+            self.ep_store.read(cx).shown_predictions().count(),
         );
         cx.notify();
     }
@@ -130,7 +130,7 @@ impl RatePredictionsModal {
 
     fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
         let next_index = self
-            .zeta
+            .ep_store
             .read(cx)
             .shown_predictions()
             .skip(self.selected_index)
@@ -146,11 +146,11 @@ impl RatePredictionsModal {
     }
 
     fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut Context<Self>) {
-        let zeta = self.zeta.read(cx);
-        let completions_len = zeta.shown_completions_len();
+        let ep_store = self.ep_store.read(cx);
+        let completions_len = ep_store.shown_completions_len();
 
         let prev_index = self
-            .zeta
+            .ep_store
             .read(cx)
             .shown_predictions()
             .rev()
@@ -173,7 +173,7 @@ impl RatePredictionsModal {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
+        self.selected_index = self.ep_store.read(cx).shown_completions_len() - 1;
         cx.notify();
     }
 
@@ -183,9 +183,9 @@ impl RatePredictionsModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.zeta.update(cx, |zeta, cx| {
+        self.ep_store.update(cx, |ep_store, cx| {
             if let Some(active) = &self.active_prediction {
-                zeta.rate_prediction(
+                ep_store.rate_prediction(
                     &active.prediction,
                     EditPredictionRating::Positive,
                     active.feedback_editor.read(cx).text(cx),
@@ -216,8 +216,8 @@ impl RatePredictionsModal {
                 return;
             }
 
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.rate_prediction(
+            self.ep_store.update(cx, |ep_store, cx| {
+                ep_store.rate_prediction(
                     &active.prediction,
                     EditPredictionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
@@ -254,7 +254,7 @@ impl RatePredictionsModal {
         cx: &mut Context<Self>,
     ) {
         let completion = self
-            .zeta
+            .ep_store
             .read(cx)
             .shown_predictions()
             .skip(self.selected_index)
@@ -267,7 +267,7 @@ impl RatePredictionsModal {
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let completion = self
-            .zeta
+            .ep_store
             .read(cx)
             .shown_predictions()
             .skip(self.selected_index)
@@ -288,7 +288,7 @@ impl RatePredictionsModal {
         // Avoid resetting completion rating if it's already selected.
         if let Some(prediction) = prediction {
             self.selected_index = self
-                .zeta
+                .ep_store
                 .read(cx)
                 .shown_predictions()
                 .enumerate()
@@ -564,7 +564,7 @@ impl RatePredictionsModal {
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
 
-        let rated = self.zeta.read(cx).is_prediction_rated(&completion_id);
+        let rated = self.ep_store.read(cx).is_prediction_rated(&completion_id);
         let feedback_empty = active_prediction
             .feedback_editor
             .read(cx)
@@ -715,7 +715,7 @@ impl RatePredictionsModal {
     }
 
     fn render_shown_completions(&self, cx: &Context<Self>) -> impl Iterator<Item = ListItem> {
-        self.zeta
+        self.ep_store
             .read(cx)
             .shown_predictions()
             .cloned()
@@ -725,7 +725,7 @@ impl RatePredictionsModal {
                     .active_prediction
                     .as_ref()
                     .is_some_and(|selected| selected.prediction.id == completion.id);
-                let rated = self.zeta.read(cx).is_prediction_rated(&completion.id);
+                let rated = self.ep_store.read(cx).is_prediction_rated(&completion.id);
 
                 let (icon_name, icon_color, tooltip_text) =
                     match (rated, completion.edits.is_empty()) {

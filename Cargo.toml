@@ -53,6 +53,7 @@ members = [
     "crates/denoise",
     "crates/diagnostics",
     "crates/docs_preprocessor",
+    "crates/edit_prediction",
     "crates/edit_prediction_types",
     "crates/edit_prediction_button",
     "crates/edit_prediction_context",
@@ -201,7 +202,6 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zed_env_vars",
-    "crates/zeta",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
@@ -433,7 +433,7 @@ x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
-zeta = { path = "crates/zeta" }
+edit_prediction = { path = "crates/edit_prediction" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 

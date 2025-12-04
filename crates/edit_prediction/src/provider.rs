@@ -10,7 +10,7 @@ use project::Project;
 use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
 
 pub struct ZedEditPredictionDelegate {
-    zeta: Entity<EditPredictionStore>,
+    store: Entity<EditPredictionStore>,
     project: Entity<Project>,
 }
 
@@ -23,19 +23,19 @@ impl ZedEditPredictionDelegate {
         user_store: &Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let zeta = EditPredictionStore::global(client, user_store, cx);
-        zeta.update(cx, |zeta, cx| {
-            zeta.register_project(&project, cx);
+        let store = EditPredictionStore::global(client, user_store, cx);
+        store.update(cx, |store, cx| {
+            store.register_project(&project, cx);
         });
 
-        cx.observe(&zeta, |_this, _zeta, cx| {
+        cx.observe(&store, |_this, _ep_store, cx| {
             cx.notify();
         })
         .detach();
 
         Self {
             project: project,
-            zeta,
+            store: store,
         }
     }
 }
@@ -67,7 +67,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn usage(&self, cx: &App) -> Option<client::EditPredictionUsage> {
-        self.zeta.read(cx).usage(cx)
+        self.store.read(cx).usage(cx)
     }
 
     fn is_enabled(
@@ -76,16 +76,16 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         _cursor_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        let zeta = self.zeta.read(cx);
-        if zeta.edit_prediction_model == EditPredictionModel::Sweep {
-            zeta.has_sweep_api_token()
+        let store = self.store.read(cx);
+        if store.edit_prediction_model == EditPredictionModel::Sweep {
+            store.has_sweep_api_token()
         } else {
             true
         }
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {
-        self.zeta.read(cx).is_refreshing(&self.project)
+        self.store.read(cx).is_refreshing(&self.project)
     }
 
     fn refresh(
@@ -95,24 +95,24 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        let zeta = self.zeta.read(cx);
+        let store = self.store.read(cx);
 
-        if zeta.user_store.read_with(cx, |user_store, _cx| {
+        if store.user_store.read_with(cx, |user_store, _cx| {
             user_store.account_too_young() || user_store.has_overdue_invoices()
         }) {
             return;
         }
 
-        if let Some(current) = zeta.current_prediction_for_buffer(&buffer, &self.project, cx)
+        if let Some(current) = store.current_prediction_for_buffer(&buffer, &self.project, cx)
             && let BufferEditPrediction::Local { prediction } = current
             && prediction.interpolate(buffer.read(cx)).is_some()
         {
             return;
         }
 
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context(&self.project, &buffer, cursor_position, cx);
-            zeta.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
+        self.store.update(cx, |store, cx| {
+            store.refresh_context(&self.project, &buffer, cursor_position, cx);
+            store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
         });
     }
 
@@ -126,20 +126,20 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.accept_current_prediction(&self.project, cx);
+        self.store.update(cx, |store, cx| {
+            store.accept_current_prediction(&self.project, cx);
         });
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, _cx| {
-            zeta.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project);
+        self.store.update(cx, |store, _cx| {
+            store.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project);
         });
     }
 
     fn did_show(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.did_show_current_prediction(&self.project, cx);
+        self.store.update(cx, |store, cx| {
+            store.did_show_current_prediction(&self.project, cx);
         });
     }
 
@@ -150,7 +150,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         cx: &mut Context<Self>,
     ) -> Option<edit_prediction_types::EditPrediction> {
         let prediction =
-            self.zeta
+            self.store
                 .read(cx)
                 .current_prediction_for_buffer(buffer, &self.project, cx)?;
 
@@ -169,8 +169,8 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         let snapshot = buffer.snapshot();
 
         let Some(edits) = prediction.interpolate(&snapshot) else {
-            self.zeta.update(cx, |zeta, _cx| {
-                zeta.reject_current_prediction(
+            self.store.update(cx, |store, _cx| {
+                store.reject_current_prediction(
                     EditPredictionRejectReason::InterpolatedEmpty,
                     &self.project,
                 );

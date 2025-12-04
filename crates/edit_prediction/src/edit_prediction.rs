@@ -429,9 +429,9 @@ impl EditPredictionStore {
         cx.try_global::<EditPredictionStoreGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let zeta = cx.new(|cx| Self::new(client.clone(), user_store.clone(), cx));
-                cx.set_global(EditPredictionStoreGlobal(zeta.clone()));
-                zeta
+                let ep_store = cx.new(|cx| Self::new(client.clone(), user_store.clone(), cx));
+                cx.set_global(EditPredictionStoreGlobal(ep_store.clone()));
+                ep_store
             })
     }
 

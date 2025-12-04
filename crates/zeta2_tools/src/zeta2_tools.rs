@@ -1,10 +1,10 @@
 mod zeta2_context_view;
 
+use edit_prediction::Zeta2FeatureFlag;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{actions, prelude::*};
 use ui::prelude::*;
 use workspace::{SplitDirection, Workspace};
-use zeta::Zeta2FeatureFlag;
 use zeta2_context_view::Zeta2ContextView;
 
 actions!(

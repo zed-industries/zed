@@ -19,6 +19,7 @@ use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
+use edit_prediction::udiff::DiffLine;
 use edit_prediction_context::EditPredictionExcerptOptions;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
@@ -27,7 +28,6 @@ use project::{Project, Worktree, lsp_store::OpenLspBufferHandle};
 use reqwest_client::ReqwestClient;
 use std::io::{self};
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
-use zeta::udiff::DiffLine;
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
@@ -182,8 +182,8 @@ enum PredictionProvider {
     Sweep,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
-    zeta::ZetaOptions {
+fn zeta2_args_to_options(args: &Zeta2Args) -> edit_prediction::ZetaOptions {
+    edit_prediction::ZetaOptions {
         context: EditPredictionExcerptOptions {
             max_bytes: args.max_excerpt_bytes,
             min_bytes: args.min_excerpt_bytes,
@@ -367,29 +367,29 @@ async fn zeta2_context(
         .await;
     let output = cx
         .update(|cx| {
-            let zeta = cx.new(|cx| {
-                zeta::EditPredictionStore::new(
+            let store = cx.new(|cx| {
+                edit_prediction::EditPredictionStore::new(
                     app_state.client.clone(),
                     app_state.user_store.clone(),
                     cx,
                 )
             });
-            zeta.update(cx, |zeta, cx| {
-                zeta.set_options(zeta2_args_to_options(&args.zeta2_args));
-                zeta.register_buffer(&buffer, &project, cx);
+            store.update(cx, |store, cx| {
+                store.set_options(zeta2_args_to_options(&args.zeta2_args));
+                store.register_buffer(&buffer, &project, cx);
             });
             cx.spawn(async move |cx| {
-                let updates_rx = zeta.update(cx, |zeta, cx| {
+                let updates_rx = store.update(cx, |store, cx| {
                     let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
-                    zeta.set_use_context(true);
-                    zeta.refresh_context(&project, &buffer, cursor, cx);
-                    zeta.project_context_updates(&project).unwrap()
+                    store.set_use_context(true);
+                    store.refresh_context(&project, &buffer, cursor, cx);
+                    store.project_context_updates(&project).unwrap()
                 })?;
 
                 updates_rx.recv().await.ok();
 
-                let context = zeta.update(cx, |zeta, cx| {
-                    zeta.context_for_project(&project, cx).to_vec()
+                let context = store.update(cx, |store, cx| {
+                    store.context_for_project(&project, cx).to_vec()
                 })?;
 
                 anyhow::Ok(serde_json::to_string_pretty(&context).unwrap())
@@ -404,7 +404,7 @@ async fn zeta1_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<zeta::zeta1::GatherContextOutput> {
+) -> Result<edit_prediction::zeta1::GatherContextOutput> {
     let LoadedContext {
         full_path_str,
         snapshot,
@@ -419,7 +419,7 @@ async fn zeta1_context(
 
     let prompt_for_events = move || (events, 0);
     cx.update(|cx| {
-        zeta::zeta1::gather_context(
+        edit_prediction::zeta1::gather_context(
             full_path_str,
             &snapshot,
             clipped_cursor,

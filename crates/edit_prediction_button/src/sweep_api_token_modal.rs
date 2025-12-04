@@ -1,10 +1,10 @@
+use edit_prediction::EditPredictionStore;
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render,
 };
 use ui::{Button, ButtonStyle, Clickable, Headline, HeadlineSize, prelude::*};
 use ui_input::InputField;
 use workspace::ModalView;
-use zeta::EditPredictionStore;
 
 pub struct SweepApiKeyModal {
     api_key_input: Entity<InputField>,
@@ -29,9 +29,10 @@ impl SweepApiKeyModal {
         let api_key = self.api_key_input.read(cx).text(cx);
         let api_key = (!api_key.trim().is_empty()).then_some(api_key);
 
-        if let Some(zeta) = EditPredictionStore::try_global(cx) {
-            zeta.update(cx, |zeta, cx| {
-                zeta.sweep_ai
+        if let Some(ep_store) = EditPredictionStore::try_global(cx) {
+            ep_store.update(cx, |ep_store, cx| {
+                ep_store
+                    .sweep_ai
                     .set_api_token(api_key, cx)
                     .detach_and_log_err(cx);
             });

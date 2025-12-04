@@ -1,20 +1,18 @@
 use super::*;
 use crate::zeta1::MAX_EVENT_TOKENS;
-use client::UserStore;
-use client::test::FakeServer;
+use client::{UserStore, test::FakeServer};
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
-    EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
+    EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
+    RejectEditPredictionsBody,
 };
-use cloud_llm_client::{PredictEditsBody, PredictEditsResponse};
 use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
 };
-use gpui::TestAppContext;
 use gpui::{
-    Entity,
+    Entity, TestAppContext,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
