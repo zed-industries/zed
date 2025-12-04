@@ -1052,11 +1052,17 @@ impl SshSocket {
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
         let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
+        let uname = uname.trim();
+        let Some((os, arch)) = uname
+            // Take the last line to skip possible shell initialization output
+            .rsplit_once('\n')
+            .map_or(uname, |(_, last)| last.trim())
+            .split_once(" ")
+        else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
 
-        let os = match os.trim() {
+        let os = match os {
             "Darwin" => "macos",
             "Linux" => "linux",
             _ => anyhow::bail!(
@@ -1087,13 +1093,19 @@ impl SshSocket {
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
         {
-            Ok(shell) => match shell.trim() {
-                "" => {
+            Ok(output) => {
+                let output = output.trim();
+                // Take the last line to skip possible shell initialization output
+                let shell = output
+                    .rsplit_once('\n')
+                    .map_or(output, |(_, last)| last.trim());
+                if shell.is_empty() {
                     log::error!("$SHELL is not set, falling back to {default_shell}");
                     default_shell.to_owned()
+                } else {
+                    shell.to_owned()
                 }
-                shell => shell.to_owned(),
-            },
+            }
             Err(e) => {
                 log::error!("Failed to get shell: {e}");
                 default_shell.to_owned()
