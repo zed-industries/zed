@@ -472,6 +472,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
+        client.add_entity_request_handler(Self::handle_create_remote);
+        client.add_entity_request_handler(Self::handle_remove_remote);
         client.add_entity_request_handler(Self::handle_delete_branch);
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
@@ -2274,6 +2276,25 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_create_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+        let remote_url = envelope.payload.remote_url;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_remote(remote_name, remote_url)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_delete_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitDeleteBranch>,
@@ -2286,6 +2307,24 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.delete_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_remove_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRemoveRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.remove_remote(remote_name)
             })?
             .await??;
 
@@ -4865,6 +4904,61 @@ impl Repository {
         )
     }
 
+    pub fn create_remote(
+        &mut self,
+        remote_name: String,
+        remote_url: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remote add {remote_name} {remote_url}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_remote(remote_name, remote_url).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCreateRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                                remote_url,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn remove_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remove remote {remote_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_remote(remote_name).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRemoveRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
@@ -4902,7 +4996,7 @@ impl Repository {
                     let remotes = response
                         .remotes
                         .into_iter()
-                        .map(|remotes| git::repository::Remote {
+                        .map(|remotes| Remote {
                             name: remotes.name.into(),
                         })
                         .collect();
