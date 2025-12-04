@@ -4760,7 +4760,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "launchpad",
+                "welcome",
                 "line_ending_selector",
                 "lsp_tool",
                 "markdown",

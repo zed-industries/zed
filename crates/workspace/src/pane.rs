@@ -396,7 +396,7 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
-    launchpad: Option<Entity<crate::launchpad::LaunchpadPage>>,
+    welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -541,7 +541,7 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
-            launchpad: None,
+            welcome_page: None,
         }
     }
 
@@ -628,9 +628,9 @@ impl Pane {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
             }
-        } else if let Some(launchpad) = self.launchpad.as_ref() {
+        } else if let Some(welcome_page) = self.welcome_page.as_ref() {
             if self.focus_handle.is_focused(window) {
-                launchpad.read(cx).focus_handle(cx).focus(window);
+                welcome_page.read(cx).focus_handle(cx).focus(window);
             }
         }
     }
@@ -3921,13 +3921,15 @@ impl Render for Pane {
                             if has_worktrees {
                                 placeholder
                             } else {
-                                if self.launchpad.is_none() {
+                                if self.welcome_page.is_none() {
                                     let workspace = self.workspace.clone();
-                                    self.launchpad = Some(cx.new(|cx| {
-                                        crate::launchpad::LaunchpadPage::new(workspace, window, cx)
+                                    self.welcome_page = Some(cx.new(|cx| {
+                                        crate::welcome::WelcomePage::new(
+                                            workspace, true, window, cx,
+                                        )
                                     }));
                                 }
-                                placeholder.child(self.launchpad.clone().unwrap())
+                                placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
                     })

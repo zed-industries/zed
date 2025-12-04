@@ -2,7 +2,6 @@ pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
-pub mod launchpad;
 mod modal_layer;
 pub mod notifications;
 pub mod pane;
@@ -16,6 +15,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+pub mod welcome;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
