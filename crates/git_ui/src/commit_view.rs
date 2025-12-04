@@ -717,55 +717,6 @@ impl language::File for GitBlob {
 //     }
 // }
 
-struct CommitViewAddon {
-    multibuffer: WeakEntity<MultiBuffer>,
-}
-
-impl Addon for CommitViewAddon {
-    fn render_buffer_header_controls(
-        &self,
-        excerpt: &ExcerptInfo,
-        _window: &Window,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let multibuffer = self.multibuffer.upgrade()?;
-        let snapshot = multibuffer.read(cx).snapshot(cx);
-        let excerpts = snapshot.excerpts().collect::<Vec<_>>();
-        let current_idx = excerpts.iter().position(|(id, _, _)| *id == excerpt.id)?;
-        let (_, _, current_range) = &excerpts[current_idx];
-
-        let start_row = current_range.context.start.to_point(&excerpt.buffer).row;
-
-        let prev_end_row = if current_idx > 0 {
-            let (_, prev_buffer, prev_range) = &excerpts[current_idx - 1];
-            if prev_buffer.remote_id() == excerpt.buffer_id {
-                prev_range.context.end.to_point(&excerpt.buffer).row
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let skipped_lines = start_row.saturating_sub(prev_end_row);
-
-        if skipped_lines > 0 {
-            Some(
-                Label::new(format!("{} unchanged lines", skipped_lines))
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
-    }
-
-    fn to_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
