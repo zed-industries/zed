@@ -30,7 +30,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
-    trusted_worktrees::TrustedWorktreesStorage,
+    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -632,7 +632,7 @@ impl SettingsObserver {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
                 let watcher =
                     trusted_worktrees.subscribe(cx, move |settings_observer, e, cx| match e {
-                        crate::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
+                        TrustedWorktreesEvent::Trusted(trusted_path) => {
                             if let Some(pending_local_settings) = settings_observer
                                 .pending_local_settings
                                 .remove(trusted_path)
@@ -668,7 +668,7 @@ impl SettingsObserver {
                                 }
                             }
                         }
-                        crate::trusted_worktrees::Event::UntrustedWorktree(_) => {}
+                        TrustedWorktreesEvent::StoppedTrusting(_) => {}
                     });
                 Some(watcher)
             })

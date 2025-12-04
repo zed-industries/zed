@@ -32,7 +32,9 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktreesStorage,
+    Project, WorktreeSettings,
+    git_store::GitStoreEvent,
+    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
 };
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
@@ -301,10 +303,10 @@ impl TitleBar {
                 subscriptions.push(trusted_worktrees_storage.subscribe(
                     cx,
                     move |title_bar, e, cx| match e {
-                        project::trusted_worktrees::Event::TrustedWorktree(abs_path) => {
+                        TrustedWorktreesEvent::Trusted(abs_path) => {
                             title_bar.untrusted_worktrees.remove(abs_path);
                         }
-                        project::trusted_worktrees::Event::UntrustedWorktree(abs_path) => {
+                        TrustedWorktreesEvent::StoppedTrusting(abs_path) => {
                             title_bar
                                 .workspace
                                 .update(cx, |workspace, cx| {
