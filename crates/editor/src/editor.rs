@@ -51,7 +51,7 @@ pub mod test;
 
 pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
-pub use edit_prediction::Direction;
+pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
@@ -92,7 +92,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use edit_prediction::{EditPredictionProvider, EditPredictionProviderHandle};
+use edit_prediction_types::{EditPredictionDelegate, EditPredictionDelegateHandle};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -1120,7 +1120,7 @@ pub struct Editor {
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    edit_prediction_provider: Option<RegisteredEditPredictionProvider>,
+    edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_edit_prediction: Option<EditPredictionState>,
     /// Used to prevent flickering as the user types while the menu is open
@@ -1562,8 +1562,8 @@ pub struct RenameState {
 
 struct InvalidationStack<T>(Vec<T>);
 
-struct RegisteredEditPredictionProvider {
-    provider: Arc<dyn EditPredictionProviderHandle>,
+struct RegisteredEditPredictionDelegate {
+    provider: Arc<dyn EditPredictionDelegateHandle>,
     _subscription: Subscription,
 }
 
@@ -2988,9 +2988,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
-        T: EditPredictionProvider,
+        T: EditPredictionDelegate,
     {
-        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionProvider {
+        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionDelegate {
             _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
                 if this.focus_handle.is_focused(window) {
                     this.update_visible_edit_prediction(window, cx);
@@ -7394,7 +7394,7 @@ impl Editor {
             && self
                 .edit_prediction_provider
                 .as_ref()
-                .is_some_and(|provider| provider.provider.show_completions_in_menu());
+                .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
@@ -8095,12 +8095,12 @@ impl Editor {
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
         let (completion_id, edits, edit_preview) = match edit_prediction {
-            edit_prediction::EditPrediction::Local {
+            edit_prediction_types::EditPrediction::Local {
                 id,
                 edits,
                 edit_preview,
             } => (id, edits, edit_preview),
-            edit_prediction::EditPrediction::Jump {
+            edit_prediction_types::EditPrediction::Jump {
                 id,
                 snapshot,
                 target,
@@ -8241,7 +8241,7 @@ impl Editor {
         Some(())
     }
 
-    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionProviderHandle>> {
+    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionDelegateHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
     }
 
@@ -9563,7 +9563,7 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
     fn get_prediction_provider_icon_name(
-        provider: &Option<RegisteredEditPredictionProvider>,
+        provider: &Option<RegisteredEditPredictionDelegate>,
     ) -> IconName {
         match provider {
             Some(provider) => match provider.provider.name() {
