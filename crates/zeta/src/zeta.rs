@@ -2765,7 +2765,6 @@ mod tests {
     use cloud_llm_client::{
         EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     };
-    use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
     use futures::{
         AsyncReadExt, StreamExt,
         channel::{mpsc, oneshot},
@@ -2777,6 +2776,7 @@ mod tests {
     };
     use indoc::indoc;
     use language::OffsetRangeExt as _;
+    use lsp::LanguageServerId;
     use open_ai::Usage;
     use pretty_assertions::{assert_eq, assert_matches};
     use project::{FakeFs, Project};
@@ -2808,6 +2808,7 @@ mod tests {
         let buffer1 = project
             .update(cx, |project, cx| {
                 let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+                project.set_active_path(Some(path.clone()), cx);
                 project.open_buffer(path, cx)
             })
             .await
@@ -2843,63 +2844,38 @@ mod tests {
             assert_matches!(prediction, BufferEditPrediction::Local { .. });
         });
 
-        // Context refresh
-        let refresh_task = zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context_with_agentic_retrieval(
-                project.clone(),
-                buffer1.clone(),
-                position,
-                cx,
-            )
-        });
-        let (_request, respond_tx) = requests.predict.next().await.unwrap();
-        respond_tx
-            .send(open_ai::Response {
-                id: Uuid::new_v4().to_string(),
-                object: "response".into(),
-                created: 0,
-                model: "model".into(),
-                choices: vec![open_ai::Choice {
-                    index: 0,
-                    message: open_ai::RequestMessage::Assistant {
-                        content: None,
-                        tool_calls: vec![open_ai::ToolCall {
-                            id: "search".into(),
-                            content: open_ai::ToolCallContent::Function {
-                                function: open_ai::FunctionContent {
-                                    name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME
-                                        .to_string(),
-                                    arguments: serde_json::to_string(&SearchToolInput {
-                                        queries: Box::new([SearchToolQuery {
-                                            glob: "root/2.txt".to_string(),
-                                            syntax_node: vec![],
-                                            content: Some(".".into()),
-                                        }]),
-                                    })
-                                    .unwrap(),
-                                },
-                            },
-                        }],
-                    },
-                    finish_reason: None,
-                }],
-                usage: Usage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                },
-            })
-            .unwrap();
-        refresh_task.await.unwrap();
-
         zeta.update(cx, |zeta, _cx| {
             zeta.reject_current_prediction(EditPredictionRejectReason::Discarded, &project);
         });
 
-        // Prediction for another file
-        zeta.update(cx, |zeta, cx| {
-            zeta.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx)
+        // Prediction for diagnostic in another file
+
+        let diagnostic = lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "Sentence is incomplete".to_string(),
+            ..Default::default()
+        };
+
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path("/root/2.txt").unwrap().clone(),
+                            diagnostics: vec![diagnostic],
+                            version: None,
+                        },
+                        None,
+                        language::DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap();
+            });
         });
+
         let (_request, respond_tx) = requests.predict.next().await.unwrap();
         respond_tx
             .send(model_response(indoc! {r#"
@@ -3871,7 +3847,6 @@ mod tests {
                                 let mut buf = Vec::new();
                                 body.read_to_end(&mut buf).await.ok();
                                 let req = serde_json::from_slice(&buf).unwrap();
-
                                 let (res_tx, res_rx) = oneshot::channel();
                                 predict_req_tx.unbounded_send((req, res_tx)).unwrap();
                                 serde_json::to_string(&res_rx.await?).unwrap()
