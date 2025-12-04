@@ -7143,7 +7143,7 @@ mod tests {
                 .enumerate()
                 .map(|(ix, item)| {
                     let mut state = item
-                        .to_any()
+                        .to_any_view()
                         .downcast::<TestItem>()
                         .unwrap()
                         .read(cx)
@@ -7210,7 +7210,7 @@ mod tests {
         for label in pane_labels {
             add_labeled_item(&pane, label, false, cx);
         }
-        pane.update(cx, |pane, cx| pane.split(direction, &operation, cx));
+        pane.update(cx, |pane, cx| pane.split(direction, operation, cx));
         cx.executor().run_until_parked();
         let new_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
