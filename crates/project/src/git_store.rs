@@ -454,6 +454,7 @@ impl GitStore {
                                     let (job_sender, state) = (this.refetch_repo_state)(cx);
                                     this.repository_state = state;
                                     this.job_sender = job_sender;
+                                    this.schedule_scan(None, cx);
                                 }
                             })
                         }
