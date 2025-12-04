@@ -1,3 +1,4 @@
+use crate::ExtensionSettings;
 use crate::wasm_host::WasmExtension;
 
 use crate::wasm_host::wit::{
@@ -9,6 +10,7 @@ use crate::wasm_host::wit::{
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use editor::Editor;
+use extension::LanguageModelAuthConfig;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
@@ -37,12 +39,15 @@ pub struct ExtensionLanguageModelProvider {
     pub extension: WasmExtension,
     pub provider_info: LlmProviderInfo,
     icon_path: Option<SharedString>,
+    auth_config: Option<LanguageModelAuthConfig>,
     state: Entity<ExtensionLlmProviderState>,
 }
 
 pub struct ExtensionLlmProviderState {
     is_authenticated: bool,
     available_models: Vec<LlmModelInfo>,
+    env_var_allowed: bool,
+    api_key_from_env: bool,
 }
 
 impl EventEmitter<()> for ExtensionLlmProviderState {}
@@ -54,17 +59,42 @@ impl ExtensionLanguageModelProvider {
         models: Vec<LlmModelInfo>,
         is_authenticated: bool,
         icon_path: Option<SharedString>,
+        auth_config: Option<LanguageModelAuthConfig>,
         cx: &mut App,
     ) -> Self {
+        let provider_id_string = format!("{}:{}", extension.manifest.id, provider_info.id);
+        let env_var_allowed = ExtensionSettings::get_global(cx)
+            .allowed_env_var_providers
+            .contains(provider_id_string.as_str());
+
+        let (is_authenticated, api_key_from_env) =
+            if env_var_allowed && auth_config.as_ref().is_some_and(|c| c.env_var.is_some()) {
+                let env_var_name = auth_config.as_ref().unwrap().env_var.as_ref().unwrap();
+                if let Ok(value) = std::env::var(env_var_name) {
+                    if !value.is_empty() {
+                        (true, true)
+                    } else {
+                        (is_authenticated, false)
+                    }
+                } else {
+                    (is_authenticated, false)
+                }
+            } else {
+                (is_authenticated, false)
+            };
+
         let state = cx.new(|_| ExtensionLlmProviderState {
             is_authenticated,
             available_models: models,
+            env_var_allowed,
+            api_key_from_env,
         });
 
         Self {
             extension,
             provider_info,
             icon_path,
+            auth_config,
             state,
         }
     }
@@ -194,13 +224,17 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
         let credential_key = self.credential_key();
         let extension = self.extension.clone();
         let extension_provider_id = self.provider_info.id.clone();
+        let full_provider_id = self.provider_id_string();
         let state = self.state.clone();
+        let auth_config = self.auth_config.clone();
 
         cx.new(|cx| {
             ExtensionProviderConfigurationView::new(
                 credential_key,
                 extension,
                 extension_provider_id,
+                full_provider_id,
+                auth_config,
                 state,
                 window,
                 cx,
@@ -274,6 +308,8 @@ struct ExtensionProviderConfigurationView {
     credential_key: String,
     extension: WasmExtension,
     extension_provider_id: String,
+    full_provider_id: String,
+    auth_config: Option<LanguageModelAuthConfig>,
     state: Entity<ExtensionLlmProviderState>,
     settings_markdown: Option<Entity<Markdown>>,
     api_key_editor: Entity<Editor>,
@@ -287,6 +323,8 @@ impl ExtensionProviderConfigurationView {
         credential_key: String,
         extension: WasmExtension,
         extension_provider_id: String,
+        full_provider_id: String,
+        auth_config: Option<LanguageModelAuthConfig>,
         state: Entity<ExtensionLlmProviderState>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -307,6 +345,8 @@ impl ExtensionProviderConfigurationView {
             credential_key,
             extension,
             extension_provider_id,
+            full_provider_id,
+            auth_config,
             state,
             settings_markdown: None,
             api_key_editor,
@@ -362,7 +402,20 @@ impl ExtensionProviderConfigurationView {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let state = self.state.clone();
 
+        // Check if we should use env var (already set in state during provider construction)
+        let api_key_from_env = self.state.read(cx).api_key_from_env;
+
         cx.spawn(async move |this, cx| {
+            // If using env var, we're already authenticated
+            if api_key_from_env {
+                this.update(cx, |this, cx| {
+                    this.loading_credentials = false;
+                    cx.notify();
+                })
+                .log_err();
+                return;
+            }
+
             let credentials = credentials_provider
                 .read_credentials(&credential_key, cx)
                 .await
@@ -384,6 +437,92 @@ impl ExtensionProviderConfigurationView {
                 cx.notify();
             })
             .log_err();
+        })
+        .detach();
+    }
+
+    fn toggle_env_var_permission(&mut self, cx: &mut Context<Self>) {
+        let full_provider_id: Arc<str> = self.full_provider_id.clone().into();
+        let env_var_name = match &self.auth_config {
+            Some(config) => config.env_var.clone(),
+            None => return,
+        };
+
+        let state = self.state.clone();
+        let currently_allowed = self.state.read(cx).env_var_allowed;
+
+        // Update settings file
+        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, move |settings, _| {
+            let providers = settings
+                .extension
+                .allowed_env_var_providers
+                .get_or_insert_with(Vec::new);
+
+            if currently_allowed {
+                providers.retain(|id| id.as_ref() != full_provider_id.as_ref());
+            } else {
+                if !providers
+                    .iter()
+                    .any(|id| id.as_ref() == full_provider_id.as_ref())
+                {
+                    providers.push(full_provider_id.clone());
+                }
+            }
+        });
+
+        // Update local state
+        let new_allowed = !currently_allowed;
+        let new_from_env = if new_allowed {
+            if let Some(var_name) = &env_var_name {
+                if let Ok(value) = std::env::var(var_name) {
+                    !value.is_empty()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        state.update(cx, |state, cx| {
+            state.env_var_allowed = new_allowed;
+            state.api_key_from_env = new_from_env;
+            if new_from_env {
+                state.is_authenticated = true;
+            }
+            cx.notify();
+        });
+
+        // If env var is being disabled, reload credentials from keychain
+        if !new_allowed {
+            self.reload_keychain_credentials(cx);
+        }
+
+        cx.notify();
+    }
+
+    fn reload_keychain_credentials(&mut self, cx: &mut Context<Self>) {
+        let credential_key = self.credential_key.clone();
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let state = self.state.clone();
+
+        cx.spawn(async move |_this, cx| {
+            let credentials = credentials_provider
+                .read_credentials(&credential_key, cx)
+                .await
+                .log_err()
+                .flatten();
+
+            let has_credentials = credentials.is_some();
+
+            let _ = cx.update(|cx| {
+                state.update(cx, |state, cx| {
+                    state.is_authenticated = has_credentials;
+                    cx.notify();
+                });
+            });
         })
         .detach();
     }
@@ -456,6 +595,8 @@ impl gpui::Render for ExtensionProviderConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_loading = self.loading_settings || self.loading_credentials;
         let is_authenticated = self.is_authenticated(cx);
+        let env_var_allowed = self.state.read(cx).env_var_allowed;
+        let api_key_from_env = self.state.read(cx).api_key_from_env;
 
         if is_loading {
             return v_flex()
@@ -478,8 +619,67 @@ impl gpui::Render for ExtensionProviderConfigurationView {
             );
         }
 
+        // Render env var checkbox if the extension specifies an env var
+        if let Some(auth_config) = &self.auth_config {
+            if let Some(env_var_name) = &auth_config.env_var {
+                let env_var_name = env_var_name.clone();
+                let checkbox_label =
+                    format!("Read API key from {} environment variable", env_var_name);
+
+                content = content.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            ui::Checkbox::new("env-var-permission", env_var_allowed.into())
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.toggle_env_var_permission(cx);
+                                })),
+                        )
+                        .child(Label::new(checkbox_label).size(LabelSize::Small)),
+                );
+
+                // Show status if env var is allowed
+                if env_var_allowed {
+                    if api_key_from_env {
+                        content = content.child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    ui::Icon::new(ui::IconName::Check)
+                                        .color(Color::Success)
+                                        .size(ui::IconSize::Small),
+                                )
+                                .child(
+                                    Label::new(format!("API key loaded from {}", env_var_name))
+                                        .color(Color::Success),
+                                ),
+                        );
+                        return content.into_any_element();
+                    } else {
+                        content = content.child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    ui::Icon::new(ui::IconName::Warning)
+                                        .color(Color::Warning)
+                                        .size(ui::IconSize::Small),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "{} is not set or empty. You can set it and restart Zed, or enter an API key below.",
+                                        env_var_name
+                                    ))
+                                    .color(Color::Warning)
+                                    .size(LabelSize::Small),
+                                ),
+                        );
+                    }
+                }
+            }
+        }
+
         // Render API key section
-        if is_authenticated {
+        if is_authenticated && !api_key_from_env {
             content = content.child(
                 v_flex()
                     .gap_2()
@@ -501,13 +701,19 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                             })),
                     ),
             );
-        } else {
+        } else if !api_key_from_env {
+            let credential_label = self
+                .auth_config
+                .as_ref()
+                .and_then(|c| c.credential_label.clone())
+                .unwrap_or_else(|| "API Key".to_string());
+
             content = content.child(
                 v_flex()
                     .gap_2()
                     .on_action(cx.listener(Self::save_api_key))
                     .child(
-                        Label::new("API Key")
+                        Label::new(credential_label)
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )

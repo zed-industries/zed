@@ -68,6 +68,7 @@ struct LlmProviderWithModels {
     models: Vec<LlmModelInfo>,
     is_authenticated: bool,
     icon_path: Option<SharedString>,
+    auth_config: Option<extension::LanguageModelAuthConfig>,
 }
 
 pub use extension::{
@@ -1476,11 +1477,20 @@ impl ExtensionStore {
                                         SharedString::from(absolute_icon_path)
                                     });
 
+                                    let provider_id_arc: Arc<str> =
+                                        provider_info.id.as_str().into();
+                                    let auth_config = extension
+                                        .manifest
+                                        .language_model_providers
+                                        .get(&provider_id_arc)
+                                        .and_then(|entry| entry.auth.clone());
+
                                     llm_providers_with_models.push(LlmProviderWithModels {
                                         provider_info,
                                         models,
                                         is_authenticated,
                                         icon_path,
+                                        auth_config,
                                     });
                                 }
                             } else {
@@ -1579,12 +1589,13 @@ impl ExtensionStore {
                         let mods = llm_provider.models.clone();
                         let auth = llm_provider.is_authenticated;
                         let icon = llm_provider.icon_path.clone();
+                        let auth_config = llm_provider.auth_config.clone();
 
                         this.proxy.register_language_model_provider(
                             provider_id.clone(),
                             Box::new(move |cx: &mut App| {
                                 let provider = Arc::new(ExtensionLanguageModelProvider::new(
-                                    wasm_ext, pinfo, mods, auth, icon, cx,
+                                    wasm_ext, pinfo, mods, auth, icon, auth_config, cx,
                                 ));
                                 language_model::LanguageModelRegistry::global(cx).update(
                                     cx,

@@ -1,3 +1,4 @@
+use crate::ExtensionSettings;
 use crate::wasm_host::wit::since_v0_8_0::{
     dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
@@ -1192,6 +1193,55 @@ impl ExtensionImports for WasmState {
     }
 
     async fn llm_get_env_var(&mut self, name: String) -> wasmtime::Result<Option<String>> {
+        let extension_id = self.manifest.id.clone();
+
+        // Find which provider (if any) declares this env var in its auth config
+        let mut allowed_provider_id: Option<Arc<str>> = None;
+        for (provider_id, provider_entry) in &self.manifest.language_model_providers {
+            if let Some(auth_config) = &provider_entry.auth {
+                if auth_config.env_var.as_deref() == Some(&name) {
+                    allowed_provider_id = Some(provider_id.clone());
+                    break;
+                }
+            }
+        }
+
+        // If no provider declares this env var, deny access
+        let Some(provider_id) = allowed_provider_id else {
+            log::warn!(
+                "Extension {} attempted to read env var {} which is not declared in any provider auth config",
+                extension_id,
+                name
+            );
+            return Ok(None);
+        };
+
+        // Check if the user has allowed this provider to read env vars
+        let full_provider_id = format!("{}:{}", extension_id, provider_id);
+        let is_allowed = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        ExtensionSettings::get_global(cx)
+                            .allowed_env_var_providers
+                            .contains(full_provider_id.as_str())
+                    })
+                    .unwrap_or(false)
+                }
+                .boxed_local()
+            })
+            .await;
+
+        if !is_allowed {
+            log::debug!(
+                "Extension {} provider {} is not allowed to read env var {}",
+                extension_id,
+                provider_id,
+                name
+            );
+            return Ok(None);
+        }
+
         Ok(env::var(&name).ok())
     }
 }
