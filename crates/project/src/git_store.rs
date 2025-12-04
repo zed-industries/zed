@@ -48,6 +48,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
+use paths::{config_dir, home_dir};
 use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
@@ -69,7 +70,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use task::Shell;
@@ -175,6 +176,7 @@ enum GitStoreState {
         downstream: Option<LocalDownstreamState>,
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        _fs_watches: Box<[Task<()>]>,
     },
     Remote {
         upstream_client: AnyProtoClient,
@@ -397,6 +399,7 @@ pub enum GitStoreEvent {
     IndexWriteError(anyhow::Error),
     JobsUpdated,
     ConflictsUpdated,
+    GlobalConfigurationUpdated,
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
@@ -424,6 +427,30 @@ impl GitStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let paths = [
+            config_dir().join("git/config"),
+            home_dir().join(".gitconfig"),
+        ];
+        let mut watchers = vec![];
+        for path in paths {
+            let fs = fs.clone();
+            // let path = environment.read(cx).
+            let watch_task = cx.spawn(async move |this, cx| {
+                let watcher = fs.watch(&path, Duration::from_millis(100));
+                let (mut watcher, _) = watcher.await;
+                while let Some(_) = watcher.next().await {
+                    let Ok(_) = this.update(cx, |_, cx| {
+                        cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
+                    }) else {
+                        return;
+                    };
+                }
+            });
+            watchers.push(watch_task);
+        }
+
+        let _fs_watches = watchers.into_boxed_slice();
+
         Self::new(
             worktree_store.clone(),
             buffer_store,
@@ -431,6 +458,7 @@ impl GitStore {
                 next_repository_id: Arc::new(AtomicU64::new(1)),
                 downstream: None,
                 project_environment: environment,
+                _fs_watches,
                 fs,
             },
             cx,
@@ -1221,6 +1249,7 @@ impl GitStore {
             downstream,
             next_repository_id,
             fs,
+            ..
         } = &self.state
         else {
             return;

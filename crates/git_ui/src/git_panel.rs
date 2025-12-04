@@ -755,7 +755,8 @@ impl GitPanel {
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::GlobalConfigurationUpdated => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
