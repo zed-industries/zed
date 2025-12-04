@@ -131,11 +131,7 @@ async fn build_remote_server_from_source(
     let build_remote_server =
         std::env::var("ZED_BUILD_REMOTE_SERVER").unwrap_or("nocompress".into());
 
-    if build_remote_server == "false"
-        || build_remote_server == "no"
-        || build_remote_server == "off"
-        || build_remote_server == "0"
-    {
+    if let "false" | "no" | "off" | "0" = &*build_remote_server {
         return Ok(None);
     }
 
