@@ -24,12 +24,15 @@ use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semver::Version;
+use smol::net::TcpListener;
 use std::{
     env,
+    io::{BufRead, Write},
     net::Ipv4Addr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
@@ -1243,6 +1246,191 @@ impl ExtensionImports for WasmState {
         }
 
         Ok(env::var(&name).ok())
+    }
+
+    async fn llm_oauth_start_web_auth(
+        &mut self,
+        config: llm_provider::OauthWebAuthConfig,
+    ) -> wasmtime::Result<Result<llm_provider::OauthWebAuthResult, String>> {
+        let auth_url = config.auth_url;
+        let callback_path = config.callback_path;
+        let timeout_secs = config.timeout_secs.unwrap_or(300);
+
+        self.on_main_thread(move |cx| {
+            async move {
+                let listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to bind localhost server: {}", e))?;
+                let port = listener
+                    .local_addr()
+                    .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
+                    .port();
+
+                cx.update(|cx| {
+                    cx.open_url(&auth_url);
+                })?;
+
+                let accept_future = async {
+                    let (stream, _) = listener
+                        .accept()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to accept connection: {}", e))?;
+
+                    let mut reader = smol::io::BufReader::new(&stream);
+                    let mut request_line = String::new();
+                    smol::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to read request: {}", e))?;
+
+                    let callback_url = if let Some(path_start) = request_line.find(' ') {
+                        if let Some(path_end) = request_line[path_start + 1..].find(' ') {
+                            let path = &request_line[path_start + 1..path_start + 1 + path_end];
+                            if path.starts_with(&callback_path) || path.starts_with(&format!("/{}", callback_path.trim_start_matches('/'))) {
+                                format!("http://localhost:{}{}", port, path)
+                            } else {
+                                return Err(anyhow::anyhow!(
+                                    "Unexpected callback path: {}",
+                                    path
+                                ));
+                            }
+                        } else {
+                            return Err(anyhow::anyhow!("Malformed HTTP request"));
+                        }
+                    } else {
+                        return Err(anyhow::anyhow!("Malformed HTTP request"));
+                    };
+
+                    let response = "HTTP/1.1 200 OK\r\n\
+                        Content-Type: text/html\r\n\
+                        Connection: close\r\n\
+                        \r\n\
+                        <!DOCTYPE html>\
+                        <html><head><title>Authentication Complete</title></head>\
+                        <body style=\"font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;\">\
+                        <div style=\"text-align: center;\">\
+                        <h1>Authentication Complete</h1>\
+                        <p>You can close this window and return to Zed.</p>\
+                        </div></body></html>";
+
+                    let mut writer = &stream;
+                    smol::io::AsyncWriteExt::write_all(&mut writer, response.as_bytes())
+                        .await
+                        .ok();
+                    smol::io::AsyncWriteExt::flush(&mut writer).await.ok();
+
+                    Ok(callback_url)
+                };
+
+                let timeout_duration = Duration::from_secs(timeout_secs as u64);
+                let callback_url = smol::future::or(
+                    accept_future,
+                    async {
+                        smol::Timer::after(timeout_duration).await;
+                        Err(anyhow::anyhow!(
+                            "OAuth callback timed out after {} seconds",
+                            timeout_secs
+                        ))
+                    },
+                )
+                .await?;
+
+                Ok(llm_provider::OauthWebAuthResult {
+                    callback_url,
+                    port: port as u32,
+                })
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn llm_oauth_http_request(
+        &mut self,
+        request: llm_provider::OauthHttpRequest,
+    ) -> wasmtime::Result<Result<llm_provider::OauthHttpResponse, String>> {
+        let http_client = self.http_client.clone();
+
+        self.on_main_thread(move |_cx| {
+            async move {
+                let method = match request.method.to_uppercase().as_str() {
+                    "GET" => ::http_client::Method::GET,
+                    "POST" => ::http_client::Method::POST,
+                    "PUT" => ::http_client::Method::PUT,
+                    "DELETE" => ::http_client::Method::DELETE,
+                    "PATCH" => ::http_client::Method::PATCH,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "Unsupported HTTP method: {}",
+                            request.method
+                        ));
+                    }
+                };
+
+                let mut builder = ::http_client::HttpRequest::builder()
+                    .method(method)
+                    .uri(&request.url);
+
+                for (key, value) in &request.headers {
+                    builder = builder.header(key.as_str(), value.as_str());
+                }
+
+                let body = if request.body.is_empty() {
+                    AsyncBody::empty()
+                } else {
+                    AsyncBody::from(request.body.into_bytes())
+                };
+
+                let http_request = builder
+                    .body(body)
+                    .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+
+                let mut response = http_client
+                    .send(http_request)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+                let status = response.status().as_u16();
+                let headers: Vec<(String, String)> = response
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect();
+
+                let mut body_bytes = Vec::new();
+                futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
+
+                let body = String::from_utf8_lossy(&body_bytes).to_string();
+
+                Ok(llm_provider::OauthHttpResponse {
+                    status,
+                    headers,
+                    body,
+                })
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn llm_oauth_open_browser(
+        &mut self,
+        url: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.on_main_thread(move |cx| {
+            async move {
+                cx.update(|cx| {
+                    cx.open_url(&url);
+                })?;
+                Ok(())
+            }
+            .boxed_local()
+        })
+        .await
+        .to_wasmtime_result()
     }
 }
 

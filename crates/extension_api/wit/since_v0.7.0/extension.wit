@@ -249,4 +249,36 @@ world extension {
 
     /// Read an environment variable.
     import llm-get-env-var: func(name: string) -> option<string>;
+
+    // =========================================================================
+    // OAuth Web Auth Flow Imports
+    // =========================================================================
+
+    use llm-provider.{oauth-web-auth-config, oauth-web-auth-result, oauth-http-request, oauth-http-response};
+
+    /// Start an OAuth web authentication flow.
+    ///
+    /// This will:
+    /// 1. Start a localhost server to receive the OAuth callback
+    /// 2. Open the auth URL in the user's default browser
+    /// 3. Wait for the callback (up to the timeout)
+    /// 4. Return the callback URL with query parameters
+    ///
+    /// The extension is responsible for:
+    /// - Constructing the auth URL with client_id, redirect_uri, scope, state, etc.
+    /// - Parsing the callback URL to extract the authorization code
+    /// - Exchanging the code for tokens using llm-oauth-http-request
+    import llm-oauth-start-web-auth: func(config: oauth-web-auth-config) -> result<oauth-web-auth-result, string>;
+
+    /// Make an HTTP request for OAuth token exchange.
+    ///
+    /// This is a simple HTTP client for OAuth flows, allowing the extension
+    /// to handle token exchange with full control over serialization.
+    import llm-oauth-http-request: func(request: oauth-http-request) -> result<oauth-http-response, string>;
+
+    /// Open a URL in the user's default browser.
+    ///
+    /// Useful for OAuth flows that need to open a browser but handle the
+    /// callback differently (e.g., polling-based flows).
+    import llm-oauth-open-browser: func(url: string) -> result<_, string>;
 }
