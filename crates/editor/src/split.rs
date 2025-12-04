@@ -262,6 +262,9 @@ impl SplittableEditor {
                     context_line_count,
                     cx,
                 );
+                // - we just added some excerpts for a specific buffer to the primary (RHS)
+                // - but the diff for that buffer doesn't get attached to the primary multibuffer until slightly later
+                // - however, for sync_path_excerpts we require that we have a diff for the buffer
                 if let Some(secondary) = &mut self.secondary
                     && let Some(languages) = self
                         .workspace
@@ -348,6 +351,8 @@ impl SecondaryEditor {
             })
             .unwrap_or_else(|| {
                 cx.new(|cx| {
+                    // FIXME we might not have a language at this point for the base text;
+                    // need to handle the case where the language comes in afterward
                     let base_text = diff.base_text();
                     let mut buffer = Buffer::local_normalized(
                         base_text.as_rope().clone(),
@@ -364,18 +369,18 @@ impl SecondaryEditor {
             .excerpts_for_buffer(main_buffer.remote_id(), cx)
             .into_iter()
             .map(|(_, excerpt_range)| {
-                let point_to_base_text_point = |point: Point| {
-                    let row = diff.row_to_base_text_row(point.row, main_buffer);
-                    let column = diff.base_text().line_len(row);
-                    Point::new(row, column)
+                let point_range_to_base_text_point_range = |range: Range<Point>| {
+                    let start_row = diff.row_to_base_text_row(range.start.row, main_buffer);
+                    let start_column = 0;
+                    let end_row = diff.row_to_base_text_row(range.end.row, main_buffer);
+                    let end_column = diff.base_text().line_len(end_row);
+                    Point::new(start_row, start_column)..Point::new(end_row, end_column)
                 };
                 let primary = excerpt_range.primary.to_point(main_buffer);
                 let context = excerpt_range.context.to_point(main_buffer);
                 ExcerptRange {
-                    primary: point_to_base_text_point(primary.start)
-                        ..point_to_base_text_point(primary.end),
-                    context: point_to_base_text_point(context.start)
-                        ..point_to_base_text_point(context.end),
+                    primary: point_range_to_base_text_point_range(primary),
+                    context: point_range_to_base_text_point_range(context),
                 }
             })
             .collect();

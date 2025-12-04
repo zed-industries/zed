@@ -624,7 +624,8 @@ pub struct MultiBufferSnapshot {
     replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
-    show_deleted_hunks: bool,
+    // FIXME
+    pub show_deleted_hunks: bool,
     show_headers: bool,
 }
 
@@ -3906,18 +3907,29 @@ impl MultiBufferSnapshot {
             let word_diffs = (!hunk.base_word_diffs.is_empty()
                 || !hunk.buffer_word_diffs.is_empty())
             .then(|| {
-                let hunk_start_offset =
-                    Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self);
+                let hunk_start_offset = if is_inverted {
+                    Anchor::in_buffer(
+                        excerpt.id,
+                        excerpt.buffer.anchor_after(hunk.diff_base_byte_range.start),
+                    )
+                    .to_offset(self)
+                } else {
+                    Anchor::in_buffer(excerpt.id, hunk.buffer_range.start).to_offset(self)
+                };
 
-                hunk.base_word_diffs
+                let mut word_diffs = hunk
+                    .base_word_diffs
                     .iter()
                     .map(|diff| hunk_start_offset + diff.start..hunk_start_offset + diff.end)
-                    .chain(
+                    .collect::<Vec<_>>();
+                if !is_inverted {
+                    word_diffs.extend(
                         hunk.buffer_word_diffs
                             .into_iter()
                             .map(|diff| Anchor::range_in_buffer(excerpt.id, diff).to_offset(self)),
-                    )
-                    .collect()
+                    );
+                }
+                word_diffs
             })
             .unwrap_or_default();
 
