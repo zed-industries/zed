@@ -2382,18 +2382,16 @@ fn matching(
         line_end = map.max_point().to_point(map);
     }
 
+    let is_quote_char = |ch: Option<char>| matches!(ch, Some('\'' | '"' | '`'));
+
     let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
               opening_range: Range<BufferOffset>,
               closing_range: Range<BufferOffset>| {
-            if !match_quotes
-                && matches!(
-                    buffer.chars_at(opening_range.start).next(),
-                    Some('\'' | '"' | '`')
-                )
-            {
+            if !match_quotes && is_quote_char(buffer.chars_at(opening_range.start).next()) {
                 return false;
             }
+
             if require_on_bracket {
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
@@ -2443,10 +2441,7 @@ fn matching(
 
         for (open_range, close_range) in ranges {
             if !match_quotes
-                && matches!(
-                    map.buffer_snapshot().chars_at(open_range.start).next(),
-                    Some('\'' | '"' | '`')
-                )
+                && is_quote_char(map.buffer_snapshot().chars_at(open_range.start).next())
             {
                 continue;
             }
