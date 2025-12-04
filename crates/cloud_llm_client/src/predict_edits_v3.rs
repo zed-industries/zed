@@ -66,7 +66,7 @@ pub struct Excerpt {
 pub enum PromptFormat {
     /// XML old_tex/new_text
     OldTextNewText,
-    /// Prompt format intended for use via zeta_cli
+    /// Prompt format intended for use via edit_prediction_cli
     OnlySnippets,
     /// One-sentence instructions used in fine-tuned models
     Minimal,

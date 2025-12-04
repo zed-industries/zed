@@ -202,7 +202,7 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zed_env_vars",
-    "crates/zeta_cli",
+    "crates/edit_prediction_cli",
     "crates/zlog",
     "crates/zlog_settings",
 
