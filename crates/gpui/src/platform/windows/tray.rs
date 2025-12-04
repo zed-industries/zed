@@ -58,8 +58,8 @@ impl WindowsTray {
             return;
         }
 
-        let hicon = tray.icon.as_ref().map(|image| {
-            *Icon::new(image.as_bytes(), image.width(), image.height()).as_raw_handle()
+        let hicon = tray.rendered_icon.as_ref().map(|image| {
+            *Icon::new(image.data.as_bytes(), image.width, image.height).as_raw_handle()
         });
 
         self.set_menu(menu);
@@ -214,12 +214,6 @@ struct Pixel {
     a: u8,
 }
 
-impl Pixel {
-    fn convert_to_bgra(&mut self) {
-        mem::swap(&mut self.r, &mut self.b);
-    }
-}
-
 const PIXEL_SIZE: usize = mem::size_of::<Pixel>();
 
 impl Icon {
@@ -230,7 +224,6 @@ impl Icon {
             unsafe { std::slice::from_raw_parts_mut(rgba.as_ptr() as *mut Pixel, pixel_count) };
         for pixel in pixels {
             and_mask.push((pixel.a as u8).wrapping_sub(u8::MAX)); // invert alpha channel
-            pixel.convert_to_bgra();
         }
         assert_eq!(and_mask.len(), pixel_count);
         let handle = unsafe {
