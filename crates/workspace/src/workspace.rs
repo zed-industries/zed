@@ -1224,12 +1224,14 @@ impl Workspace {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
                 trusted_worktrees_storage
                     .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
-                        TrustedWorktreesEvent::Trusted(trusted_path) => {
+                        TrustedWorktreesEvent::Trusted(trusted_paths) => {
                             if let Some(security_modal) =
                                 workspace.active_modal::<SecurityModal>(cx)
                             {
                                 let remove = security_modal.update(cx, |security_modal, _| {
-                                    security_modal.paths.remove(trusted_path);
+                                    for trusted_path in trusted_paths {
+                                        security_modal.paths.remove(trusted_path);
+                                    }
                                     security_modal.paths.is_empty()
                                 });
                                 if remove {
@@ -1237,7 +1239,7 @@ impl Workspace {
                                 }
                             }
                         }
-                        TrustedWorktreesEvent::StoppedTrusting(_) => {
+                        TrustedWorktreesEvent::Restricted(_) => {
                             workspace.show_worktree_security_modal(window, cx)
                         }
                     })
@@ -6432,15 +6434,15 @@ impl Workspace {
     }
 
     pub fn show_worktree_security_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
+        let restricted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
                 trusted_worktrees_storage
-                    .untrusted_worktrees()
+                    .restricted_worktrees()
                     .iter()
-                    .filter(|untrusted_path| {
+                    .filter(|restricted_path| {
                         self.project()
                             .read(cx)
-                            .find_worktree(untrusted_path, cx)
+                            .find_worktree(restricted_path, cx)
                             .is_some()
                     })
                     .cloned()
@@ -6452,7 +6454,7 @@ impl Workspace {
 
         if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
             let remove = security_modal.update(cx, |security_modal, cx| {
-                security_modal.paths.extend(untrusted_worktrees);
+                security_modal.paths.extend(restricted_worktrees);
                 let remove = security_modal.paths.is_empty();
                 cx.notify();
                 remove
@@ -6460,8 +6462,8 @@ impl Workspace {
             if remove {
                 self.hide_modal(window, cx);
             }
-        } else if !untrusted_worktrees.is_empty() {
-            self.toggle_modal(window, cx, |_, _| SecurityModal::new(untrusted_worktrees));
+        } else if !restricted_worktrees.is_empty() {
+            self.toggle_modal(window, cx, |_, _| SecurityModal::new(restricted_worktrees));
         }
     }
 }
