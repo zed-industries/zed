@@ -2383,15 +2383,22 @@ fn matching(
     }
 
     let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
-        move |buffer: &language::BufferSnapshot, open: Range<usize>, close: Range<usize>| {
-            if !match_quotes && matches!(buffer.chars_at(open.start).next(), Some('\'' | '"' | '`'))
+        move |buffer: &language::BufferSnapshot,
+              opening_range: Range<BufferOffset>,
+              closing_range: Range<BufferOffset>| {
+            if !match_quotes
+                && matches!(
+                    buffer.chars_at(opening_range.start).next(),
+                    Some('\'' | '"' | '`')
+                )
             {
                 return false;
             }
             if require_on_bracket {
                 // Attempt to find the smallest enclosing bracket range that also contains
                 // the offset, which only happens if the cursor is currently in a bracket.
-                open.contains(&offset) || close.contains(&offset)
+                opening_range.contains(&BufferOffset(offset.0))
+                    || closing_range.contains(&BufferOffset(offset.0))
             } else {
                 true
             }
