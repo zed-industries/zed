@@ -2,7 +2,7 @@ use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
+use edit_prediction_types::{DataCollectionState, Direction, EditPredictionProvider};
 use gpui::{App, Entity, prelude::*};
 use language::ToPoint as _;
 use project::Project;
@@ -148,7 +148,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         buffer: &Entity<language::Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<edit_prediction::EditPrediction> {
+    ) -> Option<edit_prediction_types::EditPrediction> {
         let prediction =
             self.zeta
                 .read(cx)
@@ -157,7 +157,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let prediction = match prediction {
             BufferEditPrediction::Local { prediction } => prediction,
             BufferEditPrediction::Jump { prediction } => {
-                return Some(edit_prediction::EditPrediction::Jump {
+                return Some(edit_prediction_types::EditPrediction::Jump {
                     id: Some(prediction.id.to_string().into()),
                     snapshot: prediction.snapshot.clone(),
                     target: prediction.edits.first().unwrap().0.start,
@@ -208,7 +208,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             }
         }
 
-        Some(edit_prediction::EditPrediction::Local {
+        Some(edit_prediction_types::EditPrediction::Local {
             id: Some(prediction.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(prediction.edit_preview.clone()),

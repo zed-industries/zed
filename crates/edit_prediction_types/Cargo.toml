@@ -1,5 +1,5 @@
 [package]
-name = "edit_prediction"
+name = "edit_prediction_types"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/edit_prediction.rs"
+path = "src/edit_prediction_types.rs"
 
 [dependencies]
 client.workspace = true

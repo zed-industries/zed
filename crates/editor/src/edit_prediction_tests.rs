@@ -1,4 +1,4 @@
-use edit_prediction::EditPredictionProvider;
+use edit_prediction_types::EditPredictionProvider;
 use gpui::{Entity, KeyBinding, Modifiers, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
@@ -383,7 +383,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -414,7 +414,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -434,11 +434,14 @@ fn assign_editor_completion_provider_non_zed(
 
 #[derive(Default, Clone)]
 pub struct FakeEditPredictionProvider {
-    pub completion: Option<edit_prediction::EditPrediction>,
+    pub completion: Option<edit_prediction_types::EditPrediction>,
 }
 
 impl FakeEditPredictionProvider {
-    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
+    pub fn set_edit_prediction(
+        &mut self,
+        completion: Option<edit_prediction_types::EditPrediction>,
+    ) {
         self.completion = completion;
     }
 }
@@ -486,7 +489,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _direction: edit_prediction::Direction,
+        _direction: edit_prediction_types::Direction,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -500,18 +503,21 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<edit_prediction::EditPrediction> {
+    ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
 }
 
 #[derive(Default, Clone)]
 pub struct FakeNonZedEditPredictionProvider {
-    pub completion: Option<edit_prediction::EditPrediction>,
+    pub completion: Option<edit_prediction_types::EditPrediction>,
 }
 
 impl FakeNonZedEditPredictionProvider {
-    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
+    pub fn set_edit_prediction(
+        &mut self,
+        completion: Option<edit_prediction_types::EditPrediction>,
+    ) {
         self.completion = completion;
     }
 }
@@ -559,7 +565,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _direction: edit_prediction::Direction,
+        _direction: edit_prediction_types::Direction,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -573,7 +579,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<edit_prediction::EditPrediction> {
+    ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
 }

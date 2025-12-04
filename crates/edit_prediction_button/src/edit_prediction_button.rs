@@ -1,5 +1,6 @@
 mod sweep_api_token_modal;
 
+use edit_prediction_types::EditPredictionProviderHandle;
 pub use sweep_api_token_modal::SweepApiKeyModal;
 
 use anyhow::Result;
@@ -67,7 +68,7 @@ pub struct EditPredictionButton {
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    edit_prediction_provider: Option<Arc<dyn edit_prediction::EditPredictionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn EditPredictionProviderHandle>>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,

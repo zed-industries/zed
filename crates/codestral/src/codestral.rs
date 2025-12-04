@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
-use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -43,7 +43,7 @@ impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
     /// Returns None if the user's edits conflict with the predicted edits.
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+        edit_prediction_types::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
 

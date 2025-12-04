@@ -1,6 +1,6 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};

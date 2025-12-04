@@ -1,6 +1,6 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use settings::Settings;

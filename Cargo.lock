@@ -3227,8 +3227,8 @@ name = "codestral"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "edit_prediction",
  "edit_prediction_context",
+ "edit_prediction_types",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -3628,7 +3628,7 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "dirs 4.0.0",
- "edit_prediction",
+ "edit_prediction_types",
  "editor",
  "fs",
  "futures 0.3.31",
@@ -5107,15 +5107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "edit_prediction"
-version = "0.1.0"
-dependencies = [
- "client",
- "gpui",
- "language",
-]
-
-[[package]]
 name = "edit_prediction_button"
 version = "0.1.0"
 dependencies = [
@@ -5124,7 +5115,7 @@ dependencies = [
  "cloud_llm_client",
  "codestral",
  "copilot",
- "edit_prediction",
+ "edit_prediction_types",
  "editor",
  "feature_flags",
  "fs",
@@ -5178,6 +5169,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_types"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "language",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -5193,7 +5193,7 @@ dependencies = [
  "ctor",
  "dap",
  "db",
- "edit_prediction",
+ "edit_prediction_types",
  "emojis",
  "feature_flags",
  "file_icons",
@@ -15518,7 +15518,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
- "edit_prediction",
+ "edit_prediction_types",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -20760,8 +20760,8 @@ dependencies = [
  "credentials_provider",
  "ctor",
  "db",
- "edit_prediction",
  "edit_prediction_context",
+ "edit_prediction_types",
  "editor",
  "feature_flags",
  "fs",
