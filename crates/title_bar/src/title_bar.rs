@@ -31,9 +31,10 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
+use project::{
+    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktreesStorage,
+};
 use remote::RemoteConnectionOptions;
-use session::TrustedWorktreesStorage;
 use settings::{Settings, SettingsLocation};
 use std::{path::PathBuf, sync::Arc};
 use theme::ActiveTheme;
@@ -300,10 +301,10 @@ impl TitleBar {
                 subscriptions.push(trusted_worktrees_storage.subscribe(
                     cx,
                     move |title_bar, e, cx| match e {
-                        session::Event::TrustedWorktree(abs_path) => {
+                        project::trusted_worktrees::Event::TrustedWorktree(abs_path) => {
                             title_bar.untrusted_worktrees.remove(abs_path);
                         }
-                        session::Event::UntrustedWorktree(abs_path) => {
+                        project::trusted_worktrees::Event::UntrustedWorktree(abs_path) => {
                             title_bar
                                 .workspace
                                 .update(cx, |workspace, cx| {
@@ -448,9 +449,7 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.untrusted_worktrees.is_empty()
-            || !cx.has_global::<session::TrustedWorktreesStorage>()
-        {
+        if self.untrusted_worktrees.is_empty() || !cx.has_global::<TrustedWorktreesStorage>() {
             return None;
         }
 
