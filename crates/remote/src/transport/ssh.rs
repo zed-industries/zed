@@ -1546,6 +1546,13 @@ mod tests {
         assert_eq!(parse_platform("Linux aarch64\n").unwrap().arch, "aarch64");
         assert_eq!(parse_platform("Linux x86_64\n").unwrap().arch, "x86_64");
 
+        let result = parse_platform(
+            r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
+        )
+        .unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "x86_64");
+
         assert!(parse_platform("Windows x86_64\n").is_err());
         assert!(parse_platform("Linux armv7l\n").is_err());
     }
