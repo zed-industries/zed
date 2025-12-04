@@ -6,7 +6,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
-use util::{debug_panic, post_inc, rel_path::RelPath};
+use util::{post_inc, rel_path::RelPath};
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,

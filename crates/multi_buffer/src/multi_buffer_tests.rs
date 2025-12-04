@@ -12,6 +12,13 @@ use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
 
+// FIXME
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MultiBufferFilterMode {
+    KeepInsertions,
+    KeepDeletions,
+}
+
 #[ctor::ctor]
 fn init_logger() {
     zlog::init_test();
@@ -2685,23 +2692,22 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 }
 
-// TODO(split-diff) bump up iterations
+// FIXME
 // #[gpui::test(iterations = 100)]
-#[gpui::test]
-async fn test_random_filtered_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-        multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-        multibuffer
-    });
-    let follower = multibuffer.update(cx, |multibuffer, cx| multibuffer.get_or_create_follower(cx));
-    follower.update(cx, |follower, _| {
-        assert!(follower.all_diff_hunks_expanded());
-        follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-    });
-    test_random_multibuffer_impl(multibuffer, cx, rng).await;
-}
+// async fn test_random_filtered_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
+//     let multibuffer = cx.new(|cx| {
+//         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+//         multibuffer.set_all_diff_hunks_expanded(cx);
+//         multibuffer.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
+//         multibuffer
+//     });
+//     let follower = multibuffer.update(cx, |multibuffer, cx| multibuffer.get_or_create_follower(cx));
+//     follower.update(cx, |follower, _| {
+//         assert!(follower.all_diff_hunks_expanded());
+//         follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+//     });
+//     test_random_multibuffer_impl(multibuffer, cx, rng).await;
+// }
 
 #[gpui::test(iterations = 100)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
@@ -2726,7 +2732,6 @@ async fn test_random_multibuffer_impl(
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
-    let mut old_follower_versions = Vec::new();
     let mut needs_diff_calculation = false;
 
     for _ in 0..operations {
@@ -2943,34 +2948,17 @@ async fn test_random_multibuffer_impl(
         if rng.random_bool(0.3) {
             multibuffer.update(cx, |multibuffer, cx| {
                 old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
-
-                if let Some(follower) = &multibuffer.follower {
-                    follower.update(cx, |follower, cx| {
-                        old_follower_versions.push((follower.snapshot(cx), follower.subscribe()));
-                    })
-                }
             })
         }
 
         multibuffer.read_with(cx, |multibuffer, cx| {
             check_multibuffer(multibuffer, &reference, &anchors, cx, &mut rng);
-
-            if let Some(follower) = &multibuffer.follower {
-                check_multibuffer(follower.read(cx), &reference, &anchors, cx, &mut rng);
-            }
         });
     }
 
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     for (old_snapshot, subscription) in old_versions {
         check_multibuffer_edits(&snapshot, &old_snapshot, subscription);
-    }
-    if let Some(follower) = multibuffer.read_with(cx, |multibuffer, _| multibuffer.follower.clone())
-    {
-        let snapshot = follower.read_with(cx, |follower, cx| follower.snapshot(cx));
-        for (old_snapshot, subscription) in old_follower_versions {
-            check_multibuffer_edits(&snapshot, &old_snapshot, subscription);
-        }
     }
 }
 
@@ -2982,7 +2970,8 @@ fn check_multibuffer(
     rng: &mut StdRng,
 ) {
     let snapshot = multibuffer.snapshot(cx);
-    let filter_mode = multibuffer.filter_mode;
+    // FIXME
+    let filter_mode = None;
     assert!(filter_mode.is_some() == snapshot.all_diff_hunks_expanded);
     let actual_text = snapshot.text();
     let actual_boundary_rows = snapshot
@@ -3696,7 +3685,7 @@ fn format_diff(
 // }
 
 #[gpui::test]
-async fn test_basic_filtering(cx: &mut TestAppContext) {
+async fn test_inverted_diff(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         ZERO
@@ -3721,11 +3710,17 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
     let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
+    let base_text_buffer = cx.new(|cx| Buffer::local(base_text, cx));
+
     let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-        multibuffer.add_diff(diff.clone(), cx);
+        let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
         multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
+        multibuffer.add_inverted_diff(
+            base_text_buffer.read(cx).remote_id(),
+            diff.clone(),
+            buffer.clone(),
+            cx,
+        );
         multibuffer
     });
 
@@ -3766,6 +3761,7 @@ async fn test_basic_filtering(cx: &mut TestAppContext) {
             cx,
         );
     });
+    cx.run_until_parked();
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,

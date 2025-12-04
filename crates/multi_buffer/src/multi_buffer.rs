@@ -592,8 +592,12 @@ impl DiffState {
                         }
                         cx.emit(Event::BufferDiffChanged);
                     }
-                    // FIXME
-                    BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
+                    BufferDiffEvent::LanguageChanged => this.inverted_buffer_diff_language_changed(
+                        base_text_buffer_id,
+                        diff,
+                        main_buffer.clone(),
+                        cx,
+                    ),
                     _ => {}
                 }
             }),
@@ -656,6 +660,7 @@ struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
+    is_logically_deleted: bool,
 }
 
 impl Eq for DiffTransformHunkInfo {}
@@ -3316,6 +3321,12 @@ impl MultiBuffer {
                     excerpt_buffer_start + edit.new.end.saturating_sub(excerpt_start);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
 
+                if excerpts.end() <= edit.new.end {
+                    excerpts.next();
+                } else {
+                    break;
+                }
+
                 if let Some(main_buffer) = &diff.main_buffer {
                     for hunk in diff.hunks_intersecting_base_text_range(
                         edit_buffer_start..edit_buffer_end,
@@ -3342,6 +3353,7 @@ impl MultiBuffer {
                                 excerpt_id: excerpt.id,
                                 hunk_start_anchor: hunk.buffer_range.start,
                                 hunk_secondary_status: hunk.secondary_status,
+                                is_logically_deleted: true,
                             };
                             *end_of_current_insert =
                                 Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
@@ -3367,6 +3379,7 @@ impl MultiBuffer {
                         excerpt_id: excerpt.id,
                         hunk_start_anchor: hunk.buffer_range.start,
                         hunk_secondary_status: hunk.secondary_status,
+                        is_logically_deleted: false,
                     };
 
                     let hunk_excerpt_start = excerpt_start
@@ -3443,12 +3456,6 @@ impl MultiBuffer {
                         }
                     }
                 }
-            }
-
-            if excerpts.end() <= edit.new.end {
-                excerpts.next();
-            } else {
-                break;
             }
         }
 
@@ -6926,13 +6933,20 @@ where
                     has_trailing_newline = excerpt.has_trailing_newline;
                 };
 
+                let diff_hunk_status = inserted_hunk_info.map(|info| {
+                    if info.is_logically_deleted {
+                        DiffHunkStatus::deleted(info.hunk_secondary_status)
+                    } else {
+                        DiffHunkStatus::added(info.hunk_secondary_status)
+                    }
+                });
+
                 Some(MultiBufferRegion {
                     buffer,
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    diff_hunk_status: inserted_hunk_info
-                        .map(|info| DiffHunkStatus::added(info.hunk_secondary_status)),
+                    diff_hunk_status,
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
