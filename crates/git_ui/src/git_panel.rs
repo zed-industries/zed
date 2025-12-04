@@ -13,6 +13,7 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
+use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
@@ -61,12 +62,7 @@ use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
-use std::{
-    collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-    usize,
-};
+use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
@@ -400,6 +396,7 @@ pub struct GitPanel {
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
+    entries_indices: HashMap<RepoPath, usize>,
     single_staged_entry: Option<GitStatusEntry>,
     single_tracked_entry: Option<GitStatusEntry>,
     focus_handle: FocusHandle,
@@ -495,7 +492,6 @@ impl GitPanel {
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
-                    this.entries.clear();
                     this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
@@ -565,6 +561,7 @@ impl GitPanel {
                 add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
+                entries_indices: HashMap::default(),
                 focus_handle: cx.focus_handle(),
                 fs,
                 new_count: 0,
@@ -595,9 +592,9 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 view_mode: GitPanelViewMode::Flat,
-                expanded_dirs: HashMap::new(),
-                directory_descendants: HashMap::new(),
-                optimistic_staging: HashMap::new(),
+                expanded_dirs: HashMap::default(),
+                directory_descendants: HashMap::default(),
+                optimistic_staging: HashMap::default(),
                 _settings_subscription,
             };
 
@@ -606,17 +603,8 @@ impl GitPanel {
         })
     }
 
-    // ensuring entry_by_path works correctly when in tree view by switching from binary search to linear search
-    // since entries aren’t sorted there. This will keep features like checkbox states and bulk staging anchors
-    // working smoothly without overcomplicating the logic.
-    pub fn entry_by_path(&self, path: &RepoPath, _cx: &App) -> Option<usize> {
-        // Lists can contain headers, directory nodes, and different sort/group modes;
-        // just scan the rendered entries for a matching status path.
-        self.entries.iter().position(|entry| {
-            entry
-                .status_entry()
-                .is_some_and(|status| &status.repo_path == path)
-        })
+    pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
+        self.entries_indices.get(path).copied()
     }
 
     pub fn select_entry_by_path(
@@ -631,7 +619,7 @@ impl GitPanel {
         let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
             return;
         };
-        let Some(ix) = self.entry_by_path(&repo_path, cx) else {
+        let Some(ix) = self.entry_by_path(&repo_path) else {
             return;
         };
         self.selected_entry = Some(ix);
@@ -3000,9 +2988,10 @@ impl GitPanel {
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
-            .and_then(|op| self.entry_by_path(&op.anchor, cx));
+            .and_then(|op| self.entry_by_path(&op.anchor));
 
         self.entries.clear();
+        self.entries_indices.clear();
         self.directory_descendants.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
@@ -3023,7 +3012,7 @@ impl GitPanel {
         let mut conflict_entries = Vec::new();
         let mut single_staged_entry = None;
         let mut staged_count = 0;
-        let mut seen_directories = HashSet::new();
+        let mut seen_directories = HashSet::default();
         let mut max_width_estimate = 0usize;
         let mut max_width_item_index = None;
 
@@ -3099,21 +3088,28 @@ impl GitPanel {
             self.single_tracked_entry = changed_entries.first().cloned();
         }
 
-        let mut push_entry =
-            |entries: &mut Vec<GitListEntry>, entry: GitListEntry, estimate: Option<usize>| {
-                if let Some(estimate) = estimate {
-                    if estimate > max_width_estimate {
-                        max_width_estimate = estimate;
-                        max_width_item_index = Some(entries.len());
-                    }
+        let mut push_entry = |entries: &mut Vec<GitListEntry>,
+                              entries_indices: &mut HashMap<RepoPath, usize>,
+                              entry: GitListEntry,
+                              estimate: Option<usize>| {
+            if let Some(estimate) = estimate {
+                if estimate > max_width_estimate {
+                    max_width_estimate = estimate;
+                    max_width_item_index = Some(entries.len());
                 }
-                entries.push(entry);
-            };
+            }
+
+            if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone()) {
+                entries_indices.insert(repo_path, entries.len());
+            }
+            entries.push(entry);
+        };
 
         if self.view_mode == GitPanelViewMode::Tree {
             if !conflict_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
+                    &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::Conflict,
                     }),
@@ -3126,13 +3122,19 @@ impl GitPanel {
                     &mut seen_directories,
                 ) {
                     let estimate = self.width_estimate_for_list_entry(&entry, path_style);
-                    push_entry(&mut self.entries, entry, estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        entry,
+                        estimate,
+                    );
                 }
             }
 
             if !changed_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
+                    &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::Tracked,
                     }),
@@ -3145,13 +3147,19 @@ impl GitPanel {
                     &mut seen_directories,
                 ) {
                     let estimate = self.width_estimate_for_list_entry(&entry, path_style);
-                    push_entry(&mut self.entries, entry, estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        entry,
+                        estimate,
+                    );
                 }
             }
 
             if !new_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
+                    &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::New,
                     }),
@@ -3161,7 +3169,12 @@ impl GitPanel {
                     self.build_tree_entries(Section::New, new_entries, &repo, &mut seen_directories)
                 {
                     let estimate = self.width_estimate_for_list_entry(&entry, path_style);
-                    push_entry(&mut self.entries, entry, estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        entry,
+                        estimate,
+                    );
                 }
             }
 
@@ -3171,6 +3184,7 @@ impl GitPanel {
             if !conflict_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
+                    &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::Conflict,
                     }),
@@ -3178,7 +3192,12 @@ impl GitPanel {
                 );
                 for entry in conflict_entries {
                     let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
-                    push_entry(&mut self.entries, GitListEntry::Status(entry), estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        GitListEntry::Status(entry),
+                        estimate,
+                    );
                 }
             }
 
@@ -3186,6 +3205,7 @@ impl GitPanel {
                 if !sort_by_path {
                     push_entry(
                         &mut self.entries,
+                        &mut self.entries_indices,
                         GitListEntry::Header(GitHeaderEntry {
                             header: Section::Tracked,
                         }),
@@ -3194,12 +3214,18 @@ impl GitPanel {
                 }
                 for entry in changed_entries {
                     let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
-                    push_entry(&mut self.entries, GitListEntry::Status(entry), estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        GitListEntry::Status(entry),
+                        estimate,
+                    );
                 }
             }
             if !new_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
+                    &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::New,
                     }),
@@ -3207,7 +3233,12 @@ impl GitPanel {
                 );
                 for entry in new_entries {
                     let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
-                    push_entry(&mut self.entries, GitListEntry::Status(entry), estimate);
+                    push_entry(
+                        &mut self.entries,
+                        &mut self.entries_indices,
+                        GitListEntry::Status(entry),
+                        estimate,
+                    );
                 }
             }
         }
@@ -3226,7 +3257,7 @@ impl GitPanel {
         let bulk_staging_anchor_new_index = bulk_staging
             .as_ref()
             .filter(|op| op.repo_id == repo.id)
-            .and_then(|op| self.entry_by_path(&op.anchor, cx));
+            .and_then(|op| self.entry_by_path(&op.anchor));
         if bulk_staging_anchor_new_index == last_staged_path_prev_index
             && let Some(index) = bulk_staging_anchor_new_index
             && let Some(entry) = self.entries.get(index)
@@ -4280,7 +4311,7 @@ impl GitPanel {
         let repo = self.active_repository.as_ref()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path().clone()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
-        let ix = self.entry_by_path(&repo_path, cx)?;
+        let ix = self.entry_by_path(&repo_path)?;
         let entry = self.entries.get(ix)?;
 
         let is_staging_or_staged = repo
@@ -5112,7 +5143,7 @@ impl GitPanel {
         let Some(op) = self.bulk_staging.as_ref() else {
             return;
         };
-        let Some(mut anchor_index) = self.entry_by_path(&op.anchor, cx) else {
+        let Some(mut anchor_index) = self.entry_by_path(&op.anchor) else {
             return;
         };
         if let Some(entry) = self.entries.get(index)
