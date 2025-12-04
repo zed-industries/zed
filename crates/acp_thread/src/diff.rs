@@ -90,7 +90,7 @@ impl Diff {
         let base_text = base_text_snapshot.text();
         debug_assert_eq!(buffer_text_snapshot.text(), base_text);
         let buffer_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, base_text_snapshot);
+            let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
             let snapshot = diff.snapshot(cx);
             let secondary_diff = cx.new(|cx| {
                 let mut diff = BufferDiff::new(&buffer_text_snapshot, cx);
@@ -193,7 +193,7 @@ impl Diff {
 
 pub struct PendingDiff {
     multibuffer: Entity<MultiBuffer>,
-    base_text: Arc<String>,
+    base_text: Arc<str>,
     new_buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     revealed_ranges: Vec<Range<Anchor>>,

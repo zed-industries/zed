@@ -506,6 +506,13 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
+fn foo(buffer: Entity<Buffer>, cx: &mut App) {
+    buffer.update(cx, |buffer, cx| {
+        let new_buffer = Buffer::new();
+        std::mem::replace(buffer, new_buffer);
+    })
+}
+
 struct DiffState {
     diff: Entity<BufferDiff>,
     /// Whether the [`MultiBuffer`] this is associated with is inverted (i.e.

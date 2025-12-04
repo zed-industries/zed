@@ -7735,9 +7735,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // Both staged hunks appear as pending.
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7765,9 +7765,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
