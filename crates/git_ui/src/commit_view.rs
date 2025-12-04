@@ -896,7 +896,6 @@ impl Item for CommitView {
                     .into_any_element()
             }
         }))))
-        .into()
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
