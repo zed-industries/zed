@@ -197,7 +197,7 @@ pub struct DeploySearch {
 }
 
 // TODO naming
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub enum SplitOperation {
     /// clone the current pane
@@ -2392,10 +2392,10 @@ impl Pane {
     pub fn split(
         &mut self,
         direction: SplitDirection,
-        operation: &SplitOperation,
+        operation: SplitOperation,
         cx: &mut Context<Self>,
     ) {
-        if self.items.len() <= 1 && *operation == SplitOperation::Move {
+        if self.items.len() <= 1 && operation == SplitOperation::Move {
             return;
         }
 
@@ -3801,34 +3801,34 @@ impl Render for Pane {
             .flex_none()
             .overflow_hidden()
             .on_action(cx.listener(|pane, split: &SplitLeft, _, cx| {
-                pane.split(SplitDirection::Left, &split.operation, cx)
+                pane.split(SplitDirection::Left, split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitUp, _, cx| {
-                pane.split(SplitDirection::Up, &split.operation, cx)
+                pane.split(SplitDirection::Up, split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), &split.operation, cx)
+                pane.split(SplitDirection::horizontal(cx), split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), &split.operation, cx)
+                pane.split(SplitDirection::vertical(cx), split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitRight, _, cx| {
-                pane.split(SplitDirection::Right, &split.operation, cx)
+                pane.split(SplitDirection::Right, split.operation, cx)
             }))
             .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
-                pane.split(SplitDirection::Down, &split.operation, cx)
+                pane.split(SplitDirection::Down, split.operation, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
-                pane.split(SplitDirection::Up, &SplitOperation::Move, cx)
+                pane.split(SplitDirection::Up, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
-                pane.split(SplitDirection::Down, &SplitOperation::Move, cx)
+                pane.split(SplitDirection::Down, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
-                pane.split(SplitDirection::Left, &SplitOperation::Move, cx)
+                pane.split(SplitDirection::Left, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
-                pane.split(SplitDirection::Right, &SplitOperation::Move, cx)
+                pane.split(SplitDirection::Right, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
