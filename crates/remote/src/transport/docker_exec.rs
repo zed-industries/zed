@@ -83,7 +83,15 @@ impl DockerExecConnection {
 
     async fn discover_shell(&self) -> String {
         let default_shell = "sh";
-        match self.run_command("sh", &["-c", "echo $SHELL"]).await {
+        match self
+            .run_docker_exec(
+                "sh",
+                &self.connection_options.working_directory,
+                &Default::default(),
+                &["-c", "echo $SHELL"],
+            )
+            .await
+        {
             Ok(shell) => match shell.trim() {
                 "" => {
                     log::error!("$SHELL is not set, falling back to {default_shell}");
@@ -99,7 +107,14 @@ impl DockerExecConnection {
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("uname", &["-sm"]).await?;
+        let uname = self
+            .run_docker_exec(
+                "uname",
+                &self.connection_options.working_directory,
+                &Default::default(),
+                &["-sm"],
+            )
+            .await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -179,7 +194,12 @@ impl DockerExecConnection {
         }
 
         if self
-            .run_command(&dst_path.display(self.path_style()), &["version"])
+            .run_docker_exec(
+                &dst_path.display(self.path_style()),
+                &self.connection_options.working_directory,
+                &Default::default(),
+                &["version"],
+            )
             .await
             .is_ok()
         {
@@ -284,7 +304,13 @@ impl DockerExecConnection {
             format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
-        self.run_command("sh", &args).await?;
+        self.run_docker_exec(
+            "sh",
+            &self.connection_options.working_directory,
+            &Default::default(),
+            &args,
+        )
+        .await?;
         Ok(())
     }
 
@@ -296,8 +322,13 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
-            self.run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
-                .await?;
+            self.run_docker_exec(
+                "mkdir",
+                &self.connection_options.working_directory,
+                &Default::default(),
+                &["-p", parent.display(self.path_style()).as_ref()],
+            )
+            .await?;
         }
 
         let src_stat = smol::fs::metadata(&src_path).await?;
@@ -352,21 +383,16 @@ impl DockerExecConnection {
         );
     }
 
-    async fn run_command(&self, program: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let mut command = util::command::new_smol_command("docker"); // TODO docker needs to be a field
-        command.arg("exec");
-
-        command.arg("-w");
-        command.arg(&self.connection_options.working_directory);
-
-        command.arg(&self.connection_options.container_id);
-
-        command.arg(program);
-
+    async fn run_docker_command(
+        &self,
+        subcommand: &str,
+        args: &[impl AsRef<str>],
+    ) -> Result<String> {
+        let mut command = util::command::new_smol_command("docker");
+        command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
         }
-
         let output = command.output().await?;
         anyhow::ensure!(
             output.status.success(),
@@ -374,6 +400,30 @@ impl DockerExecConnection {
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn run_docker_exec(
+        &self,
+        inner_program: &str,
+        working_directory: &str,
+        env: &HashMap<String, String>,
+        program_args: &[impl AsRef<str>],
+    ) -> Result<String> {
+        let mut args = vec!["-w".to_string(), working_directory.to_string()];
+
+        for (k, v) in env.iter() {
+            args.push("-e".to_string());
+            let env_declaration = format!("{}={}", k, v);
+            args.push(env_declaration);
+        }
+
+        args.push(self.connection_options.container_id.clone());
+        args.push(inner_program.to_string());
+
+        for arg in program_args {
+            args.push(arg.as_ref().to_owned());
+        }
+        self.run_docker_command("exec", args.as_ref()).await
     }
 
     async fn download_binary_on_server(
@@ -384,15 +434,22 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
-            self.run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
-                .await?;
+            self.run_docker_exec(
+                "mkdir",
+                &self.connection_options.working_directory,
+                &Default::default(),
+                &["-p", parent.display(self.path_style()).as_ref()],
+            )
+            .await?;
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
         match self
-            .run_command(
+            .run_docker_exec(
                 "curl",
+                &self.connection_options.working_directory,
+                &Default::default(),
                 &[
                     "-f",
                     "-L",
@@ -405,21 +462,41 @@ impl DockerExecConnection {
         {
             Ok(_) => {}
             Err(e) => {
-                if self.run_command("which", &["curl"]).await.is_ok() {
+                if self
+                    .run_docker_exec(
+                        "which",
+                        &self.connection_options.working_directory,
+                        &Default::default(),
+                        &["curl"],
+                    )
+                    .await
+                    .is_ok()
+                {
                     return Err(e);
                 }
 
                 log::info!("curl is not available, trying wget");
                 match self
-                    .run_command(
+                    .run_docker_exec(
                         "wget",
+                        &self.connection_options.working_directory,
+                        &Default::default(),
                         &[url, "-O", &tmp_path_gz.display(self.path_style())],
                     )
                     .await
                 {
                     Ok(_) => {}
                     Err(e) => {
-                        if self.run_command("which", &["wget"]).await.is_ok() {
+                        if self
+                            .run_docker_exec(
+                                "which",
+                                &self.connection_options.working_directory,
+                                &Default::default(),
+                                &["wget"],
+                            )
+                            .await
+                            .is_ok()
+                        {
                             return Err(e);
                         } else {
                             anyhow::bail!("Neither curl nor wget is available");
@@ -449,59 +526,40 @@ impl RemoteConnection for DockerExecConnection {
         let Some(remote_binary_path) = self.remote_binary_path.clone() else {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
-        // let path = RelPath::new(Path::new(".zed_server/zed-remote-server"), PathStyle::Posix)?;
-        // let remote_binary_path = Arc::new(RelPath::new(
-        //     Path::new(".zed_server/zed-remote-server"),
-        //     PathStyle::Posix,
-        // ));
 
         let mut docker_args = vec![
-            "exec",
-            "-w",
-            &self.connection_options.working_directory,
-            "-i",
-            &self.connection_options.container_id,
+            "exec".to_string(),
+            "-w".to_string(),
+            self.connection_options.working_directory.clone(),
+            "-i".to_string(),
+            self.connection_options.container_id.to_string(),
         ];
-        // TODO not sure how you do this best in an exec context
-        // for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
-        //     if let Some(value) = std::env::var(env_var).ok() {
-        //         docker_args.push(format!("{}='{}'", env_var, value));
-        //     }
-        // }
-        let val = remote_binary_path.display(self.path_style()).into_owned();
-        docker_args.push(&val);
-        docker_args.push("proxy");
-        docker_args.push("--identifier");
-        docker_args.push(&unique_identifier);
-        if reconnect {
-            docker_args.push("--reconnect");
+        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
+            if let Some(value) = std::env::var(env_var).ok() {
+                docker_args.push("-e".to_string());
+                docker_args.push(format!("{}='{}'", env_var, value));
+            }
         }
-
-        // if reconnect {
-        //     proxy_args.push("--reconnect".to_owned());
-        // }
-
-        // let ssh_proxy_process = match self
-        //     .socket
-        //     .ssh_command(self.ssh_shell_kind, "env", &proxy_args, false)
-        //     // IMPORTANT: we kill this process when we drop the task that uses it.
-        //     .kill_on_drop(true)
-        //     .spawn()
-        // {
-        //     Ok(process) => process,
-        //     Err(error) => {
-        //         return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
-        //     }
-        // };
+        let val = remote_binary_path.display(self.path_style()).into_owned();
+        docker_args.push(val);
+        docker_args.push("proxy".to_string());
+        docker_args.push("--identifier".to_string());
+        docker_args.push(unique_identifier);
+        if reconnect {
+            docker_args.push("--reconnect".to_string());
+        }
         let mut command = util::command::new_smol_command("docker");
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(docker_args); // TODO
-        let child = command.spawn().unwrap(); // TODO
+            .args(docker_args);
+        let Ok(child) = command.spawn() else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Failed to start remote server process"
+            )));
+        };
 
-        // So the question is really, why doesn't this have a stdout /in handle?
         super::handle_rpc_messages_over_child_process_stdio(
             child,
             incoming_tx,
@@ -520,9 +578,6 @@ impl RemoteConnection for DockerExecConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
-        println!("Upload path: {}", dest_path_str);
-        println!("Source path: {}", src_path_display);
-
         let mut command = util::command::new_smol_command("docker");
         command.arg("cp");
         command.arg("-a"); // Archive mode is required to assign the file ownership to the default docker exec user
@@ -535,9 +590,6 @@ impl RemoteConnection for DockerExecConnection {
         cx.background_spawn(async move {
             let output = command.output().await?;
 
-            dbg!("output: {}", &output);
-
-            // TODO stderr mapping and such
             if output.status.success() {
                 Ok(())
             } else {
@@ -565,74 +617,54 @@ impl RemoteConnection for DockerExecConnection {
         working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        use std::fmt::Write as _;
-
         let mut parsed_working_dir = None;
 
         let path_style = self.path_style();
-        // let shell_kind = self.shell_kind();
 
-        let mut exec = String::new();
         if let Some(working_dir) = working_dir {
             let working_dir = RemotePathBuf::new(working_dir, path_style).to_string();
 
-            // shlex will wrap the command in single quotes (''), disabling ~ expansion,
-            // replace with with something that works
             const TILDE_PREFIX: &'static str = "~/";
             if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
                 parsed_working_dir = Some(format!("$HOME/{working_dir}"));
-                // write!(
-                //     exec,
-                //     "cd \"$HOME/{working_dir}\" {} ",
-                //     ssh_shell_kind.sequential_and_commands_separator()
-                // )?;
             } else {
                 parsed_working_dir = Some(working_dir);
-                // write!(
-                //     exec,
-                //     "cd \"{working_dir}\" {} ",
-                //     ssh_shell_kind.sequential_and_commands_separator()
-                // )?;
             }
         }
-
-        write!(exec, "exec env ")?;
 
         let mut inner_program = Vec::new();
 
         if let Some(program) = program {
             inner_program.push(program);
             for arg in args {
-                // let arg = ssh_shell_kind.try_quote(&arg).context("shell quoting")?;
                 inner_program.push(arg.clone());
             }
         } else {
-            inner_program.push("/bin/bash".to_string()); // TODO shell extraction
+            inner_program.push(self.shell().clone());
             inner_program.push("-l".to_string());
         };
 
-        let mut the_args = vec!["exec".to_string()];
+        let mut docker_args = vec!["exec".to_string()];
 
         if parsed_working_dir.is_some() {
-            the_args.push("-w".to_string());
-            the_args.push(parsed_working_dir.unwrap());
+            docker_args.push("-w".to_string());
+            docker_args.push(parsed_working_dir.unwrap());
         }
 
         for (k, v) in env.iter() {
-            the_args.push("-e".to_string());
-            the_args.push(format!("{}={}", k, v));
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{}={}", k, v));
         }
 
-        the_args.push("-it".to_string());
-        the_args.push(self.connection_options.container_id.to_string());
+        docker_args.push("-it".to_string());
+        docker_args.push(self.connection_options.container_id.to_string());
 
-        the_args.append(&mut inner_program);
+        docker_args.append(&mut inner_program);
 
-        print!("The Args: {:?}", the_args);
         Ok(CommandTemplate {
             program: "docker".to_string(),
-            args: the_args,
+            args: docker_args,
             // Docker-exec pipes in environment via the "-e" argument
             env: Default::default(),
         })
@@ -642,7 +674,7 @@ impl RemoteConnection for DockerExecConnection {
         &self,
         _forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        todo!("Not currently supported for docker_exec")
+        Err(anyhow::anyhow!("Not currently supported for docker_exec"))
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {

@@ -1786,7 +1786,7 @@ impl RemoteServerProjects {
                                             .child(
                                                 h_flex()
                                                     .gap_1()
-                                                    .child(Label::new("Create New From"))
+                                                    .child(Label::new("Open or Create New From"))
                                                     .child(
                                                         Label::new("devcontainer.json")
                                                             .buffer_font(cx),
