@@ -1,0 +1,10 @@
+id = "anthropic"
+name = "Anthropic"
+description = "Anthropic Claude LLM provider for Zed."
+version = "0.1.0"
+schema_version = 1
+authors = ["Zed Team"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_model_providers.anthropic]
+name = "Anthropic"
