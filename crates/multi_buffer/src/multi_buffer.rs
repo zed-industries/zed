@@ -610,6 +610,7 @@ pub struct MultiBufferSnapshot {
     replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
+    show_deleted_hunks: bool,
     show_headers: bool,
 }
 
@@ -1089,6 +1090,7 @@ impl MultiBuffer {
             capability,
             MultiBufferSnapshot {
                 show_headers: true,
+                show_deleted_hunks: true,
                 ..MultiBufferSnapshot::default()
             },
         )
@@ -1862,6 +1864,7 @@ impl MultiBuffer {
             replaced_excerpts,
             trailing_excerpt_update_count,
             all_diff_hunks_expanded: _,
+            show_deleted_hunks: _,
             show_headers: _,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
@@ -2652,6 +2655,11 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], false, cx);
     }
 
+    pub fn set_show_deleted_hunks(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.snapshot.get_mut().show_deleted_hunks = show;
+        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+    }
+
     pub fn has_multiple_hunks(&self, cx: &App) -> bool {
         self.read(cx)
             .diff_hunks_in_range(Anchor::min()..Anchor::max())
@@ -2989,6 +2997,7 @@ impl MultiBuffer {
             replaced_excerpts: _,
             trailing_excerpt_update_count: _,
             all_diff_hunks_expanded: _,
+            show_deleted_hunks: _,
             show_headers: _,
         } = snapshot;
         *is_dirty = false;
@@ -3382,10 +3391,10 @@ impl MultiBuffer {
                             excerpt.id
                         );
 
-                        // FIXME don't push the deleted region if this is the RHS of a split
                         if !hunk.diff_base_byte_range.is_empty()
                             && hunk_buffer_range.start >= edit_buffer_start
                             && hunk_buffer_range.start <= excerpt_buffer_end
+                            && snapshot.show_deleted_hunks
                         {
                             let base_text = diff.base_text();
                             let mut text_cursor =

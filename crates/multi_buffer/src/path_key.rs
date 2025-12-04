@@ -69,6 +69,14 @@ impl MultiBuffer {
             .flat_map(|(key, ex_ids)| ex_ids.iter().map(move |id| (key, id)))
     }
 
+    pub fn excerpts_for_path(&self, path: &PathKey) -> impl '_ + Iterator<Item = ExcerptId> {
+        self.excerpts_by_path
+            .get(path)
+            .into_iter()
+            .flatten()
+            .copied()
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
