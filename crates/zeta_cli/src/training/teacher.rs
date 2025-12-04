@@ -21,8 +21,15 @@ pub struct TeacherOutput {
 
 impl TeacherModel {
     const PROMPT: &str = include_str!("teacher.prompt.md");
-    const REGION_START: &str = "<|editable_region_start|>\n";
-    const REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const REGION_START: &str = "<|editable_region_start|>\n";
+    pub(crate) const REGION_END: &str = "<|editable_region_end|>";
+    pub(crate) const USER_CURSOR: &str = "<|user_cursor|>";
+
+    /// Number of lines to include before the cursor position
+    pub(crate) const LEFT_CONTEXT_SIZE: usize = 5;
+
+    /// Number of lines to include after the cursor position
+    pub(crate) const RIGHT_CONTEXT_SIZE: usize = 5;
 
     pub fn new(llm_name: String, context: ContextType) -> Self {
         TeacherModel { llm_name, context }
@@ -36,7 +43,7 @@ impl TeacherModel {
             .parse()
             .expect("Failed to parse cursor position");
 
-        let context = collect_context(&self.context, &worktree_dir, cursor);
+        let context = collect_context(&self.context, &worktree_dir, cursor.clone());
 
         let prompt = Self::PROMPT
             .replace("{{context}}", &context)
@@ -115,6 +122,7 @@ impl TeacherModel {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
