@@ -1541,18 +1541,6 @@ mod preview {
                                 .into_any_element(),
                         )],
                     ))
-                    .child(example_group_with_title(
-                        "Terminal Mode (TODO)",
-                        vec![single_example(
-                            "TODO: Execute Button",
-                            div()
-                                .p_4()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .child("TODO: Implement Terminal Mode with execute button")
-                                .into_any_element(),
-                        )],
-                    ))
                     .into_any_element(),
             )
         }
