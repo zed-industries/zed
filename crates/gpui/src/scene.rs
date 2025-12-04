@@ -679,7 +679,9 @@ pub(crate) struct ArcPath {
     pub path: Arc<Path<ScaledPixels>>,
     pub order: DrawOrder,
     pub id: PathId,
+    #[cfg_attr(target_os = "linux", allow(unused_variables))]
     pub content_mask: ContentMask<ScaledPixels>,
+    #[cfg_attr(target_os = "linux", allow(unused_variables))]
     pub color: Background,
 }
 
@@ -698,6 +700,7 @@ impl ArcPath {
         }
     }
 
+    #[cfg_attr(target_os = "linux", allow(unused_variables))]
     pub fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
         self.path.bounds.intersect(&self.content_mask.bounds)
     }
