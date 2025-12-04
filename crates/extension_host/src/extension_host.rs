@@ -1387,11 +1387,6 @@ impl ExtensionStore {
                         // Tuple is (provider_info, models, is_authenticated)
                         let mut llm_providers_with_models = Vec::new();
                         if !extension.manifest.language_model_providers.is_empty() {
-                            eprintln!(
-                                "Extension {} declares {} LLM providers in manifest, querying...",
-                                extension.manifest.id,
-                                extension.manifest.language_model_providers.len()
-                            );
                             let providers_result = wasm_extension
                                 .call(|ext, store| {
                                     async move { ext.call_llm_providers(store).await }.boxed()
@@ -1399,11 +1394,6 @@ impl ExtensionStore {
                                 .await;
 
                             if let Ok(Ok(providers)) = providers_result {
-                                eprintln!(
-                                    "Extension {} returned {} LLM providers",
-                                    extension.manifest.id,
-                                    providers.len()
-                                );
                                 for provider_info in providers {
                                     let models_result = wasm_extension
                                         .call({
@@ -1421,7 +1411,7 @@ impl ExtensionStore {
                                     let models: Vec<LlmModelInfo> = match models_result {
                                         Ok(Ok(Ok(models))) => models,
                                         Ok(Ok(Err(e))) => {
-                                            eprintln!(
+                                            log::error!(
                                                 "Failed to get models for LLM provider {} in extension {}: {}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1430,7 +1420,7 @@ impl ExtensionStore {
                                             Vec::new()
                                         }
                                         Ok(Err(e)) => {
-                                            eprintln!(
+                                            log::error!(
                                                 "Wasm error calling llm_provider_models for {} in extension {}: {:?}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1439,7 +1429,7 @@ impl ExtensionStore {
                                             Vec::new()
                                         }
                                         Err(e) => {
-                                            eprintln!(
+                                            log::error!(
                                                 "Extension call failed for llm_provider_models {} in extension {}: {:?}",
                                                 provider_info.id,
                                                 extension.manifest.id,
@@ -1468,17 +1458,11 @@ impl ExtensionStore {
                                         .unwrap_or(Ok(false))
                                         .unwrap_or(false);
 
-                                    eprintln!(
-                                        "LLM provider {} has {} models, is_authenticated={}",
-                                        provider_info.id,
-                                        models.len(),
-                                        is_authenticated
-                                    );
                                     llm_providers_with_models
                                         .push((provider_info, models, is_authenticated));
                                 }
                             } else {
-                                eprintln!(
+                                log::error!(
                                     "Failed to get LLM providers from extension {}: {:?}",
                                     extension.manifest.id,
                                     providers_result
@@ -1576,23 +1560,18 @@ impl ExtensionStore {
                         this.proxy.register_language_model_provider(
                             provider_id.clone(),
                             Box::new(move |cx: &mut App| {
-                                eprintln!("register_fn closure called, creating provider");
                                 let provider = Arc::new(ExtensionLanguageModelProvider::new(
                                     wasm_ext, pinfo, mods, auth, cx,
                                 ));
-                                eprintln!("Provider created, registering with registry");
                                 language_model::LanguageModelRegistry::global(cx).update(
                                     cx,
                                     |registry, cx| {
-                                        eprintln!("Inside registry.register_provider");
                                         registry.register_provider(provider, cx);
                                     },
                                 );
-                                eprintln!("Provider registered");
                             }),
                             cx,
                         );
-                        eprintln!("register_language_model_provider call completed for {}", provider_id);
                     }
                 }
 
