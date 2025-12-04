@@ -1419,7 +1419,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         state.repeat.current_keycode = Some(keycode);
 
                         let rate = state.repeat.characters_per_second;
-                        let repeat_interval = Duration::from_secs(1) / rate;
+                        let repeat_interval = Duration::from_secs(1) / rate.max(1);
                         let id = state.repeat.current_id;
                         state
                             .loop_handle
