@@ -284,7 +284,8 @@ actions!(
         Unfollow,
         /// Restores the banner.
         RestoreBanner,
-        /// Toggles expansion of the selected item.
+        /// Toggles expansion of
+        ///  the selected item.
         ToggleExpandItem,
     ]
 );
@@ -5976,11 +5977,17 @@ impl Workspace {
             .on_action(
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
                     if cx.has_global::<TrustedWorktreesStorage>() {
-                        cx.update_global::<TrustedWorktreesStorage, _>(
+                        let clear_task = cx.update_global::<TrustedWorktreesStorage, _>(
                             |trusted_worktrees_storage, cx| {
                                 trusted_worktrees_storage.clear_trusted_paths(cx);
+                                trusted_worktrees_storage.take_task(cx)
                             },
                         );
+                        cx.spawn(async move |_, cx| {
+                            clear_task.await;
+                            cx.update(|cx| reload(cx)).ok();
+                        })
+                        .detach();
                     }
                 }),
             )

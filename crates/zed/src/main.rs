@@ -408,7 +408,6 @@ pub fn main() {
     app.run(move |cx| {
         menu::init();
         zed_actions::init();
-        project::trusted_worktrees::init(cx);
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
