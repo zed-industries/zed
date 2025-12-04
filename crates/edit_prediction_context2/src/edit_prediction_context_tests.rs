@@ -46,15 +46,40 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
         assert_related_files(
             &excerpts,
             &[
-                ("src/company.rs", &["pub struct Company {"]),
+                (
+                    "src/company.rs",
+                    &[indoc! {"
+                        pub struct Company {
+                            owner: Arc<Person>,
+                            address: Address,
+                        }"}],
+                ),
                 (
                     "src/main.rs",
                     &[
-                        "pub struct Session {",
-                        "pub fn set_company(&mut self, company: Arc<Company>) {",
+                        indoc! {"
+                        pub struct Session {
+                            company: Arc<Company>,
+                        }
+
+                        impl Session {
+                            pub fn set_company(&mut self, company: Arc<Company>) {"},
+                        indoc! {"
+                            }
+                        }"},
                     ],
                 ),
-                ("src/person.rs", &["pub fn get_first_name(&self) -> &str {"]),
+                (
+                    "src/person.rs",
+                    &[
+                        indoc! {"
+                        impl Person {
+                            pub fn get_first_name(&self) -> &str {
+                                &self.first_name
+                            }"},
+                        "}",
+                    ],
+                ),
             ],
         );
     });
@@ -90,11 +115,7 @@ async fn test_fake_definition_lsp(cx: &mut TestAppContext) {
         .await
         .unwrap()
         .unwrap();
-    assert_definitions(
-        &definitions,
-        &["pub struct Address {", "impl Address {"],
-        cx,
-    );
+    assert_definitions(&definitions, &["pub struct Address {"], cx);
 
     let definitions = project
         .update(cx, |project, cx| {
@@ -278,27 +299,17 @@ fn assert_related_files(actual_files: &[RelatedFile], expected_files: &[(&str, &
             let excerpts = file
                 .excerpts
                 .iter()
-                .map(|excerpt| {
-                    excerpt
-                        .text
-                        .chunks()
-                        .lines()
-                        .next()
-                        .expect("excerpt text not empty")
-                        .trim()
-                        .to_string()
-                })
+                .map(|excerpt| excerpt.text.to_string())
                 .collect::<Vec<_>>();
-
             (file.path.path.as_unix_str(), excerpts)
         })
         .collect::<Vec<_>>();
     let expected_excerpts = expected_files
         .iter()
-        .map(|(path, first_lines)| {
+        .map(|(path, texts)| {
             (
                 *path,
-                first_lines
+                texts
                     .iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>(),
