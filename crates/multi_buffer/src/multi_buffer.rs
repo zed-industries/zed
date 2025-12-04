@@ -3321,12 +3321,6 @@ impl MultiBuffer {
                     excerpt_buffer_start + edit.new.end.saturating_sub(excerpt_start);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
 
-                if excerpts.end() <= edit.new.end {
-                    excerpts.next();
-                } else {
-                    break;
-                }
-
                 if let Some(main_buffer) = &diff.main_buffer {
                     for hunk in diff.hunks_intersecting_base_text_range(
                         edit_buffer_start..edit_buffer_end,
@@ -3359,103 +3353,109 @@ impl MultiBuffer {
                                 Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
                         }
                     }
-                    continue;
-                }
-
-                let edit_anchor_range =
-                    buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
-                for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
-                    if hunk.is_created_file() && !all_diff_hunks_expanded {
-                        continue;
-                    }
-
-                    let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
-                    if hunk_buffer_range.start < excerpt_buffer_start {
-                        log::trace!("skipping hunk that starts before excerpt");
-                        continue;
-                    }
-
-                    let hunk_info = DiffTransformHunkInfo {
-                        excerpt_id: excerpt.id,
-                        hunk_start_anchor: hunk.buffer_range.start,
-                        hunk_secondary_status: hunk.secondary_status,
-                        is_logically_deleted: false,
-                    };
-
-                    let hunk_excerpt_start = excerpt_start
-                        + hunk_buffer_range.start.saturating_sub(excerpt_buffer_start);
-                    let hunk_excerpt_end = excerpt_end
-                        .min(excerpt_start + (hunk_buffer_range.end - excerpt_buffer_start));
-
-                    Self::push_buffer_content_transform(
-                        snapshot,
-                        new_diff_transforms,
-                        hunk_excerpt_start,
-                        *end_of_current_insert,
-                    );
-
-                    // For every existing hunk, determine if it was previously expanded
-                    // and if it should currently be expanded.
-                    let was_previously_expanded = old_expanded_hunks.contains(&hunk_info);
-                    let should_expand_hunk = match &change_kind {
-                        DiffChangeKind::DiffUpdated { base_changed: true } => {
-                            was_previously_expanded || all_diff_hunks_expanded
+                } else {
+                    let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
+                        ..buffer.anchor_after(edit_buffer_end);
+                    for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
+                        if hunk.is_created_file() && !all_diff_hunks_expanded {
+                            continue;
                         }
-                        DiffChangeKind::ExpandOrCollapseHunks { expand } => {
-                            let intersects = hunk_buffer_range.is_empty()
-                                || hunk_buffer_range.end > edit_buffer_start;
-                            if *expand {
-                                intersects || was_previously_expanded || all_diff_hunks_expanded
-                            } else {
-                                !intersects && (was_previously_expanded || all_diff_hunks_expanded)
-                            }
-                        }
-                        _ => was_previously_expanded || all_diff_hunks_expanded,
-                    };
 
-                    if should_expand_hunk {
-                        did_expand_hunks = true;
-                        log::trace!(
-                            "expanding hunk {:?}, excerpt:{:?}",
-                            hunk_excerpt_start..hunk_excerpt_end,
-                            excerpt.id
+                        let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
+                        if hunk_buffer_range.start < excerpt_buffer_start {
+                            log::trace!("skipping hunk that starts before excerpt");
+                            continue;
+                        }
+
+                        let hunk_info = DiffTransformHunkInfo {
+                            excerpt_id: excerpt.id,
+                            hunk_start_anchor: hunk.buffer_range.start,
+                            hunk_secondary_status: hunk.secondary_status,
+                            is_logically_deleted: false,
+                        };
+
+                        let hunk_excerpt_start = excerpt_start
+                            + hunk_buffer_range.start.saturating_sub(excerpt_buffer_start);
+                        let hunk_excerpt_end = excerpt_end
+                            .min(excerpt_start + (hunk_buffer_range.end - excerpt_buffer_start));
+
+                        Self::push_buffer_content_transform(
+                            snapshot,
+                            new_diff_transforms,
+                            hunk_excerpt_start,
+                            *end_of_current_insert,
                         );
 
-                        if !hunk.diff_base_byte_range.is_empty()
-                            && hunk_buffer_range.start >= edit_buffer_start
-                            && hunk_buffer_range.start <= excerpt_buffer_end
-                            && snapshot.show_deleted_hunks
-                        {
-                            let base_text = diff.base_text();
-                            let mut text_cursor =
-                                base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
-                            let mut base_text_summary =
-                                text_cursor.summary::<TextSummary>(hunk.diff_base_byte_range.end);
+                        // For every existing hunk, determine if it was previously expanded
+                        // and if it should currently be expanded.
+                        let was_previously_expanded = old_expanded_hunks.contains(&hunk_info);
+                        let should_expand_hunk = match &change_kind {
+                            DiffChangeKind::DiffUpdated { base_changed: true } => {
+                                was_previously_expanded || all_diff_hunks_expanded
+                            }
+                            DiffChangeKind::ExpandOrCollapseHunks { expand } => {
+                                let intersects = hunk_buffer_range.is_empty()
+                                    || hunk_buffer_range.end > edit_buffer_start;
+                                if *expand {
+                                    intersects || was_previously_expanded || all_diff_hunks_expanded
+                                } else {
+                                    !intersects
+                                        && (was_previously_expanded || all_diff_hunks_expanded)
+                                }
+                            }
+                            _ => was_previously_expanded || all_diff_hunks_expanded,
+                        };
 
-                            let mut has_trailing_newline = false;
-                            if base_text_summary.last_line_chars > 0 {
-                                base_text_summary += TextSummary::newline();
-                                has_trailing_newline = true;
+                        if should_expand_hunk {
+                            did_expand_hunks = true;
+                            log::trace!(
+                                "expanding hunk {:?}, excerpt:{:?}",
+                                hunk_excerpt_start..hunk_excerpt_end,
+                                excerpt.id
+                            );
+
+                            if !hunk.diff_base_byte_range.is_empty()
+                                && hunk_buffer_range.start >= edit_buffer_start
+                                && hunk_buffer_range.start <= excerpt_buffer_end
+                                && snapshot.show_deleted_hunks
+                            {
+                                let base_text = diff.base_text();
+                                let mut text_cursor =
+                                    base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
+                                let mut base_text_summary = text_cursor
+                                    .summary::<TextSummary>(hunk.diff_base_byte_range.end);
+
+                                let mut has_trailing_newline = false;
+                                if base_text_summary.last_line_chars > 0 {
+                                    base_text_summary += TextSummary::newline();
+                                    has_trailing_newline = true;
+                                }
+
+                                new_diff_transforms.push(
+                                    DiffTransform::DeletedHunk {
+                                        base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                        summary: base_text_summary,
+                                        buffer_id: excerpt.buffer_id,
+                                        hunk_info,
+                                        has_trailing_newline,
+                                    },
+                                    (),
+                                );
                             }
 
-                            new_diff_transforms.push(
-                                DiffTransform::DeletedHunk {
-                                    base_text_byte_range: hunk.diff_base_byte_range.clone(),
-                                    summary: base_text_summary,
-                                    buffer_id: excerpt.buffer_id,
-                                    hunk_info,
-                                    has_trailing_newline,
-                                },
-                                (),
-                            );
-                        }
-
-                        if !hunk_buffer_range.is_empty() {
-                            *end_of_current_insert =
-                                Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
+                            if !hunk_buffer_range.is_empty() {
+                                *end_of_current_insert =
+                                    Some((hunk_excerpt_end.min(excerpt_end), hunk_info));
+                            }
                         }
                     }
                 }
+            }
+
+            if excerpts.end() <= edit.new.end {
+                excerpts.next();
+            } else {
+                break;
             }
         }
 

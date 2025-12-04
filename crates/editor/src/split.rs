@@ -403,6 +403,7 @@ mod tests {
     use language::{Buffer, Capability};
     use multi_buffer::MultiBuffer;
     use project::Project;
+    use settings::SettingsStore;
     use ui::VisualContext as _;
     use workspace::Workspace;
 
@@ -410,6 +411,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic_excerpts(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            crate::init(cx);
+        });
         let base_text = indoc! {"
             hello
         "};
@@ -425,5 +432,6 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
         });
+        
     }
 }
