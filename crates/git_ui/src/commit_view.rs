@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Addon, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
+use editor::{Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
@@ -11,9 +11,8 @@ use gpui::{
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
-    TextBuffer, ToPoint,
+    TextBuffer,
 };
-use multi_buffer::ExcerptInfo;
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
@@ -22,11 +21,9 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{
-    Avatar, Button, ButtonCommon, Clickable, Color, Icon, IconName, IconSize, Label,
-    LabelCommon as _, LabelSize, SharedString, div, h_flex, v_flex,
-};
+use ui::{Avatar, DiffStat, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
+use workspace::item::TabTooltipContent;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -151,11 +148,11 @@ impl CommitView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+
             editor.disable_inline_diagnostics();
+            editor.disable_indent_guides();
             editor.set_expand_all_diff_hunks(cx);
-            editor.register_addon(CommitViewAddon {
-                multibuffer: multibuffer.downgrade(),
-            });
+
             editor
         });
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
@@ -357,6 +354,41 @@ impl CommitView {
             .into_any()
     }
 
+    fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let mut total_additions = 0u32;
+        let mut total_deletions = 0u32;
+
+        let mut seen_buffers = std::collections::HashSet::new();
+        for (_, buffer, _) in snapshot.excerpts() {
+            let buffer_id = buffer.remote_id();
+            if !seen_buffers.insert(buffer_id) {
+                continue;
+            }
+
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                continue;
+            };
+
+            let base_text = diff.base_text();
+
+            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
+                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+                total_additions += added_rows;
+
+                let base_start = base_text
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
+                let deleted_rows = base_end.saturating_sub(base_start);
+
+                total_deletions += deleted_rows;
+            }
+        }
+
+        (total_additions, total_deletions)
+    }
+
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let commit = &self.commit;
         let author_name = commit.author_name.clone();
@@ -380,46 +412,72 @@ impl CommitView {
             )
         });
 
-        v_flex()
-            .p_4()
-            .pl_0()
-            .gap_4()
+        let (additions, deletions) = self.calculate_changed_lines(cx);
+
+        let commit_diff_stat = if additions > 0 || deletions > 0 {
+            Some(DiffStat::new(
+                "commit-diff-stat",
+                additions as usize,
+                deletions as usize,
+            ))
+        } else {
+            None
+        };
+
+        h_flex()
             .border_b_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border_variant)
             .child(
                 h_flex()
+                    .w(self.editor.read(cx).last_gutter_dimensions().full_width())
+                    .justify_center()
+                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx)),
+            )
+            .child(
+                h_flex()
+                    .py_4()
+                    .pl_1()
+                    .pr_4()
+                    .w_full()
                     .items_start()
-                    .child(
-                        h_flex()
-                            .w(self.editor.read(cx).last_gutter_dimensions().full_width())
-                            .justify_center()
-                            .child(self.render_commit_avatar(
-                                &commit.sha,
-                                gpui::rems(3.0),
-                                window,
-                                cx,
-                            )),
-                    )
+                    .justify_between()
+                    .flex_wrap()
                     .child(
                         v_flex()
-                            .gap_1()
                             .child(
                                 h_flex()
-                                    .gap_3()
-                                    .items_baseline()
+                                    .gap_1()
                                     .child(Label::new(author_name).color(Color::Default))
                                     .child(
-                                        Label::new(format!("commit {}", commit.sha))
-                                            .color(Color::Muted),
+                                        Label::new(format!("Commit:{}", commit.sha))
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                            .truncate()
+                                            .buffer_font(cx),
                                     ),
                             )
-                            .child(Label::new(date_string).color(Color::Muted)),
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        Label::new(date_string)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        Label::new("•")
+                                            .color(Color::Ignored)
+                                            .size(LabelSize::Small),
+                                    )
+                                    .children(commit_diff_stat),
+                            ),
                     )
-                    .child(div().flex_grow())
                     .children(github_url.map(|url| {
                         Button::new("view_on_github", "View on GitHub")
                             .icon(IconName::Github)
-                            .style(ui::ButtonStyle::Subtle)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
                             .on_click(move |_, _, cx| cx.open_url(&url))
                     })),
             )
@@ -714,55 +772,6 @@ impl language::File for GitBlob {
 //     }
 // }
 
-struct CommitViewAddon {
-    multibuffer: WeakEntity<MultiBuffer>,
-}
-
-impl Addon for CommitViewAddon {
-    fn render_buffer_header_controls(
-        &self,
-        excerpt: &ExcerptInfo,
-        _window: &Window,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let multibuffer = self.multibuffer.upgrade()?;
-        let snapshot = multibuffer.read(cx).snapshot(cx);
-        let excerpts = snapshot.excerpts().collect::<Vec<_>>();
-        let current_idx = excerpts.iter().position(|(id, _, _)| *id == excerpt.id)?;
-        let (_, _, current_range) = &excerpts[current_idx];
-
-        let start_row = current_range.context.start.to_point(&excerpt.buffer).row;
-
-        let prev_end_row = if current_idx > 0 {
-            let (_, prev_buffer, prev_range) = &excerpts[current_idx - 1];
-            if prev_buffer.remote_id() == excerpt.buffer_id {
-                prev_range.context.end.to_point(&excerpt.buffer).row
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let skipped_lines = start_row.saturating_sub(prev_end_row);
-
-        if skipped_lines > 0 {
-            Some(
-                Label::new(format!("{} unchanged lines", skipped_lines))
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
-    }
-
-    fn to_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
@@ -865,13 +874,28 @@ impl Item for CommitView {
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
         let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
-        format!("{short_sha} - {subject}").into()
+        format!("{short_sha} — {subject}").into()
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
+    fn tab_tooltip_content(&self, _: &App) -> Option<TabTooltipContent> {
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
         let subject = self.commit.message.split('\n').next().unwrap();
-        Some(format!("{short_sha} - {subject}").into())
+
+        Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
+            let subject = subject.to_string();
+            let short_sha = short_sha.to_string();
+
+            move |_, _| {
+                v_flex()
+                    .child(Label::new(subject.clone()))
+                    .child(
+                        Label::new(short_sha.clone())
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element()
+            }
+        }))))
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
@@ -988,12 +1012,11 @@ impl Item for CommitView {
 impl Render for CommitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_stash = self.stash.is_some();
-        div()
+
+        v_flex()
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
-            .bg(cx.theme().colors().editor_background)
-            .flex()
-            .flex_col()
             .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
             .child(div().flex_grow().child(self.editor.clone()))
     }
@@ -1013,7 +1036,7 @@ impl EventEmitter<ToolbarItemEvent> for CommitViewToolbar {}
 
 impl Render for CommitViewToolbar {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        div().hidden()
     }
 }
 
