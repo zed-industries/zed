@@ -26,7 +26,6 @@ use metrics::delta_chr_f;
 use project::{Project, Worktree, lsp_store::OpenLspBufferHandle};
 use reqwest_client::ReqwestClient;
 use std::io::{self};
-use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
 use zeta::udiff::DiffLine;
 
@@ -192,8 +191,6 @@ fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
         },
         max_prompt_bytes: args.max_prompt_bytes,
         prompt_format: args.prompt_format.into(),
-        file_indexing_parallelism: args.file_indexing_parallelism,
-        buffer_change_grouping_interval: Duration::ZERO,
     }
 }
 

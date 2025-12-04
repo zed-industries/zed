@@ -2,7 +2,6 @@ use super::*;
 use crate::zeta1::MAX_EVENT_TOKENS;
 use client::UserStore;
 use client::test::FakeServer;
-use clock::FakeSystemClock;
 use clock::{FakeSystemClock, ReplicaId};
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
@@ -15,14 +14,10 @@ use futures::{
 };
 use gpui::TestAppContext;
 use gpui::{
-    Entity, TestAppContext,
+    Entity,
     http_client::{FakeHttpClient, Response},
-    prelude::*,
 };
-use http_client::FakeHttpClient;
 use indoc::indoc;
-use indoc::indoc;
-use language::OffsetRangeExt as _;
 use language::Point;
 use lsp::LanguageServerId;
 use open_ai::Usage;
@@ -30,11 +25,8 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
 use serde_json::json;
-use serde_json::json;
-use settings::SettingsStore;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
-use util::path;
 use util::{path, rel_path::rel_path};
 use uuid::Uuid;
 
@@ -42,7 +34,7 @@ use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_
 
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
-    let (ep_store, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -170,7 +162,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_simple_request(cx: &mut TestAppContext) {
-    let (ep_store, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -234,7 +226,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_request_events(cx: &mut TestAppContext) {
-    let (ep_store, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -308,7 +300,7 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_empty_prediction(cx: &mut TestAppContext) {
-    let (ep_store, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -373,7 +365,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_interpolated_empty(cx: &mut TestAppContext) {
-    let (ep_store, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -394,8 +386,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
-    ep_store.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -410,9 +402,10 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         assert!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .is_none()
         );
     });
@@ -442,7 +435,7 @@ const SIMPLE_DIFF: &str = indoc! { r"
 
 #[gpui::test]
 async fn test_replace_current(cx: &mut TestAppContext) {
-    let (zeta, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -463,8 +456,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -474,9 +467,10 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -485,8 +479,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     // a second request is triggered
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -496,10 +490,11 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // second replaces first
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -522,7 +517,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_current_preferred(cx: &mut TestAppContext) {
-    let (zeta, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -543,8 +538,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -554,9 +549,10 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -565,8 +561,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     });
 
     // a second request is triggered
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_tx) = requests.predict.next().await.unwrap();
@@ -585,10 +581,11 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // first is preferred over second
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -611,7 +608,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
-    let (zeta, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -633,14 +630,14 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
     // start two refresh tasks
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_first) = requests.predict.next().await.unwrap();
 
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_second) = requests.predict.next().await.unwrap();
@@ -655,10 +652,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // current prediction is second
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -672,10 +670,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // current prediction is still second, since first was cancelled
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -700,7 +699,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
-    let (zeta, mut requests) = init_test(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -722,14 +721,14 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
     let position = snapshot.anchor_before(language::Point::new(1, 3));
 
     // start two refresh tasks
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_first) = requests.predict.next().await.unwrap();
 
-    zeta.update(cx, |zeta, cx| {
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
     });
 
     let (_, respond_second) = requests.predict.next().await.unwrap();
@@ -737,13 +736,14 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
     // wait for throttle, so requests are sent
     cx.run_until_parked();
 
-    zeta.update(cx, |zeta, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // start a third request
-        zeta.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
 
         // 2 are pending, so 2nd is cancelled
         assert_eq!(
-            zeta.get_or_init_project(&project, cx)
+            ep_store
+                .get_or_init_project(&project, cx)
                 .cancelled_predictions
                 .iter()
                 .copied()
@@ -763,10 +763,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // current prediction is first
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -780,10 +781,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // current prediction is still first, since second was cancelled
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -797,10 +799,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    zeta.read_with(cx, |zeta, cx| {
+    ep_store.read_with(cx, |ep_store, cx| {
         // third completes and replaces first
         assert_eq!(
-            zeta.current_prediction_for_buffer(&buffer, &project, cx)
+            ep_store
+                .current_prediction_for_buffer(&buffer, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -832,15 +835,15 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
-    let (zeta, mut requests) = init_test_with_fake_client(cx);
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
-    zeta.update(cx, |zeta, _cx| {
-        zeta.reject_prediction(
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.reject_prediction(
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
         );
-        zeta.reject_prediction(
+        ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
@@ -873,9 +876,9 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     );
 
     // Reaching batch size limit sends without debounce
-    zeta.update(cx, |zeta, _cx| {
+    ep_store.update(cx, |ep_store, _cx| {
         for i in 0..70 {
-            zeta.reject_prediction(
+            ep_store.reject_prediction(
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
@@ -904,8 +907,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     assert_eq!(reject_request.rejections[19].request_id, "batch-69");
 
     // Request failure
-    zeta.update(cx, |zeta, _cx| {
-        zeta.reject_prediction(
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.reject_prediction(
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
@@ -922,8 +925,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     drop(_respond_tx);
 
     // Add another rejection
-    zeta.update(cx, |zeta, _cx| {
-        zeta.reject_prediction(
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.reject_prediction(
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
@@ -945,7 +948,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // Skipped until we start including diagnostics in prompt
 // #[gpui::test]
 // async fn test_request_diagnostics(cx: &mut TestAppContext) {
-//     let (zeta, mut req_rx) = init_test(cx);
+//     let (ep_store, mut req_rx) = init_test_with_fake_client(cx);
 //     let fs = FakeFs::new(cx.executor());
 //     fs.insert_tree(
 //         "/root",
@@ -995,8 +998,8 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 //     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 //     let position = snapshot.anchor_before(language::Point::new(0, 0));
 
-//     let _prediction_task = zeta.update(cx, |zeta, cx| {
-//         zeta.request_prediction(&project, &buffer, position, cx)
+//     let _prediction_task = ep_store.update(cx, |ep_store, cx| {
+//         ep_store.request_prediction(&project, &buffer, position, cx)
 //     });
 
 //     let (request, _respond_tx) = req_rx.next().await.unwrap();
@@ -1133,10 +1136,10 @@ fn init_test_with_fake_client(
         language_model::init(client.clone(), cx);
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = EditPredictionStore::global(&client, &user_store, cx);
+        let ep_store = EditPredictionStore::global(&client, &user_store, cx);
 
         (
-            zeta,
+            ep_store,
             RequestChannels {
                 predict: predict_req_rx,
                 reject: reject_req_rx,
@@ -1356,22 +1359,22 @@ async fn test_can_collect_data(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         true
     );
 
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Disabled
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Disabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1394,12 +1397,12 @@ async fn test_no_data_collection_for_remote_file(cx: &mut TestAppContext) {
         )
     });
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1428,12 +1431,12 @@ async fn test_no_data_collection_for_private_file(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1448,12 +1451,12 @@ async fn test_no_data_collection_for_untitled_buffer(cx: &mut TestAppContext) {
     let project = Project::test(fs.clone(), [], cx).await;
     let buffer = cx.new(|cx| Buffer::local("", cx));
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1476,12 +1479,12 @@ async fn test_no_data_collection_when_closed_source(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1517,12 +1520,12 @@ async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         true
@@ -1545,7 +1548,7 @@ async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
         buffer.file_updated(closed_source_file, cx);
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1584,19 +1587,19 @@ async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut Te
         .await
         .unwrap();
 
-    let (zeta, captured_request, _) = make_test_zeta(&project, cx).await;
-    zeta.update(cx, |zeta, _cx| {
-        zeta.data_collection_choice = DataCollectionChoice::Enabled
+    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
+    ep_store.update(cx, |ep_store, _cx| {
+        ep_store.data_collection_choice = DataCollectionChoice::Enabled
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         true
     );
 
     // this has a side effect of registering the buffer to watch for edits
-    run_edit_prediction(&private_buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&private_buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1606,7 +1609,7 @@ async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut Te
         private_buffer.edit([(0..0, "An edit for the history!")], None, cx);
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         false
@@ -1625,7 +1628,7 @@ async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut Te
         );
     });
 
-    run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     assert_eq!(
         captured_request.lock().clone().unwrap().can_collect_data,
         true
@@ -1647,9 +1650,9 @@ async fn apply_edit_prediction(
     let fs = project::FakeFs::new(cx.executor());
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-    let (zeta, _, response) = make_test_zeta(&project, cx).await;
+    let (ep_store, _, response) = make_test_ep_store(&project, cx).await;
     *response.lock() = completion_response.to_string();
-    let edit_prediction = run_edit_prediction(&buffer, &project, &zeta, cx).await;
+    let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
     });
@@ -1659,19 +1662,21 @@ async fn apply_edit_prediction(
 async fn run_edit_prediction(
     buffer: &Entity<Buffer>,
     project: &Entity<Project>,
-    zeta: &Entity<EditPredictionStore>,
+    ep_store: &Entity<EditPredictionStore>,
     cx: &mut TestAppContext,
 ) -> EditPrediction {
     let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-    zeta.update(cx, |zeta, cx| zeta.register_buffer(buffer, &project, cx));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(buffer, &project, cx)
+    });
     cx.background_executor.run_until_parked();
-    let prediction_task = zeta.update(cx, |zeta, cx| {
-        zeta.request_prediction(&project, buffer, cursor, Default::default(), cx)
+    let prediction_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.request_prediction(&project, buffer, cursor, Default::default(), cx)
     });
     prediction_task.await.unwrap().unwrap().prediction.unwrap()
 }
 
-async fn make_test_zeta(
+async fn make_test_ep_store(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
 ) -> (
@@ -1742,23 +1747,24 @@ async fn make_test_zeta(
     });
     let _server = FakeServer::for_client(42, &client, cx).await;
 
-    let zeta = cx.new(|cx| {
-        let mut zeta = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
-        zeta.set_edit_prediction_model(EditPredictionModel::Zeta1);
+    let ep_store = cx.new(|cx| {
+        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
         for worktree in worktrees {
             let worktree_id = worktree.read(cx).id();
-            zeta.get_or_init_project(project, cx)
+            ep_store
+                .get_or_init_project(project, cx)
                 .license_detection_watchers
                 .entry(worktree_id)
                 .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
         }
 
-        zeta
+        ep_store
     });
 
-    (zeta, captured_request, completion_response)
+    (ep_store, captured_request, completion_response)
 }
 
 fn to_completion_edits(
