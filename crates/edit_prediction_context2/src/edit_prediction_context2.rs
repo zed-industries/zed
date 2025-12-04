@@ -177,12 +177,7 @@ impl RelatedExcerptStore {
         }
     }
 
-    pub fn cursor_moved(
-        &mut self,
-        buffer: Entity<Buffer>,
-        position: Anchor,
-        _: &mut Context<Self>,
-    ) {
+    pub fn refresh(&mut self, buffer: Entity<Buffer>, position: Anchor, _: &mut Context<Self>) {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
@@ -376,7 +371,7 @@ fn process_definition(
     cx: &mut App,
 ) -> Option<CachedDefinition> {
     let buffer = location.target.buffer.read(cx);
-    let range = location.target.range;
+    let anchor_range = location.target.range;
     let file = buffer.file()?;
     let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
     if worktree.read(cx).is_single_file() {
@@ -388,7 +383,7 @@ fn process_definition(
             path: file.path().clone(),
         },
         buffer: location.target.buffer,
-        anchor_range: range.clone(),
+        anchor_range,
     })
 }
 

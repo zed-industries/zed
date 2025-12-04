@@ -37,7 +37,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             buffer.anchor_before(offset)
         };
 
-        store.cursor_moved(buffer.clone(), position, cx);
+        store.refresh(buffer.clone(), position, cx);
     });
 
     cx.executor().advance_clock(DEBOUNCE_DURATION);

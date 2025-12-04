@@ -109,7 +109,7 @@ fn clip_range_to_lines(
 }
 
 fn add_outline_item(
-    item_range: Range<Point>,
+    mut item_range: Range<Point>,
     body_range: Option<Range<Point>>,
     buffer: &BufferSnapshot,
     outline_ranges: &mut Vec<Range<Point>>,
@@ -130,7 +130,6 @@ fn add_outline_item(
             outline_ranges.push(tail_range);
         }
     } else {
-        let mut item_range = item_range.clone();
         item_range.start.column = 0;
         item_range.end.column = buffer.line_len(item_range.end.row);
         outline_ranges.push(item_range);

@@ -2,7 +2,7 @@ use collections::HashMap;
 use futures::channel::mpsc::UnboundedReceiver;
 use language::{Language, LanguageRegistry};
 use lsp::{
-    FakeLanguageServer, LanguageServerBinary, TextDocumentSyncCapability, TextDocumentSyncKind,
+    FakeLanguageServer, LanguageServerBinary, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use parking_lot::Mutex;
 use project::Fs;
@@ -129,16 +129,11 @@ pub fn register_fake_definition_server(
                                             continue;
                                         };
                                         for file in &files {
-                                            if !file.starts_with(&path) {
-                                                continue;
-                                            }
-                                            if let Ok(content) = fs.load(&file).await {
-                                                let uri = lsp::Uri::from_file_path(&file)
-                                                    .ok()
-                                                    .map(Into::into);
-                                                if let Some(uri) = uri {
-                                                    index.lock().index_file(uri, &content);
-                                                }
+                                            if let Some(uri) = Uri::from_file_path(&file).ok()
+                                                && file.starts_with(&path)
+                                                && let Ok(content) = fs.load(&file).await
+                                            {
+                                                index.lock().index_file(uri, &content);
                                             }
                                         }
                                     }
@@ -167,7 +162,7 @@ pub fn register_fake_definition_server(
 struct DefinitionIndex {
     language: Arc<Language>,
     definitions: HashMap<String, Vec<lsp::Location>>,
-    files: HashMap<lsp::Uri, FileEntry>,
+    files: HashMap<Uri, FileEntry>,
 }
 
 #[derive(Debug)]
@@ -185,7 +180,7 @@ impl DefinitionIndex {
         }
     }
 
-    fn remove_definitions_for_file(&mut self, uri: &lsp::Uri) {
+    fn remove_definitions_for_file(&mut self, uri: &Uri) {
         self.definitions.retain(|_, locations| {
             locations.retain(|loc| &loc.uri != uri);
             !locations.is_empty()
@@ -193,33 +188,28 @@ impl DefinitionIndex {
         self.files.remove(uri);
     }
 
-    fn open_buffer(&mut self, uri: lsp::Uri, content: &str) {
+    fn open_buffer(&mut self, uri: Uri, content: &str) {
         self.index_file_inner(uri, content, true);
     }
 
-    fn mark_buffer_closed(&mut self, uri: &lsp::Uri) {
+    fn mark_buffer_closed(&mut self, uri: &Uri) {
         if let Some(entry) = self.files.get_mut(uri) {
             entry.is_open_in_buffer = false;
         }
     }
 
-    fn is_buffer_open(&self, uri: &lsp::Uri) -> bool {
+    fn is_buffer_open(&self, uri: &Uri) -> bool {
         self.files
             .get(uri)
             .map(|entry| entry.is_open_in_buffer)
             .unwrap_or(false)
     }
 
-    fn index_file(&mut self, uri: lsp::Uri, content: &str) {
+    fn index_file(&mut self, uri: Uri, content: &str) {
         self.index_file_inner(uri, content, false);
     }
 
-    fn index_file_inner(
-        &mut self,
-        uri: lsp::Uri,
-        content: &str,
-        is_open_in_buffer: bool,
-    ) -> Option<()> {
+    fn index_file_inner(&mut self, uri: Uri, content: &str, is_open_in_buffer: bool) -> Option<()> {
         self.remove_definitions_for_file(&uri);
         let grammar = self.language.grammar()?;
         let outline_config = grammar.outline_config.as_ref()?;
@@ -251,7 +241,7 @@ impl DefinitionIndex {
 
     fn get_definitions(
         &mut self,
-        uri: lsp::Uri,
+        uri: Uri,
         position: lsp::Position,
     ) -> Option<lsp::GotoDefinitionResponse> {
         let entry = self.files.get(&uri)?;

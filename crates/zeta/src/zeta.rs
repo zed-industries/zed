@@ -299,7 +299,6 @@ struct ZetaProject {
 }
 
 enum ZetaProjectContext {
-    None,
     Syntax(Entity<SyntaxIndex>),
     Lsp(Entity<RelatedExcerptStore>),
     Agentic {
@@ -627,11 +626,7 @@ impl Zeta {
         self.projects
             .get(&project.entity_id())
             .and_then(|project| match &project.context {
-                ZetaProjectContext::None => None,
-                ZetaProjectContext::Syntax(_) => {
-                    // todo: implement
-                    None
-                }
+                ZetaProjectContext::Syntax(_) => None,
                 ZetaProjectContext::Lsp(store) => Some(store.read(cx).related_files()),
                 ZetaProjectContext::Agentic { context, .. } => Some(context.as_slice()),
             })
@@ -2109,13 +2104,10 @@ impl Zeta {
         };
 
         match &mut zeta_project.context {
-            ZetaProjectContext::None => {}
-            ZetaProjectContext::Syntax(_entity) => {
-                //
-            }
+            ZetaProjectContext::Syntax(_entity) => {}
             ZetaProjectContext::Lsp(related_excerpt_store) => {
                 related_excerpt_store.update(cx, |store, cx| {
-                    store.cursor_moved(buffer.clone(), cursor_position, cx);
+                    store.refresh(buffer.clone(), cursor_position, cx);
                 });
             }
             ZetaProjectContext::Agentic {
@@ -2364,7 +2356,7 @@ impl Zeta {
                                             format!(
                                                 "{:?}",
                                                 query_execution_finished_at
-                                                    - query_execution_finished_at
+                                                    - query_generation_finished_at
                                             )
                                             .into(),
                                         ),

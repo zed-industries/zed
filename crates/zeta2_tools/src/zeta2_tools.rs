@@ -317,9 +317,7 @@ impl Zeta2Inspector {
                             ..context_options
                         })
                     }
-                    ContextMode::Lsp(edit_prediction_context_options) => {
-                        ContextMode::Lsp(excerpt_options)
-                    }
+                    ContextMode::Lsp(excerpt_options) => ContextMode::Lsp(excerpt_options),
                 };
 
                 this.set_zeta_options(

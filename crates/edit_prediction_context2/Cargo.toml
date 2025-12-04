@@ -16,7 +16,6 @@ parking_lot.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
-fs.workspace = true
 gpui.workspace = true
 language.workspace = true
 lsp.workspace = true
@@ -31,7 +30,6 @@ util.workspace = true
 env_logger.workspace = true
 indoc.workspace = true
 futures.workspace = true
-fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }

@@ -182,7 +182,7 @@ pub async fn run_retrieval_searches(
         if let Some((cache, queries, key)) = cache {
             let cached_results: CachedSearchResults = results
                 .iter()
-                .filter_map(|related_file| {
+                .map(|related_file| {
                     let mut ranges = related_file
                         .excerpts
                         .iter()
@@ -196,8 +196,7 @@ pub async fn run_retrieval_searches(
                         )
                         .collect::<Vec<_>>();
                     ranges.sort_unstable_by_key(|range| (range.start, range.end));
-
-                    Some((related_file.path.path.as_std_path().to_path_buf(), ranges))
+                    (related_file.path.path.as_std_path().to_path_buf(), ranges)
                 })
                 .collect();
             cache.write(
