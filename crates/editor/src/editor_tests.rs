@@ -26476,7 +26476,7 @@ async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
 }
 
 #[gpui::test]
-async fn test_markdown_indentation_on_multicursor(cx: &mut gpui::TestAppContext) {
+async fn test_markdown_list_indent_with_multi_cursor(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
@@ -26503,6 +26503,33 @@ async fn test_markdown_indentation_on_multicursor(cx: &mut gpui::TestAppContext)
         - [Xˇ] Item 2
             - [Xˇ] Item 2.a
             - [Xˇ] Item 2.b
+        "
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_list_indent_with_newline(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(indoc! {"
+        - [x] list item
+          - [x] sub list itemˇ
+        "
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        - [x] list item
+          - [x] sub list item
+          ˇ
         "
     });
 }
