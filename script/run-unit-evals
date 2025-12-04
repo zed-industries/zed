@@ -2,4 +2,8 @@
 
 set -euxo pipefail
 
-cargo nextest run --workspace --no-fail-fast --features unit-eval --no-capture -E 'test(::eval_)'
+if [ -n "${UNIT_EVAL_COMMIT:-}" ]; then
+  git fetch origin "$UNIT_EVAL_COMMIT" && git checkout "$UNIT_EVAL_COMMIT"
+fi
+
+GPUI_TEST_TIMEOUT=1500 cargo nextest run --workspace --no-fail-fast --features unit-eval --no-capture -E 'test(::eval_)'

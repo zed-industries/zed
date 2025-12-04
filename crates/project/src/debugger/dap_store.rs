@@ -262,8 +262,8 @@ impl DapStore {
                 let user_installed_path = dap_settings.and_then(|s| match &s.binary {
                     DapBinary::Default => None,
                     DapBinary::Custom(binary) => {
-                        // if `binary` is absolute, `.join()` will keep it unmodified
-                        Some(worktree.read(cx).abs_path().join(PathBuf::from(binary)))
+                        let path = PathBuf::from(binary);
+                        Some(worktree.read(cx).resolve_executable_path(path))
                     }
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());

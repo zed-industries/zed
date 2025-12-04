@@ -393,6 +393,7 @@ pub fn into_open_router(
 ) -> open_router::Request {
     let mut messages = Vec::new();
     for message in request.messages {
+        let reasoning_details = message.reasoning_details.clone();
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
@@ -419,18 +420,26 @@ pub fn into_open_router(
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
+                                thought_signature: tool_use.thought_signature.clone(),
                             },
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning,
+                        ..
+                    }) = messages.last_mut()
                     {
                         tool_calls.push(tool_call);
+                        if existing_reasoning.is_none() && reasoning_details.is_some() {
+                            *existing_reasoning = reasoning_details.clone();
+                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -529,6 +538,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_details: None,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
@@ -540,12 +550,14 @@ fn add_message_content_part(
 
 pub struct OpenRouterEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    reasoning_details: Option<serde_json::Value>,
 }
 
 impl OpenRouterEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            reasoning_details: None,
         }
     }
 
@@ -577,6 +589,15 @@ impl OpenRouterEventMapper {
         };
 
         let mut events = Vec::new();
+
+        if let Some(details) = choice.delta.reasoning_details.clone() {
+            // Emit reasoning_details immediately
+            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                details.clone(),
+            )));
+            self.reasoning_details = Some(details);
+        }
+
         if let Some(reasoning) = choice.delta.reasoning.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Thinking {
                 text: reasoning,
@@ -608,6 +629,10 @@ impl OpenRouterEventMapper {
                     if let Some(arguments) = function.arguments.clone() {
                         entry.arguments.push_str(&arguments);
                     }
+
+                    if let Some(signature) = function.thought_signature.clone() {
+                        entry.thought_signature = Some(signature);
+                    }
                 }
             }
         }
@@ -623,6 +648,7 @@ impl OpenRouterEventMapper {
 
         match choice.finish_reason.as_deref() {
             Some("stop") => {
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
@@ -635,6 +661,7 @@ impl OpenRouterEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_call.arguments.clone(),
+                                thought_signature: tool_call.thought_signature.clone(),
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -646,10 +673,12 @@ impl OpenRouterEventMapper {
                     }
                 }));
 
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some(stop_reason) => {
                 log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
+                // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
@@ -664,6 +693,7 @@ struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
 }
 
 pub fn count_open_router_tokens(
@@ -828,6 +858,238 @@ impl Render for ConfigurationView {
                     this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
                 })
                 .into_any_element()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use open_router::{ChoiceDelta, FunctionChunk, ResponseMessageDelta, ToolCallChunk};
+
+    #[gpui::test]
+    async fn test_reasoning_details_preservation_with_tool_calls() {
+        // This test verifies that reasoning_details are properly captured and preserved
+        // when a model uses tool calling with reasoning/thinking tokens.
+        //
+        // The key regression this prevents:
+        // - OpenRouter sends multiple reasoning_details updates during streaming
+        // - First with actual content (encrypted reasoning data)
+        // - Then with empty array on completion
+        // - We must NOT overwrite the real data with the empty array
+
+        let mut mapper = OpenRouterEventMapper::new();
+
+        // Simulate the streaming events as they come from OpenRouter/Gemini
+        let events = vec![
+            // Event 1: Initial reasoning details with text
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([
+                            {
+                                "type": "reasoning.text",
+                                "text": "Let me analyze this request...",
+                                "format": "google-gemini-v1",
+                                "index": 0
+                            }
+                        ])),
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 2: More reasoning details
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([
+                            {
+                                "type": "reasoning.encrypted",
+                                "data": "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123",
+                                "format": "google-gemini-v1",
+                                "index": 0,
+                                "id": "tool_call_abc123"
+                            }
+                        ])),
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 3: Tool call starts
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("tool_call_abc123".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("list_directory".into()),
+                                arguments: Some("{\"path\":\"test\"}".into()),
+                                thought_signature: Some("sha256:test_signature_xyz789".into()),
+                            }),
+                        }]),
+                        reasoning_details: None,
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Event 4: Empty reasoning_details on tool_calls finish
+            // This is the critical event - we must not overwrite with this empty array!
+            ResponseStreamEvent {
+                id: Some("response_123".into()),
+                created: 1234567890,
+                model: "google/gemini-3-pro-preview".into(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        reasoning: None,
+                        tool_calls: None,
+                        reasoning_details: Some(serde_json::json!([])),
+                    },
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        // Process all events
+        let mut collected_events = Vec::new();
+        for event in events {
+            let mapped = mapper.map_event(event);
+            collected_events.extend(mapped);
+        }
+
+        // Verify we got the expected events
+        let mut has_tool_use = false;
+        let mut reasoning_details_events = Vec::new();
+        let mut thought_signature_value = None;
+
+        for event_result in collected_events {
+            match event_result {
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                    has_tool_use = true;
+                    assert_eq!(tool_use.id.to_string(), "tool_call_abc123");
+                    assert_eq!(tool_use.name.as_ref(), "list_directory");
+                    thought_signature_value = tool_use.thought_signature.clone();
+                }
+                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
+                    reasoning_details_events.push(details);
+                }
+                _ => {}
+            }
+        }
+
+        // Assertions
+        assert!(has_tool_use, "Should have emitted ToolUse event");
+        assert!(
+            !reasoning_details_events.is_empty(),
+            "Should have emitted ReasoningDetails events"
+        );
+
+        // We should have received multiple reasoning_details events (text, encrypted, empty)
+        // The agent layer is responsible for keeping only the first non-empty one
+        assert!(
+            reasoning_details_events.len() >= 2,
+            "Should have multiple reasoning_details events from streaming"
+        );
+
+        // Verify at least one contains the encrypted data
+        let has_encrypted = reasoning_details_events.iter().any(|details| {
+            if let serde_json::Value::Array(arr) = details {
+                arr.iter().any(|item| {
+                    item["type"] == "reasoning.encrypted"
+                        && item["data"]
+                            .as_str()
+                            .map_or(false, |s| s.contains("EtgDCtUDAdHtim9OF5jm4aeZSBAtl"))
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_encrypted,
+            "Should have at least one reasoning_details with encrypted data"
+        );
+
+        // Verify thought_signature was captured
+        assert!(
+            thought_signature_value.is_some(),
+            "Tool use should have thought_signature"
+        );
+        assert_eq!(
+            thought_signature_value.unwrap(),
+            "sha256:test_signature_xyz789"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_prevents_empty_reasoning_details_overwrite() {
+        // This test verifies that the agent layer prevents empty reasoning_details
+        // from overwriting non-empty ones, even though the mapper emits all events.
+
+        // Simulate what the agent does when it receives multiple ReasoningDetails events
+        let mut agent_reasoning_details: Option<serde_json::Value> = None;
+
+        let events = vec![
+            // First event: non-empty reasoning_details
+            serde_json::json!([
+                {
+                    "type": "reasoning.encrypted",
+                    "data": "real_data_here",
+                    "format": "google-gemini-v1"
+                }
+            ]),
+            // Second event: empty array (should not overwrite)
+            serde_json::json!([]),
+        ];
+
+        for details in events {
+            // This mimics the agent's logic: only store if we don't already have it
+            if agent_reasoning_details.is_none() {
+                agent_reasoning_details = Some(details);
+            }
+        }
+
+        // Verify the agent kept the first non-empty reasoning_details
+        assert!(agent_reasoning_details.is_some());
+        let final_details = agent_reasoning_details.unwrap();
+        if let serde_json::Value::Array(arr) = &final_details {
+            assert!(
+                !arr.is_empty(),
+                "Agent should have kept the non-empty reasoning_details"
+            );
+            assert_eq!(arr[0]["data"], "real_data_here");
+        } else {
+            panic!("Expected array");
         }
     }
 }

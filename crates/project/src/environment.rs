@@ -6,7 +6,7 @@ use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
 use terminal::terminal_settings::TerminalSettings;
-use util::{ResultExt, rel_path::RelPath};
+use util::{ResultExt, command::new_smol_command, rel_path::RelPath};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -314,6 +314,10 @@ async fn load_directory_shell_environment(
     load_direnv: DirenvSettings,
     tx: mpsc::UnboundedSender<String>,
 ) -> anyhow::Result<HashMap<String, String>> {
+    if let DirenvSettings::Disabled = load_direnv {
+        return Ok(HashMap::default());
+    }
+
     let meta = smol::fs::metadata(&abs_path).await.with_context(|| {
         tx.unbounded_send(format!("Failed to open {}", abs_path.display()))
             .ok();
@@ -355,6 +359,7 @@ async fn load_directory_shell_environment(
     // even if direnv direct mode is enabled.
     let direnv_environment = match load_direnv {
         DirenvSettings::ShellHook => None,
+        DirenvSettings::Disabled => bail!("direnv integration is disabled"),
         // Note: direnv is not available on Windows, so we skip direnv processing
         // and just return the shell environment
         DirenvSettings::Direct if cfg!(target_os = "windows") => None,
@@ -389,7 +394,7 @@ async fn load_direnv_environment(
     };
 
     let args = &["export", "json"];
-    let direnv_output = smol::process::Command::new(&direnv_path)
+    let direnv_output = new_smol_command(&direnv_path)
         .args(args)
         .envs(env)
         .env("TERM", "dumb")

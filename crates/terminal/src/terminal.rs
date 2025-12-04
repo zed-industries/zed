@@ -108,13 +108,6 @@ actions!(
     ]
 );
 
-///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
-///Scroll multiplier that is set to 3 by default. This will be removed when I
-///Implement scroll bars.
-#[cfg(target_os = "macos")]
-const SCROLL_MULTIPLIER: f32 = 4.;
-#[cfg(not(target_os = "macos"))]
-const SCROLL_MULTIPLIER: f32 = 1.;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
@@ -381,7 +374,7 @@ impl TerminalBuilder {
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
+            hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
@@ -395,6 +388,8 @@ impl TerminalBuilder {
                 cursor_shape,
                 alternate_scroll,
                 max_scroll_history_lines,
+                path_hyperlink_regexes: Vec::default(),
+                path_hyperlink_timeout_ms: 0,
                 window_id,
             },
             child_exited: None,
@@ -415,6 +410,8 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        path_hyperlink_regexes: Vec<String>,
+        path_hyperlink_timeout_ms: u64,
         is_remote_terminal: bool,
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
@@ -599,7 +596,10 @@ impl TerminalBuilder {
                 scroll_px: px(0.),
                 next_link_id: 0,
                 selection_phase: SelectionPhase::Ended,
-                hyperlink_regex_searches: RegexSearches::new(),
+                hyperlink_regex_searches: RegexSearches::new(
+                    &path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
+                ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
@@ -613,6 +613,8 @@ impl TerminalBuilder {
                     cursor_shape,
                     alternate_scroll,
                     max_scroll_history_lines,
+                    path_hyperlink_regexes,
+                    path_hyperlink_timeout_ms,
                     window_id,
                 },
                 child_exited: None,
@@ -845,6 +847,8 @@ struct CopyTemplate {
     cursor_shape: CursorShape,
     alternate_scroll: AlternateScroll,
     max_scroll_history_lines: Option<usize>,
+    path_hyperlink_regexes: Vec<String>,
+    path_hyperlink_timeout_ms: u64,
     window_id: u64,
 }
 
@@ -988,6 +992,12 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                // If there are matches we need to emit a wake up event to
+                // invalidate the matches and recalculate their locations
+                // in the new terminal layout
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
@@ -1386,7 +1396,15 @@ impl Terminal {
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            pty_tx.notify(input.into());
+            let input = input.into();
+            if log::log_enabled!(log::Level::Debug) {
+                if let Ok(str) = str::from_utf8(&input) {
+                    log::debug!("Writing to PTY: {:?}", str);
+                } else {
+                    log::debug!("Writing to PTY: {:?}", input);
+                }
+            }
+            pty_tx.notify(input);
         }
     }
 
@@ -1882,10 +1900,11 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) {
         let mouse_mode = self.mouse_mode(e.shift);
+        let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -1918,8 +1937,11 @@ impl Terminal {
         self.word_from_position(window.mouse_position());
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
-        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+    ) -> Option<i32> {
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */
@@ -2158,6 +2180,8 @@ impl Terminal {
             self.template.cursor_shape,
             self.template.alternate_scroll,
             self.template.max_scroll_history_lines,
+            self.template.path_hyperlink_regexes.clone(),
+            self.template.path_hyperlink_timeout_ms,
             self.is_remote_terminal,
             self.template.window_id,
             None,
@@ -2399,6 +2423,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    vec![],
+                    0,
                     false,
                     0,
                     Some(completion_tx),
@@ -2447,6 +2473,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    vec![],
+                    0,
                     false,
                     0,
                     Some(completion_tx),
@@ -2475,9 +2503,7 @@ mod tests {
         })
         .detach();
 
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
@@ -2522,6 +2548,8 @@ mod tests {
                     CursorShape::default(),
                     AlternateScroll::On,
                     None,
+                    Vec::new(),
+                    0,
                     false,
                     0,
                     Some(completion_tx),

@@ -226,12 +226,17 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -272,6 +277,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Five
             | Model::FiveMini
             | Model::FiveNano
+            | Model::FivePointOne
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -581,6 +587,7 @@ impl OpenAiEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_call.arguments.clone(),
+                                thought_signature: None,
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -638,7 +645,6 @@ pub fn count_open_ai_tokens(
 ) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = collect_tiktoken_messages(request);
-
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
@@ -666,11 +672,11 @@ pub fn count_open_ai_tokens(
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
-            Model::Five | Model::FiveMini | Model::FiveNano => {
-                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
-            }
+            | Model::O4Mini
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages), // GPT-5.1 doesn't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::FivePointOne => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
         }
         .map(|tokens| tokens as u64)
     })
@@ -876,6 +882,7 @@ mod tests {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
                 cache: false,
+                reasoning_details: None,
             }],
             tools: vec![],
             tool_choice: None,

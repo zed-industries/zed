@@ -8,7 +8,6 @@ pub mod channel_chat_participant;
 pub mod channel_member;
 pub mod contact;
 pub mod contributor;
-pub mod embedding;
 pub mod extension;
 pub mod extension_version;
 pub mod follower;

@@ -2,9 +2,6 @@ mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;
 mod db_tests;
-// we only run postgres tests on macos right now
-#[cfg(target_os = "macos")]
-mod embedding_tests;
 mod extension_tests;
 
 use crate::migrations::run_database_migrations;

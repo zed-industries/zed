@@ -999,7 +999,7 @@ impl Worktree {
             };
 
             if worktree_relative_path.components().next().is_some() {
-                full_path_string.push_str(self.path_style.separator());
+                full_path_string.push_str(self.path_style.primary_separator());
                 full_path_string.push_str(&worktree_relative_path.display(self.path_style));
             }
 
@@ -2108,8 +2108,8 @@ impl Snapshot {
         if path.file_name().is_some() {
             let mut abs_path = self.abs_path.to_string();
             for component in path.components() {
-                if !abs_path.ends_with(self.path_style.separator()) {
-                    abs_path.push_str(self.path_style.separator());
+                if !abs_path.ends_with(self.path_style.primary_separator()) {
+                    abs_path.push_str(self.path_style.primary_separator());
                 }
                 abs_path.push_str(component);
             }
@@ -2382,6 +2382,36 @@ impl Snapshot {
                     None
                 }
             })
+    }
+
+    /// Resolves a path to an executable using the following heuristics:
+    ///
+    /// 1. If the path starts with `~`, it is expanded to the user's home directory.
+    /// 2. If the path is relative and contains more than one component,
+    ///    it is joined to the worktree root path.
+    /// 3. If the path is relative and exists in the worktree
+    ///    (even if falls under an exclusion filter),
+    ///    it is joined to the worktree root path.
+    /// 4. Otherwise the path is returned unmodified.
+    ///
+    /// Relative paths that do not exist in the worktree may
+    /// still be found using the `PATH` environment variable.
+    pub fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+        if let Some(path_str) = path.to_str() {
+            if let Some(remaining_path) = path_str.strip_prefix("~/") {
+                return home_dir().join(remaining_path);
+            } else if path_str == "~" {
+                return home_dir().to_path_buf();
+            }
+        }
+
+        if let Ok(rel_path) = RelPath::new(&path, self.path_style)
+            && (path.components().count() > 1 || self.entry_for_path(&rel_path).is_some())
+        {
+            self.abs_path().join(path)
+        } else {
+            path
+        }
     }
 
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
@@ -5479,7 +5509,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
         let path =
             RelPath::from_proto(&entry.path).context("invalid relative path in proto message")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
-        let is_always_included = always_included.is_match(path.as_std_path());
+        let is_always_included = always_included.is_match(&path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
