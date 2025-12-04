@@ -108,6 +108,7 @@ pub struct Zeta2Inspector {
 
 pub enum ContextModeState {
     Llm,
+    Lsp,
     Syntax {
         max_retrieved_declarations: Entity<InputField>,
     },
@@ -222,6 +223,9 @@ impl Zeta2Inspector {
                     ),
                 };
             }
+            ContextMode::Lsp(_) => {
+                self.context_mode = ContextModeState::Lsp;
+            }
         }
         cx.notify();
     }
@@ -302,6 +306,9 @@ impl Zeta2Inspector {
                             ContextModeState::Syntax {
                                 max_retrieved_declarations,
                             } => number_input_value(max_retrieved_declarations, cx),
+                            ContextModeState::Lsp => {
+                                zeta::DEFAULT_SYNTAX_CONTEXT_OPTIONS.max_retrieved_declarations
+                            }
                         };
 
                         ContextMode::Syntax(EditPredictionContextOptions {
@@ -310,6 +317,7 @@ impl Zeta2Inspector {
                             ..context_options
                         })
                     }
+                    ContextMode::Lsp(excerpt_options) => ContextMode::Lsp(excerpt_options),
                 };
 
                 this.set_zeta_options(
@@ -656,6 +664,7 @@ impl Zeta2Inspector {
                                 ContextModeState::Syntax {
                                     max_retrieved_declarations,
                                 } => Some(max_retrieved_declarations.clone()),
+                                ContextModeState::Lsp => None,
                             })
                             .child(self.max_prompt_bytes_input.clone())
                             .child(self.render_prompt_format_dropdown(window, cx)),
@@ -679,6 +688,7 @@ impl Zeta2Inspector {
                     match &self.context_mode {
                         ContextModeState::Llm => "LLM-based",
                         ContextModeState::Syntax { .. } => "Syntax",
+                        ContextModeState::Lsp => "LSP-based",
                     },
                     ContextMenu::build(window, cx, move |menu, _window, _cx| {
                         menu.item(
@@ -695,6 +705,7 @@ impl Zeta2Inspector {
                                                 this.zeta.read(cx).options().clone();
                                             match current_options.context.clone() {
                                                 ContextMode::Agentic(_) => {}
+                                                ContextMode::Lsp(_) => {}
                                                 ContextMode::Syntax(context_options) => {
                                                     let options = ZetaOptions {
                                                         context: ContextMode::Agentic(
@@ -739,6 +750,7 @@ impl Zeta2Inspector {
                                                     this.set_zeta_options(options, cx);
                                                 }
                                                 ContextMode::Syntax(_) => {}
+                                                ContextMode::Lsp(_) => {}
                                             }
                                         })
                                         .ok();

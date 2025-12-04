@@ -136,8 +136,7 @@ pub async fn perform_predict(
             let result = result.clone();
             async move {
                 let mut start_time = None;
-                let mut search_queries_generated_at = None;
-                let mut search_queries_executed_at = None;
+                let mut retrieval_finished_at = None;
                 while let Some(event) = debug_rx.next().await {
                     match event {
                         zeta::ZetaDebugInfo::ContextRetrievalStarted(info) => {
@@ -147,17 +146,17 @@ pub async fn perform_predict(
                                 &info.search_prompt,
                             )?;
                         }
-                        zeta::ZetaDebugInfo::SearchQueriesGenerated(info) => {
-                            search_queries_generated_at = Some(info.timestamp);
-                            fs::write(
-                                example_run_dir.join("search_queries.json"),
-                                serde_json::to_string_pretty(&info.search_queries).unwrap(),
-                            )?;
+                        zeta::ZetaDebugInfo::ContextRetrievalFinished(info) => {
+                            retrieval_finished_at = Some(info.timestamp);
+                            for (key, value) in &info.metadata {
+                                if *key == "search_queries" {
+                                    fs::write(
+                                        example_run_dir.join("search_queries.json"),
+                                        value.as_bytes(),
+                                    )?;
+                                }
+                            }
                         }
-                        zeta::ZetaDebugInfo::SearchQueriesExecuted(info) => {
-                            search_queries_executed_at = Some(info.timestamp);
-                        }
-                        zeta::ZetaDebugInfo::ContextRetrievalFinished(_info) => {}
                         zeta::ZetaDebugInfo::EditPredictionRequested(request) => {
                             let prediction_started_at = Instant::now();
                             start_time.get_or_insert(prediction_started_at);
@@ -200,13 +199,8 @@ pub async fn perform_predict(
 
                             let mut result = result.lock().unwrap();
                             result.generated_len = response.chars().count();
-
-                            result.planning_search_time =
-                                Some(search_queries_generated_at.unwrap() - start_time.unwrap());
-                            result.running_search_time = Some(
-                                search_queries_executed_at.unwrap()
-                                    - search_queries_generated_at.unwrap(),
-                            );
+                            result.retrieval_time =
+                                retrieval_finished_at.unwrap() - start_time.unwrap();
                             result.prediction_time = prediction_finished_at - prediction_started_at;
                             result.total_time = prediction_finished_at - start_time.unwrap();
 
@@ -219,7 +213,12 @@ pub async fn perform_predict(
         });
 
         zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context(project.clone(), cursor_buffer.clone(), cursor_anchor, cx)
+            zeta.refresh_context_with_agentic_retrieval(
+                project.clone(),
+                cursor_buffer.clone(),
+                cursor_anchor,
+                cx,
+            )
         })?
         .await?;
     }
@@ -321,8 +320,7 @@ pub struct PredictionDetails {
     pub diff: String,
     pub excerpts: Vec<ActualExcerpt>,
     pub excerpts_text: String, // TODO: contains the worktree root path. Drop this field and compute it on the fly
-    pub planning_search_time: Option<Duration>,
-    pub running_search_time: Option<Duration>,
+    pub retrieval_time: Duration,
     pub prediction_time: Duration,
     pub total_time: Duration,
     pub run_example_dir: PathBuf,
@@ -336,8 +334,7 @@ impl PredictionDetails {
             diff: Default::default(),
             excerpts: Default::default(),
             excerpts_text: Default::default(),
-            planning_search_time: Default::default(),
-            running_search_time: Default::default(),
+            retrieval_time: Default::default(),
             prediction_time: Default::default(),
             total_time: Default::default(),
             run_example_dir,
@@ -357,28 +354,20 @@ impl PredictionDetails {
     }
 
     pub fn to_markdown(&self) -> String {
-        let inference_time = self.planning_search_time.unwrap_or_default() + self.prediction_time;
-
         format!(
             "## Excerpts\n\n\
             {}\n\n\
             ## Prediction\n\n\
             {}\n\n\
             ## Time\n\n\
-            Planning searches: {}ms\n\
-            Running searches: {}ms\n\
-            Making Prediction: {}ms\n\n\
-            -------------------\n\n\
-            Total: {}ms\n\
-            Inference: {}ms ({:.2}%)\n",
+            Retrieval: {}ms\n\
+            Prediction: {}ms\n\n\
+            Total: {}ms\n",
             self.excerpts_text,
             self.diff,
-            self.planning_search_time.unwrap_or_default().as_millis(),
-            self.running_search_time.unwrap_or_default().as_millis(),
+            self.retrieval_time.as_millis(),
             self.prediction_time.as_millis(),
             self.total_time.as_millis(),
-            inference_time.as_millis(),
-            (inference_time.as_millis() as f64 / self.total_time.as_millis() as f64) * 100.
         )
     }
 }

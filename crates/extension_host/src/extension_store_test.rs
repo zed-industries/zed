@@ -705,7 +705,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.register_fake_language_server(
+    let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
             completion_provider: Some(Default::default()),

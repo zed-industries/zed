@@ -56,6 +56,7 @@ members = [
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/edit_prediction_context",
+    "crates/edit_prediction_context2",
     "crates/zeta2_tools",
     "crates/editor",
     "crates/eval",
@@ -316,6 +317,7 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
+edit_prediction_context2 = { path = "crates/edit_prediction_context2" }
 zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }

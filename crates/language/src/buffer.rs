@@ -4022,6 +4022,20 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn outline_items_as_offsets_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Vec<OutlineItem<usize>> {
+        self.outline_items_containing_internal(
+            range,
+            include_extra_context,
+            theme,
+            |buffer, range| range.to_offset(buffer),
+        )
+    }
+
     fn outline_items_containing_internal<T: ToOffset, U>(
         &self,
         range: Range<T>,

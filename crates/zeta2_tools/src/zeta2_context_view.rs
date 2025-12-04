@@ -8,26 +8,25 @@ use std::{
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use editor::{Editor, PathKey};
 use futures::StreamExt as _;
 use gpui::{
     Animation, AnimationExt, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ParentElement as _, SharedString, Styled as _, Task, TextAlign, Window, actions,
-    pulsating_between,
+    Focusable, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, Task, TextAlign, Window, actions, div, pulsating_between,
 };
 use multi_buffer::MultiBuffer;
 use project::Project;
 use text::OffsetRangeExt;
 use ui::{
-    ButtonCommon, Clickable, Color, Disableable, FluentBuilder as _, Icon, IconButton, IconName,
-    IconSize, InteractiveElement, IntoElement, ListHeader, ListItem, StyledTypography, div, h_flex,
-    v_flex,
+    ButtonCommon, Clickable, Disableable, FluentBuilder as _, IconButton, IconName,
+    StyledTypography as _, h_flex, v_flex,
 };
+
 use workspace::Item;
 use zeta::{
-    Zeta, ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
-    ZetaSearchQueryDebugInfo,
+    Zeta, ZetaContextRetrievalFinishedDebugInfo, ZetaContextRetrievalStartedDebugInfo,
+    ZetaDebugInfo,
 };
 
 pub struct Zeta2ContextView {
@@ -42,10 +41,8 @@ pub struct Zeta2ContextView {
 #[derive(Debug)]
 struct RetrievalRun {
     editor: Entity<Editor>,
-    search_queries: Vec<SearchToolQuery>,
     started_at: Instant,
-    search_results_generated_at: Option<Instant>,
-    search_results_executed_at: Option<Instant>,
+    metadata: Vec<(&'static str, SharedString)>,
     finished_at: Option<Instant>,
 }
 
@@ -97,22 +94,12 @@ impl Zeta2ContextView {
     ) {
         match event {
             ZetaDebugInfo::ContextRetrievalStarted(info) => {
-                if info.project == self.project {
+                if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_started(info, window, cx);
                 }
             }
-            ZetaDebugInfo::SearchQueriesGenerated(info) => {
-                if info.project == self.project {
-                    self.handle_search_queries_generated(info, window, cx);
-                }
-            }
-            ZetaDebugInfo::SearchQueriesExecuted(info) => {
-                if info.project == self.project {
-                    self.handle_search_queries_executed(info, window, cx);
-                }
-            }
             ZetaDebugInfo::ContextRetrievalFinished(info) => {
-                if info.project == self.project {
+                if info.project_entity_id == self.project.entity_id() {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
@@ -129,7 +116,7 @@ impl Zeta2ContextView {
         if self
             .runs
             .back()
-            .is_some_and(|run| run.search_results_executed_at.is_none())
+            .is_some_and(|run| run.finished_at.is_none())
         {
             self.runs.pop_back();
         }
@@ -144,11 +131,9 @@ impl Zeta2ContextView {
 
         self.runs.push_back(RetrievalRun {
             editor,
-            search_queries: Vec::new(),
             started_at: info.timestamp,
-            search_results_generated_at: None,
-            search_results_executed_at: None,
             finished_at: None,
+            metadata: Vec::new(),
         });
 
         cx.notify();
@@ -156,7 +141,7 @@ impl Zeta2ContextView {
 
     fn handle_context_retrieval_finished(
         &mut self,
-        info: ZetaContextRetrievalDebugInfo,
+        info: ZetaContextRetrievalFinishedDebugInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -165,67 +150,72 @@ impl Zeta2ContextView {
         };
 
         run.finished_at = Some(info.timestamp);
+        run.metadata = info.metadata;
 
+        let project = self.project.clone();
+        let related_files = self
+            .zeta
+            .read(cx)
+            .context_for_project(&self.project, cx)
+            .to_vec();
+
+        let editor = run.editor.clone();
         let multibuffer = run.editor.read(cx).buffer().clone();
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.clear(cx);
 
-            let context = self.zeta.read(cx).context_for_project(&self.project);
-            let mut paths = Vec::new();
-            for (buffer, ranges) in context {
-                let path = PathKey::for_buffer(&buffer, cx);
-                let snapshot = buffer.read(cx).snapshot();
-                let ranges = ranges
-                    .iter()
-                    .map(|range| range.to_point(&snapshot))
-                    .collect::<Vec<_>>();
-                paths.push((path, buffer, ranges));
-            }
-
-            for (path, buffer, ranges) in paths {
-                multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
-            }
-        });
-
-        run.editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&Default::default(), window, cx);
-        });
-
-        cx.notify();
-    }
-
-    fn handle_search_queries_generated(
-        &mut self,
-        info: ZetaSearchQueryDebugInfo,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(run) = self.runs.back_mut() else {
-            return;
-        };
-
-        run.search_results_generated_at = Some(info.timestamp);
-        run.search_queries = info.search_queries;
-        cx.notify();
-    }
-
-    fn handle_search_queries_executed(
-        &mut self,
-        info: ZetaContextRetrievalDebugInfo,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
         if self.current_ix + 2 == self.runs.len() {
-            // Switch to latest when the queries are executed
             self.current_ix += 1;
         }
 
-        let Some(run) = self.runs.back_mut() else {
-            return;
-        };
+        cx.spawn_in(window, async move |this, cx| {
+            let mut paths = Vec::new();
+            for related_file in related_files {
+                let (buffer, point_ranges): (_, Vec<_>) =
+                    if let Some(buffer) = related_file.buffer.upgrade() {
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
-        run.search_results_executed_at = Some(info.timestamp);
-        cx.notify();
+                        (
+                            buffer,
+                            related_file
+                                .excerpts
+                                .iter()
+                                .map(|excerpt| excerpt.anchor_range.to_point(&snapshot))
+                                .collect(),
+                        )
+                    } else {
+                        (
+                            project
+                                .update(cx, |project, cx| {
+                                    project.open_buffer(related_file.path.clone(), cx)
+                                })?
+                                .await?,
+                            related_file
+                                .excerpts
+                                .iter()
+                                .map(|excerpt| excerpt.point_range.clone())
+                                .collect(),
+                        )
+                    };
+                cx.update(|_, cx| {
+                    let path = PathKey::for_buffer(&buffer, cx);
+                    paths.push((path, buffer, point_ranges));
+                })?;
+            }
+
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.clear(cx);
+
+                for (path, buffer, ranges) in paths {
+                    multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
+                }
+            })?;
+
+            editor.update_in(cx, |editor, window, cx| {
+                editor.move_to_beginning(&Default::default(), window, cx);
+            })?;
+
+            this.update(cx, |_, cx| cx.notify())
+        })
+        .detach();
     }
 
     fn handle_go_back(
@@ -254,8 +244,11 @@ impl Zeta2ContextView {
     }
 
     fn render_informational_footer(&self, cx: &mut Context<'_, Zeta2ContextView>) -> ui::Div {
-        let is_latest = self.runs.len() == self.current_ix + 1;
         let run = &self.runs[self.current_ix];
+        let new_run_started = self
+            .runs
+            .back()
+            .map_or(false, |latest_run| latest_run.finished_at.is_none());
 
         h_flex()
             .p_2()
@@ -264,113 +257,64 @@ impl Zeta2ContextView {
             .text_xs()
             .border_t_1()
             .gap_2()
+            .child(v_flex().h_full().flex_1().child({
+                let t0 = run.started_at;
+                let mut table = ui::Table::<2>::new().width(ui::px(300.)).no_ui_font();
+                for (key, value) in &run.metadata {
+                    table = table.row([key.into_any_element(), value.clone().into_any_element()])
+                }
+                table = table.row([
+                    "Total Time".into_any_element(),
+                    format!("{} ms", (run.finished_at.unwrap_or(t0) - t0).as_millis())
+                        .into_any_element(),
+                ]);
+                table
+            }))
             .child(
-                v_flex().h_full().flex_1().children(
-                    run.search_queries
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(ix, query)| {
-                            std::iter::once(ListHeader::new(query.glob.clone()).into_any_element())
-                                .chain(query.syntax_node.iter().enumerate().map(
-                                    move |(regex_ix, regex)| {
-                                        ListItem::new(ix * 100 + regex_ix)
-                                            .start_slot(
-                                                Icon::new(IconName::MagnifyingGlass)
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(regex.clone())
-                                            .into_any_element()
-                                    },
+                v_flex().h_full().text_align(TextAlign::Right).child(
+                    h_flex()
+                        .justify_end()
+                        .child(
+                            IconButton::new("go-back", IconName::ChevronLeft)
+                                .disabled(self.current_ix == 0 || self.runs.len() < 2)
+                                .tooltip(ui::Tooltip::for_action_title(
+                                    "Go to previous run",
+                                    &Zeta2ContextGoBack,
                                 ))
-                                .chain(query.content.as_ref().map(move |regex| {
-                                    ListItem::new(ix * 100 + query.syntax_node.len())
-                                        .start_slot(
-                                            Icon::new(IconName::MagnifyingGlass)
-                                                .color(Color::Muted)
-                                                .size(IconSize::Small),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_go_back(&Zeta2ContextGoBack, window, cx);
+                                })),
+                        )
+                        .child(
+                            div()
+                                .child(format!("{}/{}", self.current_ix + 1, self.runs.len()))
+                                .map(|this| {
+                                    if new_run_started {
+                                        this.with_animation(
+                                            "pulsating-count",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                            |label, delta| label.opacity(delta),
                                         )
-                                        .child(regex.clone())
                                         .into_any_element()
-                                }))
-                        }),
+                                    } else {
+                                        this.into_any_element()
+                                    }
+                                }),
+                        )
+                        .child(
+                            IconButton::new("go-forward", IconName::ChevronRight)
+                                .disabled(self.current_ix + 1 == self.runs.len())
+                                .tooltip(ui::Tooltip::for_action_title(
+                                    "Go to next run",
+                                    &Zeta2ContextGoBack,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.handle_go_forward(&Zeta2ContextGoForward, window, cx);
+                                })),
+                        ),
                 ),
-            )
-            .child(
-                v_flex()
-                    .h_full()
-                    .text_align(TextAlign::Right)
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .child(
-                                IconButton::new("go-back", IconName::ChevronLeft)
-                                    .disabled(self.current_ix == 0 || self.runs.len() < 2)
-                                    .tooltip(ui::Tooltip::for_action_title(
-                                        "Go to previous run",
-                                        &Zeta2ContextGoBack,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.handle_go_back(&Zeta2ContextGoBack, window, cx);
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .child(format!("{}/{}", self.current_ix + 1, self.runs.len()))
-                                    .map(|this| {
-                                        if self.runs.back().is_some_and(|back| {
-                                            back.search_results_executed_at.is_none()
-                                        }) {
-                                            this.with_animation(
-                                                "pulsating-count",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                                |label, delta| label.opacity(delta),
-                                            )
-                                            .into_any_element()
-                                        } else {
-                                            this.into_any_element()
-                                        }
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("go-forward", IconName::ChevronRight)
-                                    .disabled(self.current_ix + 1 == self.runs.len())
-                                    .tooltip(ui::Tooltip::for_action_title(
-                                        "Go to next run",
-                                        &Zeta2ContextGoBack,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.handle_go_forward(&Zeta2ContextGoForward, window, cx);
-                                    })),
-                            ),
-                    )
-                    .map(|mut div| {
-                        let pending_message = |div: ui::Div, msg: &'static str| {
-                            if is_latest {
-                                return div.child(msg);
-                            } else {
-                                return div.child("Canceled");
-                            }
-                        };
-
-                        let t0 = run.started_at;
-                        let Some(t1) = run.search_results_generated_at else {
-                            return pending_message(div, "Planning search...");
-                        };
-                        div = div.child(format!("Planned search: {:>5} ms", (t1 - t0).as_millis()));
-
-                        let Some(t2) = run.search_results_executed_at else {
-                            return pending_message(div, "Running search...");
-                        };
-                        div = div.child(format!("Ran search: {:>5} ms", (t2 - t1).as_millis()));
-
-                        div.child(format!(
-                            "Total: {:>5} ms",
-                            (run.finished_at.unwrap_or(t0) - t0).as_millis()
-                        ))
-                    }),
             )
     }
 }
