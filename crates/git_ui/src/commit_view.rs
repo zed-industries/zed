@@ -151,11 +151,14 @@ impl CommitView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+
             editor.disable_inline_diagnostics();
+            editor.disable_indent_guides();
             editor.set_expand_all_diff_hunks(cx);
             editor.register_addon(CommitViewAddon {
                 multibuffer: multibuffer.downgrade(),
             });
+
             editor
         });
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
