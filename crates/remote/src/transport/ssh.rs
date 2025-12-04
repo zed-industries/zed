@@ -53,7 +53,7 @@ pub enum SshConnectionHost {
 }
 
 impl SshConnectionHost {
-    pub fn to_safe_string(&self) -> String {
+    pub fn to_bracketed_string(&self) -> String {
         match self {
             Self::IpAddr(IpAddr::V4(ip)) => ip.to_string(),
             Self::IpAddr(IpAddr::V6(ip)) => format!("[{}]", ip),
@@ -1355,7 +1355,7 @@ impl SshConnectionOptions {
 
     fn scp_destination(&self) -> String {
         if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host.to_safe_string())
+            format!("{}@{}", username, self.host.to_bracketed_string())
         } else {
             self.host.to_string()
         }
@@ -1363,7 +1363,7 @@ impl SshConnectionOptions {
 
     pub fn connection_string(&self) -> String {
         let host = if let Some(port) = &self.port {
-            format!("{}:{}", self.host.to_safe_string(), port)
+            format!("{}:{}", self.host.to_bracketed_string(), port)
         } else {
             self.host.to_string()
         };
