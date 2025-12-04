@@ -380,6 +380,11 @@ impl SecondaryEditor {
             })
             .collect();
 
+        let diff = primary_multibuffer
+            .diff_for(main_buffer.remote_id())
+            .unwrap();
+        let main_buffer = primary_multibuffer.buffer(main_buffer.remote_id()).unwrap();
+
         self.editor.update(cx, |editor, cx| {
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.update_path_excerpts(
@@ -388,7 +393,13 @@ impl SecondaryEditor {
                     &base_text_buffer_snapshot,
                     new,
                     cx,
-                )
+                );
+                buffer.add_inverted_diff(
+                    base_text_buffer_snapshot.remote_id(),
+                    diff,
+                    main_buffer,
+                    cx,
+                );
             })
         });
     }
@@ -432,6 +443,5 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
         });
-        
     }
 }

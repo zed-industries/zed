@@ -3278,14 +3278,14 @@ impl EditorElement {
                 row_info.buffer_row? + 1
             };
             let relative_number = relative_rows.get(&display_row);
-            if !(relative_line_numbers_enabled && relative_number.is_some())
-                && row_info
-                    .diff_status
-                    .is_some_and(|status| status.is_deleted())
-                && !self.editor.read(cx).use_base_text_line_numbers
-            {
-                return None;
-            }
+            // FIXME
+            // if !(relative_line_numbers_enabled && relative_number.is_some())
+            //     && row_info
+            //         .diff_status
+            //         .is_some_and(|status| status.is_deleted())
+            // {
+            //     return None;
+            // }
 
             let number = relative_number.unwrap_or(&non_relative_number);
             write!(&mut line_number, "{number}").unwrap();
