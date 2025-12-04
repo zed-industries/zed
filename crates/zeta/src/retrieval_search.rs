@@ -215,6 +215,7 @@ pub async fn run_retrieval_searches(
     .await
 }
 
+#[cfg(feature = "eval-support")]
 pub(crate) fn merge_anchor_ranges(ranges: &mut Vec<Range<Anchor>>, snapshot: &BufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
