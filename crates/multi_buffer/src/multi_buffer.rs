@@ -32,7 +32,6 @@ use gpui::AppContext as _;
 use rope::DimensionPair;
 use smallvec::SmallVec;
 use smol::future::yield_now;
-use tracing::instrument;
 use std::{
     any::type_name,
     borrow::Cow,
@@ -57,6 +56,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
+use tracing::instrument;
 use util::post_inc;
 
 pub use self::path_key::PathKey;

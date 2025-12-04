@@ -6,13 +6,13 @@ mod unclipped;
 
 use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
-use tracing::instrument;
 use std::{
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
     str,
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
+use tracing::instrument;
 
 pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
