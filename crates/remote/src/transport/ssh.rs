@@ -394,6 +394,10 @@ impl RemoteConnection for SshRemoteConnection {
     fn path_style(&self) -> PathStyle {
         self.ssh_path_style
     }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }
 
 impl SshRemoteConnection {
