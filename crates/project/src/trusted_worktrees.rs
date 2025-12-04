@@ -34,9 +34,9 @@ pub struct TrustedWorktreesStorage {
 }
 
 #[derive(Debug)]
-pub enum Event {
-    TrustedWorktree(PathBuf),
-    UntrustedWorktree(PathBuf),
+pub enum TrustedWorktreesEvent {
+    Trusted(PathBuf),
+    StoppedTrusting(PathBuf),
 }
 
 /// A collection of absolute paths for trusted worktrees.
@@ -49,7 +49,7 @@ struct TrustedWorktrees {
     serialization_task: Task<()>,
 }
 
-impl EventEmitter<Event> for TrustedWorktrees {}
+impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktrees {}
 
 impl TrustedWorktrees {
     async fn new() -> Self {
@@ -93,7 +93,7 @@ impl TrustedWorktrees {
                     .log_err();
             });
             // TODO kb wrong: need to emut multiple worktrees, as we can trust some high-level directory
-            cx.emit(Event::TrustedWorktree(abs_path));
+            cx.emit(TrustedWorktreesEvent::Trusted(abs_path));
         }
     }
 
@@ -114,7 +114,7 @@ impl TrustedWorktreesStorage {
     pub fn subscribe<T: 'static>(
         &self,
         cx: &mut Context<T>,
-        mut on_event: impl FnMut(&mut T, &Event, &mut Context<T>) + 'static,
+        mut on_event: impl FnMut(&mut T, &TrustedWorktreesEvent, &mut Context<T>) + 'static,
     ) -> Subscription {
         cx.subscribe(&self.trusted, move |t, _, e, cx| on_event(t, e, cx))
     }
@@ -123,7 +123,7 @@ impl TrustedWorktreesStorage {
         &self,
         window: &mut Window,
         cx: &mut Context<T>,
-        mut on_event: impl FnMut(&mut T, &Event, &mut Window, &mut Context<T>) + 'static,
+        mut on_event: impl FnMut(&mut T, &TrustedWorktreesEvent, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         cx.subscribe_in(&self.trusted, window, move |t, _, e, window, cx| {
             on_event(t, e, window, cx)
@@ -169,7 +169,7 @@ impl TrustedWorktreesStorage {
 
             if !can_trust {
                 if self.untrusted.insert(abs_path.to_owned()) {
-                    cx.emit(Event::UntrustedWorktree(abs_path.to_owned()));
+                    cx.emit(TrustedWorktreesEvent::StoppedTrusting(abs_path.to_owned()));
                 }
             }
 
