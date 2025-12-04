@@ -6,6 +6,7 @@ pub mod settings;
 
 use core::fmt;
 
+use crate::settings::LspSettings;
 use wit::*;
 
 pub use serde_json;
@@ -85,19 +86,21 @@ pub trait Extension: Send + Sync {
     /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
         &mut self,
-        _language_server_id: &LanguageServerId,
-        _worktree: &Worktree,
+        language_server_id: &LanguageServerId,
+        worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        Ok(None)
+        LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+            .map(|settings| settings.initialization_options.clone())
     }
 
     /// Returns the workspace configuration options to pass to the language server.
     fn language_server_workspace_configuration(
         &mut self,
-        _language_server_id: &LanguageServerId,
-        _worktree: &Worktree,
+        language_server_id: &LanguageServerId,
+        worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
-        Ok(None)
+        LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+            .map(|settings| settings.settings.clone())
     }
 
     /// Returns the initialization options to pass to the other language server.
