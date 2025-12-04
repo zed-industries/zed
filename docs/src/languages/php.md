@@ -8,7 +8,7 @@ PHP support is available through the [PHP extension](https://github.com/zed-exte
 
 ## Install PHP
 
-The PHP extension requires PHP to be installed and available in your path:
+The PHP extension requires PHP to be installed and available in your `PATH`:
 
 ```sh
 # macOS via Homebrew
@@ -24,7 +24,11 @@ sudo dnf install php-cli
 sudo pacman -S php
 
 # check PHP path
+## macOS and Linux 
 which php
+
+## Windows
+where php
 ```
 
 ## Choosing a language server
