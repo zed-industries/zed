@@ -320,6 +320,7 @@ impl NativeAgent {
                 action_log.clone(),
                 session_id.clone(),
                 prompt_capabilities_rx,
+                Vec::new(),
                 cx,
             )
         });

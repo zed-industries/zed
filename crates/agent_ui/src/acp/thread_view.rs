@@ -6413,6 +6413,7 @@ pub(crate) mod tests {
                         embedded_context: true,
                         meta: None,
                     }),
+                    Vec::new(),
                     cx,
                 )
             })))
@@ -6477,6 +6478,7 @@ pub(crate) mod tests {
                         embedded_context: true,
                         meta: None,
                     }),
+                    Vec::new(),
                     cx,
                 )
             })))

@@ -32,7 +32,12 @@ use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use std::{
+    fmt::Display,
+    mem,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -818,6 +823,7 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    allowed_paths: Vec<PathBuf>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1019,6 +1025,7 @@ impl AcpThread {
         action_log: Entity<ActionLog>,
         session_id: acp::SessionId,
         mut prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
+        allowed_paths: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let prompt_capabilities = prompt_capabilities_rx.borrow().clone();
@@ -1048,11 +1055,18 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            allowed_paths,
         }
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    pub fn is_path_allowed(&self, path: &Path) -> bool {
+        self.allowed_paths
+            .iter()
+            .any(|allowed| path.starts_with(allowed))
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1988,17 +2002,23 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().with_data(e.to_string()))
-                .flatten()?;
+            let project_path = project.read_with(cx, |project, cx| {
+                project.project_path_for_absolute_path(&path, cx)
+            })?;
+
+            let load = if let Some(project_path) = project_path {
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            } else {
+                let is_allowed_outside_project =
+                    this.read_with(cx, |this, _| this.is_path_allowed(&path))?;
+                if !is_allowed_outside_project {
+                    return Err(acp::Error::resource_not_found(Some(format!(
+                        "Path {} is outside the project and not in allowed_paths",
+                        path.display()
+                    ))));
+                }
+                project.update(cx, |project, cx| project.open_local_buffer(&path, cx))?
+            };
 
             let buffer = load.await?;
 
@@ -2063,13 +2083,29 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project.update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(&path, cx)
-                    .context("invalid path")?;
-                anyhow::Ok(project.open_buffer(path, cx))
-            });
-            let buffer = load??.await?;
+            let project_path = project.read_with(cx, |project, cx| {
+                project.project_path_for_absolute_path(&path, cx)
+            })?;
+
+            let buffer = if let Some(project_path) = project_path {
+                project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .await?
+            } else {
+                let is_allowed_outside_project =
+                    this.read_with(cx, |this, _| this.is_path_allowed(&path))?;
+                if !is_allowed_outside_project {
+                    return Err(acp::Error::resource_not_found(Some(format!(
+                        "Path {} is outside the project and not in allowed_paths",
+                        path.display()
+                    )))
+                    .into());
+                }
+
+                project
+                    .update(cx, |project, cx| project.open_local_buffer(&path, cx))?
+                    .await?
+            };
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2944,6 +2980,268 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_allowed_paths_empty_only_project_accessible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": {
+                    "file.txt": "project content"
+                },
+                "external": {
+                    "file.txt": "external content"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/project")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/project/file.txt").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "project content");
+
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/external/file.txt").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
+    }
+
+    #[gpui::test]
+    async fn test_allowed_paths_claude_folder_accessible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": {
+                    "file.txt": "project content"
+                },
+                "home": {
+                    ".claude": {
+                        "plans": {
+                            "plan.md": "# My Plan"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(
+            FakeAgentConnection::new().with_allowed_paths(vec![path!("/home/.claude").into()]),
+        );
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/project")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/project/file.txt").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "project content");
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/plans/plan.md").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "# My Plan");
+    }
+
+    #[gpui::test]
+    async fn test_allowed_paths_prefix_restriction(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": {
+                    "file.txt": "project content"
+                },
+                "home": {
+                    ".claude": {
+                        "open": {
+                            "test.txt": "open content"
+                        },
+                        "closed": {
+                            "test.txt": "closed content"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(
+            FakeAgentConnection::new().with_allowed_paths(vec![path!("/home/.claude/open").into()]),
+        );
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/project")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/project/file.txt").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "project content");
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/open/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "open content");
+
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/closed/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
+    }
+
+    #[gpui::test]
+    async fn test_allowed_paths_same_start_directory_bypass_prevented(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": {
+                    "file.txt": "project content"
+                },
+                "home": {
+                    ".claude": {
+                        "open": {
+                            "test.txt": "open content"
+                        },
+                        "open_backup": {
+                            "test.txt": "backup content"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(
+            FakeAgentConnection::new().with_allowed_paths(vec![path!("/home/.claude/open").into()]),
+        );
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/project")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/open/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "open content");
+
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/open_backup/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
+    }
+
+    #[gpui::test]
     async fn test_succeeding_canceled_toolcall(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3591,6 +3889,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
+        allowed_paths: Vec<PathBuf>,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
         on_user_message: Option<
             Rc<
@@ -3608,6 +3907,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 auth_methods: Vec::new(),
+                allowed_paths: Vec::new(),
                 on_user_message: None,
                 sessions: Arc::default(),
             }
@@ -3616,6 +3916,11 @@ mod tests {
         #[expect(unused)]
         fn with_auth_methods(mut self, auth_methods: Vec<acp::AuthMethod>) -> Self {
             self.auth_methods = auth_methods;
+            self
+        }
+
+        fn with_allowed_paths(mut self, allowed_paths: Vec<PathBuf>) -> Self {
+            self.allowed_paths = allowed_paths;
             self
         }
 
@@ -3657,6 +3962,7 @@ mod tests {
                     .into(),
             );
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let allowed_paths = self.allowed_paths.clone();
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
@@ -3670,6 +3976,7 @@ mod tests {
                         embedded_context: true,
                         meta: None,
                     }),
+                    allowed_paths,
                     cx,
                 )
             });

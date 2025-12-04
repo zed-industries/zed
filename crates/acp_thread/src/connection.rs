@@ -346,6 +346,7 @@ mod test_support {
                         embedded_context: true,
                         meta: None,
                     }),
+                    Vec::new(),
                     cx,
                 )
             });

@@ -1632,6 +1632,7 @@ pub struct BuiltinAgentServerSettings {
     pub env: Option<HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
+    pub allowed_paths: Vec<PathBuf>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1654,6 +1655,12 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             env: value.env,
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
+            allowed_paths: value
+                .allowed_paths
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref()))
+                .collect(),
         }
     }
 }
@@ -1664,7 +1671,9 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
             path: Some(value.path),
             args: Some(value.args),
             env: value.env,
-            ..Default::default()
+            ignore_system_version: None,
+            default_mode: None,
+            allowed_paths: Vec::new(),
         }
     }
 }
@@ -1678,6 +1687,7 @@ pub struct CustomAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
+    pub allowed_paths: Vec<PathBuf>,
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1689,6 +1699,12 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env: value.env,
             },
             default_mode: value.default_mode,
+            allowed_paths: value
+                .allowed_paths
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref()))
+                .collect(),
         }
     }
 }
@@ -2006,6 +2022,7 @@ mod extension_agent_tests {
             env: None,
             ignore_system_version: None,
             default_mode: None,
+            allowed_paths: None,
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2021,6 +2038,7 @@ mod extension_agent_tests {
             args: vec!["serve".into()],
             env: None,
             default_mode: None,
+            allowed_paths: None,
         };
 
         let CustomAgentServerSettings {

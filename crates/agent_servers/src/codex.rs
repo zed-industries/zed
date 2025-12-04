@@ -69,6 +69,14 @@ impl AgentServer for Codex {
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
+        let allowed_paths = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .codex
+                .as_ref()
+                .map(|s| s.allowed_paths.clone())
+                .unwrap_or_default()
+        });
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -92,6 +100,7 @@ impl AgentServer for Codex {
                 command,
                 root_dir.as_ref(),
                 default_mode,
+                allowed_paths,
                 is_remote,
                 cx,
             )
