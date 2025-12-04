@@ -60,6 +60,7 @@ pub(crate) struct WindowsPlatformState {
     menus: RefCell<Vec<OwnedMenu>>,
     jump_list: RefCell<JumpList>,
     tray: RefCell<Option<WindowsTray>>,
+    tray_menus: RefCell<Vec<DockMenuItem>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     directx_devices: RefCell<Option<DirectXDevices>>,
@@ -90,6 +91,7 @@ impl WindowsPlatformState {
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
             tray: RefCell::new(None),
+            tray_menus: RefCell::new(Vec::new()),
         }
     }
 }
@@ -286,6 +288,18 @@ impl WindowsPlatform {
                 }
             })
             .unwrap();
+    }
+
+    pub(crate) fn perform_tray_menu_action(&self, action: usize) {
+        unsafe {
+            PostMessageW(
+                Some(self.handle),
+                WM_GPUI_TRAY_MENU_ACTION,
+                WPARAM(self.inner.validation_number),
+                LPARAM(action as isize),
+            )
+            .log_err();
+        }
     }
 }
 
@@ -561,20 +575,23 @@ impl Platform for WindowsPlatform {
         self.set_dock_menus(menus);
     }
 
-    fn set_tray(&self, mut tray: Tray, _menus: Option<Vec<MenuItem>>, _keymap: &Keymap) {
-        // let mut actions = Vec::new();
-        // if let Some(menus) = menus {
-        //     menus.into_iter().for_each(|menu| {
-        //         if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
-        //             actions.push(dock_menu);
-        //         }
-        //     });
-        // }
+    fn set_tray(&self, mut tray: Tray, menus: Option<Vec<MenuItem>>, _keymap: &Keymap) {
+        let mut actions = Vec::new();
+        let tray_menu = menus.as_ref().map(|menus| build_muda_menu(menus));
+        if let Some(menus) = menus {
+            menus.into_iter().for_each(|item| {
+                if let Some(dock_menu) = DockMenuItem::new(item).log_err() {
+                    actions.push(dock_menu);
+                }
+            });
+        }
+        *self.inner.state.tray_menus.borrow_mut() = actions;
+
         let mut windows_tray = self.inner.state.tray.borrow_mut();
         if let Some(windows_tray) = windows_tray.as_mut() {
-            windows_tray.update(&tray);
+            windows_tray.update(&tray, tray_menu);
         } else {
-            windows_tray.replace(WindowsTray::create(&tray));
+            windows_tray.replace(WindowsTray::create(&tray, tray_menu));
         }
     }
 
@@ -814,6 +831,7 @@ impl WindowsPlatformInner {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_GPUI_TRAY_MENU_ACTION => self.handle_tray_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
@@ -908,6 +926,24 @@ impl WindowsPlatformInner {
             .map(|dock_menu| dock_menu.action.boxed_clone())
         else {
             log::error!("Dock menu for index {action_idx} not found");
+            return Some(1);
+        };
+        self.with_callback(
+            |callbacks| &callbacks.app_menu_action,
+            |callback| callback(&*action),
+        );
+        Some(0)
+    }
+
+    fn handle_tray_action_event(&self, action_idx: usize) -> Option<isize> {
+        let Some(action) = self
+            .state
+            .tray_menus
+            .borrow()
+            .get(action_idx)
+            .map(|item| item.action.boxed_clone())
+        else {
+            log::error!("Tray menu for index {action_idx} not found");
             return Some(1);
         };
         self.with_callback(
@@ -1284,6 +1320,31 @@ unsafe extern "system" fn window_procedure(
     }
 
     result
+}
+
+/// Builds a [`muda::Menu`] from a `Vec<MenuItem>`.
+fn build_muda_menu(items: &Vec<MenuItem>) -> muda::Menu {
+    let mut menu = muda::Menu::new();
+    for item in items {
+        match item {
+            MenuItem::Separator => {
+                let _ = menu.append(&muda::PredefinedMenuItem::separator());
+            }
+            MenuItem::Action { name, checked, .. } => {
+                let _ = menu.append(&muda::CheckMenuItem::new(
+                    name.to_string(),
+                    true,
+                    *checked,
+                    None,
+                ));
+            }
+            MenuItem::Submenu(_submenu) => {
+                // TODO: Implement submenu creation
+            }
+            _ => {}
+        }
+    }
+    menu
 }
 
 #[cfg(test)]

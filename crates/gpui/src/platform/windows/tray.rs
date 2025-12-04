@@ -5,6 +5,7 @@
 
 use crate::*;
 use image::EncodableLayout;
+use muda::ContextMenu;
 use std::{
     mem,
     rc::Rc,
@@ -25,9 +26,7 @@ const PLATFORM_TRAY_CLASS_NAME: PCWSTR = w!("GPUI::PlatformTray");
 const WM_USER_TRAYICON: u32 = 6002;
 const WM_USER_UPDATE_TRAYMENU: u32 = 6003;
 const WM_USER_UPDATE_TRAYICON: u32 = 6004;
-const WM_USER_SHOW_TRAYICON: u32 = 6005;
-const WM_USER_HIDE_TRAYICON: u32 = 6006;
-const WM_USER_UPDATE_TRAYTOOLTIP: u32 = 6007;
+const WM_USER_UPDATE_TRAYTOOLTIP: u32 = 6005;
 static WM_TASKBAR_RESTART: LazyLock<u32> =
     LazyLock::new(|| unsafe { RegisterWindowMessageA(s!("TaskbarCreated")) });
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -35,22 +34,25 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 pub(crate) struct WindowsTray {
     tray_id: u32,
     hwnd: HWND,
+    menu: Option<muda::Menu>,
     visible: bool,
 }
 
 impl WindowsTray {
-    pub(crate) fn create(tray: &Tray) -> Self {
+    pub(crate) fn create(tray: &Tray, menu: Option<muda::Menu>) -> Self {
         let tray_id = COUNTER.fetch_add(1, Ordering::Relaxed);
+
         let mut this = Self {
             tray_id,
             hwnd: Self::create_tray_window(tray_id),
+            menu: None,
             visible: tray.visible,
         };
-        this.update(&tray);
+        this.update(&tray, menu);
         this
     }
 
-    pub(crate) fn update(&mut self, tray: &Tray) {
+    pub(crate) fn update(&mut self, tray: &Tray, menu: Option<muda::Menu>) {
         self.set_visible(tray.visible);
         if !self.visible {
             return;
@@ -59,6 +61,8 @@ impl WindowsTray {
         let hicon = tray.icon.as_ref().map(|image| {
             *Icon::new(image.as_bytes(), image.width(), image.height()).as_raw_handle()
         });
+
+        self.set_menu(menu);
         self.set_icon(hicon);
         self.set_tooltip(tray.tooltip.clone());
     }
@@ -159,10 +163,33 @@ impl WindowsTray {
             SendMessageW(
                 self.hwnd,
                 WM_USER_UPDATE_TRAYTOOLTIP,
-                tooltip.map(|t| WPARAM(Box::into_raw(Box::new(t)) as *mut _ as usize)),
+                tooltip.map(|t| WPARAM(Box::into_raw(Box::new(t)) as _)),
                 Some(LPARAM(0)),
             );
         }
+    }
+
+    fn set_menu(&mut self, menu: Option<muda::Menu>) {
+        if let Some(menu) = &self.menu {
+            unsafe { menu.detach_menu_subclass_from_hwnd(self.hwnd.0 as _) };
+        }
+        if let Some(menu) = &menu {
+            unsafe { menu.attach_menu_subclass_for_hwnd(self.hwnd.0 as _) };
+        }
+
+        unsafe {
+            // send the new menu to the subclass proc where we will update there
+            SendMessageW(
+                self.hwnd,
+                WM_USER_UPDATE_TRAYMENU,
+                menu.as_ref().map(|menu| {
+                    WPARAM(Box::into_raw(Box::new(Some(HMENU(menu.hpopupmenu() as _)))) as _)
+                }),
+                Some(LPARAM(0)),
+            );
+        }
+
+        self.menu = menu;
     }
 }
 struct TrayUserData {
@@ -267,27 +294,15 @@ unsafe extern "system" fn tray_procedure(
         match msg {
             WM_DESTROY => {
                 drop(Box::from_raw(userdata_ptr));
-
                 return LRESULT(0);
             }
             WM_USER_UPDATE_TRAYMENU => {
-                let hpopupmenu = Box::from_raw(wparam.0 as *mut Option<isize>);
-                userdata.hpopupmenu = (*hpopupmenu).map(|h| HMENU(h as *mut _));
+                let hpopupmenu = Box::from_raw(wparam.0 as *mut Option<HMENU>);
+                userdata.hpopupmenu = *hpopupmenu;
             }
             WM_USER_UPDATE_TRAYICON => {
                 let icon = Box::from_raw(wparam.0 as *mut Option<HICON>);
                 userdata.icon = *icon;
-            }
-            WM_USER_SHOW_TRAYICON => {
-                register_tray_icon(
-                    userdata.hwnd,
-                    userdata.tray_id,
-                    userdata.icon,
-                    userdata.tooltip.as_ref(),
-                );
-            }
-            WM_USER_HIDE_TRAYICON => {
-                remove_tray_icon(userdata.hwnd, userdata.tray_id);
             }
             WM_USER_UPDATE_TRAYTOOLTIP => {
                 let tooltip = Box::from_raw(wparam.0 as *mut Option<SharedString>);
@@ -308,10 +323,8 @@ unsafe extern "system" fn tray_procedure(
                     return LRESULT(0);
                 }
 
-                if lparam.0 as u32 == WM_RBUTTONDOWN {
-                    if let Some(menu) = userdata.hpopupmenu {
-                        show_tray_menu(hwnd, menu, cursor.x, cursor.y);
-                    }
+                if let Some(menu) = userdata.hpopupmenu {
+                    show_tray_menu(hwnd, menu, cursor.x, cursor.y);
                 }
             }
 
@@ -325,15 +338,18 @@ unsafe extern "system" fn tray_procedure(
 fn show_tray_menu(hwnd: HWND, menu: HMENU, x: i32, y: i32) {
     unsafe {
         let _ = SetForegroundWindow(hwnd);
-        let _ = TrackPopupMenu(
+        let result = TrackPopupMenu(
             menu,
             TPM_BOTTOMALIGN | TPM_LEFTALIGN,
             x,
             y,
-            None,
+            Some(0),
             hwnd,
-            None,
+            Some(std::ptr::null_mut()),
         );
+        if !result.as_bool() {
+            eprintln!("Failed to show tray menu.");
+        }
     }
 }
 
@@ -393,6 +409,7 @@ fn remove_tray_icon(hwnd: HWND, id: u32) {
     }
 }
 
+#[inline]
 fn encode_wide<S: AsRef<std::ffi::OsStr>>(string: S) -> Vec<u16> {
     std::os::windows::prelude::OsStrExt::encode_wide(string.as_ref())
         .chain(std::iter::once(0))
