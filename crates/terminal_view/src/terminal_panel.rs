@@ -386,11 +386,7 @@ impl TerminalPanel {
             } => {
                 match operation {
                     SplitOperation::Clone | SplitOperation::Clear => {
-                        let clone = match operation {
-                            SplitOperation::Clone => true,
-                            SplitOperation::Clear => false,
-                            _ => unreachable!(),
-                        };
+                        let clone = matches!(operation, SplitOperation::Clone);
                         let fut = self.new_pane_with_active_terminal(window, cx, clone);
                         let pane = pane.clone();
                         cx.spawn_in(window, async move |panel, cx| {
