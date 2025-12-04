@@ -2807,7 +2807,7 @@ mod tests {
 
         let buffer1 = project
             .update(cx, |project, cx| {
-                let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+                let path = project.find_project_path(path!("/root/1.txt"), cx).unwrap();
                 project.set_active_path(Some(path.clone()), cx);
                 project.open_buffer(path, cx)
             })
@@ -2863,7 +2863,7 @@ mod tests {
                     .update_diagnostics(
                         LanguageServerId(0),
                         lsp::PublishDiagnosticsParams {
-                            uri: lsp::Uri::from_file_path("/root/2.txt").unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/root/2.txt")).unwrap(),
                             diagnostics: vec![diagnostic],
                             version: None,
                         },
