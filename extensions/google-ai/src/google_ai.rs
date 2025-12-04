@@ -567,7 +567,7 @@ impl zed::Extension for GoogleAiProvider {
         vec![LlmProviderInfo {
             id: "google-ai".into(),
             name: "Google AI".into(),
-            icon: Some("google-ai".into()),
+            icon: None,
         }]
     }
 

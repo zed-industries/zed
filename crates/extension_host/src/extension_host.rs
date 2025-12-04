@@ -32,8 +32,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString, Task,
+    WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -67,6 +67,7 @@ struct LlmProviderWithModels {
     provider_info: LlmProviderInfo,
     models: Vec<LlmModelInfo>,
     is_authenticated: bool,
+    icon_path: Option<SharedString>,
 }
 
 pub use extension::{
@@ -1463,10 +1464,23 @@ impl ExtensionStore {
                                         .unwrap_or(Ok(false))
                                         .unwrap_or(false);
 
+                                    // Resolve icon path if provided
+                                    let icon_path = provider_info.icon.as_ref().map(|icon| {
+                                        let icon_file_path = extension_path.join(icon);
+                                        // Canonicalize to resolve symlinks (dev extensions are symlinked)
+                                        let absolute_icon_path = icon_file_path
+                                            .canonicalize()
+                                            .unwrap_or(icon_file_path)
+                                            .to_string_lossy()
+                                            .to_string();
+                                        SharedString::from(absolute_icon_path)
+                                    });
+
                                     llm_providers_with_models.push(LlmProviderWithModels {
                                         provider_info,
                                         models,
                                         is_authenticated,
+                                        icon_path,
                                     });
                                 }
                             } else {
@@ -1564,12 +1578,13 @@ impl ExtensionStore {
                         let pinfo = llm_provider.provider_info.clone();
                         let mods = llm_provider.models.clone();
                         let auth = llm_provider.is_authenticated;
+                        let icon = llm_provider.icon_path.clone();
 
                         this.proxy.register_language_model_provider(
                             provider_id.clone(),
                             Box::new(move |cx: &mut App| {
                                 let provider = Arc::new(ExtensionLanguageModelProvider::new(
-                                    wasm_ext, pinfo, mods, auth, cx,
+                                    wasm_ext, pinfo, mods, auth, icon, cx,
                                 ));
                                 language_model::LanguageModelRegistry::global(cx).update(
                                     cx,

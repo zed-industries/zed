@@ -36,6 +36,7 @@ use util::ResultExt as _;
 pub struct ExtensionLanguageModelProvider {
     pub extension: WasmExtension,
     pub provider_info: LlmProviderInfo,
+    icon_path: Option<SharedString>,
     state: Entity<ExtensionLlmProviderState>,
 }
 
@@ -52,6 +53,7 @@ impl ExtensionLanguageModelProvider {
         provider_info: LlmProviderInfo,
         models: Vec<LlmModelInfo>,
         is_authenticated: bool,
+        icon_path: Option<SharedString>,
         cx: &mut App,
     ) -> Self {
         let state = cx.new(|_| ExtensionLlmProviderState {
@@ -62,6 +64,7 @@ impl ExtensionLanguageModelProvider {
         Self {
             extension,
             provider_info,
+            icon_path,
             state,
         }
     }
@@ -87,6 +90,10 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
 
     fn icon(&self) -> ui::IconName {
         ui::IconName::ZedAssistant
+    }
+
+    fn icon_path(&self) -> Option<SharedString> {
+        self.icon_path.clone()
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

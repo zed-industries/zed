@@ -5,8 +5,8 @@ use futures::{StreamExt, channel::mpsc};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Task};
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
-    LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -56,7 +56,7 @@ fn all_models(cx: &App) -> GroupedModels {
                 .into_iter()
                 .map(|model| ModelInfo {
                     model,
-                    icon: provider.icon(),
+                    icon: ProviderIcon::from_provider(provider.as_ref()),
                 })
         })
         .collect();
@@ -69,7 +69,7 @@ fn all_models(cx: &App) -> GroupedModels {
                 .into_iter()
                 .map(|model| ModelInfo {
                     model,
-                    icon: provider.icon(),
+                    icon: ProviderIcon::from_provider(provider.as_ref()),
                 })
         })
         .collect();
@@ -78,9 +78,25 @@ fn all_models(cx: &App) -> GroupedModels {
 }
 
 #[derive(Clone)]
+enum ProviderIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
+impl ProviderIcon {
+    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
+        if let Some(path) = provider.icon_path() {
+            Self::Path(path)
+        } else {
+            Self::Name(provider.icon())
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: IconName,
+    icon: ProviderIcon,
 }
 
 pub struct LanguageModelPickerDelegate {
@@ -519,11 +535,16 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             h_flex()
                                 .w_full()
                                 .gap_1p5()
-                                .child(
-                                    Icon::new(model_info.icon)
+                                .child(match &model_info.icon {
+                                    ProviderIcon::Name(icon_name) => Icon::new(*icon_name)
                                         .color(model_icon_color)
                                         .size(IconSize::Small),
-                                )
+                                    ProviderIcon::Path(icon_path) => {
+                                        Icon::from_external_svg(icon_path.clone())
+                                            .color(model_icon_color)
+                                            .size(IconSize::Small)
+                                    }
+                                })
                                 .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
@@ -672,7 +693,7 @@ mod tests {
             .into_iter()
             .map(|(provider, name)| ModelInfo {
                 model: Arc::new(TestLanguageModel::new(name, provider)),
-                icon: IconName::Ai,
+                icon: ProviderIcon::Name(IconName::Ai),
             })
             .collect()
     }

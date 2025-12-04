@@ -445,7 +445,7 @@ impl zed::Extension for OpenAiProvider {
         vec![LlmProviderInfo {
             id: "openai".into(),
             name: "OpenAI".into(),
-            icon: Some("openai".into()),
+            icon: None,
         }]
     }
 

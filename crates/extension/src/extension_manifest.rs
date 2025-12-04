@@ -295,7 +295,7 @@ pub struct DebugLocatorManifestEntry {}
 pub struct LanguageModelProviderManifestEntry {
     /// Display name for the provider.
     pub name: String,
-    /// Icon name from Zed's icon set (optional).
+    /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
     #[serde(default)]
     pub icon: Option<String>,
     /// Default models to show even before API connection.

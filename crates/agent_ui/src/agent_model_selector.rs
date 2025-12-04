@@ -73,7 +73,8 @@ impl Render for AgentModelSelector {
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
-        let provider_icon = model.as_ref().map(|model| model.provider.icon());
+        let provider_icon_path = model.as_ref().and_then(|model| model.provider.icon_path());
+        let provider_icon_name = model.as_ref().map(|model| model.provider.icon());
         let color = if self.menu_handle.is_deployed() {
             Color::Accent
         } else {
@@ -85,8 +86,17 @@ impl Render for AgentModelSelector {
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
-                .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                .when_some(provider_icon_path.clone(), |this, icon_path| {
+                    this.child(
+                        Icon::from_external_svg(icon_path)
+                            .color(color)
+                            .size(IconSize::XSmall),
+                    )
+                })
+                .when(provider_icon_path.is_none(), |this| {
+                    this.when_some(provider_icon_name, |this, icon| {
+                        this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                    })
                 })
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
