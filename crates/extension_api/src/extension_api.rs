@@ -17,8 +17,9 @@ pub use serde_json;
 pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
-    llm_delete_credential, llm_get_credential, llm_get_env_var, llm_request_credential,
-    llm_store_credential, make_file_executable,
+    llm_delete_credential, llm_get_credential, llm_get_env_var, llm_oauth_http_request,
+    llm_oauth_open_browser, llm_oauth_start_web_auth, llm_request_credential, llm_store_credential,
+    make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
@@ -35,7 +36,9 @@ pub use wit::{
         CompletionRequest as LlmCompletionRequest, CredentialType as LlmCredentialType,
         ImageData as LlmImageData, MessageContent as LlmMessageContent,
         MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
-        ModelInfo as LlmModelInfo, ProviderInfo as LlmProviderInfo,
+        ModelInfo as LlmModelInfo, OauthHttpRequest as LlmOauthHttpRequest,
+        OauthHttpResponse as LlmOauthHttpResponse, OauthWebAuthConfig as LlmOauthWebAuthConfig,
+        OauthWebAuthResult as LlmOauthWebAuthResult, ProviderInfo as LlmProviderInfo,
         RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
         ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
         ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,

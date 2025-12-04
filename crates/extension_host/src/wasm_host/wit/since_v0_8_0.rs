@@ -27,7 +27,6 @@ use semver::Version;
 use smol::net::TcpListener;
 use std::{
     env,
-    io::{BufRead, Write},
     net::Ipv4Addr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -1271,16 +1270,18 @@ impl ExtensionImports for WasmState {
                 })?;
 
                 let accept_future = async {
-                    let (stream, _) = listener
+                    let (mut stream, _) = listener
                         .accept()
                         .await
                         .map_err(|e| anyhow::anyhow!("Failed to accept connection: {}", e))?;
 
-                    let mut reader = smol::io::BufReader::new(&stream);
                     let mut request_line = String::new();
-                    smol::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to read request: {}", e))?;
+                    {
+                        let mut reader = smol::io::BufReader::new(&mut stream);
+                        smol::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Failed to read request: {}", e))?;
+                    }
 
                     let callback_url = if let Some(path_start) = request_line.find(' ') {
                         if let Some(path_end) = request_line[path_start + 1..].find(' ') {
@@ -1312,11 +1313,10 @@ impl ExtensionImports for WasmState {
                         <p>You can close this window and return to Zed.</p>\
                         </div></body></html>";
 
-                    let mut writer = &stream;
-                    smol::io::AsyncWriteExt::write_all(&mut writer, response.as_bytes())
+                    smol::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes())
                         .await
                         .ok();
-                    smol::io::AsyncWriteExt::flush(&mut writer).await.ok();
+                    smol::io::AsyncWriteExt::flush(&mut stream).await.ok();
 
                     Ok(callback_url)
                 };
@@ -1349,7 +1349,7 @@ impl ExtensionImports for WasmState {
         &mut self,
         request: llm_provider::OauthHttpRequest,
     ) -> wasmtime::Result<Result<llm_provider::OauthHttpResponse, String>> {
-        let http_client = self.http_client.clone();
+        let http_client = self.host.http_client.clone();
 
         self.on_main_thread(move |_cx| {
             async move {
@@ -1367,7 +1367,7 @@ impl ExtensionImports for WasmState {
                     }
                 };
 
-                let mut builder = ::http_client::HttpRequest::builder()
+                let mut builder = ::http_client::Request::builder()
                     .method(method)
                     .uri(&request.url);
 

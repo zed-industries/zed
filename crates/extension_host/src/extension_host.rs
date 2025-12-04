@@ -1,4 +1,5 @@
 mod capability_granter;
+mod copilot_migration;
 pub mod extension_settings;
 pub mod headless_host;
 pub mod wasm_host;
@@ -788,6 +789,9 @@ impl ExtensionStore {
                             this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
                         });
                     }
+
+                    // Run extension-specific migrations
+                    copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
                 })
                 .ok();
             }
