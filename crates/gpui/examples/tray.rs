@@ -109,11 +109,13 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
-        let icon = image::load_from_memory(include_bytes!("image/app-icon.png")).unwrap();
         Self {
             view_mode: ViewMode::List,
             tray: Tray::new()
-                .icon(icon.to_rgba8())
+                .icon(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    include_bytes!("image/app-icon.png").to_vec(),
+                ))
                 .title("Tray App")
                 .tooltip("This is a tray icon")
                 .menu(Self::build_menus),

@@ -68,15 +68,19 @@ impl MacTray {
             let _: () = msg_send![button, setTitle:title];
 
             if let Some(icon) = tray.icon.as_ref() {
-                let image = icon.bytes();
+                let bytes = icon.bytes();
                 let nsdata = NSData::dataWithBytes_length_(
                     nil,
-                    image.as_ptr() as *const std::os::raw::c_void,
-                    image.len() as u64,
+                    bytes.as_ptr() as *const _,
+                    bytes.len() as u64,
                 );
 
                 let nsimage = NSImage::initWithData_(NSImage::alloc(nil), nsdata);
-                let new_size = NSSize::new(18.0, 18.0);
+                assert!(
+                    !nsimage.is_null(),
+                    "Failed to create NSImage from icon data, possibly invalid image data."
+                );
+                let new_size = NSSize::new(18., 18.);
 
                 button.setImage_(nsimage);
                 let _: () = msg_send![nsimage, setSize: new_size];

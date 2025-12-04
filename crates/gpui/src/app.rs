@@ -41,7 +41,8 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
     Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Tray, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    TextSystem, Tray, TrayIconData, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1918,11 +1919,20 @@ impl App {
 
     /// Sets the system tray icon and menu for the application.
     pub fn set_tray(&mut self, tray: Tray) {
+        let mut tray = tray;
         let menu_items = if let Some(build) = tray.menu_builder.as_ref() {
             Some(build(self))
         } else {
             None
         };
+
+        let render_image = tray
+            .icon
+            .as_ref()
+            .map(|icon| icon.to_image_data(self.svg_renderer.clone()).ok())
+            .flatten();
+        tray.rendered_icon =
+            render_image.map(|image| TrayIconData::from_render_image(image.as_ref()));
 
         self.platform
             .set_tray(tray, menu_items, &self.keymap.borrow())
