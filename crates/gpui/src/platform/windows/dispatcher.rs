@@ -7,9 +7,7 @@ use std::{
 use flume::Sender;
 use util::ResultExt;
 use windows::{
-    System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
-    },
+    System::Threading::{ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler},
     Win32::{
         Foundation::{LPARAM, WPARAM},
         UI::WindowsAndMessaging::PostMessageW,
@@ -55,7 +53,7 @@ impl WindowsDispatcher {
                 Ok(())
             })
         };
-        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority::High).log_err();
+        ThreadPool::RunAsync(&handler).log_err();
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
