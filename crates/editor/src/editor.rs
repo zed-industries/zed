@@ -182,7 +182,7 @@ use std::{
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Not, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -8073,10 +8073,17 @@ impl Editor {
 
         if self.edit_prediction_indent_conflict {
             let cursor_point = cursor.to_point(&multibuffer);
+            let mut suggested_indent = None;
+            multibuffer.suggested_indents_callback(
+                cursor_point.row..cursor_point.row + 1,
+                |_, indent| {
+                    suggested_indent = Some(indent);
+                    ControlFlow::Break(())
+                },
+                cx,
+            );
 
-            let indents = multibuffer.suggested_indents(cursor_point.row..cursor_point.row + 1, cx);
-
-            if let Some((_, indent)) = indents.iter().next()
+            if let Some(indent) = suggested_indent
                 && indent.len == cursor_point.column
             {
                 self.edit_prediction_indent_conflict = false;
