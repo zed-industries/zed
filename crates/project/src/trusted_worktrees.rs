@@ -1,3 +1,4 @@
+//! TODO kb also block language servers and MCP servers from starting
 use std::path::{Path, PathBuf};
 
 use collections::HashSet;
@@ -54,6 +55,9 @@ impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktrees {}
 impl TrustedWorktrees {
     async fn new() -> Self {
         Self {
+            // TODO kb
+            // * crate a new db table, FK onto remote_hosts DB table data
+            // * store abs paths there still, but without odd separators
             worktree_roots: KEY_VALUE_STORE
                 .read_kvp(TRUSTED_WORKSPACES_KEY)
                 .ok()
@@ -92,7 +96,8 @@ impl TrustedWorktrees {
                     .await
                     .log_err();
             });
-            // TODO kb wrong: need to emut multiple worktrees, as we can trust some high-level directory
+            // TODO kb wrong: need to start working with path batches + ensure parents are considered
+            // TODO kb unit test all this logic
             cx.emit(TrustedWorktreesEvent::Trusted(abs_path));
         }
     }
