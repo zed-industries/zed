@@ -404,6 +404,7 @@ impl VsCodeSettings {
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
+            git: None,
         }
     }
 
@@ -546,10 +547,12 @@ impl VsCodeSettings {
     fn git_settings_content(&self) -> Option<GitSettings> {
         let inline_blame = self.read_bool("git.blame.editorDecoration.enabled")?;
         skip_default(GitSettings {
-            inline_blame: Some(InlineBlameSettings {
-                enabled: Some(inline_blame),
-                ..Default::default()
-            }),
+            project: ProjectGitSettings {
+                inline_blame: Some(InlineBlameSettings {
+                    enabled: Some(inline_blame),
+                    ..Default::default()
+                }),
+            },
             ..Default::default()
         })
     }
