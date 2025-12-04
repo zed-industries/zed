@@ -222,7 +222,9 @@ fn assign_edit_prediction_provider(
                         } else {
                             return false;
                         }
-                    } else if user_store.read(cx).current_user().is_some() {
+                    } else if user_store.read(cx).current_user().is_some()
+                        || std::env::var("ZED_PREDICT_EDITS_URL").is_ok()
+                    {
                         zeta::ZetaEditPredictionModel::Zeta1
                     } else {
                         return false;
