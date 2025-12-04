@@ -31,6 +31,9 @@ impl TeacherModel {
     /// Number of lines to include after the cursor position
     pub(crate) const RIGHT_CONTEXT_SIZE: usize = 5;
 
+    /// Truncate edit history to this number of last lines
+    const MAX_HISTORY_LINES: usize = 128;
+
     pub fn new(llm_name: String, context: ContextType) -> Self {
         TeacherModel { llm_name, context }
     }
@@ -44,10 +47,11 @@ impl TeacherModel {
             .expect("Failed to parse cursor position");
 
         let context = collect_context(&self.context, &worktree_dir, cursor.clone());
+        let edit_history = Self::format_edit_history(&input.edit_history);
 
         let prompt = Self::PROMPT
             .replace("{{context}}", &context)
-            .replace("{{edit_history}}", &input.edit_history);
+            .replace("{{edit_history}}", &edit_history);
 
         let client = Anthropic::from_env()?;
         let response = client
@@ -119,6 +123,30 @@ impl TeacherModel {
         let end = text.find(Self::REGION_END).unwrap_or(text.len());
 
         text[start..end].to_string()
+    }
+
+    /// Truncates edit history to a maximum length and removes comments (unified diff garbage lines)
+    fn format_edit_history(edit_history: &str) -> String {
+        let lines = edit_history
+            .lines()
+            .filter(|&s| Self::is_content_line(s))
+            .collect::<Vec<_>>();
+
+        let history_lines = if lines.len() > Self::MAX_HISTORY_LINES {
+            &lines[lines.len() - Self::MAX_HISTORY_LINES..]
+        } else {
+            &lines
+        };
+        history_lines.join("\n")
+    }
+
+    fn is_content_line(s: &str) -> bool {
+        s.starts_with("-")
+            || s.starts_with("+")
+            || s.starts_with(" ")
+            || s.starts_with("---")
+            || s.starts_with("+++")
+            || s.starts_with("@@")
     }
 }
 
