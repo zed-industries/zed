@@ -136,7 +136,7 @@ impl WindowsTray {
             SendMessageW(
                 self.hwnd,
                 WM_USER_UPDATE_TRAYICON,
-                icon.map(|icon| WPARAM(Box::into_raw(Box::new(icon)) as *mut _ as usize)),
+                icon.map(|icon| WPARAM(Box::into_raw(Box::new(Some(icon))) as *mut _ as usize)),
                 Some(LPARAM(0)),
             );
         }
@@ -163,7 +163,7 @@ impl WindowsTray {
             SendMessageW(
                 self.hwnd,
                 WM_USER_UPDATE_TRAYTOOLTIP,
-                tooltip.map(|t| WPARAM(Box::into_raw(Box::new(t)) as _)),
+                tooltip.map(|t| WPARAM(Box::into_raw(Box::new(Some(t))) as _)),
                 Some(LPARAM(0)),
             );
         }
@@ -197,7 +197,7 @@ struct TrayUserData {
     tray_id: u32,
     hpopupmenu: Option<HMENU>,
     icon: Option<HICON>,
-    tooltip: Option<SharedString>,
+    tooltip: Option<String>,
 }
 
 /// An icon used for the window titlebar, taskbar, etc.
@@ -305,7 +305,7 @@ unsafe extern "system" fn tray_procedure(
                 userdata.icon = *icon;
             }
             WM_USER_UPDATE_TRAYTOOLTIP => {
-                let tooltip = Box::from_raw(wparam.0 as *mut Option<SharedString>);
+                let tooltip = Box::from_raw(wparam.0 as *mut Option<String>);
                 userdata.tooltip = *tooltip;
             }
             _ if msg == *WM_TASKBAR_RESTART => {
@@ -358,7 +358,7 @@ fn register_tray_icon(
     hwnd: HWND,
     tray_id: u32,
     hicon: Option<HICON>,
-    tooltip: Option<&SharedString>,
+    tooltip: Option<&String>,
 ) -> bool {
     let mut h_icon: HICON = HICON(std::ptr::null_mut());
     let mut flags = NIF_MESSAGE;

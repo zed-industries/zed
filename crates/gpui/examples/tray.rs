@@ -1,12 +1,24 @@
 use gpui::{
-    App, Application, Context, Global, MenuItem, SharedString, Tray, Window, WindowOptions,
-    actions, div, prelude::*,
+    App, Application, Context, Div, Global, MenuItem, SharedString, Stateful, Tray, Window,
+    WindowOptions, actions, div, prelude::*,
 };
 
 struct Example;
 
 impl Render for Example {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn button(id: &'static str) -> Stateful<Div> {
+            div()
+                .id(id)
+                .py_0p5()
+                .px_3()
+                .bg(gpui::black())
+                .active(|this| this.bg(gpui::black().opacity(0.8)))
+                .text_color(gpui::white())
+        }
+
+        let app_state = cx.global::<AppState>();
+
         div()
             .bg(gpui::white())
             .flex()
@@ -18,16 +30,23 @@ impl Render for Example {
             .child("Example for set Tray Icon")
             .child(
                 div()
-                    .id("toggle-visible")
-                    .py_0p5()
-                    .px_3()
-                    .bg(gpui::black())
-                    .active(|this| this.bg(gpui::black().opacity(0.8)))
-                    .text_color(gpui::white())
-                    .child("Toggle Tray Visibility")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ToggleVisible), cx);
-                    }),
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(
+                        button("toggle-visible")
+                            .child(format!("Visible: {}", app_state.tray.visible))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleVisible), cx);
+                            }),
+                    )
+                    .child(
+                        button("toggle-mode")
+                            .child(format!("Mode: {}", app_state.view_mode.as_str()))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(ToggleCheck), cx);
+                            }),
+                    ),
             )
     }
 }
@@ -135,6 +154,8 @@ fn toggle_check(_: &ToggleCheck, cx: &mut App) {
         let app_state = cx.global_mut::<AppState>();
         app_state.view_mode.toggle();
         app_state.tray.title = Some(format!("Mode: {}", app_state.view_mode.as_str()).into());
+        app_state.tray.tooltip =
+            Some(format!("This is a tooltip, mode: {}", app_state.view_mode.as_str()).into());
     }
 
     let app_state = cx.global::<AppState>();
