@@ -10955,7 +10955,6 @@ dependencies = [
  "documented",
  "fs",
  "fuzzy",
- "git",
  "gpui",
  "menu",
  "notifications",
