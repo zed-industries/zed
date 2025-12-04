@@ -11474,4 +11474,26 @@ mod tests {
         });
         item
     }
+
+    #[gpui::test]
+    async fn test_window_focus_set_on_startup_without_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({"a": ""})).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            let focused = window.focused(cx);
+            assert!(
+                focused.is_some(),
+                "Expected window focus to be set on startup, but it was None"
+            );
+        });
+    }
 }
