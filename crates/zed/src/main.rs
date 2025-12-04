@@ -408,7 +408,6 @@ pub fn main() {
     app.run(move |cx| {
         menu::init();
         zed_actions::init();
-        // TODO kb init in more places?
         project::trusted_worktrees::init(cx);
 
         release_channel::init(app_version, cx);

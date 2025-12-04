@@ -77,7 +77,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::TrustedWorktreesStorage,
+    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -1226,7 +1226,7 @@ impl Workspace {
                 // Need to join with remote_hosts DB table data
                 trusted_worktrees_storage
                     .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
-                        project::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
+                        TrustedWorktreesEvent::Trusted(trusted_path) => {
                             if let Some(security_modal) =
                                 workspace.active_modal::<SecurityModal>(cx)
                             {
@@ -1239,7 +1239,7 @@ impl Workspace {
                                 }
                             }
                         }
-                        project::trusted_worktrees::Event::UntrustedWorktree(_) => {
+                        TrustedWorktreesEvent::StoppedTrusting(_) => {
                             workspace.show_worktree_security_modal(window, cx)
                         }
                     })
