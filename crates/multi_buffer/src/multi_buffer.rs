@@ -43,7 +43,7 @@ use std::{
     io,
     iter::{self, FromIterator},
     mem,
-    ops::{self, AddAssign, Range, RangeBounds, Sub, SubAssign},
+    ops::{self, AddAssign, ControlFlow, Range, RangeBounds, Sub, SubAssign},
     rc::Rc,
     str,
     sync::Arc,
@@ -4618,7 +4618,24 @@ impl MultiBufferSnapshot {
         cx: &App,
     ) -> BTreeMap<MultiBufferRow, IndentSize> {
         let mut result = BTreeMap::new();
+        self.suggested_indents_callback(
+            rows,
+            |row, indent| {
+                result.insert(row, indent);
+                ControlFlow::Continue(())
+            },
+            cx,
+        );
+        result
+    }
 
+    // move this to be a generator once those are a thing
+    pub fn suggested_indents_callback(
+        &self,
+        rows: impl IntoIterator<Item = u32>,
+        mut cb: impl FnMut(MultiBufferRow, IndentSize) -> ControlFlow<()>,
+        cx: &App,
+    ) {
         let mut rows_for_excerpt = Vec::new();
         let mut cursor = self.cursor::<Point, Point>();
         let mut rows = rows.into_iter().peekable();
@@ -4662,16 +4679,17 @@ impl MultiBufferSnapshot {
             let buffer_indents = region
                 .buffer
                 .suggested_indents(buffer_rows, single_indent_size);
-            let multibuffer_indents = buffer_indents.into_iter().map(|(row, indent)| {
-                (
+            for (row, indent) in buffer_indents {
+                if cb(
                     MultiBufferRow(start_multibuffer_row + row - start_buffer_row),
                     indent,
                 )
-            });
-            result.extend(multibuffer_indents);
+                .is_break()
+                {
+                    return;
+                }
+            }
         }
-
-        result
     }
 
     pub fn indent_size_for_line(&self, row: MultiBufferRow) -> IndentSize {

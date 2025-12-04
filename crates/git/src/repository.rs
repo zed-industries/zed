@@ -7,13 +7,15 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
-use git2::BranchType;
+use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
 use std::{
@@ -53,6 +55,12 @@ impl Branch {
 
     pub fn is_remote(&self) -> bool {
         self.ref_name.starts_with("refs/remotes/")
+    }
+
+    pub fn remote_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split("/").next())
     }
 
     pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
@@ -589,6 +597,10 @@ pub trait GitRepository: Send + Sync {
     fn get_branch_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>>;
 
     fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>>;
+
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>>;
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
@@ -1385,9 +1397,19 @@ impl GitRepository for RealGitRepository {
                 branch
             } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                let mut branch = match repo.branch(&branch_name, &branch_commit, false) {
+                    Ok(branch) => branch,
+                    Err(err) if err.code() == ErrorCode::Exists => {
+                        repo.find_branch(&branch_name, BranchType::Local)?
+                    }
+                    Err(err) => {
+                        return Err(err.into());
+                    }
+                };
+
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
@@ -1403,7 +1425,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let branch = branch.await?;
-
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
@@ -1993,7 +2014,7 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
-                    .args(["remote"])
+                    .args(["remote", "-v"])
                     .output()
                     .await?;
 
@@ -2002,14 +2023,43 @@ impl GitRepository for RealGitRepository {
                     "Failed to get all remotes:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                let remote_names = String::from_utf8_lossy(&output.stdout)
-                    .split('\n')
-                    .filter(|name| !name.is_empty())
-                    .map(|name| Remote {
-                        name: name.trim().to_string().into(),
+                let remote_names: HashSet<Remote> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .filter_map(|line| {
+                        let mut split_line = line.split_whitespace();
+                        let remote_name = split_line.next()?;
+
+                        Some(Remote {
+                            name: remote_name.trim().to_string().into(),
+                        })
                     })
                     .collect();
-                Ok(remote_names)
+
+                Ok(remote_names.into_iter().collect())
+            })
+            .boxed()
+    }
+
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                repo.remote_delete(&name)?;
+
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                repo.remote(&name, url.as_ref())?;
+                Ok(())
             })
             .boxed()
     }
