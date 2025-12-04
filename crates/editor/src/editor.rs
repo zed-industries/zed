@@ -191,7 +191,7 @@ use std::{
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
-    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
+    AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
 };
 use ui::{
@@ -1206,9 +1206,15 @@ pub struct Editor {
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
-    accent_overrides: Vec<SharedString>,
+    accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
+}
+
+#[derive(Debug, PartialEq)]
+struct AccentData {
+    colors: AccentColors,
+    overrides: Vec<SharedString>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2354,7 +2360,7 @@ impl Editor {
             lookup_key: None,
             select_next_is_case_sensitive: None,
             applicable_language_settings: HashMap::default(),
-            accent_overrides: Vec::new(),
+            accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             use_base_text_line_numbers: false,
         };
@@ -2364,7 +2370,7 @@ impl Editor {
         }
 
         editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
-        editor.accent_overrides = editor.fetch_accent_overrides(cx);
+        editor.accent_data = editor.fetch_accent_data(cx);
 
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -21706,16 +21712,18 @@ impl Editor {
         cx.notify();
     }
 
-    fn fetch_accent_overrides(&self, cx: &App) -> Vec<SharedString> {
+    fn fetch_accent_data(&self, cx: &App) -> Option<AccentData> {
         if !self.mode.is_full() {
-            return Vec::new();
+            return None;
         }
 
         let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme = cx.theme();
+        let accent_colors = theme.accents().clone();
 
-        theme_settings
+        let accent_overrides = theme_settings
             .theme_overrides
-            .get(cx.theme().name.as_ref())
+            .get(theme.name.as_ref())
             .map(|theme_style| &theme_style.accents)
             .into_iter()
             .flatten()
@@ -21728,7 +21736,12 @@ impl Editor {
                     .flatten(),
             )
             .flat_map(|accent| accent.0.clone())
-            .collect()
+            .collect();
+
+        Some(AccentData {
+            colors: accent_colors,
+            overrides: accent_overrides,
+        })
     }
 
     fn fetch_applicable_language_settings(
@@ -21758,9 +21771,9 @@ impl Editor {
         let language_settings_changed = new_language_settings != self.applicable_language_settings;
         self.applicable_language_settings = new_language_settings;
 
-        let new_accent_overrides = self.fetch_accent_overrides(cx);
-        let accent_overrides_changed = new_accent_overrides != self.accent_overrides;
-        self.accent_overrides = new_accent_overrides;
+        let new_accents = self.fetch_accent_data(cx);
+        let accents_changed = new_accents != self.accent_data;
+        self.accent_data = new_accents;
 
         if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
@@ -21834,7 +21847,7 @@ impl Editor {
                 }
             }
 
-            if language_settings_changed || accent_overrides_changed {
+            if language_settings_changed || accents_changed {
                 self.colorize_brackets(true, cx);
             }
 
