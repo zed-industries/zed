@@ -336,7 +336,7 @@ pub struct LanguageModelAuthConfig {
     /// Environment variable name for the API key.
     #[serde(default)]
     pub env_var: Option<String>,
-    /// Label to show when prompting for credentials.
+    /// Human-readable name for the credential shown in the UI input field (e.g., "API Key", "Access Token").
     #[serde(default)]
     pub credential_label: Option<String>,
 }
