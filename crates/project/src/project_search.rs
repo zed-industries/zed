@@ -629,7 +629,6 @@ impl Worker<'_> {
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx: &get_buffer_for_full_scan_tx,
             };
             // Whenever we notice that some step of a pipeline is closed, we don't want to close subsequent
             // steps straight away. Another worker might be about to produce a value that will
@@ -645,10 +644,7 @@ impl Worker<'_> {
                 find_first_match = find_first_match.next() => {
                     if let Some(buffer_with_at_least_one_match) = find_first_match {
                         handler.handle_find_first_match(buffer_with_at_least_one_match).await;
-                    } else {
-                        get_buffer_for_full_scan_tx = bounded(1).0;
                     }
-
                 },
                 scan_path = scan_path.next() => {
                     if let Some(path_to_scan) = scan_path {
@@ -673,7 +669,6 @@ struct RequestHandler<'worker> {
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
-    get_buffer_for_full_scan_tx: &'worker Sender<ProjectPath>,
 }
 
 impl RequestHandler<'_> {
@@ -729,9 +724,8 @@ impl RequestHandler<'_> {
         _ = maybe!(async move {
             let InputPath {
                 entry,
-
                 snapshot,
-                should_scan_tx,
+                mut should_scan_tx,
             } = req;
 
             if entry.is_fifo || !entry.is_file() {
@@ -754,7 +748,7 @@ impl RequestHandler<'_> {
             if self.open_entries.contains(&entry.id) {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
-                self.get_buffer_for_full_scan_tx
+                should_scan_tx
                     .send(ProjectPath {
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
