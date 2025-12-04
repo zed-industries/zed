@@ -17,7 +17,7 @@ pub fn init(cx: &mut App) {
         cx.update(|cx| {
             let trusted_worktees_storage = TrustedWorktreesStorage {
                 trusted: cx.new(|_| trusted_worktrees),
-                untrusted: HashSet::default(),
+                restricted: HashSet::default(),
             };
             cx.set_global(trusted_worktees_storage);
         })
@@ -31,13 +31,15 @@ pub fn init(cx: &mut App) {
 #[derive(Clone)]
 pub struct TrustedWorktreesStorage {
     trusted: Entity<TrustedWorktrees>,
-    untrusted: HashSet<PathBuf>,
+    // TODO kb need to swtich over WorktreeId-based API from this level?
+    // But worktrees' parent directories may be trusted and not being worktrees.
+    restricted: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
 pub enum TrustedWorktreesEvent {
-    Trusted(PathBuf),
-    StoppedTrusting(PathBuf),
+    Trusted(HashSet<PathBuf>),
+    Restricted(HashSet<PathBuf>),
 }
 
 /// A collection of absolute paths for trusted worktrees.
@@ -46,7 +48,7 @@ pub enum TrustedWorktreesEvent {
 /// Emits an event each time the worktree path checked and found not trusted,
 /// or a certain worktree path had been trusted.
 struct TrustedWorktrees {
-    worktree_roots: HashSet<PathBuf>,
+    trusted_worktrees: HashSet<PathBuf>,
     serialization_task: Task<()>,
 }
 
@@ -58,7 +60,7 @@ impl TrustedWorktrees {
             // TODO kb
             // * crate a new db table, FK onto remote_hosts DB table data
             // * store abs paths there still, but without odd separators
-            worktree_roots: KEY_VALUE_STORE
+            trusted_worktrees: KEY_VALUE_STORE
                 .read_kvp(TRUSTED_WORKSPACES_KEY)
                 .ok()
                 .flatten()
@@ -73,15 +75,18 @@ impl TrustedWorktrees {
         }
     }
 
-    fn trust_path(&mut self, abs_path: PathBuf, cx: &mut Context<'_, Self>) {
-        debug_assert!(
-            abs_path.is_absolute(),
-            "Cannot trust non-absolute path {abs_path:?}"
-        );
-        let updated = self.worktree_roots.insert(abs_path.clone());
-        if updated {
+    fn trust(&mut self, paths: HashSet<PathBuf>, cx: &mut Context<'_, Self>) {
+        let current_worktree_count = self.trusted_worktrees.len();
+        self.trusted_worktrees
+            .extend(paths.clone().into_iter().inspect(|path| {
+                debug_assert!(
+                    path.is_absolute(),
+                    "Cannot trust non-absolute path {path:?}"
+                )
+            }));
+        if current_worktree_count != self.trusted_worktrees.len() {
             let new_worktree_roots =
-                self.worktree_roots
+                self.trusted_worktrees
                     .iter()
                     .fold(String::new(), |mut acc, path| {
                         if !acc.is_empty() {
@@ -96,17 +101,15 @@ impl TrustedWorktrees {
                     .await
                     .log_err();
             });
-            // TODO kb wrong: need to start working with path batches + ensure parents are considered
-            // TODO kb unit test all this logic
-            cx.emit(TrustedWorktreesEvent::Trusted(abs_path));
+            cx.emit(TrustedWorktreesEvent::Trusted(paths));
         }
     }
 
     fn clear(&mut self, cx: &App) {
-        self.worktree_roots.clear();
+        self.trusted_worktrees.clear();
         self.serialization_task = cx.background_spawn(async move {
             KEY_VALUE_STORE
-                .write_kvp(TRUSTED_WORKSPACES_KEY.to_string(), String::new())
+                .delete_kvp(TRUSTED_WORKSPACES_KEY.to_string())
                 .await
                 .log_err();
         });
@@ -135,17 +138,21 @@ impl TrustedWorktreesStorage {
         })
     }
 
-    /// Adds a worktree absolute path to the trusted list.
-    /// This will emit [`Event::TrustedWorktree`] event.
-    pub fn trust_path(&mut self, abs_path: PathBuf, cx: &mut App) {
-        self.untrusted.remove(&abs_path);
+    /// Adds worktree absolute paths to the trusted list.
+    /// This will emit [`TrustedWorktreesEvent::Trusted`] event.
+    pub fn trust(&mut self, trusted_paths: HashSet<PathBuf>, cx: &mut App) {
+        // TODO kb unit test all this logic
+        for trusted_path in &trusted_paths {
+            self.restricted
+                .retain(|restricted_path| !restricted_path.starts_with(trusted_path));
+        }
         self.trusted.update(cx, |trusted_worktrees, cx| {
-            trusted_worktrees.trust_path(abs_path, cx)
+            trusted_worktrees.trust(trusted_paths, cx)
         });
     }
 
     /// Checks whether a certain worktree absolute path is trusted.
-    /// If not, emits [`Event::UntrustedWorktree`] event.
+    /// If not, emits [`TrustedWorktreesEvent::Restricted`] event.
     pub fn can_trust_path(&mut self, abs_path: &Path, cx: &mut App) -> bool {
         debug_assert!(
             abs_path.is_absolute(),
@@ -153,8 +160,8 @@ impl TrustedWorktreesStorage {
         );
 
         self.trusted.update(cx, |trusted_worktrees, cx| {
-            let trusted_worktree_roots = &trusted_worktrees.worktree_roots;
-            let mut can_trust = !self.untrusted.contains(abs_path);
+            let trusted_worktree_roots = &trusted_worktrees.trusted_worktrees;
+            let mut can_trust = !self.restricted.contains(abs_path);
             if can_trust {
                 can_trust = if trusted_worktree_roots.len() > 100 {
                     let mut path = Some(abs_path);
@@ -173,8 +180,10 @@ impl TrustedWorktreesStorage {
             }
 
             if !can_trust {
-                if self.untrusted.insert(abs_path.to_owned()) {
-                    cx.emit(TrustedWorktreesEvent::StoppedTrusting(abs_path.to_owned()));
+                if self.restricted.insert(abs_path.to_owned()) {
+                    cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
+                        abs_path.to_owned(),
+                    ])));
                 }
             }
 
@@ -182,14 +191,13 @@ impl TrustedWorktreesStorage {
         })
     }
 
-    pub fn untrusted_worktrees(&self) -> &HashSet<PathBuf> {
-        &self.untrusted
+    pub fn restricted_worktrees(&self) -> &HashSet<PathBuf> {
+        &self.restricted
     }
 
     pub fn trust_all(&mut self, cx: &mut App) {
-        for untrusted_path in std::mem::take(&mut self.untrusted) {
-            self.trust_path(untrusted_path, cx);
-        }
+        let restricted = std::mem::take(&mut self.restricted);
+        self.trust(restricted, cx);
     }
 
     pub fn clear_trusted_paths(&self, cx: &mut App) {

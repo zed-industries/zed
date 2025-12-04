@@ -170,11 +170,7 @@ Restricted mode prevents:
                                                     ),
                                                 );
                                             }
-
-                                            for path_to_trust in paths_to_trust {
-                                                trusted_wortrees_storage
-                                                    .trust_path(path_to_trust, cx);
-                                            }
+                                            trusted_wortrees_storage.trust(paths_to_trust, cx);
                                         },
                                     );
                                 }
