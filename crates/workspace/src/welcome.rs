@@ -392,29 +392,33 @@ impl Render for WelcomePage {
                                         cx,
                                     ))
                                     .child(second_section_element)
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .pt_4()
-                                            .justify_center()
-                                            // We call this a hack
-                                            .rounded_b_xs()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border.opacity(0.6))
-                                            .border_dashed()
-                                            .child(
-                                                Button::new("welcome-exit", "Return to Setup")
-                                                    .tab_index(last_index as isize)
-                                                    .full_width()
-                                                    .label_size(LabelSize::XSmall)
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            OpenOnboarding.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    }),
-                                            ),
-                                    ),
+                                    .when(!self.fallback_to_recent_projects, |this| {
+                                        this.child(
+                                            h_flex()
+                                                .w_full()
+                                                .pt_4()
+                                                .justify_center()
+                                                // We call this a hack
+                                                .rounded_b_xs()
+                                                .border_t_1()
+                                                .border_color(
+                                                    cx.theme().colors().border.opacity(0.6),
+                                                )
+                                                .border_dashed()
+                                                .child(
+                                                    Button::new("welcome-exit", "Return to Setup")
+                                                        .tab_index(last_index as isize)
+                                                        .full_width()
+                                                        .label_size(LabelSize::XSmall)
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                OpenOnboarding.boxed_clone(),
+                                                                cx,
+                                                            );
+                                                        }),
+                                                ),
+                                        )
+                                    }),
                             ),
                     ),
             )
