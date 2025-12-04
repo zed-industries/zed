@@ -73,6 +73,12 @@ pub struct WasmExtension {
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
 
+impl Drop for WasmExtension {
+    fn drop(&mut self) {
+        self.tx.close_channel();
+    }
+}
+
 #[async_trait]
 impl extension::Extension for WasmExtension {
     fn manifest(&self) -> Arc<ExtensionManifest> {
