@@ -308,6 +308,14 @@ pub struct Repository {
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
+    refetch_repo_state: Arc<
+        dyn Fn(
+            &mut Context<Self>,
+        ) -> (
+            mpsc::UnboundedSender<GitJob>,
+            Shared<Task<Result<RepositoryState, String>>>,
+        ),
+    >,
 }
 
 impl std::ops::Deref for Repository {
@@ -439,7 +447,16 @@ impl GitStore {
                 let watcher = fs.watch(&path, Duration::from_millis(100));
                 let (mut watcher, _) = watcher.await;
                 while let Some(_) = watcher.next().await {
-                    let Ok(_) = this.update(cx, |_, cx| {
+                    let Ok(_) = this.update(cx, |this, cx| {
+                        for repo in this.repositories.values() {
+                            repo.update(cx, |this, cx| {
+                                if this.job_sender.is_closed() {
+                                    let (job_sender, state) = (this.refetch_repo_state)(cx);
+                                    this.repository_state = state;
+                                    this.job_sender = job_sender;
+                                }
+                            })
+                        }
                         cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
                     }) else {
                         return;
@@ -3603,26 +3620,37 @@ impl Repository {
     ) -> Self {
         let snapshot =
             RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::local());
-        let state = cx
-            .spawn(async move |_, cx| {
-                LocalRepositoryState::new(
-                    work_directory_abs_path,
-                    dot_git_abs_path,
-                    project_environment,
-                    fs,
-                    cx,
-                )
-                .await
-                .map_err(|err| err.to_string())
-            })
-            .shared();
-        let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
-        let state = cx
-            .spawn(async move |_, _| {
-                let state = state.await?;
-                Ok(RepositoryState::Local(state))
-            })
-            .shared();
+        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
+            let work_directory_abs_path = work_directory_abs_path.clone();
+            let dot_git_abs_path = dot_git_abs_path.clone();
+            let project_environment = project_environment.clone();
+            let fs = fs.clone();
+
+            let state = cx
+                .spawn(async move |_, cx| {
+                    LocalRepositoryState::new(
+                        work_directory_abs_path.clone(),
+                        dot_git_abs_path,
+                        project_environment,
+                        fs,
+                        cx,
+                    )
+                    .await
+                    .map_err(|err| err.to_string())
+                })
+                .shared();
+            let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
+            let state = cx
+                .spawn(async move |_, _| {
+                    let state = state.await?;
+                    Ok(RepositoryState::Local(state))
+                })
+                .shared();
+
+            (job_sender, state)
+        });
+
+        let (job_sender, state) = (refetch_repo_state)(cx);
 
         Repository {
             this: cx.weak_entity(),
@@ -3637,6 +3665,7 @@ impl Repository {
             job_sender,
             job_id: 0,
             active_jobs: Default::default(),
+            refetch_repo_state,
         }
     }
 
@@ -3650,9 +3679,19 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path, path_style);
-        let repository_state = RemoteRepositoryState { project_id, client };
-        let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
-        let repository_state = Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
+        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
+            let repository_state = RemoteRepositoryState {
+                project_id,
+                client: client.clone(),
+            };
+            let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
+            let repository_state =
+                Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
+            (job_sender, repository_state)
+        });
+
+        let (job_sender, repository_state) = (refetch_repo_state)(cx);
+
         Self {
             this: cx.weak_entity(),
             snapshot,
@@ -3666,6 +3705,7 @@ impl Repository {
             latest_askpass_id: 0,
             active_jobs: Default::default(),
             job_id: 0,
+            refetch_repo_state,
         }
     }
 
