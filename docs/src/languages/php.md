@@ -105,7 +105,7 @@ The PHP extension provides a debug adapter for PHP and Xdebug. Here a couple way
 ]
 ```
 
-In case you run into issues, here are some ways to solve them:
+These are common troubleshooting tips, in case you run into issues:
 
 - Ensure that you have Xdebug installed for the version of PHP you’re running.
 - Ensure that Xdebug is configured to run in `debug` mode.
