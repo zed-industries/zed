@@ -55,6 +55,14 @@ pub enum SshConnectionHost {
 }
 
 impl SshConnectionHost {
+    pub fn to_safe_string(&self) -> String {
+        match self {
+            Self::IpAddr(IpAddr::V4(ip)) => ip.to_string(),
+            Self::IpAddr(IpAddr::V6(ip)) => format!("[{}]", ip),
+            Self::Hostname(hostname) => hostname.clone(),
+        }
+    }
+
     pub fn to_string(&self) -> String {
         match self {
             Self::IpAddr(ip) => ip.to_string(),
@@ -138,7 +146,7 @@ impl MasterProcess {
         askpass_script_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
         socket_path: &std::path::Path,
-        url: &str,
+        destination: &str,
     ) -> Result<Self> {
         let args = [
             "-N",
@@ -162,7 +170,7 @@ impl MasterProcess {
 
         master_process.arg(format!("ControlPath={}", socket_path.display()));
 
-        let process = master_process.arg(&url).spawn()?;
+        let process = master_process.arg(&destination).spawn()?;
 
         Ok(MasterProcess { process })
     }
@@ -185,7 +193,7 @@ impl MasterProcess {
     pub fn new(
         askpass_script_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
-        url: &str,
+        destination: &str,
     ) -> Result<Self> {
         // On Windows, `ControlMaster` and `ControlPath` are not supported:
         // https://github.com/PowerShell/Win32-OpenSSH/issues/405
@@ -207,7 +215,7 @@ impl MasterProcess {
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", askpass_script_path)
             .args(additional_args)
-            .arg(url)
+            .arg(destination)
             .args(args);
 
         let process = master_process.spawn()?;
@@ -454,7 +462,7 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use askpass::AskPassResult;
 
-        let url = connection_options.ssh_url();
+        let destination = connection_options.ssh_destination();
 
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-ssh-session")
@@ -486,7 +494,7 @@ impl SshRemoteConnection {
             askpass.script_path().as_ref(),
             connection_options.additional_args(),
             &socket_path,
-            &url,
+            &destination,
         )?;
 
         let result = select_biased! {
@@ -882,7 +890,7 @@ impl SshRemoteConnection {
         }
         command.arg(src_path).arg(format!(
             "{}:{}",
-            self.socket.connection_options.scp_url(),
+            self.socket.connection_options.scp_destination(),
             dest_path_str
         ));
         command
@@ -898,7 +906,7 @@ impl SshRemoteConnection {
                 .unwrap_or_default(),
         );
         command.arg("-b").arg("-");
-        command.arg(self.socket.connection_options.scp_url());
+        command.arg(self.socket.connection_options.scp_destination());
         command.stdin(Stdio::piped());
         command
     }
@@ -1028,7 +1036,7 @@ impl SshSocket {
         let separator = shell_kind.sequential_commands_separator();
         let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
-            .arg(self.connection_options.ssh_url());
+            .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
             command.arg("-T");
         }
@@ -1105,7 +1113,7 @@ impl SshSocket {
             "ControlMaster=no".to_string(),
             "-o".to_string(),
             format!("ControlPath={}", self.socket_path.display()),
-            self.connection_options.ssh_url(),
+            self.connection_options.ssh_destination(),
         ]);
         arguments
     }
@@ -1113,7 +1121,7 @@ impl SshSocket {
     #[cfg(target_os = "windows")]
     fn ssh_args(&self) -> Vec<String> {
         let mut arguments = self.connection_options.additional_args();
-        arguments.push(self.connection_options.ssh_url());
+        arguments.push(self.connection_options.ssh_destination());
         arguments
     }
 
@@ -1293,8 +1301,8 @@ impl SshConnectionOptions {
         })
     }
 
-    pub fn ssh_url(&self) -> String {
-        let mut result = String::from("ssh://");
+    pub fn ssh_destination(&self) -> String {
+        let mut result = String::default();
         if let Some(username) = &self.username {
             // Username might be: username1@username2@ip2
             let username = urlencoding::encode(username);
@@ -1303,16 +1311,7 @@ impl SshConnectionOptions {
         }
 
         if let Some(port) = self.port {
-            match &self.host {
-                SshConnectionHost::IpAddr(IpAddr::V6(host)) => {
-                    result.push('[');
-                    result.push_str(&host.to_string());
-                    result.push(']');
-                }
-                SshConnectionHost::IpAddr(IpAddr::V4(host)) => result.push_str(&host.to_string()),
-                SshConnectionHost::Hostname(host) => result.push_str(&host),
-            }
-
+            result.push_str(&self.host.to_safe_string());
             result.push(':');
             result.push_str(&port.to_string());
         } else {
@@ -1354,9 +1353,9 @@ impl SshConnectionOptions {
         args
     }
 
-    fn scp_url(&self) -> String {
+    fn scp_destination(&self) -> String {
         if let Some(username) = &self.username {
-            format!("{}@{}", username, self.host.to_string())
+            format!("{}@{}", username, self.host.to_safe_string())
         } else {
             self.host.to_string()
         }
@@ -1364,13 +1363,7 @@ impl SshConnectionOptions {
 
     pub fn connection_string(&self) -> String {
         let host = if let Some(port) = &self.port {
-            match &self.host {
-                SshConnectionHost::IpAddr(IpAddr::V6(ip)) => {
-                    format!("[{}]:{}", ip, port)
-                }
-                SshConnectionHost::IpAddr(IpAddr::V4(ip)) => format!("{}:{}", ip, port),
-                SshConnectionHost::Hostname(host) => format!("{}:{}", host.clone(), port),
-            }
+            format!("{}:{}", self.host.to_safe_string(), port)
         } else {
             self.host.to_string()
         };
