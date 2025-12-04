@@ -1316,14 +1316,7 @@ impl SshConnectionOptions {
             result.push('@');
         }
 
-        if let Some(port) = self.port {
-            result.push_str(&self.host.to_safe_string());
-            result.push(':');
-            result.push_str(&port.to_string());
-        } else {
-            result.push_str(&self.host.to_string());
-        }
-
+        result.push_str(&self.host.to_string());
         result
     }
 
@@ -1333,6 +1326,11 @@ impl SshConnectionOptions {
 
     pub fn additional_args(&self) -> Vec<String> {
         let mut args = self.additional_args_for_scp();
+
+        if let Some(port) = self.port {
+            args.push("-p".to_string());
+            args.push(port.to_string());
+        }
 
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
