@@ -443,7 +443,11 @@ message Envelope {
         RunGitHook run_git_hook = 399;
 
         GitDeleteBranch git_delete_branch = 400;
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401; // current max
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401;
+
+        SemanticTokens semantic_tokens = 402;
+        SemanticTokensResponse semantic_tokens_response = 403;
+        RefreshSemanticTokens refresh_semantic_tokens = 404; // current max
     }
 
     reserved 87 to 88, 396;

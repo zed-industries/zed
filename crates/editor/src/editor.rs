@@ -36,6 +36,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod semantic_tokens;
 mod split;
 pub mod tasks;
 
@@ -157,8 +158,8 @@ use project::{
     },
     git_store::GitStoreEvent,
     lsp_store::{
-        CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle,
+        BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
+        LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -1196,7 +1197,6 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
-
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -1209,6 +1209,9 @@ pub struct Editor {
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
+    semantic_tokens_enabled: bool,
+    update_semantic_tokens_task: Task<()>,
+    semantic_tokens_fetched_for_buffers: HashMap<BufferId, clock::Global>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1939,6 +1942,19 @@ impl Editor {
                             cx,
                         );
                     }
+                    project::Event::RefreshSemanticTokens {
+                        server_id,
+                        request_id,
+                    } => {
+                        editor.update_semantic_tokens(
+                            None,
+                            Some(RefreshForServer {
+                                server_id: *server_id,
+                                request_id: *request_id,
+                            }),
+                            cx,
+                        );
+                    }
                     project::Event::LanguageServerRemoved(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
@@ -2363,6 +2379,9 @@ impl Editor {
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             use_base_text_line_numbers: false,
+            semantic_tokens_enabled: full_mode,
+            update_semantic_tokens_task: Task::ready(()),
+            semantic_tokens_fetched_for_buffers: HashMap::default(),
         };
 
         if is_minimap {
@@ -18090,7 +18109,6 @@ impl Editor {
                     );
                 });
             });
-            self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         }
     }
 
@@ -18403,7 +18421,13 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if self.ignore_lsp_data() || !self.diagnostics_enabled() {
+        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
+        // skip any LSP updates for it.
+
+        if self.active_diagnostics == ActiveDiagnostic::All
+            || !self.mode().is_full()
+            || !self.diagnostics_enabled()
+        {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -21611,6 +21635,12 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
+                    self.tasks
+                        .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
+                    self.semantic_tokens_fetched_for_buffers.remove(buffer_id);
+                    self.display_map.update(cx, |display_map, _| {
+                        display_map.invalidate_semantic_highlights(*buffer_id);
+                    });
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
@@ -21636,6 +21666,7 @@ impl Editor {
                     self.fetched_tree_sitter_chunks.remove(id);
                 }
                 self.colorize_brackets(false, cx);
+                self.update_lsp_data(None, window, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -21785,14 +21816,6 @@ impl Editor {
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(true, false, window, cx);
         self.refresh_inline_values(cx);
-        self.refresh_inlay_hints(
-            InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
-                self.selections.newest_anchor().head(),
-                &self.buffer.read(cx).snapshot(cx),
-                cx,
-            )),
-            cx,
-        );
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
@@ -21859,6 +21882,16 @@ impl Editor {
                 }
                 self.refresh_colors_for_visible_range(None, window, cx);
             }
+
+            self.refresh_inlay_hints(
+                InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
+                    self.selections.newest_anchor().head(),
+                    &self.buffer.read(cx).snapshot(cx),
+                    cx,
+                )),
+                cx,
+            );
+            self.update_semantic_tokens(None, None, cx);
         }
 
         cx.notify();
@@ -22757,10 +22790,11 @@ impl Editor {
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
+        self.update_semantic_tokens(for_buffer, None, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
-        if self.ignore_lsp_data() {
+        if !self.mode().is_full() {
             return;
         }
         for (_, (visible_buffer, _, _)) in self.visible_excerpts(true, cx) {
@@ -22769,7 +22803,7 @@ impl Editor {
     }
 
     fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if self.ignore_lsp_data() {
+        if !self.mode().is_full() {
             return;
         }
 
@@ -22787,12 +22821,6 @@ impl Editor {
                 self.registered_buffers.remove(&buffer_id);
             }
         }
-    }
-
-    fn ignore_lsp_data(&self) -> bool {
-        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
-        // skip any LSP updates for it.
-        self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 }
 
@@ -23513,6 +23541,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>>;
 
+    fn semantic_tokens(
+        &self,
+        buffer: Entity<Buffer>,
+        refresh: Option<RefreshForServer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>;
+
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
@@ -24083,6 +24118,17 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
         }))
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer: Entity<Buffer>,
+        refresh: Option<RefreshForServer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>> {
+        self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer, refresh, cx)
+        })
     }
 
     fn range_for_rename(
