@@ -346,50 +346,11 @@ impl Prettier {
         ignore_dir: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
-        let get_parser = |buffer_path: &Option<PathBuf>,
-                          buffer_language: &Option<&Arc<Language>>,
-                          prettier_settings: &PrettierSettings|
-         -> anyhow::Result<Option<String>> {
-            let parser = if buffer_path.is_none() {
-                let parser = prettier_settings.parser.as_deref().or_else(|| {
-                    buffer_language.and_then(|language| language.prettier_parser_name())
-                });
-                if parser.is_none() {
-                    log::error!(
-                        "Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}"
-                    );
-                    anyhow::bail!("Cannot determine prettier parser for unsaved file");
-                }
-                parser
-            } else if let (Some(buffer_language), Some(buffer_path)) =
-                (buffer_language, &buffer_path)
-                && buffer_path.extension().is_some_and(|extension| {
-                    !buffer_language
-                        .config()
-                        .matcher
-                        .path_suffixes
-                        .contains(&extension.to_string_lossy().into_owned())
-                })
-            {
-                buffer_language.prettier_parser_name()
-            } else {
-                prettier_settings.parser.as_deref()
-            };
-
-            let result = if let Some(parser) = parser {
-                Some(parser.to_string())
-            } else {
-                None
-            };
-
-            Ok(result)
-        };
-
         match self {
             Self::Real(local) => {
                 let params = buffer
                     .update(cx, |buffer, cx| {
-                        let buffer_language = buffer.language();
+                        let buffer_language = buffer.language().map(|language| language.as_ref());
                         let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
@@ -489,7 +450,7 @@ impl Prettier {
                             })
                             .collect();
 
-                        let prettier_parser = get_parser(&buffer_path, &buffer_language, prettier_settings)?;
+                        let parser = prettier_parser_name(buffer_path.as_deref(), buffer_language, prettier_settings).context("getting prettier parser")?;
 
                         let ignore_path = ignore_dir.and_then(|dir| {
                             let ignore_file = dir.join(".prettierignore");
@@ -507,9 +468,9 @@ impl Prettier {
                         anyhow::Ok(FormatParams {
                             text: buffer.text(),
                             options: FormatOptions {
-                                parser: prettier_parser.as_deref().map(ToOwned::to_owned),
-                                plugins,
                                 path: buffer_path,
+                                parser,
+                                plugins,
                                 prettier_options,
                                 ignore_path,
                             },
@@ -537,18 +498,22 @@ impl Prettier {
                         Some(_other) => {
                             let mut formatted_text = buffer.text() + FORMAT_SUFFIX;
 
-                            let buffer_language = buffer.language();
+                            let buffer_language =
+                                buffer.language().map(|language| language.as_ref());
                             let language_settings = language_settings(
                                 buffer_language.map(|l| l.name()),
                                 buffer.file(),
                                 cx,
                             );
                             let prettier_settings = &language_settings.prettier;
-                            let parser =
-                                get_parser(&buffer_path, &buffer_language, prettier_settings)?;
+                            let parser = prettier_parser_name(
+                                buffer_path.as_deref(),
+                                buffer_language,
+                                prettier_settings,
+                            )?;
 
                             if let Some(parser) = parser {
-                                formatted_text = format!("{}\n{}", formatted_text, parser.as_str());
+                                formatted_text = format!("{formatted_text}\n{parser}");
                             }
 
                             Ok(buffer.diff(formatted_text, cx))
@@ -596,6 +561,40 @@ impl Prettier {
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
+}
+
+fn prettier_parser_name(
+    buffer_path: Option<&Path>,
+    buffer_language: Option<&Language>,
+    prettier_settings: &PrettierSettings,
+) -> anyhow::Result<Option<String>> {
+    let parser = if buffer_path.is_none() {
+        let parser = prettier_settings
+            .parser
+            .as_deref()
+            .or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+        if parser.is_none() {
+            log::error!(
+                "Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}"
+            );
+            anyhow::bail!("Cannot determine prettier parser for unsaved file");
+        }
+        parser
+    } else if let (Some(buffer_language), Some(buffer_path)) = (buffer_language, buffer_path)
+        && buffer_path.extension().is_some_and(|extension| {
+            !buffer_language
+                .config()
+                .matcher
+                .path_suffixes
+                .contains(&extension.to_string_lossy().into_owned())
+        })
+    {
+        buffer_language.prettier_parser_name()
+    } else {
+        prettier_settings.parser.as_deref()
+    };
+
+    Ok(parser.map(ToOwned::to_owned))
 }
 
 async fn has_prettier_in_node_modules(fs: &dyn Fs, path: &Path) -> anyhow::Result<bool> {
