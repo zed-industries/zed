@@ -8,7 +8,7 @@ use std::any::{Any as _, TypeId};
 use command_palette_hooks::CommandPaletteFilter;
 use edit_prediction::{ResetOnboarding, Zeta2FeatureFlag};
 use edit_prediction_context_view::EditPredictionContextView;
-use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::actions;
 use project::DisableAiSettings;
 use rate_prediction_modal::RatePredictionsModal;
@@ -18,6 +18,8 @@ use workspace::{SplitDirection, Workspace};
 
 pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
 pub use sweep_api_token_modal::SweepApiKeyModal;
+
+use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 
 actions!(
     dev,
@@ -31,7 +33,7 @@ actions!(
     edit_prediction,
     [
         /// Opens the rate completions modal.
-        RateCompletions,
+        RatePredictions,
     ]
 );
 
@@ -39,8 +41,8 @@ pub fn init(cx: &mut App) {
     feature_gate_predict_edits_actions(cx);
 
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
-            if cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>() {
+        workspace.register_action(|workspace, _: &RatePredictions, window, cx| {
+            if cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>() {
                 RatePredictionsModal::toggle(workspace, window, cx);
             }
         });
@@ -74,10 +76,10 @@ pub fn init(cx: &mut App) {
 }
 
 fn feature_gate_predict_edits_actions(cx: &mut App) {
-    let rate_completion_action_types = [TypeId::of::<RateCompletions>()];
+    let rate_completion_action_types = [TypeId::of::<RatePredictions>()];
     let reset_onboarding_action_types = [TypeId::of::<ResetOnboarding>()];
     let all_action_types = [
-        TypeId::of::<RateCompletions>(),
+        TypeId::of::<RatePredictions>(),
         TypeId::of::<edit_prediction::ResetOnboarding>(),
         zed_actions::OpenZedPredictOnboarding.type_id(),
         TypeId::of::<edit_prediction::ClearHistory>(),
@@ -95,7 +97,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
 
     cx.observe_global::<SettingsStore>(move |cx| {
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let has_feature_flag = cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>();
+        let has_feature_flag = cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>();
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             if is_ai_disabled {
@@ -109,7 +111,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_flag::<PredictEditsRateCompletionsFeatureFlag, _>(move |is_enabled, cx| {
+    cx.observe_flag::<PredictEditsRatePredictionsFeatureFlag, _>(move |is_enabled, cx| {
         if !DisableAiSettings::get_global(cx).disable_ai {
             if is_enabled {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {

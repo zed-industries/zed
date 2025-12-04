@@ -2,6 +2,7 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use cloud_zeta2_prompt::write_codeblock;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, ExcerptRange, MultiBuffer};
+use feature_flags::FeatureFlag;
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
@@ -31,6 +32,12 @@ actions!(
         PreviewPrediction,
     ]
 );
+
+pub struct PredictEditsRatePredictionsFeatureFlag;
+
+impl FeatureFlag for PredictEditsRatePredictionsFeatureFlag {
+    const NAME: &'static str = "predict-edits-rate-completions";
+}
 
 pub struct RatePredictionsModal {
     ep_store: Entity<EditPredictionStore>,

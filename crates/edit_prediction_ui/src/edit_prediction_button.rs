@@ -8,7 +8,7 @@ use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
 };
-use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
@@ -43,7 +43,10 @@ use workspace::{
 };
 use zed_actions::OpenBrowser;
 
-use crate::{RateCompletions, SweepApiKeyModal};
+use crate::{
+    RatePredictions, SweepApiKeyModal,
+    rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag,
+};
 
 actions!(
     edit_prediction,
@@ -946,8 +949,8 @@ impl EditPredictionButton {
                 )
                 .context(editor_focus_handle)
                 .when(
-                    cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
-                    |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
+                    cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
+                    |this| this.action("Rate Predictions", RatePredictions.boxed_clone()),
                 );
         }
 
