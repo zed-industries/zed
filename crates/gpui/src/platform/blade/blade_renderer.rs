@@ -3,8 +3,8 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    ArcPath, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    ArcPath, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Point, PolychromeSprite,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     get_gamma_correction_ratios,
 };
 use blade_graphics as gpu;
@@ -562,12 +562,7 @@ impl BladeRenderer {
     }
 
     #[profiling::function]
-    fn draw_paths_to_intermediate(
-        &mut self,
-        paths: &[ArcPath],
-        width: f32,
-        height: f32,
-    ) {
+    fn draw_paths_to_intermediate(&mut self, paths: &[ArcPath], width: f32, height: f32) {
         self.command_encoder
             .init_texture(self.path_intermediate_texture);
         if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
@@ -603,12 +598,18 @@ impl BladeRenderer {
 
             let mut vertices = Vec::new();
             for arc_path in paths {
-                vertices.extend(arc_path.path.vertices.iter().map(|v| PathRasterizationVertex {
-                    xy_position: v.xy_position,
-                    st_position: v.st_position,
-                    color: arc_path.color,
-                    bounds: arc_path.clipped_bounds(),
-                }));
+                vertices.extend(
+                    arc_path
+                        .path
+                        .vertices
+                        .iter()
+                        .map(|v| PathRasterizationVertex {
+                            xy_position: v.xy_position,
+                            st_position: v.st_position,
+                            color: arc_path.color,
+                            bounds: arc_path.clipped_bounds(),
+                        }),
+                );
             }
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
             encoder.bind(

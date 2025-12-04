@@ -2946,7 +2946,11 @@ impl Window {
     /// Returns the scaled path that can be cached for later use.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, path: Path<Pixels>, color: impl Into<Background>) -> Arc<Path<ScaledPixels>> {
+    pub fn paint_path(
+        &mut self,
+        path: Path<Pixels>,
+        color: impl Into<Background>,
+    ) -> Arc<Path<ScaledPixels>> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
@@ -2960,19 +2964,17 @@ impl Window {
     /// This path is expected to be already scaled by the window's scale factor, to prevent an unnecessary copy.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_cached_path(
-        &mut self,
-        path: Arc<Path<ScaledPixels>>,
-        color: Background,
-    ) {
+    pub fn paint_cached_path(&mut self, path: Arc<Path<ScaledPixels>>, color: Background) {
         let scale_factor = self.scale_factor();
         let opacity = self.element_opacity();
         let content_mask = self.content_mask().scale(scale_factor);
 
         self.invalidator.debug_assert_paint();
-        self.next_frame
-            .scene
-            .insert_primitive(ArcPath::new(path, content_mask, color.opacity(opacity)));
+        self.next_frame.scene.insert_primitive(ArcPath::new(
+            path,
+            content_mask,
+            color.opacity(opacity),
+        ));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.

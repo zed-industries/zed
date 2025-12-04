@@ -331,8 +331,8 @@ impl DirectXRenderer {
             Some(composition)
         };
 
-        let path_data_buffer = PathDataBuffer::new(&devices.device, 32)
-            .context("Recreating path data buffer")?;
+        let path_data_buffer =
+            PathDataBuffer::new(&devices.device, 32).context("Recreating path data buffer")?;
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -658,9 +658,10 @@ impl DirectXRenderer {
         // for a minimal spanning rect.
         if paths.last().unwrap().order == first_path.order {
             self.path_sprites.reserve(paths.len());
-            self.path_sprites.extend(paths.iter().map(|path| PathSprite {
-                bounds: path.clipped_bounds(),
-            }));
+            self.path_sprites
+                .extend(paths.iter().map(|path| PathSprite {
+                    bounds: path.clipped_bounds(),
+                }));
         } else {
             let mut bounds = first_path.clipped_bounds();
             for path in paths.iter().skip(1) {

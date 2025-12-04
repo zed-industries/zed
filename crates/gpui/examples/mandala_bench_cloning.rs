@@ -3,13 +3,12 @@
 //! Displays an FPS counter in the top left and continuously redraws.
 
 use std::f32::consts::{PI, TAU};
-use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
     Application, Background, Bounds, Context, Path, PathBuilder, Pixels, Point, Render,
-    ScaledPixels, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla,
-    linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla, linear_color_stop,
+    linear_gradient, point, prelude::*, px, size,
 };
 
 const DEFAULT_WINDOW_WIDTH: Pixels = px(1200.0);
@@ -20,21 +19,19 @@ const NUM_PATHS: usize = 500;
 const POINTS_PER_PATH: usize = 2000; // ~1M total points
 
 struct MandalaViewer {
-    paths: Vec<(Arc<Path<ScaledPixels>>, Background)>,
+    paths: Vec<(Path<Pixels>, Background)>,
     frame_times: Vec<f32>,
     last_frame: Instant,
     total_points: usize,
 }
 
 impl MandalaViewer {
-    fn new(window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let center = point(DEFAULT_WINDOW_WIDTH / 2.0, DEFAULT_WINDOW_HEIGHT / 2.0);
         let max_radius = DEFAULT_WINDOW_WIDTH.min(DEFAULT_WINDOW_HEIGHT) / 2.0 - px(50.0);
 
         let mut paths = Vec::with_capacity(NUM_PATHS);
         let mut total_points = 0;
-
-        let scale_factor = window.scale_factor();
 
         for path_idx in 0..NUM_PATHS {
             // Rotation angle for this path in the mandala
@@ -53,7 +50,7 @@ impl MandalaViewer {
                 linear_color_stop(hsla((hue + 0.1) % 1.0, 0.9, 0.6, 0.4), 1.0),
             );
 
-            paths.push((Arc::new(path.scale(scale_factor)), color));
+            paths.push((path, color));
         }
 
         Self {
@@ -184,7 +181,7 @@ impl Render for MandalaViewer {
                     move |_, _, _| {},
                     move |_, _, window, _| {
                         for (path, color) in &paths {
-                            window.paint_cached_path(path.clone(), *color);
+                            window.paint_path(path.clone(), *color);
                         }
                     },
                 )

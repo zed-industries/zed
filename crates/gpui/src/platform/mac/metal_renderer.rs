@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     ArcPath, AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite,
-    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
-    Size, Surface, Underline, point, size,
+    PaintSurface, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -595,12 +595,18 @@ impl MetalRenderer {
         align_offset(instance_offset);
         let mut vertices = Vec::new();
         for arc_path in paths {
-            vertices.extend(arc_path.path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: arc_path.color,
-                bounds: arc_path.clipped_bounds(),
-            }));
+            vertices.extend(
+                arc_path
+                    .path
+                    .vertices
+                    .iter()
+                    .map(|v| PathRasterizationVertex {
+                        xy_position: v.xy_position,
+                        st_position: v.st_position,
+                        color: arc_path.color,
+                        bounds: arc_path.clipped_bounds(),
+                    }),
+            );
         }
         let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
         let next_offset = *instance_offset + vertices_bytes_len;
