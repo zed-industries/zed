@@ -197,6 +197,7 @@ impl GitHostingProvider for Bitbucket {
         let owner = if path_segments.get(0).is_some_and(|v| *v == "scm") && path_segments.len() > 1
         {
             // Skip the "scm" segment if it's not the only segment
+            // https://github.com/gitkraken/vscode-gitlens/blob/a6e3c6fbb255116507eaabaa9940c192ed7bb0e1/src/git/remotes/bitbucket-server.ts#L72-L74
             path_segments.into_iter().skip(1).join("/")
         } else {
             path_segments.into_iter().join("/")
