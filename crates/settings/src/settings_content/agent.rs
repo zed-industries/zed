@@ -337,6 +337,15 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: None
     pub default_model: Option<String>,
+    /// Additional paths outside the project that this agent can read and write.
+    ///
+    /// Each path acts as a prefix - specifying "~/.claude" allows access to
+    /// "~/.claude/plans", "~/.claude/configs", etc.
+    /// More specific paths restrict access: "~/.claude/plans" only allows
+    /// that folder and its subfolders.
+    ///
+    /// Default: []
+    pub allowed_paths: Option<Vec<PathBuf>>,
 }
 
 #[with_fallible_options]
@@ -361,6 +370,15 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// Additional paths outside the project that this agent can read and write.
+        ///
+        /// Each path acts as a prefix - specifying "~/.claude" allows access to
+        /// "~/.claude/plans", "~/.claude/configs", etc.
+        /// More specific paths restrict access: "~/.claude/plans" only allows
+        /// that folder and its subfolders.
+        ///
+        /// Default: []
+        allowed_paths: Option<Vec<PathBuf>>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -375,5 +393,14 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// Additional paths outside the project that this agent can read and write.
+        ///
+        /// Each path acts as a prefix - specifying "~/.claude" allows access to
+        /// "~/.claude/plans", "~/.claude/configs", etc.
+        /// More specific paths restrict access: "~/.claude/plans" only allows
+        /// that folder and its subfolders.
+        ///
+        /// Default: []
+        allowed_paths: Option<Vec<PathBuf>>,
     },
 }

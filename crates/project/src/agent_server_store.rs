@@ -1785,6 +1785,7 @@ pub struct BuiltinAgentServerSettings {
     pub ignore_system_version: Option<bool>,
     pub default_mode: Option<String>,
     pub default_model: Option<String>,
+    pub allowed_paths: Vec<PathBuf>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -1808,6 +1809,12 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             ignore_system_version: value.ignore_system_version,
             default_mode: value.default_mode,
             default_model: value.default_model,
+            allowed_paths: value
+                .allowed_paths
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref()))
+                .collect(),
         }
     }
 }
@@ -1818,7 +1825,10 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
             path: Some(value.path),
             args: Some(value.args),
             env: value.env,
-            ..Default::default()
+            ignore_system_version: None,
+            default_mode: None,
+            default_model: None,
+            allowed_paths: Vec::new(),
         }
     }
 }
@@ -1839,6 +1849,8 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// Additional paths outside the project that this agent can read and write.
+        allowed_paths: Vec<PathBuf>,
     },
     Extension {
         /// The default mode to use for this agent.
@@ -1853,6 +1865,8 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_model: Option<String>,
+        /// Additional paths outside the project that this agent can read and write.
+        allowed_paths: Vec<PathBuf>,
     },
 }
 
@@ -1879,6 +1893,13 @@ impl CustomAgentServerSettings {
             }
         }
     }
+
+    pub fn allowed_paths(&self) -> &[PathBuf] {
+        match self {
+            CustomAgentServerSettings::Custom { allowed_paths, .. }
+            | CustomAgentServerSettings::Extension { allowed_paths, .. } => allowed_paths,
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -1890,6 +1911,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 env,
                 default_mode,
                 default_model,
+                allowed_paths,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -1898,13 +1920,24 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 },
                 default_mode,
                 default_model,
+                allowed_paths: allowed_paths
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref()))
+                    .collect(),
             },
             settings::CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                allowed_paths,
             } => CustomAgentServerSettings::Extension {
                 default_mode,
                 default_model,
+                allowed_paths: allowed_paths
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|p| PathBuf::from(shellexpand::tilde(&p.to_string_lossy()).as_ref()))
+                    .collect(),
             },
         }
     }
@@ -2229,6 +2262,7 @@ mod extension_agent_tests {
             ignore_system_version: None,
             default_mode: None,
             default_model: None,
+            allowed_paths: None,
         };
 
         let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -2245,6 +2279,7 @@ mod extension_agent_tests {
             env: None,
             default_mode: None,
             default_model: None,
+            allowed_paths: None,
         };
 
         let converted: CustomAgentServerSettings = settings.into();

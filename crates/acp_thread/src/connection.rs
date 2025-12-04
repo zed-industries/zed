@@ -351,6 +351,7 @@ mod test_support {
                             .audio(true)
                             .embedded_context(true),
                     ),
+                    Vec::new(),
                     cx,
                 )
             });
