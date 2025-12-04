@@ -535,7 +535,7 @@ impl zed::Extension for OpenRouterProvider {
         vec![LlmProviderInfo {
             id: "open_router".into(),
             name: "OpenRouter".into(),
-            icon: None,
+            icon: Some("icons/open-router.svg".into()),
         }]
     }
 

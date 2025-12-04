@@ -490,7 +490,7 @@ impl zed::Extension for AnthropicProvider {
         vec![LlmProviderInfo {
             id: "anthropic".into(),
             name: "Anthropic".into(),
-            icon: None,
+            icon: Some("icons/anthropic.svg".into()),
         }]
     }
 

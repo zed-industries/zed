@@ -429,7 +429,7 @@ impl zed::Extension for CopilotChatProvider {
         vec![LlmProviderInfo {
             id: "copilot_chat".into(),
             name: "Copilot Chat".into(),
-            icon: None,
+            icon: Some("icons/copilot.svg".into()),
         }]
     }
 
