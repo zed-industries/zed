@@ -1222,6 +1222,7 @@ impl Workspace {
         if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
                 // TODO kb Is it ok that remote projects' worktrees are identified by abs path only?
+                // Need to join with remote_hosts DB table data
                 trusted_worktrees_storage
                     .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
                         session::Event::TrustedWorktree(trusted_path) => {
@@ -6461,9 +6462,7 @@ impl Workspace {
                 self.hide_modal(window, cx);
             }
         } else if !untrusted_worktrees.is_empty() {
-            self.toggle_modal(window, cx, |_, _| SecurityModal {
-                paths: untrusted_worktrees,
-            });
+            self.toggle_modal(window, cx, |_, _| SecurityModal::new(untrusted_worktrees));
         }
     }
 }

@@ -132,6 +132,8 @@ impl AppSession {
     }
 }
 
+// TODO kb move the whole trusted shebang into `project` crate.
+
 /// A collection of worktree absolute paths that are considered trusted.
 /// This can be used when checking for this criteria before enabling certain features.
 #[derive(Clone)]
