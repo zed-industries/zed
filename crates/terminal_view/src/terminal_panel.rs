@@ -387,10 +387,10 @@ impl TerminalPanel {
                 match operation {
                     SplitOperation::Clone | SplitOperation::Clear => {
                         let clone = matches!(operation, SplitOperation::Clone);
-                        let fut = self.new_pane_with_active_terminal(window, cx, clone);
+                        let new_pane = self.new_pane_with_active_terminal(clone, window, cx);
                         let pane = pane.clone();
                         cx.spawn_in(window, async move |panel, cx| {
-                            let Some(new_pane) = fut.await else {
+                            let Some(new_pane) = new_pane.await else {
                                 return;
                             };
                             panel
@@ -437,9 +437,9 @@ impl TerminalPanel {
 
     fn new_pane_with_active_terminal(
         &mut self,
+        clone: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-        clone: bool,
     ) -> Task<Option<Entity<Pane>>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(None);
@@ -1489,7 +1489,7 @@ impl Render for TerminalPanel {
                             window.focus(&pane.read(cx).focus_handle(cx));
                         } else {
                             let future =
-                                terminal_panel.new_pane_with_active_terminal(window, cx, true);
+                                terminal_panel.new_pane_with_active_terminal(true, window, cx);
                             cx.spawn_in(window, async move |terminal_panel, cx| {
                                 if let Some(new_pane) = future.await {
                                     _ = terminal_panel.update_in(
