@@ -32,7 +32,6 @@ use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
-use tracing_subscriber::layer::SubscriberExt;
 use std::{
     env,
     io::{self, IsTerminal},
@@ -42,6 +41,7 @@ use std::{
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
+use tracing_subscriber::layer::SubscriberExt;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -167,8 +167,9 @@ pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
     tracing::subscriber::set_global_default(
-        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default())
-    ).expect("setup tracy layer");
+        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+    )
+    .expect("setup tracy layer");
 
     STARTUP_TIME.get_or_init(|| Instant::now());
 
