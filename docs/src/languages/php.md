@@ -85,7 +85,7 @@ Zed supports syntax highlighting for PHPDoc comments.
 
 ## Debugging
 
-The PHP extension provides a debug adapter for PHP and Xdebug. Here a couple ways you can use it:
+The PHP extension provides a debug adapter for PHP via Xdebug. There are several ways to use it:
 
 ```json
 [
