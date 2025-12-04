@@ -1,6 +1,6 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use settings::Settings;
@@ -8,7 +8,7 @@ use std::{path::Path, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
-pub struct CopilotCompletionProvider {
+pub struct CopilotEditPredictionDelegate {
     cycled: bool,
     buffer_id: Option<EntityId>,
     completions: Vec<Completion>,
@@ -19,7 +19,7 @@ pub struct CopilotCompletionProvider {
     copilot: Entity<Copilot>,
 }
 
-impl CopilotCompletionProvider {
+impl CopilotEditPredictionDelegate {
     pub fn new(copilot: Entity<Copilot>) -> Self {
         Self {
             cycled: false,
@@ -47,7 +47,7 @@ impl CopilotCompletionProvider {
     }
 }
 
-impl EditPredictionProvider for CopilotCompletionProvider {
+impl EditPredictionDelegate for CopilotEditPredictionDelegate {
     fn name() -> &'static str {
         "copilot"
     }
@@ -56,7 +56,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         "Copilot"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 
@@ -314,7 +314,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
@@ -546,7 +546,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
@@ -670,7 +670,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
@@ -753,7 +753,7 @@ mod tests {
                 window.focus(&editor.focus_handle(cx));
             })
             .unwrap();
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
@@ -848,7 +848,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
@@ -1000,7 +1000,7 @@ mod tests {
                 window.focus(&editor.focus_handle(cx))
             })
             .unwrap();
-        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)

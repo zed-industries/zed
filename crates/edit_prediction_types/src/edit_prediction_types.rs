@@ -61,10 +61,10 @@ impl DataCollectionState {
     }
 }
 
-pub trait EditPredictionProvider: 'static + Sized {
+pub trait EditPredictionDelegate: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
-    fn show_completions_in_menu() -> bool;
+    fn show_predictions_in_menu() -> bool;
     fn show_tab_accept_marker() -> bool {
         false
     }
@@ -113,7 +113,7 @@ pub trait EditPredictionProvider: 'static + Sized {
     ) -> Option<EditPrediction>;
 }
 
-pub trait EditPredictionProviderHandle {
+pub trait EditPredictionDelegateHandle {
     fn name(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
     fn is_enabled(
@@ -122,7 +122,7 @@ pub trait EditPredictionProviderHandle {
         cursor_position: language::Anchor,
         cx: &App,
     ) -> bool;
-    fn show_completions_in_menu(&self) -> bool;
+    fn show_predictions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn supports_jump_to_edit(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
@@ -154,9 +154,9 @@ pub trait EditPredictionProviderHandle {
     ) -> Option<EditPrediction>;
 }
 
-impl<T> EditPredictionProviderHandle for Entity<T>
+impl<T> EditPredictionDelegateHandle for Entity<T>
 where
-    T: EditPredictionProvider,
+    T: EditPredictionDelegate,
 {
     fn name(&self) -> &'static str {
         T::name()
@@ -166,8 +166,8 @@ where
         T::display_name()
     }
 
-    fn show_completions_in_menu(&self) -> bool {
-        T::show_completions_in_menu()
+    fn show_predictions_in_menu(&self) -> bool {
+        T::show_predictions_in_menu()
     }
 
     fn show_tab_accept_marker(&self) -> bool {

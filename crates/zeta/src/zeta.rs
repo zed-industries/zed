@@ -81,7 +81,7 @@ use crate::rate_prediction_modal::{
 };
 pub use crate::sweep_ai::SweepAi;
 use crate::zeta1::request_prediction_with_zeta1;
-pub use provider::ZetaEditPredictionProvider;
+pub use provider::ZedEditPredictionDelegate;
 
 actions!(
     edit_prediction,

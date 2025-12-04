@@ -1,12 +1,12 @@
 mod sweep_api_token_modal;
 
-use edit_prediction_types::EditPredictionProviderHandle;
+use edit_prediction_types::EditPredictionDelegateHandle;
 pub use sweep_api_token_modal::SweepApiKeyModal;
 
 use anyhow::Result;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
-use codestral::CodestralCompletionProvider;
+use codestral::CodestralEditPredictionDelegate;
 use copilot::{Copilot, Status};
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -68,7 +68,7 @@ pub struct EditPredictionButton {
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    edit_prediction_provider: Option<Arc<dyn EditPredictionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn EditPredictionDelegateHandle>>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -245,7 +245,7 @@ impl Render for EditPredictionButton {
 
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
-                let has_api_key = CodestralCompletionProvider::has_api_key(cx);
+                let has_api_key = CodestralEditPredictionDelegate::has_api_key(cx);
                 let fs = self.fs.clone();
                 let this = cx.weak_entity();
 
@@ -486,7 +486,7 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
-        CodestralCompletionProvider::ensure_api_key_loaded(client.http_client(), cx);
+        CodestralEditPredictionDelegate::ensure_api_key_loaded(client.http_client(), cx);
 
         Self {
             editor_subscription: None,
@@ -521,7 +521,7 @@ impl EditPredictionButton {
             }
         }
 
-        if CodestralCompletionProvider::has_api_key(cx) {
+        if CodestralEditPredictionDelegate::has_api_key(cx) {
             providers.push(EditPredictionProvider::Codestral);
         }
 

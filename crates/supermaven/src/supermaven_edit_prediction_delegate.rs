@@ -1,6 +1,6 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};
@@ -15,7 +15,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
-pub struct SupermavenCompletionProvider {
+pub struct SupermavenEditPredictionDelegate {
     supermaven: Entity<Supermaven>,
     buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
@@ -25,7 +25,7 @@ pub struct SupermavenCompletionProvider {
     completion_position: Option<language::Anchor>,
 }
 
-impl SupermavenCompletionProvider {
+impl SupermavenEditPredictionDelegate {
     pub fn new(supermaven: Entity<Supermaven>) -> Self {
         Self {
             supermaven,
@@ -104,7 +104,7 @@ fn completion_from_diff(
     }
 }
 
-impl EditPredictionProvider for SupermavenCompletionProvider {
+impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
     fn name() -> &'static str {
         "supermaven"
     }
@@ -113,7 +113,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         "Supermaven"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 
@@ -269,8 +269,8 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
 }
 
 fn reset_completion_cache(
-    provider: &mut SupermavenCompletionProvider,
-    _cx: &mut Context<SupermavenCompletionProvider>,
+    provider: &mut SupermavenEditPredictionDelegate,
+    _cx: &mut Context<SupermavenEditPredictionDelegate>,
 ) {
     provider.pending_refresh = None;
     provider.completion_id = None;

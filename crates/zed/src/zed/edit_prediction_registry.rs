@@ -1,7 +1,7 @@
 use client::{Client, UserStore};
-use codestral::CodestralCompletionProvider;
+use codestral::CodestralEditPredictionDelegate;
 use collections::HashMap;
-use copilot::{Copilot, CopilotCompletionProvider};
+use copilot::{Copilot, CopilotEditPredictionDelegate};
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
@@ -12,9 +12,9 @@ use settings::{
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
-use supermaven::{Supermaven, SupermavenCompletionProvider};
+use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
 use ui::Window;
-use zeta::{SweepFeatureFlag, Zeta2FeatureFlag, ZetaEditPredictionProvider};
+use zeta::{SweepFeatureFlag, ZedEditPredictionDelegate, Zeta2FeatureFlag};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -176,7 +176,7 @@ fn assign_edit_prediction_provider(
 
     match provider {
         EditPredictionProvider::None => {
-            editor.set_edit_prediction_provider::<ZetaEditPredictionProvider>(None, window, cx);
+            editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(None, window, cx);
         }
         EditPredictionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
@@ -187,19 +187,19 @@ fn assign_edit_prediction_provider(
                         copilot.register_buffer(&buffer, cx);
                     });
                 }
-                let provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
+                let provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
         EditPredictionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
-                let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
+                let provider = cx.new(|_| SupermavenEditPredictionDelegate::new(supermaven));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
         EditPredictionProvider::Codestral => {
             let http_client = client.http_client();
-            let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
+            let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         value @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
@@ -235,7 +235,7 @@ fn assign_edit_prediction_provider(
 
                 if has_model {
                     let provider = cx.new(|cx| {
-                        ZetaEditPredictionProvider::new(project.clone(), &client, &user_store, cx)
+                        ZedEditPredictionDelegate::new(project.clone(), &client, &user_store, cx)
                     });
                     editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -47,13 +47,13 @@ impl CurrentCompletion {
     }
 }
 
-pub struct CodestralCompletionProvider {
+pub struct CodestralEditPredictionDelegate {
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
 }
 
-impl CodestralCompletionProvider {
+impl CodestralEditPredictionDelegate {
     pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             http_client,
@@ -165,7 +165,7 @@ impl CodestralCompletionProvider {
     }
 }
 
-impl EditPredictionProvider for CodestralCompletionProvider {
+impl EditPredictionDelegate for CodestralEditPredictionDelegate {
     fn name() -> &'static str {
         "codestral"
     }
@@ -174,7 +174,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         "Codestral"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 

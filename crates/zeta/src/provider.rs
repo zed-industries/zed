@@ -2,19 +2,19 @@ use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{DataCollectionState, Direction, EditPredictionProvider};
+use edit_prediction_types::{DataCollectionState, Direction, EditPredictionDelegate};
 use gpui::{App, Entity, prelude::*};
 use language::ToPoint as _;
 use project::Project;
 
 use crate::{BufferEditPrediction, Zeta, ZetaEditPredictionModel};
 
-pub struct ZetaEditPredictionProvider {
+pub struct ZedEditPredictionDelegate {
     zeta: Entity<Zeta>,
     project: Entity<Project>,
 }
 
-impl ZetaEditPredictionProvider {
+impl ZedEditPredictionDelegate {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(
@@ -40,16 +40,16 @@ impl ZetaEditPredictionProvider {
     }
 }
 
-impl EditPredictionProvider for ZetaEditPredictionProvider {
+impl EditPredictionDelegate for ZedEditPredictionDelegate {
     fn name() -> &'static str {
-        "zed-predict2"
+        "zed-predict"
     }
 
     fn display_name() -> &'static str {
         "Zed's Edit Predictions 2"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 
