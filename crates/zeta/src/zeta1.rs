@@ -124,7 +124,7 @@ pub(crate) fn request_prediction_with_zeta1(
 
         let inputs = EditPredictionInputs {
             events: included_events.into(),
-            included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
+            included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
                 path: full_path.clone(),
                 max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
                 excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {

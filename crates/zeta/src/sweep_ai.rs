@@ -197,7 +197,7 @@ impl SweepAi {
 
             let inputs = EditPredictionInputs {
                 events,
-                included_files: vec![cloud_llm_client::predict_edits_v3::IncludedFile {
+                included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
                     path: full_path.clone(),
                     max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
                     excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {

@@ -32,9 +32,7 @@ use gpui::{
     prelude::*,
 };
 use language::language_settings::all_language_settings;
-use language::{
-    Anchor, Buffer, DiagnosticSet, File, LanguageServerId, Point, ToOffset as _, ToPoint,
-};
+use language::{Anchor, Buffer, File, Point, ToOffset as _, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{DisableAiSettings, Project, ProjectItem as _, ProjectPath, WorktreeId};
@@ -1530,8 +1528,6 @@ impl Zeta {
         let app_version = AppVersion::global(cx);
         let debug_tx = self.debug_tx.clone();
 
-        let diagnostics = active_snapshot.diagnostic_sets().clone();
-
         let file = active_buffer.read(cx).file();
 
         let active_file_full_path = file.as_ref().map(|f| f.full_path(cx));
@@ -1553,14 +1549,6 @@ impl Zeta {
                 let cursor_point = cursor_offset.to_point(&active_snapshot);
 
                 let before_retrieval = Instant::now();
-
-                let (diagnostic_groups, diagnostic_groups_truncated) =
-                    Self::gather_nearby_diagnostics(
-                        cursor_offset,
-                        &diagnostics,
-                        &active_snapshot,
-                        options.max_diagnostic_bytes,
-                    );
 
                 let excerpt_options = options.context;
 
@@ -1602,7 +1590,7 @@ impl Zeta {
 
                 let included_files = included_files
                     .iter()
-                    .map(|related_file| predict_edits_v3::IncludedFile {
+                    .map(|related_file| predict_edits_v3::RelatedFile {
                         path: Arc::from(related_file.path.path.as_std_path()),
                         max_row: Line(related_file.max_row),
                         excerpts: related_file
@@ -1625,17 +1613,12 @@ impl Zeta {
                         line: predict_edits_v3::Line(cursor_point.row),
                         column: cursor_point.column,
                     },
-                    included_files,
-                    referenced_declarations: vec![],
+                    related_files: included_files,
                     events,
                     can_collect_data,
-                    diagnostic_groups,
-                    diagnostic_groups_truncated,
                     debug_info: debug_tx.is_some(),
                     prompt_max_bytes: Some(options.max_prompt_bytes),
                     prompt_format: options.prompt_format,
-                    // TODO [zeta2]
-                    signatures: vec![],
                     excerpt_parent: None,
                     git_info: None,
                     trigger,
@@ -1644,7 +1627,7 @@ impl Zeta {
                 let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
 
                 let inputs = EditPredictionInputs {
-                    included_files: cloud_request.included_files,
+                    included_files: cloud_request.related_files,
                     events: cloud_request.events,
                     cursor_point: cloud_request.cursor_point,
                     cursor_path: cloud_request.excerpt_path,
@@ -1662,7 +1645,7 @@ impl Zeta {
                                 retrieval_time,
                                 buffer: active_buffer.downgrade(),
                                 local_prompt: match prompt_result.as_ref() {
-                                    Ok((prompt, _)) => Ok(prompt.clone()),
+                                    Ok(prompt) => Ok(prompt.clone()),
                                     Err(err) => Err(err.to_string()),
                                 },
                                 position,
@@ -1684,7 +1667,7 @@ impl Zeta {
                     anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
                 }
 
-                let (prompt, _) = prompt_result?;
+                let prompt = prompt_result?;
                 let generation_params =
                     cloud_zeta2_prompt::generation_params(cloud_request.prompt_format);
                 let request = open_ai::Request {
@@ -1757,10 +1740,6 @@ impl Zeta {
                 };
 
                 let (_, edits) = match options.prompt_format {
-                    PromptFormat::NumLinesUniDiff => {
-                        // TODO: Implement parsing of multi-file diffs
-                        crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
-                    }
                     PromptFormat::Minimal
                     | PromptFormat::MinimalQwen
                     | PromptFormat::SeedCoder1120 => {
@@ -2016,52 +1995,6 @@ impl Zeta {
                     store.refresh(buffer.clone(), cursor_position, cx);
                 });
         }
-    }
-
-    fn gather_nearby_diagnostics(
-        cursor_offset: usize,
-        diagnostic_sets: &[(LanguageServerId, DiagnosticSet)],
-        snapshot: &BufferSnapshot,
-        max_diagnostics_bytes: usize,
-    ) -> (Vec<predict_edits_v3::DiagnosticGroup>, bool) {
-        // TODO: Could make this more efficient
-        let mut diagnostic_groups = Vec::new();
-        for (language_server_id, diagnostics) in diagnostic_sets {
-            let mut groups = Vec::new();
-            diagnostics.groups(*language_server_id, &mut groups, &snapshot);
-            diagnostic_groups.extend(
-                groups
-                    .into_iter()
-                    .map(|(_, group)| group.resolve::<usize>(&snapshot)),
-            );
-        }
-
-        // sort by proximity to cursor
-        diagnostic_groups.sort_by_key(|group| {
-            let range = &group.entries[group.primary_ix].range;
-            if range.start >= cursor_offset {
-                range.start - cursor_offset
-            } else if cursor_offset >= range.end {
-                cursor_offset - range.end
-            } else {
-                (cursor_offset - range.start).min(range.end - cursor_offset)
-            }
-        });
-
-        let mut results = Vec::new();
-        let mut diagnostic_groups_truncated = false;
-        let mut diagnostics_byte_count = 0;
-        for group in diagnostic_groups {
-            let raw_value = serde_json::value::to_raw_value(&group).unwrap();
-            diagnostics_byte_count += raw_value.get().len();
-            if diagnostics_byte_count > max_diagnostics_bytes {
-                diagnostic_groups_truncated = true;
-                break;
-            }
-            results.push(predict_edits_v3::DiagnosticGroup(raw_value));
-        }
-
-        (results, diagnostic_groups_truncated)
     }
 
     fn is_file_open_source(

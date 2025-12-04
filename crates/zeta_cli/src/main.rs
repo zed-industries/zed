@@ -200,11 +200,8 @@ fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
 
 #[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
 enum PromptFormat {
-    MarkedExcerpt,
-    LabeledSections,
     OnlySnippets,
     #[default]
-    NumberedLines,
     OldTextNewText,
     Minimal,
     MinimalQwen,
@@ -214,10 +211,7 @@ enum PromptFormat {
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
     fn into(self) -> predict_edits_v3::PromptFormat {
         match self {
-            Self::MarkedExcerpt => predict_edits_v3::PromptFormat::MarkedExcerpt,
-            Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
             Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
-            Self::NumberedLines => predict_edits_v3::PromptFormat::NumLinesUniDiff,
             Self::OldTextNewText => predict_edits_v3::PromptFormat::OldTextNewText,
             Self::Minimal => predict_edits_v3::PromptFormat::Minimal,
             Self::MinimalQwen => predict_edits_v3::PromptFormat::MinimalQwen,
