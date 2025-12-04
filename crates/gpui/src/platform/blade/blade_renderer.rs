@@ -3,8 +3,8 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
-    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    ArcPath, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     get_gamma_correction_ratios,
 };
 use blade_graphics as gpu;
@@ -564,7 +564,7 @@ impl BladeRenderer {
     #[profiling::function]
     fn draw_paths_to_intermediate(
         &mut self,
-        paths: &[Path<ScaledPixels>],
+        paths: &[ArcPath],
         width: f32,
         height: f32,
     ) {
@@ -602,12 +602,12 @@ impl BladeRenderer {
             let mut encoder = pass.with(&self.pipelines.path_rasterization);
 
             let mut vertices = Vec::new();
-            for path in paths {
-                vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
+            for arc_path in paths {
+                vertices.extend(arc_path.path.vertices.iter().map(|v| PathRasterizationVertex {
                     xy_position: v.xy_position,
                     st_position: v.st_position,
-                    color: path.color,
-                    bounds: path.clipped_bounds(),
+                    color: arc_path.color,
+                    bounds: arc_path.clipped_bounds(),
                 }));
             }
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };

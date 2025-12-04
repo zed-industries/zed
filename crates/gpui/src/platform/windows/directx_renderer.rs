@@ -20,6 +20,7 @@ use windows::{
 };
 
 use crate::{
+    ArcPath,
     platform::windows::directx_renderer::shader_resources::{
         RawShaderBytes, ShaderModule, ShaderTarget,
     },
@@ -54,6 +55,13 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+
+    /// GPU buffer for per-path data.
+    path_data_buffer: PathDataBuffer,
+    /// Number of path vertices in the current draw call.
+    path_vertex_count: usize,
+    /// Reusable buffer for path sprites to avoid allocation every frame.
+    path_sprites: Vec<PathSprite>,
 }
 
 /// Direct3D objects
@@ -85,11 +93,47 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
+    path_rasterization_pipeline: PipelineState<PathVertex>,
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
+}
+
+/// Manages a GPU buffer for path data (color + bounds per path).
+struct PathDataBuffer {
+    buffer: ID3D11Buffer,
+    buffer_size: usize,
+    view: Option<ID3D11ShaderResourceView>,
+}
+
+impl PathDataBuffer {
+    fn new(device: &ID3D11Device, initial_size: usize) -> Result<Self> {
+        let buffer = create_buffer(device, std::mem::size_of::<PathData>(), initial_size)?;
+        let view = create_buffer_view(device, &buffer)?;
+        Ok(Self {
+            buffer,
+            buffer_size: initial_size,
+            view,
+        })
+    }
+
+    /// Ensure the buffer is large enough for the given number of elements.
+    /// Resizes the buffer if needed, but does not write any data.
+    fn ensure_size(&mut self, device: &ID3D11Device, required_size: usize) -> Result<()> {
+        if self.buffer_size < required_size {
+            let new_size = required_size.next_power_of_two();
+            log::info!(
+                "Updating path_data_buffer size from {} to {}",
+                self.buffer_size,
+                new_size
+            );
+            self.buffer = create_buffer(device, std::mem::size_of::<PathData>(), new_size)?;
+            self.view = create_buffer_view(device, &self.buffer)?;
+            self.buffer_size = new_size;
+        }
+        Ok(())
+    }
 }
 
 struct DirectXGlobalElements {
@@ -150,6 +194,8 @@ impl DirectXRenderer {
             .context("Creating DirectX global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
+        let path_data_buffer =
+            PathDataBuffer::new(&devices.device, 32).context("Creating path data buffer")?;
 
         let direct_composition = if disable_direct_composition {
             None
@@ -174,6 +220,9 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            path_data_buffer,
+            path_vertex_count: 0,
+            path_sprites: Vec::new(),
         })
     }
 
@@ -282,6 +331,9 @@ impl DirectXRenderer {
             Some(composition)
         };
 
+        let path_data_buffer = PathDataBuffer::new(&devices.device, 32)
+            .context("Recreating path data buffer")?;
+
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
 
@@ -294,6 +346,7 @@ impl DirectXRenderer {
         self.resources = Some(resources);
         self.globals = globals;
         self.pipelines = pipelines;
+        self.path_data_buffer = path_data_buffer;
         self.direct_composition = direct_composition;
         self.skip_draws = true;
         Ok(())
@@ -436,7 +489,7 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_paths_to_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+    fn draw_paths_to_intermediate(&mut self, paths: &[ArcPath]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
@@ -456,31 +509,85 @@ impl DirectXRenderer {
             );
         }
 
-        // Collect all vertices and sprites for a single draw call
-        let mut vertices = Vec::new();
+        // Pre-calculate exact sizes to avoid any reallocations
+        let total_vertices: usize = paths.iter().map(|p| p.path.vertices.len()).sum();
 
-        for path in paths {
-            vertices.extend(path.vertices.iter().map(|v| PathRasterizationSprite {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: path.color,
-                bounds: path.clipped_bounds(),
-            }));
+        // Ensure GPU buffers are large enough, resize if needed
+        self.pipelines
+            .path_rasterization_pipeline
+            .ensure_buffer_size(&devices.device, total_vertices)?;
+        self.path_data_buffer
+            .ensure_size(&devices.device, paths.len())?;
+
+        // Map both buffers and write directly to GPU-accessible memory
+        // This eliminates the intermediate CPU Vec and one memory copy
+        unsafe {
+            // Map vertex buffer
+            let mut vertex_dest = std::mem::zeroed();
+            devices.device_context.Map(
+                &self.pipelines.path_rasterization_pipeline.buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut vertex_dest),
+            )?;
+            let vertex_ptr = vertex_dest.pData as *mut PathVertex;
+
+            // Map path data buffer
+            let mut path_data_dest = std::mem::zeroed();
+            devices.device_context.Map(
+                &self.path_data_buffer.buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut path_data_dest),
+            )?;
+            let path_data_ptr = path_data_dest.pData as *mut PathData;
+
+            // Write directly to mapped buffers - no intermediate Vec needed
+            let mut vertex_offset = 0usize;
+            for (path_id, arc_path) in paths.iter().enumerate() {
+                // Write path data directly
+                std::ptr::write(
+                    path_data_ptr.add(path_id),
+                    PathData {
+                        color: arc_path.color,
+                        bounds: arc_path.clipped_bounds(),
+                    },
+                );
+
+                // Write vertices directly with path_id
+                let path_id = path_id as u32;
+                for v in &arc_path.path.vertices {
+                    std::ptr::write(
+                        vertex_ptr.add(vertex_offset),
+                        PathVertex {
+                            xy_position: v.xy_position,
+                            st_position: v.st_position,
+                            path_id,
+                            _pad: 0,
+                        },
+                    );
+                    vertex_offset += 1;
+                }
+            }
+
+            // Unmap both buffers
+            devices
+                .device_context
+                .Unmap(&self.pipelines.path_rasterization_pipeline.buffer, 0);
+            devices
+                .device_context
+                .Unmap(&self.path_data_buffer.buffer, 0);
         }
 
-        self.pipelines.path_rasterization_pipeline.update_buffer(
-            &devices.device,
-            &devices.device_context,
-            &vertices,
-        )?;
+        // Store vertex count for draw call
+        self.path_vertex_count = total_vertices;
 
-        self.pipelines.path_rasterization_pipeline.draw(
+        // Draw with both buffers bound
+        self.draw_paths_with_data_buffer(
             &devices.device_context,
             slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-            vertices.len() as u32,
-            1,
         )?;
 
         // Resolve MSAA to non-MSAA intermediate texture
@@ -501,10 +608,46 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    fn draw_paths_from_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+    /// Draw paths with both vertex buffer (slot 1) and path data buffer (slot 2) bound.
+    fn draw_paths_with_data_buffer(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        viewport: &[D3D11_VIEWPORT],
+    ) -> Result<()> {
+        let pipeline = &self.pipelines.path_rasterization_pipeline;
+        unsafe {
+            // Bind vertex buffer to slot 1
+            device_context.VSSetShaderResources(1, Some(slice::from_ref(&pipeline.view)));
+            device_context.PSSetShaderResources(1, Some(slice::from_ref(&pipeline.view)));
+
+            // Bind path data buffer to slot 2
+            device_context
+                .VSSetShaderResources(2, Some(slice::from_ref(&self.path_data_buffer.view)));
+            device_context
+                .PSSetShaderResources(2, Some(slice::from_ref(&self.path_data_buffer.view)));
+
+            device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            device_context.RSSetViewports(Some(viewport));
+            device_context.VSSetShader(&pipeline.vertex, None);
+            device_context.PSSetShader(&pipeline.fragment, None);
+            device_context
+                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            device_context
+                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            device_context.OMSetBlendState(&pipeline.blend_state, None, 0xFFFFFFFF);
+
+            device_context.DrawInstanced(self.path_vertex_count as u32, 1, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_paths_from_intermediate(&mut self, paths: &[ArcPath]) -> Result<()> {
         let Some(first_path) = paths.first() else {
             return Ok(());
         };
+
+        // Reuse the sprite buffer to avoid allocation every frame.
+        self.path_sprites.clear();
 
         // When copying paths from the intermediate texture to the drawable,
         // each pixel must only be copied once, in case of transparent paths.
@@ -513,27 +656,25 @@ impl DirectXRenderer {
         // disjoint, so we can copy each path's bounds individually. If this
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
-        let sprites = if paths.last().unwrap().order == first_path.order {
-            paths
-                .iter()
-                .map(|path| PathSprite {
-                    bounds: path.clipped_bounds(),
-                })
-                .collect::<Vec<_>>()
+        if paths.last().unwrap().order == first_path.order {
+            self.path_sprites.reserve(paths.len());
+            self.path_sprites.extend(paths.iter().map(|path| PathSprite {
+                bounds: path.clipped_bounds(),
+            }));
         } else {
             let mut bounds = first_path.clipped_bounds();
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.clipped_bounds());
             }
-            vec![PathSprite { bounds }]
-        };
+            self.path_sprites.push(PathSprite { bounds });
+        }
 
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
         self.pipelines.path_sprite_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
-            &sprites,
+            &self.path_sprites,
         )?;
 
         // Draw the sprites with the path texture
@@ -543,7 +684,7 @@ impl DirectXRenderer {
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
-            sprites.len() as u32,
+            self.path_sprites.len() as u32,
         )
     }
 
@@ -923,14 +1064,11 @@ impl<T> PipelineState<T> {
         })
     }
 
-    fn update_buffer(
-        &mut self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        data: &[T],
-    ) -> Result<()> {
-        if self.buffer_size < data.len() {
-            let new_buffer_size = data.len().next_power_of_two();
+    /// Ensure the buffer is large enough for the given number of elements.
+    /// Resizes the buffer if needed, but does not write any data.
+    fn ensure_buffer_size(&mut self, device: &ID3D11Device, required_size: usize) -> Result<()> {
+        if self.buffer_size < required_size {
+            let new_buffer_size = required_size.next_power_of_two();
             log::info!(
                 "Updating {} buffer size from {} to {}",
                 self.label,
@@ -943,6 +1081,16 @@ impl<T> PipelineState<T> {
             self.view = view;
             self.buffer_size = new_buffer_size;
         }
+        Ok(())
+    }
+
+    fn update_buffer(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        data: &[T],
+    ) -> Result<()> {
+        self.ensure_buffer_size(device, data.len())?;
         update_buffer(device_context, &self.buffer, data)
     }
 
@@ -1001,13 +1149,24 @@ impl<T> PipelineState<T> {
     }
 }
 
+/// Per-path data stored once per path (not per vertex).
+/// This significantly reduces memory bandwidth by avoiding redundant data.
 #[derive(Clone, Copy)]
 #[repr(C)]
-struct PathRasterizationSprite {
-    xy_position: Point<ScaledPixels>,
-    st_position: Point<f32>,
+struct PathData {
     color: Background,
     bounds: Bounds<ScaledPixels>,
+}
+
+/// Per-vertex data for path rasterization.
+/// Only contains position data + path index to look up PathData.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PathVertex {
+    xy_position: Point<ScaledPixels>,
+    st_position: Point<f32>,
+    path_id: u32,
+    _pad: u32, // Padding for alignment
 }
 
 #[derive(Clone, Copy)]

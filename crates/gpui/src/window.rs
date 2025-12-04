@@ -1,9 +1,9 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, ArcPath,
+    Arena, Asset, AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
+    Capslock, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -2943,20 +2943,36 @@ impl Window {
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
+    /// Returns the scaled path that can be cached for later use.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
+    pub fn paint_path(&mut self, path: Path<Pixels>, color: impl Into<Background>) -> Arc<Path<ScaledPixels>> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
-        let opacity = self.element_opacity();
-        path.content_mask = content_mask;
         let color: Background = color.into();
-        path.color = color.opacity(opacity);
+        let cached_path = Arc::new(path.scale(scale_factor));
+        self.paint_cached_path(cached_path.clone(), color);
+        cached_path
+    }
+
+    /// Paint the given `Path` (wrapped in an Arc) into the scene for the next frame at the current z-index.
+    /// This path is expected to be already scaled by the window's scale factor, to prevent an unnecessary copy.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_cached_path(
+        &mut self,
+        path: Arc<Path<ScaledPixels>>,
+        color: Background,
+    ) {
+        let scale_factor = self.scale_factor();
+        let opacity = self.element_opacity();
+        let content_mask = self.content_mask().scale(scale_factor);
+
+        self.invalidator.debug_assert_paint();
         self.next_frame
             .scene
-            .insert_primitive(path.scale(scale_factor));
+            .insert_primitive(ArcPath::new(path, content_mask, color.opacity(opacity)));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.

@@ -13,6 +13,7 @@ use std::{
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
 
 #[allow(non_camel_case_types, unused)]
@@ -27,7 +28,7 @@ pub(crate) struct Scene {
     layer_stack: Vec<DrawOrder>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) quads: Vec<Quad>,
-    pub(crate) paths: Vec<Path<ScaledPixels>>,
+    pub(crate) paths: Vec<ArcPath>,
     pub(crate) underlines: Vec<Underline>,
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
@@ -88,10 +89,10 @@ impl Scene {
                 quad.order = order;
                 self.quads.push(quad.clone());
             }
-            Primitive::Path(path) => {
-                path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
+            Primitive::Path(arc_path) => {
+                arc_path.order = order;
+                arc_path.id = PathId(self.paths.len());
+                self.paths.push(arc_path.clone());
             }
             Primitive::Underline(underline) => {
                 underline.order = order;
@@ -199,7 +200,7 @@ pub(crate) enum PaintOperation {
 pub(crate) enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
-    Path(Path<ScaledPixels>),
+    Path(ArcPath),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
@@ -211,7 +212,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
             Primitive::Quad(quad) => &quad.bounds,
-            Primitive::Path(path) => &path.bounds,
+            Primitive::Path(arc_path) => &arc_path.path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
@@ -223,7 +224,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.content_mask,
             Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::Path(path) => &path.content_mask,
+            Primitive::Path(arc_path) => &arc_path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
@@ -246,9 +247,9 @@ struct BatchIterator<'a> {
     quads: &'a [Quad],
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
-    paths: &'a [Path<ScaledPixels>],
+    paths: &'a [ArcPath],
     paths_start: usize,
-    paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
+    paths_iter: Peekable<slice::Iter<'a, ArcPath>>,
     underlines: &'a [Underline],
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
@@ -435,7 +436,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 pub(crate) enum PrimitiveBatch<'a> {
     Shadows(&'a [Shadow]),
     Quads(&'a [Quad]),
-    Paths(&'a [Path<ScaledPixels>]),
+    Paths(&'a [ArcPath]),
     Underlines(&'a [Underline]),
     MonochromeSprites {
         texture_id: AtlasTextureId,
@@ -671,6 +672,33 @@ impl From<PaintSurface> for Primitive {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PathId(pub(crate) usize);
 
+/// A wrapper around an Arc<Path> that stores the path geometry separately from
+/// the mutable metadata (order, id, content_mask, color) that is set during scene insertion.
+#[derive(Clone, Debug)]
+pub(crate) struct ArcPath {
+    pub path: Arc<Path<ScaledPixels>>,
+    pub order: DrawOrder,
+    pub id: PathId,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub color: Background,
+}
+
+impl ArcPath {
+    pub fn new(path: Arc<Path<ScaledPixels>>, content_mask: ContentMask<ScaledPixels>, color: Background) -> Self {
+        Self {
+            path,
+            order: DrawOrder::default(),
+            id: PathId(0),
+            content_mask,
+            color,
+        }
+    }
+
+    pub fn clipped_bounds(&self) -> Bounds<ScaledPixels> {
+        self.path.bounds.intersect(&self.content_mask.bounds)
+    }
+}
+
 /// A line made up of a series of vertices and control points.
 #[derive(Clone, Debug)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
@@ -808,9 +836,9 @@ where
     }
 }
 
-impl From<Path<ScaledPixels>> for Primitive {
-    fn from(path: Path<ScaledPixels>) -> Self {
-        Primitive::Path(path)
+impl From<ArcPath> for Primitive {
+    fn from(arc_path: ArcPath) -> Self {
+        Primitive::Path(arc_path)
     }
 }
 
