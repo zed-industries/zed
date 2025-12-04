@@ -1,11 +1,22 @@
-use crate::{example::Example, training::context::ContextType};
+use crate::{
+    example::Example,
+    source_location::SourceLocation,
+    training::context::{ContextType, collect_context},
+};
 use anthropic_sdk::{Anthropic, ContentBlock, MessageCreateBuilder};
 use anyhow::Result;
-use std::hash::{Hash, Hasher};
 
 pub struct TeacherModel {
     llm_name: String,
     context: ContextType,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TeacherOutput {
+    parsed_output: String,
+    prompt: String,
+    raw_llm_response: String,
+    context: String,
 }
 
 impl TeacherModel {
@@ -17,18 +28,18 @@ impl TeacherModel {
         TeacherModel { llm_name, context }
     }
 
-    pub async fn predict(&self, input: Example) -> Result<String> {
-        let mut hasher = std::hash::DefaultHasher::new();
-        input.hash(&mut hasher);
-        let disambiguator = hasher.finish();
-        let hash = format!("{:04x}", disambiguator);
-        let file_name = format!("{}_{}", &input.revision[..8], &hash[..4]);
-        input.setup_worktree(file_name).await?;
+    pub async fn predict(&self, input: Example) -> Result<TeacherOutput> {
+        let name = input.unique_name();
+        let worktree_dir = input.setup_worktree(name).await?;
+        let cursor: SourceLocation = input
+            .cursor_position
+            .parse()
+            .expect("Failed to parse cursor position");
 
-        let context = "";
+        let context = collect_context(&self.context, &worktree_dir, cursor);
 
         let prompt = Self::PROMPT
-            .replace("{{context}}", context)
+            .replace("{{context}}", &context)
             .replace("{{edit_history}}", &input.edit_history);
 
         let client = Anthropic::from_env()?;
@@ -36,12 +47,12 @@ impl TeacherModel {
             .messages()
             .create(
                 MessageCreateBuilder::new(self.llm_name.clone(), 16384)
-                    .user(prompt)
+                    .user(prompt.clone())
                     .build(),
             )
             .await?;
 
-        let response_text = &response
+        let response_text = response
             .content
             .into_iter()
             .filter_map(|content| {
@@ -54,16 +65,21 @@ impl TeacherModel {
             .collect::<Vec<String>>()
             .join("\n");
 
-        let parsed = self.parse_response(response_text);
+        let parsed_output = self.parse_response(&response_text);
 
-        Ok(parsed)
+        Ok(TeacherOutput {
+            parsed_output,
+            prompt,
+            raw_llm_response: response_text,
+            context,
+        })
     }
 
     fn parse_response(&self, content: &str) -> String {
         let codeblock = Self::extract_codeblock(content);
         let editable_region = Self::extract_editable_region(&codeblock);
 
-        // todo: apply
+        // todo: apply?
         editable_region
     }
 

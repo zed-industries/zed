@@ -16,7 +16,7 @@ use crate::{
     predict::run_predict,
     source_location::SourceLocation,
     syntax_retrieval_stats::retrieval_stats,
-    training::distill::run_distill,
+    training::{context::ContextType, distill::run_distill},
     util::{open_buffer, open_buffer_with_language_server},
 };
 use ::util::{ResultExt, paths::PathStyle};
@@ -139,6 +139,8 @@ pub struct PredictArguments {
 #[derive(Debug, Args)]
 pub struct DistillArguments {
     split_commit_dataset: PathBuf,
+    #[clap(long, value_enum, default_value_t = ContextType::CurrentFile)]
+    context_type: ContextType,
 }
 
 #[derive(Clone, Debug, Args)]

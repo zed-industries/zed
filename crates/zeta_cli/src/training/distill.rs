@@ -4,7 +4,10 @@ use crate::{
     DistillArguments,
     example::Example,
     source_location::SourceLocation,
-    training::{context::ContextType, teacher::TeacherModel},
+    training::{
+        context::ContextType,
+        teacher::{TeacherModel, TeacherOutput},
+    },
 };
 use anyhow::Result;
 
@@ -26,13 +29,13 @@ pub async fn run_distill(arguments: DistillArguments) -> Result<()> {
 
     for commit in split_commits {
         let distilled = distill_one(commit).await?;
-        println!("{}", distilled);
+        println!("{}", serde_json::to_string(&distilled)?);
     }
 
     Ok(())
 }
 
-pub async fn distill_one(commit: SplitCommit) -> Result<String> {
+pub async fn distill_one(commit: SplitCommit) -> Result<TeacherOutput> {
     let cursor: SourceLocation = commit
         .cursor_position
         .parse()

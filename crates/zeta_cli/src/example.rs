@@ -3,6 +3,8 @@ use std::{
     cell::RefCell,
     fmt::{self, Display},
     fs,
+    hash::Hash,
+    hash::Hasher,
     io::Write,
     mem,
     path::{Path, PathBuf},
@@ -171,6 +173,14 @@ impl Example {
         }
 
         Ok(worktree_path)
+    }
+
+    pub fn unique_name(&self) -> String {
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.hash(&mut hasher);
+        let disambiguator = hasher.finish();
+        let hash = format!("{:04x}", disambiguator);
+        format!("{}_{}", &self.revision[..8], &hash[..4])
     }
 }
 
