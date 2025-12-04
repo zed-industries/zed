@@ -63,6 +63,12 @@ use wasm_host::{
     wit::{LlmModelInfo, LlmProviderInfo, is_supported_wasm_api_version, wasm_api_version_range},
 };
 
+struct LlmProviderWithModels {
+    provider_info: LlmProviderInfo,
+    models: Vec<LlmModelInfo>,
+    is_authenticated: bool,
+}
+
 pub use extension::{
     ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest, SchemaVersion,
 };
@@ -1364,7 +1370,7 @@ impl ExtensionStore {
             let mut wasm_extensions: Vec<(
                 Arc<ExtensionManifest>,
                 WasmExtension,
-                Vec<(LlmProviderInfo, Vec<LlmModelInfo>, bool)>,
+                Vec<LlmProviderWithModels>,
             )> = Vec::new();
             for extension in extension_entries {
                 if extension.manifest.lib.kind.is_none() {
@@ -1384,7 +1390,6 @@ impl ExtensionStore {
                 match wasm_extension {
                     Ok(wasm_extension) => {
                         // Query for LLM providers if the manifest declares any
-                        // Tuple is (provider_info, models, is_authenticated)
                         let mut llm_providers_with_models = Vec::new();
                         if !extension.manifest.language_model_providers.is_empty() {
                             let providers_result = wasm_extension
@@ -1458,8 +1463,11 @@ impl ExtensionStore {
                                         .unwrap_or(Ok(false))
                                         .unwrap_or(false);
 
-                                    llm_providers_with_models
-                                        .push((provider_info, models, is_authenticated));
+                                    llm_providers_with_models.push(LlmProviderWithModels {
+                                        provider_info,
+                                        models,
+                                        is_authenticated,
+                                    });
                                 }
                             } else {
                                 log::error!(
@@ -1549,13 +1557,13 @@ impl ExtensionStore {
                     }
 
                     // Register LLM providers
-                    for (provider_info, models, is_authenticated) in llm_providers_with_models {
+                    for llm_provider in llm_providers_with_models {
                         let provider_id: Arc<str> =
-                            format!("{}:{}", manifest.id, provider_info.id).into();
+                            format!("{}:{}", manifest.id, llm_provider.provider_info.id).into();
                         let wasm_ext = extension.as_ref().clone();
-                        let pinfo = provider_info.clone();
-                        let mods = models.clone();
-                        let auth = *is_authenticated;
+                        let pinfo = llm_provider.provider_info.clone();
+                        let mods = llm_provider.models.clone();
+                        let auth = llm_provider.is_authenticated;
 
                         this.proxy.register_language_model_provider(
                             provider_id.clone(),
