@@ -111,7 +111,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         }
 
         self.zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context_if_needed(&self.project, &buffer, cursor_position, cx);
+            zeta.refresh_context(&self.project, &buffer, cursor_position, cx);
             zeta.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
         });
     }

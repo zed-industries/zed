@@ -28,7 +28,6 @@ use reqwest_client::ReqwestClient;
 use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
-use zeta::ContextMode;
 use zeta::udiff::DiffLine;
 
 #[derive(Parser, Debug)]
@@ -186,11 +185,11 @@ enum PredictionProvider {
 
 fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
     zeta::ZetaOptions {
-        context: ContextMode::Lsp(EditPredictionExcerptOptions {
+        context: EditPredictionExcerptOptions {
             max_bytes: args.max_excerpt_bytes,
             min_bytes: args.min_excerpt_bytes,
             target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
-        }),
+        },
         max_diagnostic_bytes: args.max_diagnostic_bytes,
         max_prompt_bytes: args.max_prompt_bytes,
         prompt_format: args.prompt_format.into(),
@@ -389,7 +388,7 @@ async fn zeta2_context(
                 let updates_rx = zeta.update(cx, |zeta, cx| {
                     let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
                     zeta.set_use_context(true);
-                    zeta.refresh_context_if_needed(&project, &buffer, cursor, cx);
+                    zeta.refresh_context(&project, &buffer, cursor, cx);
                     zeta.project_context_updates(&project).unwrap()
                 })?;
 

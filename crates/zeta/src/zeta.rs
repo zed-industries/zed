@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat};
@@ -8,7 +8,6 @@ use cloud_llm_client::{
     MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::retrieval_prompt::{SearchToolInput, SearchToolQuery};
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
@@ -38,7 +37,6 @@ use language::{
 };
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use open_ai::FunctionDefinition;
 use project::{DisableAiSettings, Project, ProjectItem as _, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -57,7 +55,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use std::{env, mem};
 use thiserror::Error;
-use util::{LogErrorFuture, RangeExt as _, ResultExt as _, TryFutureExt};
+use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 mod license_detection;
@@ -65,7 +63,6 @@ mod onboarding_modal;
 mod prediction;
 mod provider;
 mod rate_prediction_modal;
-pub mod retrieval_search;
 pub mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
@@ -111,20 +108,13 @@ pub struct SweepFeatureFlag;
 impl FeatureFlag for SweepFeatureFlag {
     const NAME: &str = "sweep-ai";
 }
-pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
-    max_bytes: 512,
-    min_bytes: 128,
-    target_before_cursor_over_total_bytes: 0.5,
-};
-
-pub const DEFAULT_CONTEXT_OPTIONS: ContextMode = ContextMode::Lsp(DEFAULT_EXCERPT_OPTIONS);
-
-pub const DEFAULT_AGENTIC_CONTEXT_OPTIONS: AgenticContextOptions = AgenticContextOptions {
-    excerpt: DEFAULT_EXCERPT_OPTIONS,
-};
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
-    context: DEFAULT_CONTEXT_OPTIONS,
+    context: EditPredictionExcerptOptions {
+        max_bytes: 512,
+        min_bytes: 128,
+        target_before_cursor_over_total_bytes: 0.5,
+    },
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
@@ -134,13 +124,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
 
 static USE_OLLAMA: LazyLock<bool> =
     LazyLock::new(|| env::var("ZED_ZETA2_OLLAMA").is_ok_and(|var| !var.is_empty()));
-static CONTEXT_RETRIEVAL_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
-    env::var("ZED_ZETA2_CONTEXT_MODEL").unwrap_or(if *USE_OLLAMA {
-        "qwen3-coder:30b".to_string()
-    } else {
-        "yqvev8r3".to_string()
-    })
-});
+
 static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
     match env::var("ZED_ZETA2_MODEL").as_deref() {
         Ok("zeta2-exp") => "4w5n28vw", // Fine-tuned model @ Baseten
@@ -205,32 +189,12 @@ pub enum ZetaEditPredictionModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
-    pub context: ContextMode,
+    pub context: EditPredictionExcerptOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
     pub file_indexing_parallelism: usize,
     pub buffer_change_grouping_interval: Duration,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ContextMode {
-    Agentic(AgenticContextOptions),
-    Lsp(EditPredictionExcerptOptions),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AgenticContextOptions {
-    pub excerpt: EditPredictionExcerptOptions,
-}
-
-impl ContextMode {
-    pub fn excerpt(&self) -> &EditPredictionExcerptOptions {
-        match self {
-            ContextMode::Agentic(options) => &options.excerpt,
-            ContextMode::Lsp(options) => &options,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -278,19 +242,9 @@ struct ZetaProject {
     context_updates_rx: smol::channel::Receiver<()>,
     last_prediction_refresh: Option<(EntityId, Instant)>,
     cancelled_predictions: HashSet<usize>,
-    context: ZetaProjectContext,
+    context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
     _subscription: gpui::Subscription,
-}
-
-enum ZetaProjectContext {
-    Lsp(Entity<RelatedExcerptStore>),
-    Agentic {
-        refresh_context_task: Option<LogErrorFuture<Task<Result<()>>>>,
-        refresh_context_debounce_task: Option<Task<Option<()>>>,
-        refresh_context_timestamp: Option<Instant>,
-        context: Vec<RelatedFile>,
-    },
 }
 
 impl ZetaProject {
@@ -609,10 +563,7 @@ impl Zeta {
     ) -> &'a [RelatedFile] {
         self.projects
             .get(&project.entity_id())
-            .and_then(|project| match &project.context {
-                ZetaProjectContext::Lsp(store) => Some(store.read(cx).related_files()),
-                ZetaProjectContext::Agentic { context, .. } => Some(context.as_slice()),
-            })
+            .map(|project| project.context.read(cx).related_files())
             .unwrap_or(&[])
     }
 
@@ -648,89 +599,75 @@ impl Zeta {
         self.projects
             .entry(entity_id)
             .or_insert_with(|| ZetaProject {
-                context: match &self.options.context {
-                    ContextMode::Agentic(_) => ZetaProjectContext::Agentic {
-                        refresh_context_task: None,
-                        refresh_context_debounce_task: None,
-                        refresh_context_timestamp: None,
-                        context: Vec::new(),
-                    },
-                    ContextMode::Lsp(_) => {
-                        let related_excerpt_store =
-                            cx.new(|cx| RelatedExcerptStore::new(project, cx));
-                        cx.subscribe(
-                            &related_excerpt_store,
-                            move |this, _, event, _| match event {
-                                RelatedExcerptStoreEvent::StartedRefresh => {
-                                    if let Some(debug_tx) = this.debug_tx.clone() {
-                                        debug_tx
-                                            .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
-                                                ZetaContextRetrievalStartedDebugInfo {
-                                                    project_entity_id: entity_id,
-                                                    timestamp: Instant::now(),
-                                                    search_prompt: String::new(),
-                                                },
-                                            ))
-                                            .ok();
-                                    }
+                context: {
+                    let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(project, cx));
+                    cx.subscribe(
+                        &related_excerpt_store,
+                        move |this, _, event, _| match event {
+                            RelatedExcerptStoreEvent::StartedRefresh => {
+                                if let Some(debug_tx) = this.debug_tx.clone() {
+                                    debug_tx
+                                        .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
+                                            ZetaContextRetrievalStartedDebugInfo {
+                                                project_entity_id: entity_id,
+                                                timestamp: Instant::now(),
+                                                search_prompt: String::new(),
+                                            },
+                                        ))
+                                        .ok();
                                 }
-                                RelatedExcerptStoreEvent::FinishedRefresh {
-                                    cache_hit_count,
-                                    cache_miss_count,
-                                    mean_definition_latency,
-                                    max_definition_latency,
-                                } => {
-                                    if let Some(debug_tx) = this.debug_tx.clone() {
-                                        debug_tx
-                                            .unbounded_send(
-                                                ZetaDebugInfo::ContextRetrievalFinished(
-                                                    ZetaContextRetrievalFinishedDebugInfo {
-                                                        project_entity_id: entity_id,
-                                                        timestamp: Instant::now(),
-                                                        metadata: vec![
-                                                            (
-                                                                "Cache Hits",
-                                                                format!(
-                                                                    "{}/{}",
-                                                                    cache_hit_count,
-                                                                    cache_hit_count
-                                                                        + cache_miss_count
-                                                                )
-                                                                .into(),
-                                                            ),
-                                                            (
-                                                                "Max LSP Time",
-                                                                format!(
-                                                                    "{} ms",
-                                                                    max_definition_latency
-                                                                        .as_millis()
-                                                                )
-                                                                .into(),
-                                                            ),
-                                                            (
-                                                                "Mean LSP Time",
-                                                                format!(
-                                                                    "{} ms",
-                                                                    mean_definition_latency
-                                                                        .as_millis()
-                                                                )
-                                                                .into(),
-                                                            ),
-                                                        ],
-                                                    },
-                                                ),
-                                            )
-                                            .ok();
-                                    }
-                                    if let Some(project_state) = this.projects.get(&entity_id) {
-                                        project_state.context_updates_tx.send_blocking(()).ok();
-                                    }
+                            }
+                            RelatedExcerptStoreEvent::FinishedRefresh {
+                                cache_hit_count,
+                                cache_miss_count,
+                                mean_definition_latency,
+                                max_definition_latency,
+                            } => {
+                                if let Some(debug_tx) = this.debug_tx.clone() {
+                                    debug_tx
+                                        .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
+                                            ZetaContextRetrievalFinishedDebugInfo {
+                                                project_entity_id: entity_id,
+                                                timestamp: Instant::now(),
+                                                metadata: vec![
+                                                    (
+                                                        "Cache Hits",
+                                                        format!(
+                                                            "{}/{}",
+                                                            cache_hit_count,
+                                                            cache_hit_count + cache_miss_count
+                                                        )
+                                                        .into(),
+                                                    ),
+                                                    (
+                                                        "Max LSP Time",
+                                                        format!(
+                                                            "{} ms",
+                                                            max_definition_latency.as_millis()
+                                                        )
+                                                        .into(),
+                                                    ),
+                                                    (
+                                                        "Mean LSP Time",
+                                                        format!(
+                                                            "{} ms",
+                                                            mean_definition_latency.as_millis()
+                                                        )
+                                                        .into(),
+                                                    ),
+                                                ],
+                                            },
+                                        ))
+                                        .ok();
                                 }
-                            },
-                        )
-                        .detach();
-                        ZetaProjectContext::Lsp(related_excerpt_store)
-                    }
+                                if let Some(project_state) = this.projects.get(&entity_id) {
+                                    project_state.context_updates_tx.send_blocking(()).ok();
+                                }
+                            }
+                        },
+                    )
+                    .detach();
+                    related_excerpt_store
                 },
                 events: VecDeque::new(),
                 last_event: None,
@@ -1625,7 +1562,7 @@ impl Zeta {
                         options.max_diagnostic_bytes,
                     );
 
-                let excerpt_options = options.context.excerpt();
+                let excerpt_options = options.context;
 
                 let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
                     cursor_point,
@@ -2065,293 +2002,20 @@ impl Zeta {
         }
     }
 
-    pub const CONTEXT_RETRIEVAL_IDLE_DURATION: Duration = Duration::from_secs(10);
-    pub const CONTEXT_RETRIEVAL_DEBOUNCE_DURATION: Duration = Duration::from_secs(3);
-
-    pub fn refresh_context_if_needed(
+    pub fn refresh_context(
         &mut self,
         project: &Entity<Project>,
         buffer: &Entity<language::Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        if !self.use_context {
-            return;
-        }
-        let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) else {
-            return;
-        };
-
-        match &mut zeta_project.context {
-            ZetaProjectContext::Lsp(related_excerpt_store) => {
-                related_excerpt_store.update(cx, |store, cx| {
+        if self.use_context {
+            self.get_or_init_zeta_project(project, cx)
+                .context
+                .update(cx, |store, cx| {
                     store.refresh(buffer.clone(), cursor_position, cx);
                 });
-            }
-            ZetaProjectContext::Agentic {
-                refresh_context_debounce_task,
-                refresh_context_timestamp,
-                ..
-            } => {
-                let now = Instant::now();
-                let was_idle = refresh_context_timestamp.map_or(true, |timestamp| {
-                    now - timestamp > Self::CONTEXT_RETRIEVAL_IDLE_DURATION
-                });
-                *refresh_context_timestamp = Some(now);
-                *refresh_context_debounce_task = Some(cx.spawn({
-                    let buffer = buffer.clone();
-                    let project = project.clone();
-                    async move |this, cx| {
-                        if was_idle {
-                            log::debug!("refetching edit prediction context after idle");
-                        } else {
-                            cx.background_executor()
-                                .timer(Self::CONTEXT_RETRIEVAL_DEBOUNCE_DURATION)
-                                .await;
-                            log::debug!("refetching edit prediction context after pause");
-                        }
-                        this.update(cx, |this, cx| {
-                            let task = this.refresh_context_with_agentic_retrieval(
-                                project.clone(),
-                                buffer,
-                                cursor_position,
-                                cx,
-                            );
-
-                            if let Some(zeta_project) = this.projects.get_mut(&project.entity_id())
-                            {
-                                if let ZetaProjectContext::Agentic {
-                                    refresh_context_task,
-                                    ..
-                                } = &mut zeta_project.context
-                                {
-                                    *refresh_context_task = Some(task.log_err());
-                                }
-                            };
-                        })
-                        .ok()
-                    }
-                }));
-            }
         }
-    }
-
-    // Refresh the related excerpts asynchronously. Ensure the task runs to completion,
-    // and avoid spawning more than one concurrent task.
-    pub fn refresh_context_with_agentic_retrieval(
-        &mut self,
-        project: Entity<Project>,
-        buffer: Entity<language::Buffer>,
-        cursor_position: language::Anchor,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(zeta_project) = self.projects.get(&project.entity_id()) else {
-            return Task::ready(anyhow::Ok(()));
-        };
-
-        let ContextMode::Agentic(options) = &self.options().context else {
-            return Task::ready(anyhow::Ok(()));
-        };
-
-        let snapshot = buffer.read(cx).snapshot();
-        let cursor_point = cursor_position.to_point(&snapshot);
-        let Some(cursor_excerpt) =
-            EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, &options.excerpt)
-        else {
-            return Task::ready(Ok(()));
-        };
-
-        let app_version = AppVersion::global(cx);
-        let client = self.client.clone();
-        let llm_token = self.llm_token.clone();
-        let debug_tx = self.debug_tx.clone();
-        let current_file_path: Arc<Path> = snapshot
-            .file()
-            .map(|f| f.full_path(cx).into())
-            .unwrap_or_else(|| Path::new("untitled").into());
-
-        let prompt = match cloud_zeta2_prompt::retrieval_prompt::build_prompt(
-            predict_edits_v3::PlanContextRetrievalRequest {
-                excerpt: cursor_excerpt.text(&snapshot).body,
-                excerpt_path: current_file_path,
-                excerpt_line_range: cursor_excerpt.line_range,
-                cursor_file_max_row: Line(snapshot.max_point().row),
-                events: zeta_project.events(cx),
-            },
-        ) {
-            Ok(prompt) => prompt,
-            Err(err) => {
-                return Task::ready(Err(err));
-            }
-        };
-
-        let retrieval_started_at = Instant::now();
-
-        if let Some(debug_tx) = &debug_tx {
-            debug_tx
-                .unbounded_send(ZetaDebugInfo::ContextRetrievalStarted(
-                    ZetaContextRetrievalStartedDebugInfo {
-                        project_entity_id: project.entity_id(),
-                        timestamp: retrieval_started_at,
-                        search_prompt: prompt.clone(),
-                    },
-                ))
-                .ok();
-        }
-
-        pub static TOOL_SCHEMA: LazyLock<(serde_json::Value, String)> = LazyLock::new(|| {
-            let schema = language_model::tool_schema::root_schema_for::<SearchToolInput>(
-                language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset,
-            );
-
-            let description = schema
-                .get("description")
-                .and_then(|description| description.as_str())
-                .unwrap()
-                .to_string();
-
-            (schema.into(), description)
-        });
-
-        let (tool_schema, tool_description) = TOOL_SCHEMA.clone();
-
-        let request = open_ai::Request {
-            model: CONTEXT_RETRIEVAL_MODEL_ID.clone(),
-            messages: vec![open_ai::RequestMessage::User {
-                content: open_ai::MessageContent::Plain(prompt),
-            }],
-            stream: false,
-            max_completion_tokens: None,
-            stop: Default::default(),
-            temperature: 0.7,
-            tool_choice: None,
-            parallel_tool_calls: None,
-            tools: vec![open_ai::ToolDefinition::Function {
-                function: FunctionDefinition {
-                    name: cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME.to_string(),
-                    description: Some(tool_description),
-                    parameters: Some(tool_schema),
-                },
-            }],
-            prompt_cache_key: None,
-            reasoning_effort: None,
-        };
-
-        #[cfg(feature = "eval-support")]
-        let eval_cache = self.eval_cache.clone();
-
-        cx.spawn(async move |this, cx| {
-            log::trace!("Sending search planning request");
-            let response = Self::send_raw_llm_request(
-                request,
-                client,
-                llm_token,
-                app_version,
-                #[cfg(feature = "eval-support")]
-                eval_cache.clone(),
-                #[cfg(feature = "eval-support")]
-                EvalCacheEntryKind::Context,
-            )
-            .await;
-            let mut response = Self::handle_api_response(&this, response, cx)?;
-            log::trace!("Got search planning response");
-
-            let choice = response
-                .choices
-                .pop()
-                .context("No choices in retrieval response")?;
-            let open_ai::RequestMessage::Assistant {
-                content: _,
-                tool_calls,
-            } = choice.message
-            else {
-                anyhow::bail!("Retrieval response didn't include an assistant message");
-            };
-
-            let mut queries: Vec<SearchToolQuery> = Vec::new();
-            for tool_call in tool_calls {
-                let open_ai::ToolCallContent::Function { function } = tool_call.content;
-                if function.name != cloud_zeta2_prompt::retrieval_prompt::TOOL_NAME {
-                    log::warn!(
-                        "Context retrieval response tried to call an unknown tool: {}",
-                        function.name
-                    );
-
-                    continue;
-                }
-
-                let input: SearchToolInput = serde_json::from_str(&function.arguments)
-                    .with_context(|| format!("invalid search json {}", &function.arguments))?;
-                queries.extend(input.queries);
-            }
-
-            log::trace!("Running retrieval search: {queries:#?}");
-            let query_generation_finished_at = Instant::now();
-
-            let related_excerpts_result = retrieval_search::run_retrieval_searches(
-                queries,
-                project.clone(),
-                #[cfg(feature = "eval-support")]
-                eval_cache,
-                cx,
-            )
-            .await;
-
-            log::trace!("Search queries executed");
-            let query_execution_finished_at = Instant::now();
-
-            this.update(cx, |this, _cx| {
-                let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
-                    return Ok(());
-                };
-                if let ZetaProjectContext::Agentic {
-                    refresh_context_task,
-                    context,
-                    ..
-                } = &mut zeta_project.context
-                {
-                    refresh_context_task.take();
-                    if let Some(debug_tx) = &this.debug_tx {
-                        debug_tx
-                            .unbounded_send(ZetaDebugInfo::ContextRetrievalFinished(
-                                ZetaContextRetrievalFinishedDebugInfo {
-                                    project_entity_id: project.entity_id(),
-                                    timestamp: Instant::now(),
-                                    metadata: vec![
-                                        (
-                                            "query_generation",
-                                            format!(
-                                                "{:?}",
-                                                query_generation_finished_at - retrieval_started_at
-                                            )
-                                            .into(),
-                                        ),
-                                        (
-                                            "search_execution",
-                                            format!(
-                                                "{:?}",
-                                                query_execution_finished_at
-                                                    - query_generation_finished_at
-                                            )
-                                            .into(),
-                                        ),
-                                    ],
-                                },
-                            ))
-                            .ok();
-                    }
-                    match related_excerpts_result {
-                        Ok(excerpts) => {
-                            *context = excerpts;
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    Ok(())
-                }
-            })?
-        })
     }
 
     fn gather_nearby_diagnostics(

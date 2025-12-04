@@ -1,6 +1,3 @@
-//! Zeta2 prompt planning and generation code shared with cloud.
-pub mod retrieval_prompt;
-
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::predict_edits_v3::{
     self, DiffPathFmt, Event, Excerpt, IncludedFile, Line, Point, PromptFormat,

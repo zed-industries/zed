@@ -213,14 +213,8 @@ pub async fn perform_predict(
         });
 
         zeta.update(cx, |zeta, cx| {
-            zeta.refresh_context_with_agentic_retrieval(
-                project.clone(),
-                cursor_buffer.clone(),
-                cursor_anchor,
-                cx,
-            )
-        })?
-        .await?;
+            zeta.refresh_context(&project, &cursor_buffer, cursor_anchor, cx)
+        })?;
     }
 
     let prediction = zeta
