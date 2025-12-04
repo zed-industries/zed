@@ -393,3 +393,37 @@ impl SecondaryEditor {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use buffer_diff::BufferDiff;
+    use db::indoc;
+    use fs::FakeFs;
+    use gpui::AppContext as _;
+    use language::{Buffer, Capability};
+    use multi_buffer::MultiBuffer;
+    use project::Project;
+    use ui::VisualContext as _;
+    use workspace::Workspace;
+
+    use crate::SplittableEditor;
+
+    #[gpui::test]
+    async fn test_basic_excerpts(cx: &mut gpui::TestAppContext) {
+        let base_text = indoc! {"
+            hello
+        "};
+        let buffer_text = indoc! {"
+            HELLO!
+        "};
+        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let editor = cx.new_window_entity(|window, cx| {
+            SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
+        });
+    }
+}
