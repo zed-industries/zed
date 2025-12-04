@@ -28,7 +28,7 @@ fn should_appear_in_profile(kitty: Cat) {
 }
 ```
 
-Then either compile Zed in debug mode or with `cargo r --release --no-default-features`
+Then either compile Zed with `cargo r --release  --no-default-features`. The release build is optional but highly recommended as like every program Zeds performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
 
 ## One time Setup/Building the profiler:
 
