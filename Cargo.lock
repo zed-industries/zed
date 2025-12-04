@@ -12387,6 +12387,7 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
+ "db",
  "extension",
  "fancy-regex",
  "fs",
@@ -12420,7 +12421,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "session",
  "settings",
  "sha2",
  "shellexpand 2.1.2",
@@ -14685,7 +14685,6 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
- "collections",
  "db",
  "gpui",
  "serde_json",
@@ -16760,7 +16759,6 @@ dependencies = [
  "rpc",
  "schemars",
  "serde",
- "session",
  "settings",
  "smallvec",
  "story",

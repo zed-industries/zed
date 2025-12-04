@@ -43,7 +43,6 @@ remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
-session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }

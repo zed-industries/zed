@@ -406,9 +406,10 @@ pub fn main() {
     });
 
     app.run(move |cx| {
-        session::init(cx);
         menu::init();
         zed_actions::init();
+        // TODO kb init in more places?
+        project::trusted_worktrees::init(cx);
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);

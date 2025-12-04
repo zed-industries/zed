@@ -1,4 +1,3 @@
-//! TODO kb
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -6,7 +5,7 @@ use std::{
 
 use collections::HashSet;
 use gpui::{DismissEvent, EventEmitter, Focusable};
-use session::TrustedWorktreesStorage;
+use project::trusted_worktrees::TrustedWorktreesStorage;
 use ui::{
     BorrowAppContext, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable as _, Color, Context,
     Div, Element, ElevationIndex, Icon, IconName, IconSize, InteractiveElement as _, IntoElement,

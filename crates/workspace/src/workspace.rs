@@ -77,6 +77,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
+    trusted_worktrees::TrustedWorktreesStorage,
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -84,7 +85,7 @@ use remote::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use session::{AppSession, TrustedWorktreesStorage};
+use session::AppSession;
 use settings::{
     CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
 };
@@ -1225,7 +1226,7 @@ impl Workspace {
                 // Need to join with remote_hosts DB table data
                 trusted_worktrees_storage
                     .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
-                        session::Event::TrustedWorktree(trusted_path) => {
+                        project::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
                             if let Some(security_modal) =
                                 workspace.active_modal::<SecurityModal>(cx)
                             {
@@ -1238,7 +1239,7 @@ impl Workspace {
                                 }
                             }
                         }
-                        session::Event::UntrustedWorktree(_) => {
+                        project::trusted_worktrees::Event::UntrustedWorktree(_) => {
                             workspace.show_worktree_security_modal(window, cx)
                         }
                     })

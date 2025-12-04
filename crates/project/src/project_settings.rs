@@ -17,7 +17,6 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use session::TrustedWorktreesStorage;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
@@ -31,6 +30,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
+    trusted_worktrees::TrustedWorktreesStorage,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -632,7 +632,7 @@ impl SettingsObserver {
         let _trusted_worktrees_watcher = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
                 let watcher = trusted_worktrees.subscribe(cx, move |_, e, cx| match e {
-                    session::Event::TrustedWorktree(trusted_path) => {
+                    crate::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
                         weak_settings_observer
                             .update(cx, |settings_observer, cx| {
                                 if let Some(pending_local_settings) = settings_observer
@@ -672,7 +672,7 @@ impl SettingsObserver {
                             })
                             .ok();
                     }
-                    session::Event::UntrustedWorktree(_) => {}
+                    crate::trusted_worktrees::Event::UntrustedWorktree(_) => {}
                 });
                 Some(watcher)
             })
