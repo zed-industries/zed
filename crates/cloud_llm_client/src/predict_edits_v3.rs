@@ -77,7 +77,7 @@ pub enum PromptFormat {
 }
 
 impl PromptFormat {
-    pub const DEFAULT: PromptFormat = PromptFormat::OldTextNewText;
+    pub const DEFAULT: PromptFormat = PromptFormat::Minimal;
 }
 
 impl Default for PromptFormat {

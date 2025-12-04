@@ -7,6 +7,7 @@ use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
 };
+use edit_prediction_context::Line;
 use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -16,7 +17,7 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::Point;
+use language::{Point, ToOffset as _};
 use lsp::LanguageServerId;
 use open_ai::Usage;
 use parking_lot::Mutex;
