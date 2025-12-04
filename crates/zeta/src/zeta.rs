@@ -2863,7 +2863,7 @@ mod tests {
                     .update_diagnostics(
                         LanguageServerId(0),
                         lsp::PublishDiagnosticsParams {
-                            uri: lsp::Uri::from_file_path("/root/2.txt").unwrap().clone(),
+                            uri: lsp::Uri::from_file_path("/root/2.txt").unwrap(),
                             diagnostics: vec![diagnostic],
                             version: None,
                         },
