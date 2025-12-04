@@ -4483,6 +4483,12 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
+                        // Reuse the entry ID before checking should_scan_directory, so that
+                        // scanned_dirs.contains(&entry.id) returns true for directories that
+                        // were previously scanned. Otherwise we may lose the directory state
+                        // if it is gitignored.
+                        state.reuse_entry_id(&mut fs_entry);
+
                         if state.should_scan_directory(&fs_entry)
                             || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
