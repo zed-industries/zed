@@ -35,9 +35,7 @@ language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 log.workspace = true
 node_runtime.workspace = true
-ordered-float.workspace = true
 paths.workspace = true
-polars = { version = "0.51", features = ["lazy", "dtype-struct", "parquet"] }
 project.workspace = true
 prompt_store.workspace = true
 pulldown-cmark.workspace = true
@@ -48,7 +46,6 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
-soa-rs = "0.8.1"
 terminal_view.workspace = true
 toml.workspace = true
 util.workspace = true
