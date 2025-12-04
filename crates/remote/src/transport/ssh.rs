@@ -487,7 +487,7 @@ impl SshRemoteConnection {
         let mut master_process = MasterProcess::new(
             askpass.script_path().as_ref(),
             connection_options.additional_args(),
-            &url,
+            &destination,
         )?;
         #[cfg(not(target_os = "windows"))]
         let mut master_process = MasterProcess::new(
