@@ -176,6 +176,7 @@ impl LspAdapter for TailwindLspAdapter {
         HashMap::from_iter([
             (LanguageName::new("Astro"), "astro".to_string()),
             (LanguageName::new("HTML"), "html".to_string()),
+            (LanguageName::new("Gleam"), "html".to_string()),
             (LanguageName::new("CSS"), "css".to_string()),
             (LanguageName::new("JavaScript"), "javascript".to_string()),
             (LanguageName::new("TypeScript"), "typescript".to_string()),
@@ -185,7 +186,6 @@ impl LspAdapter for TailwindLspAdapter {
             (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
             (LanguageName::new("ERB"), "erb".to_string()),
             (LanguageName::new("HTML+ERB"), "erb".to_string()),
-            (LanguageName::new("HTML/ERB"), "erb".to_string()),
             (LanguageName::new("PHP"), "php".to_string()),
             (LanguageName::new("Vue.js"), "vue".to_string()),
         ])

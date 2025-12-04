@@ -152,8 +152,8 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> Option<String> {
-        None
+    fn remote_url(&self, _name: &str) -> BoxFuture<'_, Option<String>> {
+        async move { None }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -444,6 +444,25 @@ impl GitRepository for FakeGitRepository {
                 .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
+    }
+
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        async move {
+            Ok(git::repository::FileHistory {
+                entries: Vec::new(),
+                path,
+            })
+        }
+        .boxed()
     }
 
     fn stage_paths(

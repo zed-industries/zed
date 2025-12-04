@@ -159,6 +159,7 @@ dependencies = [
  "derive_more 0.99.20",
  "editor",
  "env_logger 0.11.8",
+ "eval_utils",
  "fs",
  "futures 0.3.31",
  "git",
@@ -215,9 +216,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525705e39c11cd73f7bc784e3681a9386aa30c8d0630808d3dc2237eb4f9cb1b"
+checksum = "3e639d6b544ad39f5b4e05802db5eb04e1518284eb05fda1839931003e0244c8"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -226,16 +227,15 @@ dependencies = [
  "derive_more 2.0.1",
  "futures 0.3.31",
  "log",
- "parking_lot",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.6.2"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecf16c18fea41282d6bbadd1549a06be6836bddb1893f44a6235f340fa24e2af"
+checksum = "f182f5e14bef8232b239719bd99166bb11e986c08fc211f28e392f880d3093ba"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -328,6 +328,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
+ "clock",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -335,6 +336,7 @@ dependencies = [
  "context_server",
  "db",
  "editor",
+ "eval_utils",
  "extension",
  "extension_host",
  "feature_flags",
@@ -343,6 +345,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "gpui_tokio",
  "html_to_markdown",
  "http_client",
  "image",
@@ -370,6 +373,7 @@ dependencies = [
  "proto",
  "rand 0.9.2",
  "release_channel",
+ "reqwest_client",
  "rope",
  "rules_library",
  "schemars",
@@ -2423,6 +2427,7 @@ dependencies = [
  "rand 0.9.2",
  "rope",
  "serde_json",
+ "settings",
  "sum_tree",
  "text",
  "unindent",
@@ -4183,6 +4188,7 @@ dependencies = [
  "serde_json",
  "smol",
  "system_specs",
+ "windows 0.61.3",
  "zstd 0.11.2+zstd.1.5.2",
 ]
 
@@ -5299,6 +5305,7 @@ dependencies = [
  "indoc",
  "language",
  "lsp",
+ "menu",
  "paths",
  "project",
  "regex",
@@ -5308,6 +5315,7 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -5367,6 +5375,7 @@ dependencies = [
  "db",
  "edit_prediction",
  "emojis",
+ "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -5769,6 +5778,15 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+]
+
+[[package]]
+name = "eval_utils"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "serde",
+ "smol",
 ]
 
 [[package]]
@@ -6968,7 +6986,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
@@ -6985,7 +7003,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "git+https://github.com/zed-industries/gh-workflow?rev=3eaa84abca0778eb54272f45a312cb24f9a0b435#3eaa84abca0778eb54272f45a312cb24f9a0b435"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=09acfdf2bd5c1d6254abefd609c808ff73547b2c#09acfdf2bd5c1d6254abefd609c808ff73547b2c"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -7108,6 +7126,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
+ "git_hosting_providers",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -9041,7 +9060,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "smallvec",
  "smol",
+ "snippet",
  "task",
  "terminal",
  "text",
@@ -15115,6 +15136,7 @@ dependencies = [
  "editor",
  "futures 0.3.31",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "lsp",
  "menu",
@@ -17998,9 +18020,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-bash"
-version = "0.25.0"
+version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "871b0606e667e98a1237ebdc1b0d7056e0aebfdc3141d12b399865d4cb6ed8a6"
+checksum = "9e5ec769279cc91b561d3df0d8a5deb26b0ad40d183127f409494d6d8fc53062"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -21012,6 +21034,7 @@ dependencies = [
  "indexmap",
  "indoc",
  "serde",
+ "serde_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21196,7 +21219,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.216.0"
+version = "0.217.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -21486,6 +21509,8 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
 dependencies = [
  "serde",
  "serde_json",
@@ -21494,9 +21519,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -21514,7 +21537,7 @@ dependencies = [
 name = "zed_html"
 version = "0.2.3"
 dependencies = [
- "zed_extension_api 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.7.0",
 ]
 
 [[package]]
@@ -21528,7 +21551,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.7.0",
+ "zed_extension_api 0.8.0",
 ]
 
 [[package]]
@@ -21672,6 +21695,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "copilot",
+ "credentials_provider",
  "ctor",
  "db",
  "edit_prediction",

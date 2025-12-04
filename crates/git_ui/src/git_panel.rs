@@ -6,7 +6,8 @@ use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
+    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
+    repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
@@ -837,6 +838,26 @@ impl GitPanel {
                 })
                 .ok();
             self.focus_handle.focus(window);
+
+            Some(())
+        });
+    }
+
+    fn file_history(&mut self, _: &git::FileHistory, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+            let active_repo = self.active_repository.as_ref()?;
+            let repo_path = entry.repo_path.clone();
+            let git_store = self.project.read(cx).git_store();
+
+            FileHistoryView::open(
+                repo_path,
+                git_store.downgrade(),
+                active_repo.downgrade(),
+                self.workspace.clone(),
+                window,
+                cx,
+            );
 
             Some(())
         });
@@ -1950,7 +1971,7 @@ impl GitPanel {
             .lines()
             .map(|line| {
                 if line.len() > 256 {
-                    format!("{}...[truncated]\n", &line[..256])
+                    format!("{}...[truncated]\n", &line[..line.floor_char_boundary(256)])
                 } else {
                     format!("{}\n", line)
                 }
@@ -3698,6 +3719,7 @@ impl GitPanel {
                                     repo.clone(),
                                     workspace.clone(),
                                     None,
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -3982,20 +4004,21 @@ impl GitPanel {
             "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            let mut context_menu = context_menu
+            let is_created = entry.status.is_created();
+            context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone());
-
-            if entry.status.is_created() {
-                context_menu =
-                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
-            }
-
-            context_menu
+                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action_disabled_when(
+                    !is_created,
+                    "Add to .gitignore",
+                    git::AddToGitignore.boxed_clone(),
+                )
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
+                .separator()
+                .action_disabled_when(is_created, "File History", Box::new(git::FileHistory))
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
@@ -4498,6 +4521,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
+            .on_action(cx.listener(Self::file_history))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
@@ -5909,7 +5933,7 @@ mod tests {
 
     #[test]
     fn test_compress_diff_truncate_long_lines() {
-        let long_line = "a".repeat(300);
+        let long_line = "🦀".repeat(300);
         let diff = indoc::formatdoc! {"
             --- a/file.txt
             +++ b/file.txt

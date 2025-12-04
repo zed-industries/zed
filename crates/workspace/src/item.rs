@@ -64,8 +64,12 @@ pub struct ItemSettings {
 #[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
+    pub enable_preview_from_project_panel: bool,
     pub enable_preview_from_file_finder: bool,
-    pub enable_preview_from_code_navigation: bool,
+    pub enable_preview_from_multibuffer: bool,
+    pub enable_preview_multibuffer_from_code_navigation: bool,
+    pub enable_preview_file_from_code_navigation: bool,
+    pub enable_keep_preview_on_code_navigation: bool,
 }
 
 impl Settings for ItemSettings {
@@ -87,9 +91,19 @@ impl Settings for PreviewTabsSettings {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_project_panel: preview_tabs
+                .enable_preview_from_project_panel
+                .unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
-            enable_preview_from_code_navigation: preview_tabs
-                .enable_preview_from_code_navigation
+            enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
+            enable_preview_multibuffer_from_code_navigation: preview_tabs
+                .enable_preview_multibuffer_from_code_navigation
+                .unwrap(),
+            enable_preview_file_from_code_navigation: preview_tabs
+                .enable_preview_file_from_code_navigation
+                .unwrap(),
+            enable_keep_preview_on_code_navigation: preview_tabs
+                .enable_keep_preview_on_code_navigation
                 .unwrap(),
         }
     }
@@ -287,7 +301,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -981,7 +995,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
+        self.read(cx).as_searchable(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {

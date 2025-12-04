@@ -464,7 +464,7 @@ mod tests {
                     models
                         .into_iter()
                         .map(|model| acp_thread::AgentModelInfo {
-                            id: acp::ModelId(model.to_string().into()),
+                            id: acp::ModelId::new(model.to_string()),
                             name: model.to_string().into(),
                             description: None,
                             icon: None,
