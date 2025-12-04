@@ -60,8 +60,7 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-        let mut buttons = Vec::new();
+        let mut action_buttons = Vec::new();
 
         const RIGHT_PADDING: Pixels = px(9.);
 
@@ -74,7 +73,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(codegen, cx));
+                    action_buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -85,10 +84,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                 (left_gutter_width, right_padding)
             }
-            PromptEditorMode::Terminal { .. } => {
-                // Give the equivalent of the same left-padding that we're using on the right
-                (Pixels::from(40.0), Pixels::from(24.))
-            }
+            PromptEditorMode::Terminal { .. } => (Pixels::from(40.0), Pixels::from(24.)),
         };
 
         let bottom_padding = match &self.mode {
@@ -96,7 +92,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             PromptEditorMode::Terminal { .. } => rems_from_px(8.0),
         };
 
-        buttons.extend(self.render_buttons(window, cx));
+        action_buttons.extend(self.render_buttons(window, cx));
 
         let menu_visible = self.is_completions_menu_visible(cx);
         let add_context_button = IconButton::new("add-context", IconName::AtSign)
@@ -109,93 +105,48 @@ impl<T: 'static> Render for PromptEditor<T> {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.trigger_completion_menu(window, cx);
-            }));
+            }))
+            .into_any_element();
+
+        let close_button = self.render_close_button(cx);
+
+        let error_message = if let CodegenStatus::Error(error) = self.codegen_status(cx) {
+            Some(SharedString::from(error.to_string()))
+        } else {
+            None
+        };
+
+        let editor = self.render_editor(window, cx);
+        let model_selector = self.model_selector.clone().into_any_element();
 
         v_flex()
             .key_context("PromptEditor")
             .capture_action(cx.listener(Self::paste))
             .bg(cx.theme().colors().editor_background)
             .block_mouse_except_scroll()
-            .gap_0p5()
-            .border_y_1()
-            .border_color(cx.theme().status().info_border)
-            .size_full()
-            .pt_0p5()
-            .pb(bottom_padding)
-            .pr(right_padding)
+            .cursor(CursorStyle::Arrow)
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                this.model_selector
+                    .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+            }))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::move_down))
+            .capture_action(cx.listener(Self::cycle_prev))
+            .capture_action(cx.listener(Self::cycle_next))
             .child(
-                h_flex()
-                    .items_start()
-                    .cursor(CursorStyle::Arrow)
-                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                        this.model_selector
-                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                    }))
-                    .on_action(cx.listener(Self::confirm))
-                    .on_action(cx.listener(Self::cancel))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::move_down))
-                    .capture_action(cx.listener(Self::cycle_prev))
-                    .capture_action(cx.listener(Self::cycle_next))
-                    .child(
-                        WithRemSize::new(ui_font_size)
-                            .flex()
-                            .flex_row()
-                            .flex_shrink_0()
-                            .items_center()
-                            .h_full()
-                            .w(left_gutter_width)
-                            .justify_center()
-                            .gap_2()
-                            .child(self.render_close_button(cx))
-                            .map(|el| {
-                                let CodegenStatus::Error(error) = self.codegen_status(cx) else {
-                                    return el;
-                                };
-
-                                let error_message = SharedString::from(error.to_string());
-                                el.child(
-                                    div()
-                                        .id("error")
-                                        .tooltip(Tooltip::text(error_message))
-                                        .child(
-                                            Icon::new(IconName::XCircle)
-                                                .size(IconSize::Small)
-                                                .color(Color::Error),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .child(div().flex_1().child(self.render_editor(window, cx)))
-                            .child(
-                                WithRemSize::new(ui_font_size)
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_1()
-                                    .children(buttons),
-                            ),
-                    ),
-            )
-            .child(
-                WithRemSize::new(ui_font_size)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .child(h_flex().flex_shrink_0().w(left_gutter_width))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .pl_1()
-                            .items_start()
-                            .justify_between()
-                            .child(add_context_button)
-                            .child(self.model_selector.clone()),
-                    ),
+                PromptEditorLayout::new(
+                    editor,
+                    close_button,
+                    action_buttons,
+                    add_context_button,
+                    model_selector,
+                )
+                .error_message(error_message)
+                .left_gutter_width(left_gutter_width)
+                .right_padding(right_padding)
+                .bottom_padding(bottom_padding),
             )
     }
 }
@@ -1174,6 +1125,237 @@ impl GenerationMode {
     }
 }
 
+/// A stateless layout component for the inline prompt editor.
+///
+/// This component handles the visual layout of the prompt editor UI without
+/// any behavior. It's used by both `PromptEditor` (with interactive elements)
+/// and the component preview (with static elements).
+#[derive(IntoElement)]
+pub struct PromptEditorLayout {
+    /// The editor element to display
+    editor: AnyElement,
+    /// Close button element (left gutter)
+    close_button: AnyElement,
+    /// Optional error message to display (left gutter, shown as error icon when present)
+    error_message: Option<SharedString>,
+    /// Action buttons (right side: start/stop/accept/restart + cycle controls)
+    action_buttons: Vec<AnyElement>,
+    /// Add context button (bottom left, @ button)
+    add_context_button: AnyElement,
+    /// Model selector element (bottom right)
+    model_selector: AnyElement,
+    /// Left gutter width for alignment
+    left_gutter_width: Pixels,
+    /// Right padding
+    right_padding: Pixels,
+    /// Bottom padding
+    bottom_padding: Rems,
+}
+
+impl PromptEditorLayout {
+    pub fn new(
+        editor: AnyElement,
+        close_button: AnyElement,
+        action_buttons: Vec<AnyElement>,
+        add_context_button: AnyElement,
+        model_selector: AnyElement,
+    ) -> Self {
+        Self {
+            editor,
+            close_button,
+            error_message: None,
+            action_buttons,
+            add_context_button,
+            model_selector,
+            left_gutter_width: px(40.0),
+            right_padding: px(9.0),
+            bottom_padding: rems_from_px(2.0),
+        }
+    }
+
+    pub fn error_message(mut self, error_message: impl Into<Option<SharedString>>) -> Self {
+        self.error_message = error_message.into();
+        self
+    }
+
+    pub fn left_gutter_width(mut self, width: Pixels) -> Self {
+        self.left_gutter_width = width;
+        self
+    }
+
+    pub fn right_padding(mut self, padding: Pixels) -> Self {
+        self.right_padding = padding;
+        self
+    }
+
+    pub fn bottom_padding(mut self, padding: Rems) -> Self {
+        self.bottom_padding = padding;
+        self
+    }
+
+    /// Creates a PromptEditorLayout for preview/static rendering.
+    ///
+    /// This constructor handles creating all the static (non-interactive) buttons
+    /// based on the codegen status, mode, and other parameters. It's used by the
+    /// component preview system.
+    pub fn preview(
+        editor: AnyElement,
+        codegen_status: CodegenStatus,
+        mode: GenerationMode,
+        edited_since_done: bool,
+        cx: &App,
+    ) -> Self {
+        // Create action buttons based on status
+        let action_buttons = match codegen_status {
+            CodegenStatus::Idle => {
+                vec![
+                    Button::new("start", mode.start_label())
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Return)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .into_any_element(),
+                ]
+            }
+            CodegenStatus::Pending => vec![
+                IconButton::new("stop", IconName::Stop)
+                    .icon_color(Color::Error)
+                    .shape(IconButtonShape::Square)
+                    .into_any_element(),
+            ],
+            CodegenStatus::Done => {
+                if edited_since_done {
+                    vec![
+                        IconButton::new("restart", IconName::RotateCw)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .into_any_element(),
+                    ]
+                } else {
+                    vec![
+                        IconButton::new("accept", IconName::Check)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .into_any_element(),
+                    ]
+                }
+            }
+            CodegenStatus::Error(_) => {
+                vec![
+                    IconButton::new("restart", IconName::RotateCw)
+                        .icon_color(Color::Info)
+                        .shape(IconButtonShape::Square)
+                        .into_any_element(),
+                ]
+            }
+        };
+
+        let close_button = IconButton::new("cancel", IconName::Close)
+            .icon_color(Color::Muted)
+            .shape(IconButtonShape::Square)
+            .into_any_element();
+
+        let add_context_button = IconButton::new("add-context", IconName::AtSign)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .into_any_element();
+
+        let model_selector = div()
+            .text_color(cx.theme().colors().text_muted)
+            .child("Model Selector")
+            .into_any_element();
+
+        let error_message = if let CodegenStatus::Error(error) = codegen_status {
+            Some(SharedString::from(error.to_string()))
+        } else {
+            None
+        };
+
+        Self::new(
+            editor,
+            close_button,
+            action_buttons,
+            add_context_button,
+            model_selector,
+        )
+        .error_message(error_message)
+    }
+}
+
+impl RenderOnce for PromptEditorLayout {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+
+        v_flex()
+            .bg(cx.theme().colors().editor_background)
+            .gap_0p5()
+            .border_y_1()
+            .border_color(cx.theme().status().info_border)
+            .size_full()
+            .pt_0p5()
+            .pb(self.bottom_padding)
+            .pr(self.right_padding)
+            .child(
+                h_flex()
+                    .items_start()
+                    .child(
+                        WithRemSize::new(ui_font_size)
+                            .flex()
+                            .flex_row()
+                            .flex_shrink_0()
+                            .items_center()
+                            .h_full()
+                            .w(self.left_gutter_width)
+                            .justify_center()
+                            .gap_2()
+                            .child(self.close_button)
+                            .when_some(self.error_message, |el, error_message| {
+                                el.child(
+                                    div()
+                                        .id("error")
+                                        .tooltip(Tooltip::text(error_message))
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Error),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(div().flex_1().child(self.editor))
+                            .child(
+                                WithRemSize::new(ui_font_size)
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_1()
+                                    .children(self.action_buttons),
+                            ),
+                    ),
+            )
+            .child(
+                WithRemSize::new(ui_font_size)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(h_flex().flex_shrink_0().w(self.left_gutter_width))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .pl_1()
+                            .items_start()
+                            .justify_between()
+                            .child(self.add_context_button)
+                            .child(self.model_selector),
+                    ),
+            )
+    }
+}
+
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]
 struct MessageCrease {
@@ -1228,4 +1410,157 @@ fn insert_message_creases(
     let ids = editor.insert_creases(creases.clone(), cx);
     editor.fold_creases(creases, false, window, cx);
     ids
+}
+
+mod preview {
+    use component::{Component, ComponentScope, example_group_with_title, single_example};
+    use editor::Editor;
+    use gpui::{AnyElement, App, Window};
+    use ui::prelude::*;
+
+    use super::{CodegenStatus, GenerationMode, PromptEditorLayout};
+
+    // View this component preview using `workspace: open component-preview`
+    #[derive(IntoElement, RegisterComponent)]
+    struct PromptEditorPreview;
+
+    impl Component for PromptEditorPreview {
+        fn scope() -> ComponentScope {
+            ComponentScope::Agent
+        }
+
+        fn name() -> &'static str {
+            "Inline Prompt Editor"
+        }
+
+        fn sort_name() -> &'static str {
+            "AgentInlinePromptEditor"
+        }
+
+        fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+            let editor = window.use_state(cx, |window, cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("How can I help?", window, cx);
+                editor
+            });
+
+            Some(
+                v_flex()
+                    .gap_6()
+                    .child(example_group_with_title(
+                        "Idle State",
+                        vec![
+                            single_example(
+                                "Generate",
+                                div()
+                                    .w(px(600.))
+                                    .child(PromptEditorLayout::preview(
+                                        editor.clone().into_any_element(),
+                                        CodegenStatus::Idle,
+                                        GenerationMode::Generate,
+                                        false,
+                                        cx,
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Transform",
+                                div()
+                                    .w(px(600.))
+                                    .child(PromptEditorLayout::preview(
+                                        editor.clone().into_any_element(),
+                                        CodegenStatus::Idle,
+                                        GenerationMode::Transform,
+                                        false,
+                                        cx,
+                                    ))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ))
+                    .child(example_group_with_title(
+                        "Pending State",
+                        vec![single_example(
+                            "Stop Button",
+                            div()
+                                .w(px(600.))
+                                .child(PromptEditorLayout::preview(
+                                    editor.clone().into_any_element(),
+                                    CodegenStatus::Pending,
+                                    GenerationMode::Generate,
+                                    false,
+                                    cx,
+                                ))
+                                .into_any_element(),
+                        )],
+                    ))
+                    .child(example_group_with_title(
+                        "Done State",
+                        vec![
+                            single_example(
+                                "Accept Button",
+                                div()
+                                    .w(px(600.))
+                                    .child(PromptEditorLayout::preview(
+                                        editor.clone().into_any_element(),
+                                        CodegenStatus::Done,
+                                        GenerationMode::Generate,
+                                        false,
+                                        cx,
+                                    ))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Edited Since Done (Restart)",
+                                div()
+                                    .w(px(600.))
+                                    .child(PromptEditorLayout::preview(
+                                        editor.clone().into_any_element(),
+                                        CodegenStatus::Done,
+                                        GenerationMode::Generate,
+                                        true,
+                                        cx,
+                                    ))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ))
+                    .child(example_group_with_title(
+                        "Error State",
+                        vec![single_example(
+                            "Error Indicator with Restart",
+                            div()
+                                .w(px(600.))
+                                .child(PromptEditorLayout::preview(
+                                    editor.into_any_element(),
+                                    CodegenStatus::Error(anyhow::anyhow!("Example error message")),
+                                    GenerationMode::Generate,
+                                    false,
+                                    cx,
+                                ))
+                                .into_any_element(),
+                        )],
+                    ))
+                    .child(example_group_with_title(
+                        "Terminal Mode (TODO)",
+                        vec![single_example(
+                            "TODO: Execute Button",
+                            div()
+                                .p_4()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .child("TODO: Implement Terminal Mode with execute button")
+                                .into_any_element(),
+                        )],
+                    ))
+                    .into_any_element(),
+            )
+        }
+    }
+
+    impl RenderOnce for PromptEditorPreview {
+        fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+            div().child("Inline Prompt Editor Preview")
+        }
+    }
 }
