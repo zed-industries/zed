@@ -171,22 +171,26 @@ pub fn init(cx: &mut App) {
             let replace_window = window.window_handle().downcast::<Workspace>();
 
             cx.spawn_in(window, async move |_, mut cx| {
-                let (connection, starting_dir) =
-                    match dev_container::start_dev_container(&mut cx).await {
-                        Ok((c, s)) => (c, s),
-                        Err(e) => {
-                            log::error!("Failed to start Dev Container: {:?}", e);
-                            cx.prompt(
-                                gpui::PromptLevel::Critical,
-                                "Failed to start Dev Container",
-                                Some(&format!("{:?}", e)),
-                                &["Ok"],
-                            )
-                            .await
-                            .ok();
-                            return;
-                        }
-                    };
+                let (connection, starting_dir) = match dev_container::start_dev_container(
+                    &mut cx,
+                    app_state.node_runtime.clone(),
+                )
+                .await
+                {
+                    Ok((c, s)) => (c, s),
+                    Err(e) => {
+                        log::error!("Failed to start Dev Container: {:?}", e);
+                        cx.prompt(
+                            gpui::PromptLevel::Critical,
+                            "Failed to start Dev Container",
+                            Some(&format!("{:?}", e)),
+                            &["Ok"],
+                        )
+                        .await
+                        .ok();
+                        return;
+                    }
+                };
 
                 let result = open_remote_project(
                     connection.into(),

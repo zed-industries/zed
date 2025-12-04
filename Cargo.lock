@@ -13813,6 +13813,7 @@ dependencies = [
  "log",
  "markdown",
  "menu",
+ "node_runtime",
  "ordered-float 2.10.1",
  "paths",
  "picker",

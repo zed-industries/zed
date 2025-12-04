@@ -1604,23 +1604,27 @@ impl RemoteServerProjects {
                 let replace_window = window.window_handle().downcast::<Workspace>();
 
                 cx.spawn_in(window, async move |entity, cx| {
-                    let (connection, starting_dir) = match start_dev_container(cx).await {
-                        Ok((c, s)) => (c, s),
-                        Err(e) => {
-                            log::error!("Failed to start dev container: {:?}", e);
-                            entity
-                                .update_in(cx, |remote_server_projects, window, cx| {
-                                    remote_server_projects.mode = Mode::CreateRemoteDevContainer(
-                                        CreateRemoteDevContainer::new(window, cx).progress(
-                                            DevContainerCreationProgress::Error(format!("{:?}", e)),
-                                        ),
-                                    );
-                                    // cx.emit(DismissEvent);
-                                })
-                                .log_err();
-                            return;
-                        }
-                    };
+                    let (connection, starting_dir) =
+                        match start_dev_container(cx, app_state.node_runtime.clone()).await {
+                            Ok((c, s)) => (c, s),
+                            Err(e) => {
+                                log::error!("Failed to start dev container: {:?}", e);
+                                entity
+                                    .update_in(cx, |remote_server_projects, window, cx| {
+                                        remote_server_projects.mode =
+                                            Mode::CreateRemoteDevContainer(
+                                                CreateRemoteDevContainer::new(window, cx).progress(
+                                                    DevContainerCreationProgress::Error(format!(
+                                                        "{:?}",
+                                                        e
+                                                    )),
+                                                ),
+                                            );
+                                    })
+                                    .log_err();
+                                return;
+                            }
+                        };
                     entity
                         .update(cx, |_, cx| {
                             cx.emit(DismissEvent);

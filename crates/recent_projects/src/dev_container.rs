@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gpui::AsyncWindowContext;
+use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
 use workspace::Workspace;
@@ -30,16 +31,37 @@ async fn check_for_docker() -> Result<(), DevContainerError> {
     }
 }
 
-// TODO we probably want to package this with Zed
-async fn check_for_devcontainer_cli() -> Result<(), DevContainerError> {
+async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<(), DevContainerError> {
     let mut command = util::command::new_smol_command("devcontainer");
     command.arg("--version");
 
     match command.output().await {
         Ok(_) => Ok(()),
         Err(e) => {
-            log::error!("Unable to find devcontainer CLI in $PATH: {:?}", e);
-            Err(DevContainerError::DevContainerCliNotAvailable)
+            log::error!(
+                "Unable to find devcontainer CLI in $PATH. Trying to install with npm {:?}",
+                e
+            );
+
+            if let Err(e) = node_runtime
+                .run_npm_subcommand(None, "install", &["-g", "@devcontainers/cli"])
+                .await
+            {
+                log::error!("Unable to install devcontainer CLI to npm. Error: {:?}", e);
+                return Err(DevContainerError::DevContainerCliNotAvailable);
+            };
+
+            let mut command = util::command::new_smol_command("devcontainer");
+            command.arg("--version");
+            if let Err(e) = command.output().await {
+                log::error!(
+                    "Unable to find devcontainer cli after NPM install. Ensure the global node_modules is in your path and try again. Error: {:?}",
+                    e
+                );
+                Err(DevContainerError::DevContainerCliNotAvailable)
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -95,10 +117,11 @@ fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
 
 pub(crate) async fn start_dev_container(
     cx: &mut AsyncWindowContext,
+    node_runtime: NodeRuntime,
 ) -> Result<(Connection, String), DevContainerError> {
     check_for_docker().await?;
 
-    check_for_devcontainer_cli().await?;
+    ensure_devcontainer_cli(node_runtime).await?;
 
     let Some(directory) = project_directory(cx) else {
         return Err(DevContainerError::DevContainerNotFound);

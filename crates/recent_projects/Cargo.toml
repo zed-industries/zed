@@ -27,6 +27,7 @@ language.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
+node_runtime.workspace = true
 ordered-float.workspace = true
 paths.workspace = true
 picker.workspace = true
