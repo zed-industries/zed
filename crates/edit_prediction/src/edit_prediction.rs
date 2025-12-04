@@ -10,13 +10,12 @@ use cloud_llm_client::{
 };
 use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::{HashMap, HashSet};
-use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use edit_prediction_context::{
     RelatedExcerpt, RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile,
 };
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::{
@@ -35,14 +34,12 @@ use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, ToOffset as _, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use project::{DisableAiSettings, Project, ProjectItem as _, ProjectPath, WorktreeId};
+use project::{Project, ProjectItem as _, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, Settings, SettingsStore, update_settings_file};
-use std::any::{Any as _, TypeId};
+use settings::{EditPredictionProvider, SettingsStore, update_settings_file};
 use std::collections::{VecDeque, hash_map};
-use telemetry_events::EditPredictionRating;
 use workspace::Workspace;
 
 use std::ops::Range;
@@ -60,7 +57,6 @@ mod license_detection;
 mod onboarding_modal;
 mod prediction;
 mod provider;
-mod rate_prediction_modal;
 pub mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
@@ -75,21 +71,16 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
-use crate::rate_prediction_modal::{
-    NextEdit, PreviousEdit, RatePredictionsModal, ThumbsDownActivePrediction,
-    ThumbsUpActivePrediction,
-};
 pub use crate::sweep_ai::SweepAi;
 use crate::zeta1::request_prediction_with_zeta1;
 pub use provider::ZedEditPredictionDelegate;
+pub use telemetry_events::EditPredictionRating;
 
 actions!(
     edit_prediction,
     [
         /// Resets the edit prediction onboarding state.
         ResetOnboarding,
-        /// Opens the rate completions modal.
-        RateCompletions,
         /// Clears the edit prediction history.
         ClearHistory,
     ]
@@ -2224,15 +2215,7 @@ pub fn should_show_upsell_modal() -> bool {
 }
 
 pub fn init(cx: &mut App) {
-    feature_gate_predict_edits_actions(cx);
-
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
-            if cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>() {
-                RatePredictionsModal::toggle(workspace, window, cx);
-            }
-        });
-
         workspace.register_action(
             move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
                 ZedPredictModal::toggle(
@@ -2255,58 +2238,6 @@ pub fn init(cx: &mut App) {
                     .edit_prediction_provider = Some(EditPredictionProvider::None)
             });
         });
-    })
-    .detach();
-}
-
-fn feature_gate_predict_edits_actions(cx: &mut App) {
-    let rate_completion_action_types = [TypeId::of::<RateCompletions>()];
-    let reset_onboarding_action_types = [TypeId::of::<ResetOnboarding>()];
-    let all_action_types = [
-        TypeId::of::<RateCompletions>(),
-        TypeId::of::<ResetOnboarding>(),
-        zed_actions::OpenZedPredictOnboarding.type_id(),
-        TypeId::of::<ClearHistory>(),
-        TypeId::of::<ThumbsUpActivePrediction>(),
-        TypeId::of::<ThumbsDownActivePrediction>(),
-        TypeId::of::<NextEdit>(),
-        TypeId::of::<PreviousEdit>(),
-    ];
-
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_action_types(&rate_completion_action_types);
-        filter.hide_action_types(&reset_onboarding_action_types);
-        filter.hide_action_types(&[zed_actions::OpenZedPredictOnboarding.type_id()]);
-    });
-
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let has_feature_flag = cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>();
-
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            if is_ai_disabled {
-                filter.hide_action_types(&all_action_types);
-            } else if has_feature_flag {
-                filter.show_action_types(&rate_completion_action_types);
-            } else {
-                filter.hide_action_types(&rate_completion_action_types);
-            }
-        });
-    })
-    .detach();
-
-    cx.observe_flag::<PredictEditsRateCompletionsFeatureFlag, _>(move |is_enabled, cx| {
-        if !DisableAiSettings::get_global(cx).disable_ai {
-            if is_enabled {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(&rate_completion_action_types);
-                });
-            } else {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&rate_completion_action_types);
-                });
-            }
-        }
     })
     .detach();
 }

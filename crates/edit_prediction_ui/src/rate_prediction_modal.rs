@@ -1,6 +1,6 @@
-use crate::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use cloud_zeta2_prompt::write_codeblock;
+use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
@@ -9,9 +9,7 @@ use gpui::{
 use language::{LanguageRegistry, Point, language_settings};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
-use std::fmt::Write;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -376,7 +374,7 @@ impl RatePredictionsModal {
                     &included_file.path,
                     &included_file.excerpts,
                     if included_file.path == prediction.inputs.cursor_path {
-                        cursor_insertions
+                        cursor_insertions.as_slice()
                     } else {
                         &[]
                     },
