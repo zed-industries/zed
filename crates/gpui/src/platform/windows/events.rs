@@ -27,7 +27,6 @@ pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
-pub(crate) const WM_GPUI_TRAY_MENU_ACTION: u32 = WM_USER + 9;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;

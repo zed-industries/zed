@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -60,7 +61,7 @@ pub(crate) struct WindowsPlatformState {
     menus: RefCell<Vec<OwnedMenu>>,
     jump_list: RefCell<JumpList>,
     tray: RefCell<Option<WindowsTray>>,
-    tray_menus: RefCell<Vec<DockMenuItem>>,
+    tray_menu_actions: RefCell<HashMap<muda::MenuId, Box<dyn Action>>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     directx_devices: RefCell<Option<DirectXDevices>>,
@@ -91,7 +92,7 @@ impl WindowsPlatformState {
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
             tray: RefCell::new(None),
-            tray_menus: RefCell::new(Vec::new()),
+            tray_menu_actions: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -153,6 +154,8 @@ impl WindowsPlatform {
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
+
+        run_muda_menu_event_listener(&foreground_executor, &inner);
 
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
@@ -288,18 +291,6 @@ impl WindowsPlatform {
                 }
             })
             .unwrap();
-    }
-
-    pub(crate) fn perform_tray_menu_action(&self, action: usize) {
-        unsafe {
-            PostMessageW(
-                Some(self.handle),
-                WM_GPUI_TRAY_MENU_ACTION,
-                WPARAM(self.inner.validation_number),
-                LPARAM(action as isize),
-            )
-            .log_err();
-        }
     }
 }
 
@@ -576,17 +567,12 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_tray(&self, mut tray: Tray, menus: Option<Vec<MenuItem>>, _keymap: &Keymap) {
-        let mut actions = Vec::new();
-        let tray_menu = menus.as_ref().map(|menus| build_muda_menu(menus));
-        if let Some(menus) = menus {
-            menus.into_iter().for_each(|item| {
-                if let Some(dock_menu) = DockMenuItem::new(item).log_err() {
-                    actions.push(dock_menu);
-                }
-            });
-        }
-        *self.inner.state.tray_menus.borrow_mut() = actions;
+        let mut action_map = HashMap::new();
+        let tray_menu = menus
+            .as_ref()
+            .map(|menus| build_muda_menu(menus, &mut action_map));
 
+        *self.inner.state.tray_menu_actions.borrow_mut() = action_map;
         let mut windows_tray = self.inner.state.tray.borrow_mut();
         if let Some(windows_tray) = windows_tray.as_mut() {
             windows_tray.update(&tray, tray_menu);
@@ -824,6 +810,7 @@ impl WindowsPlatformInner {
             log::error!("Wrong validation number while processing message: {message}");
             return None;
         }
+
         match message {
             WM_GPUI_CLOSE_ONE_WINDOW => {
                 self.close_one_window(HWND(lparam.0 as _));
@@ -831,7 +818,6 @@ impl WindowsPlatformInner {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
-            WM_GPUI_TRAY_MENU_ACTION => self.handle_tray_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
@@ -894,6 +880,7 @@ impl WindowsPlatformInner {
                     }
                     break 'tasks;
                 }
+
                 match self.main_receiver.try_recv() {
                     Err(_) => break 'timeout_loop,
                     Ok(runnable) => WindowsDispatcher::execute_runnable(runnable),
@@ -935,24 +922,6 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_tray_action_event(&self, action_idx: usize) -> Option<isize> {
-        let Some(action) = self
-            .state
-            .tray_menus
-            .borrow()
-            .get(action_idx)
-            .map(|item| item.action.boxed_clone())
-        else {
-            log::error!("Tray menu for index {action_idx} not found");
-            return Some(1);
-        };
-        self.with_callback(
-            |callbacks| &callbacks.app_menu_action,
-            |callback| callback(&*action),
-        );
-        Some(0)
-    }
-
     fn handle_keyboard_layout_change(&self) -> Option<isize> {
         self.with_callback(
             |callbacks| &callbacks.keyboard_layout_change,
@@ -966,6 +935,25 @@ impl WindowsPlatformInner {
         let directx_devices = unsafe { &*directx_devices };
         self.state.directx_devices.borrow_mut().take();
         *self.state.directx_devices.borrow_mut() = Some(directx_devices.clone());
+
+        Some(0)
+    }
+
+    fn handle_tray_menu_action_event(&self, menu_id: muda::MenuId) -> Option<isize> {
+        let Some(action) = self
+            .state
+            .tray_menu_actions
+            .borrow()
+            .get(&menu_id)
+            .map(|action| action.boxed_clone())
+        else {
+            log::error!("Tray menu for index {:?} not found", menu_id);
+            return Some(1);
+        };
+        self.with_callback(
+            |callbacks| &callbacks.app_menu_action,
+            |callback| callback(&*action),
+        );
 
         Some(0)
     }
@@ -1322,8 +1310,39 @@ unsafe extern "system" fn window_procedure(
     result
 }
 
+/// Runs a menu event listener in a separate thread.
+/// To coordinate [`muda::MenuEvent::receiver()`] with the main thread, use a channel.
+fn run_muda_menu_event_listener(
+    foreground_executor: &ForegroundExecutor,
+    inner: &Rc<WindowsPlatformInner>,
+) {
+    let (tx, rx) = smol::channel::unbounded::<muda::MenuEvent>();
+    foreground_executor
+        .spawn({
+            let inner = inner.clone();
+            async move {
+                while let Ok(event) = rx.recv().await {
+                    _ = inner.handle_tray_menu_action_event(event.id);
+                }
+            }
+        })
+        .detach();
+
+    std::thread::Builder::new()
+        .name("MenuEventReceiver".to_string())
+        .spawn(move || {
+            while let Ok(event) = muda::MenuEvent::receiver().recv() {
+                _ = tx.send_blocking(event);
+            }
+        })
+        .unwrap();
+}
+
 /// Builds a [`muda::Menu`] from a `Vec<MenuItem>`.
-fn build_muda_menu(items: &Vec<MenuItem>) -> muda::Menu {
+fn build_muda_menu(
+    items: &Vec<MenuItem>,
+    action_map: &mut HashMap<muda::MenuId, Box<dyn Action>>,
+) -> muda::Menu {
     use muda::{CheckMenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 
     let mut menu = muda::Menu::new();
@@ -1332,11 +1351,24 @@ fn build_muda_menu(items: &Vec<MenuItem>) -> muda::Menu {
             MenuItem::Separator => {
                 let _ = menu.append(&PredefinedMenuItem::separator());
             }
-            MenuItem::Action { name, checked, .. } => {
-                let _ = menu.append(&CheckMenuItem::new(name.to_string(), true, *checked, None));
+            MenuItem::Action {
+                name,
+                checked,
+                action,
+                ..
+            } => {
+                if *checked {
+                    let muda_item = CheckMenuItem::new(name.to_string(), true, *checked, None);
+                    action_map.insert(muda_item.id().clone(), action.boxed_clone());
+                    let _ = menu.append(&muda_item);
+                } else {
+                    let muda_item = muda::MenuItem::new(name.to_string(), true, None);
+                    action_map.insert(muda_item.id().clone(), action.boxed_clone());
+                    let _ = menu.append(&muda_item);
+                }
             }
             MenuItem::Submenu(_submenu) => {
-                let child_menu = build_muda_menu(&_submenu.items);
+                let child_menu = build_muda_menu(&_submenu.items, action_map);
                 let submenu = Submenu::new(_submenu.name.to_string(), true);
                 for item in child_menu.items() {
                     match item {
@@ -1360,7 +1392,7 @@ fn build_muda_menu(items: &Vec<MenuItem>) -> muda::Menu {
                 let _ = menu.append(&submenu);
             }
             _ => {}
-        }
+        };
     }
     menu
 }

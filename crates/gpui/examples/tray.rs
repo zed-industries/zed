@@ -167,6 +167,7 @@ fn toggle_check(_: &ToggleCheck, cx: &mut App) {
 
     let app_state = cx.global::<AppState>();
     cx.set_tray(app_state.tray.clone());
+    cx.refresh_windows();
 }
 
 fn toggle_visible(_: &ToggleVisible, cx: &mut App) {
@@ -175,4 +176,5 @@ fn toggle_visible(_: &ToggleVisible, cx: &mut App) {
 
     let app_state = cx.global::<AppState>();
     cx.set_tray(app_state.tray.clone());
+    cx.refresh_windows();
 }
