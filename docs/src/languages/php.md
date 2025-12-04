@@ -29,21 +29,7 @@ which php
 
 ## Choosing a language server
 
-The PHP extension offers Phpactor and Intelephense as language server with Phpactor as default.
-
-### Phpactor
-
-To use Phpactor instead of Intelephense, add the following to your `settings.json`:
-
-```json [settings]
-{
-  "languages": {
-    "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "..."]
-    }
-  }
-}
-```
+The PHP extension uses [LSP language servers](https://microsoft.github.io/language-server-protocol) with Phpactor as the default. If you want to use other language servers that support Zed (e.g. Intelephense or PHP Tools), make sure to follow the documentation on how to implement it.
 
 ### Intelephense
 
@@ -61,7 +47,7 @@ To use Intelephense, add the following to your `settings.json`:
 }
 ```
 
-To use the premium features, you can place your license file inside your home directory at `~/intelephense/licence.txt`.
+To use the premium features, you can place your license file inside your home directory at `~/intelephense/licence.txt` for macOS and Linux, or `%USERPROFILE%/intelephense/licence.txt` on Windows.
 
 Alternatively, you can pass the licence key or a path to a file containing the licence key as an initialization option. To do this, add the following to your `settings.json`:
 
@@ -72,6 +58,58 @@ Alternatively, you can pass the licence key or a path to a file containing the l
       "initialization_options": {
         "licenceKey": "/path/to/licence.txt"
       }
+    }
+  }
+}
+```
+
+### PHP Tools
+
+[PHP Tools](https://www.devsense.com/) is a proprietary language server that offers free and premium features. You need to [purchase a license](https://www.devsense.com/en/purchase) to activate the premium features.
+
+To use PHP Tools, add the following to your `settings.json`:
+
+```json [settings]
+{
+  "languages": {
+    "PHP": {
+      "language_servers": ["phptools", "!intelephense", "!phpactor", "..."]
+    }
+  }
+}
+```
+
+To use the premium features, you can add your license in `initialization_options` in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "phptools": {
+      "initialization_options": {
+        "0": "your_license_key"
+      }
+    }
+  }
+}
+```
+
+or, set environment variable `DEVSENSE_PHP_LS_LICENSE` on `.env` file in your project.
+
+```env
+DEVSENSE_PHP_LS_LICENSE="your_license_key"
+```
+
+Check out the documentation of [PHP Tools for Zed](https://docs.devsense.com/other/zed/) for more details.
+
+### Phpactor
+
+To use Phpactor instead of Intelephense or any other tools, add the following to your `settings.json`:
+
+```json [settings]
+{
+  "languages": {
+    "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."]
     }
   }
 }
