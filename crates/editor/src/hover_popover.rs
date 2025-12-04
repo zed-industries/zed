@@ -518,7 +518,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.colors().element_hover, // todo update theme
+                        |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -914,7 +914,7 @@ impl InfoPopover {
                 )
                 .custom_scrollbars(
                     Scrollbars::for_settings::<EditorSettings>()
-                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                        .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
                 )
@@ -1012,7 +1012,7 @@ impl DiagnosticPopover {
                     )
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
-                            .tracked_scroll_handle(self.scroll_handle.clone()),
+                            .tracked_scroll_handle(&self.scroll_handle),
                         window,
                         cx,
                     ),

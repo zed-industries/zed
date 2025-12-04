@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
 use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -154,6 +154,7 @@ impl LspAdapter for TailwindLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut tailwind_user_settings = cx.update(|cx| {
@@ -175,6 +176,7 @@ impl LspAdapter for TailwindLspAdapter {
         HashMap::from_iter([
             (LanguageName::new("Astro"), "astro".to_string()),
             (LanguageName::new("HTML"), "html".to_string()),
+            (LanguageName::new("Gleam"), "html".to_string()),
             (LanguageName::new("CSS"), "css".to_string()),
             (LanguageName::new("JavaScript"), "javascript".to_string()),
             (LanguageName::new("TypeScript"), "typescript".to_string()),
@@ -184,7 +186,6 @@ impl LspAdapter for TailwindLspAdapter {
             (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
             (LanguageName::new("ERB"), "erb".to_string()),
             (LanguageName::new("HTML+ERB"), "erb".to_string()),
-            (LanguageName::new("HTML/ERB"), "erb".to_string()),
             (LanguageName::new("PHP"), "php".to_string()),
             (LanguageName::new("Vue.js"), "vue".to_string()),
         ])

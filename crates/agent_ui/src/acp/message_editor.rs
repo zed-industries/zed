@@ -225,8 +225,13 @@ impl MessageEditor {
             .iter()
             .find(|command| command.name == command_name)?;
 
-        let acp::AvailableCommandInput::Unstructured { mut hint } =
-            available_command.input.clone()?;
+        let acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput {
+            mut hint,
+            ..
+        }) = available_command.input.clone()?
+        else {
+            return None;
+        };
 
         let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
@@ -403,34 +408,28 @@ impl MessageEditor {
                             } => {
                                 all_tracked_buffers.extend(tracked_buffers.iter().cloned());
                                 if supports_embedded_context {
-                                    acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                        annotations: None,
-                                        resource:
-                                            acp::EmbeddedResourceResource::TextResourceContents(
-                                                acp::TextResourceContents {
-                                                    mime_type: None,
-                                                    text: content.clone(),
-                                                    uri: uri.to_uri().to_string(),
-                                                    meta: None,
-                                                },
+                                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                                        acp::EmbeddedResourceResource::TextResourceContents(
+                                            acp::TextResourceContents::new(
+                                                content.clone(),
+                                                uri.to_uri().to_string(),
                                             ),
-                                        meta: None,
-                                    })
+                                        ),
+                                    ))
                                 } else {
-                                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                        name: uri.name(),
-                                        uri: uri.to_uri().to_string(),
-                                        annotations: None,
-                                        description: None,
-                                        mime_type: None,
-                                        size: None,
-                                        title: None,
-                                        meta: None,
-                                    })
+                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                        uri.name(),
+                                        uri.to_uri().to_string(),
+                                    ))
                                 }
                             }
                             Mention::Image(mention_image) => {
-                                let uri = match uri {
+                                let mut image = acp::ImageContent::new(
+                                    mention_image.data.clone(),
+                                    mention_image.format.mime_type(),
+                                );
+
+                                if let Some(uri) = match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
                                     MentionUri::PastedImage => None,
                                     other => {
@@ -440,25 +439,14 @@ impl MessageEditor {
                                         );
                                         None
                                     }
+                                } {
+                                    image = image.uri(uri)
                                 };
-                                acp::ContentBlock::Image(acp::ImageContent {
-                                    annotations: None,
-                                    data: mention_image.data.to_string(),
-                                    mime_type: mention_image.format.mime_type().into(),
-                                    uri,
-                                    meta: None,
-                                })
+                                acp::ContentBlock::Image(image)
                             }
-                            Mention::Link => acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                name: uri.name(),
-                                uri: uri.to_uri().to_string(),
-                                annotations: None,
-                                description: None,
-                                mime_type: None,
-                                size: None,
-                                title: None,
-                                meta: None,
-                            }),
+                            Mention::Link => acp::ContentBlock::ResourceLink(
+                                acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
+                            ),
                         };
                         chunks.push(chunk);
                         ix = crease_range.end.0;
@@ -746,8 +734,7 @@ impl MessageEditor {
                     uri,
                     data,
                     mime_type,
-                    annotations: _,
-                    meta: _,
+                    ..
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri, path_style)
@@ -773,7 +760,7 @@ impl MessageEditor {
                         }),
                     ));
                 }
-                acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => {}
+                _ => {}
             }
         }
 
@@ -1092,12 +1079,7 @@ mod tests {
         assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
-        available_commands.replace(vec![acp::AvailableCommand {
-            name: "help".to_string(),
-            description: "Get help".to_string(),
-            input: None,
-            meta: None,
-        }]);
+        available_commands.replace(vec![acp::AvailableCommand::new("help", "Get help")]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
         editor.update_in(cx, |editor, window, cx| {
@@ -1211,20 +1193,12 @@ mod tests {
         let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
-            acp::AvailableCommand {
-                name: "quick-math".to_string(),
-                description: "2 + 2 = 4 - 1 = 3".to_string(),
-                input: None,
-                meta: None,
-            },
-            acp::AvailableCommand {
-                name: "say-hello".to_string(),
-                description: "Say hello to whoever you want".to_string(),
-                input: Some(acp::AvailableCommandInput::Unstructured {
-                    hint: "<name>".to_string(),
-                }),
-                meta: None,
-            },
+            acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
+            acp::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
+                acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+                    "<name>",
+                )),
+            ),
         ]));
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1504,12 +1478,12 @@ mod tests {
             editor.set_text("", window, cx);
         });
 
-        prompt_capabilities.replace(acp::PromptCapabilities {
-            image: true,
-            audio: true,
-            embedded_context: true,
-            meta: None,
-        });
+        prompt_capabilities.replace(
+            acp::PromptCapabilities::new()
+                .image(true)
+                .audio(true)
+                .embedded_context(true),
+        );
 
         cx.simulate_input("Lorem ");
 
@@ -1960,11 +1934,9 @@ mod tests {
                     cx,
                 );
                 // Enable embedded context so files are actually included
-                editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                    embedded_context: true,
-                    meta: None,
-                    ..Default::default()
-                });
+                editor
+                    .prompt_capabilities
+                    .replace(acp::PromptCapabilities::new().embedded_context(true));
                 editor
             })
         });
@@ -2043,7 +2015,7 @@ mod tests {
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
-            id: acp::SessionId("thread-123".into()),
+            id: acp::SessionId::new("thread-123"),
             title: "Previous Conversation".into(),
             updated_at: chrono::Utc::now(),
         };
@@ -2150,14 +2122,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            content,
-            vec![acp::ContentBlock::Text(acp::TextContent {
-                text: "してhello world".into(),
-                annotations: None,
-                meta: None
-            })]
-        );
+        assert_eq!(content, vec!["してhello world".into()]);
     }
 
     #[gpui::test]
@@ -2236,38 +2201,24 @@ mod tests {
             .0;
 
         let main_rs_uri = if cfg!(windows) {
-            "file:///C:/project/src/main.rs".to_string()
+            "file:///C:/project/src/main.rs"
         } else {
-            "file:///project/src/main.rs".to_string()
+            "file:///project/src/main.rs"
         };
 
         // When embedded context is `false` we should get a resource link
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: main_rs_uri.clone(),
-                    name: "main.rs".to_string(),
-                    annotations: None,
-                    meta: None,
-                    description: None,
-                    mime_type: None,
-                    size: None,
-                    title: None,
-                })
+                "What is in ".into(),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("main.rs", main_rs_uri))
             ]
         );
 
         message_editor.update(cx, |editor, _cx| {
-            editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                embedded_context: true,
-                ..Default::default()
-            })
+            editor
+                .prompt_capabilities
+                .replace(acp::PromptCapabilities::new().embedded_context(true))
         });
 
         let content = message_editor
@@ -2280,23 +2231,12 @@ mod tests {
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            text: file_content.to_string(),
-                            uri: main_rs_uri,
-                            mime_type: None,
-                            meta: None
-                        }
-                    ),
-                    annotations: None,
-                    meta: None
-                })
+                "What is in ".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(file_content, main_rs_uri)
+                    )
+                ))
             ]
         );
     }

@@ -13,6 +13,10 @@ on:
         description: bump-type
         type: string
         default: patch
+      force-bump:
+        description: force-bump
+        required: true
+        type: boolean
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -21,33 +25,6 @@ on:
         description: The app secret for the corresponding app ID
         required: true
 jobs:
-  check_extension:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        clean: false
-    - id: cache-zed-extension-cli
-      name: extension_tests::cache_zed_extension_cli
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-      with:
-        path: zed-extension
-        key: zed-extension-${{ env.ZED_EXTENSION_CLI_SHA }}
-    - name: extension_tests::download_zed_extension_cli
-      if: steps.cache-zed-extension-cli.outputs.cache-hit != 'true'
-      run: |
-        wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension"
-        chmod +x zed-extension
-      shell: bash -euxo pipefail {0}
-    - name: extension_tests::check
-      run: |
-        mkdir -p /tmp/ext-scratch
-        mkdir -p /tmp/ext-output
-        ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
-      shell: bash -euxo pipefail {0}
-    timeout-minutes: 1
   check_bump_needed:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
@@ -56,29 +33,39 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 10
+        fetch-depth: 0
     - id: compare-versions-check
       name: extension_bump::compare_versions
-      run: |+
+      run: |
         CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
-        git checkout "$(git log -1 --format=%H)"~1
+        if [[ -n "$PR_PARENT_SHA" ]]; then
+            git checkout "$PR_PARENT_SHA"
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
+            git checkout "$BRANCH_PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
+        fi
 
-        PREV_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
-        [[ "$CURRENT_VERSION" == "$PREV_COMMIT_VERSION" ]] && \
+        [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
           echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
+        echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     outputs:
       needs_bump: ${{ steps.compare-versions-check.outputs.needs_bump }}
+      current_version: ${{ steps.compare-versions-check.outputs.current_version }}
     timeout-minutes: 1
   bump_extension_version:
     needs:
-    - check_extension
     - check_bump_needed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_bump_needed.outputs.needs_bump == 'true'
+    if: |-
+      (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
+      (inputs.force-bump == 'true' || needs.check_bump_needed.outputs.needs_bump == 'true')
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
@@ -97,25 +84,21 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
 
-        cat <<EOF > .bumpversion.cfg
-        [bumpversion]
-        current_version = "$OLD_VERSION"
+        BUMP_FILES=("extension.toml")
+        if [[ -f "Cargo.toml" ]]; then
+            BUMP_FILES+=("Cargo.toml")
+        fi
 
-        [bumpversion:file:Cargo.toml]
+        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
 
-        [bumpversion:file:extension.toml]
+        if [[ -f "Cargo.toml" ]]; then
+            cargo update --workspace
+        fi
 
-        EOF
-
-        bump2version --verbose ${{ inputs.bump-type }}
         NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
-        cargo update --workspace
 
-        rm .bumpversion.cfg
-
-        echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
@@ -124,12 +107,40 @@ jobs:
         title: Bump version to ${{ steps.bump-version.outputs.new_version }}
         body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
         commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: bump-from-${{ steps.bump-version.outputs.old_version }}
+        branch: zed-zippy-autobump
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
+    timeout-minutes: 1
+  create_version_label:
+    needs:
+    - check_bump_needed
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_bump_needed.outputs.needs_bump == 'false'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: extension_bump::create_version_tag
+      uses: actions/github-script@v7
+      with:
+        script: |-
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/v${{ needs.check_bump_needed.outputs.current_version }}',
+              sha: context.sha
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}

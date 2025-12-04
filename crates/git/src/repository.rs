@@ -207,6 +207,22 @@ pub struct CommitDetails {
     pub author_name: SharedString,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FileHistoryEntry {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileHistory {
+    pub entries: Vec<FileHistoryEntry>,
+    pub path: RepoPath,
+}
+
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
@@ -404,7 +420,7 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
-    fn remote_url(&self, name: &str) -> Option<String>;
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -435,6 +451,8 @@ pub trait GitRepository: Send + Sync {
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     fn create_worktree(
@@ -462,6 +480,13 @@ pub trait GitRepository: Send + Sync {
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -559,7 +584,11 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>>;
+    fn get_push_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>>;
+
+    fn get_branch_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>>;
+
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>>;
 
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
@@ -938,7 +967,15 @@ impl GitRepository for RealGitRepository {
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path.as_std_path(), STAGE_NORMAL) {
+                    let path = path.as_std_path();
+                    // `RepoPath` contains a `RelPath` which normalizes `.` into an empty path
+                    // `get_path` unwraps on empty paths though, so undo that normalization here
+                    let path = if path.components().next().is_none() {
+                        ".".as_ref()
+                    } else {
+                        path
+                    };
+                    let oid = match index.get_path(path, STAGE_NORMAL) {
                         Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                         _ => return Ok(None),
                     };
@@ -1048,10 +1085,16 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn remote_url(&self, name: &str) -> Option<String> {
-        let repo = self.repository.lock();
-        let remote = repo.find_remote(name).ok()?;
-        remote.url().map(|url| url.to_string())
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let repo = self.repository.clone();
+        let name = name.to_owned();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                let remote = repo.find_remote(&name).ok()?;
+                remote.url().map(|url| url.to_string())
+            })
+            .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -1410,25 +1453,136 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["branch", "-d", &name])
+                    .await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
-
-        let remote_url = self
-            .remote_url("upstream")
-            .or_else(|| self.remote_url("origin"));
+        let executor = self.executor.clone();
 
         async move {
-            crate::blame::Blame::for_path(
-                &git_binary_path,
-                &working_directory?,
-                &path,
-                &content,
-                remote_url,
-            )
-            .await
+            let remote_url = if let Some(remote_url) = self.remote_url("upstream").await {
+                Some(remote_url)
+            } else if let Some(remote_url) = self.remote_url("origin").await {
+                Some(remote_url)
+            } else {
+                None
+            };
+            executor
+                .spawn(async move {
+                    crate::blame::Blame::for_path(
+                        &git_binary_path,
+                        &working_directory?,
+                        &path,
+                        &content,
+                        remote_url,
+                    )
+                    .await
+                })
+                .await
         }
         .boxed()
+    }
+
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                // Use a unique delimiter with a hardcoded UUID to separate commits
+                // This essentially eliminates any chance of encountering the delimiter in actual commit data
+                let commit_delimiter =
+                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
+
+                let format_string = format!(
+                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                    commit_delimiter
+                );
+
+                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = skip.to_string();
+                    args.push("--skip");
+                    args.push(&skip_str);
+                }
+                if let Some(n) = limit {
+                    limit_str = n.to_string();
+                    args.push("-n");
+                    args.push(&limit_str);
+                }
+
+                args.push("--");
+
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .arg(path.as_unix_str())
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut entries = Vec::new();
+
+                for commit_block in stdout.split(commit_delimiter) {
+                    let commit_block = commit_block.trim();
+                    if commit_block.is_empty() {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = commit_block.split('\0').collect();
+                    if fields.len() >= 6 {
+                        let sha = fields[0].trim().to_string().into();
+                        let subject = fields[1].trim().to_string().into();
+                        let message = fields[2].trim().to_string().into();
+                        let commit_timestamp = fields[3].trim().parse().unwrap_or(0);
+                        let author_name = fields[4].trim().to_string().into();
+                        let author_email = fields[5].trim().to_string().into();
+
+                        entries.push(FileHistoryEntry {
+                            sha,
+                            subject,
+                            message,
+                            commit_timestamp,
+                            author_name,
+                            author_email,
+                        });
+                    }
+                }
+
+                Ok(FileHistory { entries, path })
+            })
+            .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
@@ -1646,6 +1800,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let mut cmd = new_smol_command(git_binary_path);
             cmd.current_dir(&working_directory?)
@@ -1688,6 +1844,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't push")?;
             let working_directory = working_directory?;
@@ -1723,6 +1881,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't pull")?;
             let mut command = new_smol_command(git_binary_path);
@@ -1757,6 +1917,8 @@ impl GitRepository for RealGitRepository {
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't fetch")?;
             let mut command = new_smol_command(git_binary_path);
@@ -1772,29 +1934,63 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_push_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                if let Some(branch_name) = branch_name {
-                    let output = new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args(["config", "--get"])
-                        .arg(format!("branch.{}.remote", branch_name))
-                        .output()
-                        .await?;
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["rev-parse", "--abbrev-ref"])
+                    .arg(format!("{branch}@{{push}}"))
+                    .output()
+                    .await?;
+                if !output.status.success() {
+                    return Ok(None);
+                }
+                let remote_name = String::from_utf8_lossy(&output.stdout)
+                    .split('/')
+                    .next()
+                    .map(|name| Remote {
+                        name: name.trim().to_string().into(),
+                    });
 
-                    if output.status.success() {
-                        let remote_name = String::from_utf8_lossy(&output.stdout);
+                Ok(remote_name)
+            })
+            .boxed()
+    }
 
-                        return Ok(vec![Remote {
-                            name: remote_name.trim().to_string().into(),
-                        }]);
-                    }
+    fn get_branch_remote(&self, branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["config", "--get"])
+                    .arg(format!("branch.{branch}.remote"))
+                    .output()
+                    .await?;
+                if !output.status.success() {
+                    return Ok(None);
                 }
 
+                let remote_name = String::from_utf8_lossy(&output.stdout);
+                return Ok(Some(Remote {
+                    name: remote_name.trim().to_string().into(),
+                }));
+            })
+            .boxed()
+    }
+
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(["remote"])
@@ -1803,7 +1999,7 @@ impl GitRepository for RealGitRepository {
 
                 anyhow::ensure!(
                     output.status.success(),
-                    "Failed to get remotes:\n{}",
+                    "Failed to get all remotes:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 let remote_names = String::from_utf8_lossy(&output.stdout)

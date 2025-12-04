@@ -89,7 +89,7 @@ use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
+    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, prelude::*,
     right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -1227,7 +1227,13 @@ impl EditorElement {
                 editor.hide_blame_popover(false, cx);
             }
         } else {
-            editor.hide_blame_popover(false, cx);
+            let keyboard_grace = editor
+                .inline_blame_popover
+                .as_ref()
+                .is_some_and(|state| state.keyboard_grace);
+            if !keyboard_grace {
+                editor.hide_blame_popover(false, cx);
+            }
         }
 
         let breakpoint_indicator = if gutter_hovered {
@@ -2511,7 +2517,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         line_height: Pixels,
-        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineBlameLayout> {
@@ -2580,16 +2585,6 @@ impl EditorElement {
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let bounds = Bounds::new(absolute_offset, size);
 
-        self.layout_blame_entry_popover(
-            entry.clone(),
-            blame,
-            line_height,
-            text_hitbox,
-            row_info.buffer_id?,
-            window,
-            cx,
-        );
-
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(InlineBlameLayout {
@@ -2600,16 +2595,48 @@ impl EditorElement {
         })
     }
 
-    fn layout_blame_entry_popover(
+    fn layout_blame_popover(
         &self,
-        blame_entry: BlameEntry,
-        blame: Entity<GitBlame>,
-        line_height: Pixels,
+        editor_snapshot: &EditorSnapshot,
         text_hitbox: &Hitbox,
-        buffer: BufferId,
+        line_height: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) {
+        if !self.editor.read(cx).inline_blame_popover.is_some() {
+            return;
+        }
+
+        let Some(blame) = self.editor.read(cx).blame.clone() else {
+            return;
+        };
+        let cursor_point = self
+            .editor
+            .read(cx)
+            .selections
+            .newest::<language::Point>(&editor_snapshot.display_snapshot)
+            .head();
+
+        let Some((buffer, buffer_point, _)) = editor_snapshot
+            .buffer_snapshot()
+            .point_to_buffer_point(cursor_point)
+        else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(buffer_point.row),
+            ..Default::default()
+        };
+
+        let Some((buffer_id, blame_entry)) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
         let Some((popover_state, target_point)) = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
@@ -2631,7 +2658,7 @@ impl EditorElement {
                 popover_state.markdown,
                 workspace,
                 &blame,
-                buffer,
+                buffer_id,
                 window,
                 cx,
             )
@@ -3274,6 +3301,8 @@ impl EditorElement {
             line_number.clear();
             let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+            } else if self.editor.read(cx).use_base_text_line_numbers {
+                row_info.base_text_row?.0 + 1
             } else {
                 row_info.buffer_row? + 1
             };
@@ -3282,6 +3311,7 @@ impl EditorElement {
                 && row_info
                     .diff_status
                     .is_some_and(|status| status.is_deleted())
+                && !self.editor.read(cx).use_base_text_line_numbers
             {
                 return None;
             }
@@ -3969,9 +3999,14 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
+                                            let is_folded_for_tooltip = is_folded;
                                             move |_window, cx| {
                                                 Tooltip::with_meta_in(
-                                                    "Toggle Excerpt Fold",
+                                                    if is_folded_for_tooltip {
+                                                        "Unfold Excerpt"
+                                                    } else {
+                                                        "Fold Excerpt"
+                                                    },
                                                     Some(&ToggleFold),
                                                     format!(
                                                         "{} to toggle all",
@@ -4023,7 +4058,7 @@ impl EditorElement {
                     )
                     .child(
                         h_flex()
-                            .size(rems_from_px(12.0))
+                            .size_3()
                             .justify_center()
                             .flex_shrink_0()
                             .children(indicator),
@@ -4031,11 +4066,12 @@ impl EditorElement {
                     .child(
                         h_flex()
                             .cursor_pointer()
-                            .id("path header block")
+                            .id("path_header_block")
+                            .min_w_0()
                             .size_full()
                             .justify_between()
                             .overflow_hidden()
-                            .child(h_flex().gap_0p5().map(|path_header| {
+                            .child(h_flex().min_w_0().flex_1().gap_0p5().map(|path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
                                     .unwrap_or_else(|| "untitled".into());
@@ -4045,28 +4081,19 @@ impl EditorElement {
                                         let path = path::Path::new(filename.as_str());
                                         let icon =
                                             FileIcons::get_icon(path, cx).unwrap_or_default();
-                                        let icon = Icon::from_path(icon).color(Color::Muted);
-                                        el.child(icon)
+
+                                        el.child(Icon::from_path(icon).color(Color::Muted))
                                     })
                                     .child(
                                         ButtonLike::new("filename-button")
-                                            .style(ButtonStyle::Subtle)
                                             .child(
-                                                div()
-                                                    .child(
-                                                        Label::new(filename)
-                                                            .single_line()
-                                                            .color(file_status_label_color(
-                                                                file_status,
-                                                            ))
-                                                            .when(
-                                                                file_status.is_some_and(|s| {
-                                                                    s.is_deleted()
-                                                                }),
-                                                                |label| label.strikethrough(),
-                                                            ),
-                                                    )
-                                                    .group_hover("", |div| div.underline()),
+                                                Label::new(filename)
+                                                    .single_line()
+                                                    .color(file_status_label_color(file_status))
+                                                    .when(
+                                                        file_status.is_some_and(|s| s.is_deleted()),
+                                                        |label| label.strikethrough(),
+                                                    ),
                                             )
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
@@ -4081,11 +4108,11 @@ impl EditorElement {
                                             })),
                                     )
                                     .when_some(parent_path, |then, path| {
-                                        then.child(div().child(path).text_color(
+                                        then.child(Label::new(path).truncate().color(
                                             if file_status.is_some_and(FileStatus::is_deleted) {
-                                                colors.text_disabled
+                                                Color::Custom(colors.text_disabled)
                                             } else {
-                                                colors.text_muted
+                                                Color::Custom(colors.text_muted)
                                             },
                                         ))
                                     })
@@ -4094,18 +4121,13 @@ impl EditorElement {
                                 can_open_excerpts && is_selected && relative_path.is_some(),
                                 |el| {
                                     el.child(
-                                        ButtonLike::new("open-file-button")
+                                        Button::new("open-file-button", "Open File")
                                             .style(ButtonStyle::OutlinedGhost)
-                                            .child(
-                                                h_flex()
-                                                    .gap_2p5()
-                                                    .child(Label::new("Open file"))
-                                                    .child(KeyBinding::for_action_in(
-                                                        &OpenExcerpts,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )),
-                                            )
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
                                             .on_click(window.listener_for(&self.editor, {
                                                 let jump_data = jump_data.clone();
                                                 move |editor, e: &ClickEvent, window, cx| {
@@ -5575,6 +5597,50 @@ impl EditorElement {
                 }
             }
         }
+    }
+
+    fn layout_word_diff_highlights(
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        row_infos: &[RowInfo],
+        start_row: DisplayRow,
+        snapshot: &EditorSnapshot,
+        highlighted_ranges: &mut Vec<(Range<DisplayPoint>, Hsla)>,
+        cx: &mut App,
+    ) {
+        let colors = cx.theme().colors();
+
+        let word_highlights = display_hunks
+            .into_iter()
+            .filter_map(|(hunk, _)| match hunk {
+                DisplayDiffHunk::Unfolded {
+                    word_diffs, status, ..
+                } => Some((word_diffs, status)),
+                _ => None,
+            })
+            .filter(|(_, status)| status.is_modified())
+            .flat_map(|(word_diffs, _)| word_diffs)
+            .filter_map(|word_diff| {
+                let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
+                let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
+                let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+
+                row_infos
+                    .get(start_row_offset)
+                    .and_then(|row_info| row_info.diff_status)
+                    .and_then(|diff_status| {
+                        let background_color = match diff_status.kind {
+                            DiffHunkStatusKind::Added => colors.version_control_word_added,
+                            DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                return None;
+                            }
+                        };
+                        Some((start_point..end_point, background_color))
+                    })
+            });
+
+        highlighted_ranges.extend(word_highlights);
     }
 
     fn layout_diff_hunk_controls(
@@ -9127,7 +9193,7 @@ impl Element for EditorElement {
                     );
                     let end_row = DisplayRow(end_row);
 
-                    let row_infos = snapshot
+                    let row_infos = snapshot // note we only get the visual range
                         .row_infos(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<RowInfo>>();
@@ -9158,16 +9224,27 @@ impl Element for EditorElement {
 
                     let is_light = cx.theme().appearance().is_light();
 
+                    let mut highlighted_ranges = self
+                        .editor_with_selections(cx)
+                        .map(|editor| {
+                            editor.read(cx).background_highlights_in_range(
+                                start_anchor..end_anchor,
+                                &snapshot.display_snapshot,
+                                cx.theme(),
+                            )
+                        })
+                        .unwrap_or_default();
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
                         let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                            DiffHunkStatusKind::Added =>
+                                cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted =>
+                                cx.theme().colors().version_control_deleted,
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
@@ -9205,21 +9282,14 @@ impl Element for EditorElement {
                             filled_highlight
                         };
 
+                        let base_display_point =
+                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
+
                         highlighted_rows
-                            .entry(start_row + DisplayRow(ix as u32))
+                            .entry(base_display_point.row())
                             .or_insert(background);
                     }
 
-                    let highlighted_ranges = self
-                        .editor_with_selections(cx)
-                        .map(|editor| {
-                            editor.read(cx).background_highlights_in_range(
-                                start_anchor..end_anchor,
-                                &snapshot.display_snapshot,
-                                cx.theme(),
-                            )
-                        })
-                        .unwrap_or_default();
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
@@ -9392,7 +9462,7 @@ impl Element for EditorElement {
                     let crease_trailers =
                         window.with_element_namespace("crease_trailers", |window| {
                             self.layout_crease_trailers(
-                                row_infos.iter().copied(),
+                                row_infos.iter().cloned(),
                                 &snapshot,
                                 window,
                                 cx,
@@ -9405,6 +9475,15 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &snapshot,
                         window,
+                        cx,
+                    );
+
+                    Self::layout_word_diff_highlights(
+                        &display_hunks,
+                        &row_infos,
+                        start_row,
+                        &snapshot,
+                        &mut highlighted_ranges,
                         cx,
                     );
 
@@ -9761,7 +9840,6 @@ impl Element for EditorElement {
                                     scroll_position,
                                     scroll_pixel_position,
                                     line_height,
-                                    &text_hitbox,
                                     window,
                                     cx,
                                 ) {
@@ -9959,6 +10037,8 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
+
+                        self.layout_blame_popover(&snapshot, &hitbox, line_height, window, cx);
                     }
 
                     let mouse_context_menu = self.layout_mouse_context_menu(

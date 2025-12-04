@@ -49,7 +49,7 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(cx)
+            .visible_excerpts(true, cx)
             .into_values()
             .map(|(buffer, ..)| buffer)
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))

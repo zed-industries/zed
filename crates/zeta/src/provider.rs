@@ -1,6 +1,7 @@
 use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
+use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
 use gpui::{App, Entity, prelude::*};
 use language::ToPoint as _;
@@ -77,7 +78,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     ) -> bool {
         let zeta = self.zeta.read(cx);
         if zeta.edit_prediction_model == ZetaEditPredictionModel::Sweep {
-            zeta.sweep_ai.api_token.is_some()
+            zeta.has_sweep_api_token()
         } else {
             true
         }
@@ -131,8 +132,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.discard_current_prediction(&self.project, cx);
+        self.zeta.update(cx, |zeta, _cx| {
+            zeta.reject_current_prediction(EditPredictionRejectReason::Discarded, &self.project);
         });
     }
 
@@ -168,8 +169,11 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let snapshot = buffer.snapshot();
 
         let Some(edits) = prediction.interpolate(&snapshot) else {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.discard_current_prediction(&self.project, cx);
+            self.zeta.update(cx, |zeta, _cx| {
+                zeta.reject_current_prediction(
+                    EditPredictionRejectReason::InterpolatedEmpty,
+                    &self.project,
+                );
             });
             return None;
         };

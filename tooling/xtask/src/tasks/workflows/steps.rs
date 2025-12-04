@@ -128,9 +128,9 @@ pub fn script(name: &str) -> Step<Run> {
     }
 }
 
-pub struct NamedJob {
+pub struct NamedJob<J: JobType = RunJob> {
     pub name: String,
-    pub job: Job,
+    pub job: Job<J>,
 }
 
 // impl NamedJob {
@@ -180,6 +180,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -282,15 +283,19 @@ pub mod named {
         Workflow::default().name(
             named::function_name(1)
                 .split("::")
-                .next()
-                .unwrap()
-                .to_owned(),
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .skip(1)
+                .rev()
+                .collect::<Vec<_>>()
+                .join("::"),
         )
     }
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub fn job(job: Job) -> NamedJob {
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,

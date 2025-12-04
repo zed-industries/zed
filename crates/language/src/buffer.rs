@@ -32,7 +32,6 @@ use gpui::{
     Task, TaskLabel, TextStyle,
 };
 
-use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
@@ -50,7 +49,7 @@ use std::{
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, Not, Range},
+    ops::{Deref, Range},
     path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
@@ -238,6 +237,8 @@ struct SelectionSet {
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
+    /// The ID provided by the dynamic registration that produced this diagnostic.
+    pub registration_id: Option<SharedString>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
     pub code_description: Option<lsp::Uri>,
@@ -758,8 +759,8 @@ impl EditPreview {
             .to_point(&self.applied_edits_snapshot);
 
         let start = Point::new(start.row.saturating_sub(3), 0);
-        let old_end = Point::new(old_end.row + 3, 0).min(self.old_snapshot.max_point());
-        let new_end = Point::new(new_end.row + 3, 0).min(self.applied_edits_snapshot.max_point());
+        let old_end = Point::new(old_end.row + 4, 0).min(self.old_snapshot.max_point());
+        let new_end = Point::new(new_end.row + 4, 0).min(self.applied_edits_snapshot.max_point());
 
         Some(unified_diff(
             &self
@@ -862,7 +863,7 @@ impl EditPreview {
                 self.applied_edits_snapshot.line_ending(),
                 cx,
             );
-            buffer.set_language(self.syntax_snapshot.root_language(), cx);
+            buffer.set_language_async(self.syntax_snapshot.root_language(), cx);
             buffer
         })
     }
@@ -1031,6 +1032,12 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
+    pub fn with_language_async(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
+        self.set_language_async(Some(language), cx);
+        self
+    }
+
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer, returning the buffer.
     pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
@@ -1210,7 +1217,7 @@ impl Buffer {
             }
 
             // Reparse the branch buffer so that we get syntax highlighting immediately.
-            branch.reparse(cx);
+            branch.reparse(cx, true);
 
             branch
         })
@@ -1362,12 +1369,26 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
+    pub fn set_language_async(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.set_language_(language, cfg!(any(test, feature = "test-support")), cx);
+    }
+
+    /// Assign a language to the buffer, blocking for up to 1ms to reparse the buffer.
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.set_language_(language, true, cx);
+    }
+
+    fn set_language_(
+        &mut self,
+        language: Option<Arc<Language>>,
+        may_block: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
         self.was_changed();
-        self.reparse(cx);
+        self.reparse(cx, may_block);
         cx.emit(BufferEvent::LanguageChanged);
     }
 
@@ -1610,9 +1631,9 @@ impl Buffer {
     /// The snapshot with the interpolated edits is sent to a background thread,
     /// where we ask Tree-sitter to perform an incremental parse.
     ///
-    /// Meanwhile, in the foreground, we block the main thread for up to 1ms
-    /// waiting on the parse to complete. As soon as it completes, we proceed
-    /// synchronously, unless a 1ms timeout elapses.
+    /// Meanwhile, in the foreground if `may_block` is true, we block the main
+    /// thread for up to 1ms waiting on the parse to complete. As soon as it
+    /// completes, we proceed synchronously, unless a 1ms timeout elapses.
     ///
     /// If we time out waiting on the parse, we spawn a second task waiting
     /// until the parse does complete and return with the interpolated tree still
@@ -1623,7 +1644,7 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut Context<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>, may_block: bool) {
         if self.reparse.is_some() {
             return;
         }
@@ -1652,42 +1673,70 @@ impl Buffer {
         });
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
-        match cx
-            .background_executor()
-            .block_with_timeout(self.sync_parse_timeout, parse_task)
-        {
-            Ok(new_syntax_snapshot) => {
-                self.did_finish_parsing(new_syntax_snapshot, cx);
-                self.reparse = None;
-            }
-            Err(parse_task) => {
-                // todo(lw): hot foreground spawn
-                self.reparse = Some(cx.spawn(async move |this, cx| {
-                    let new_syntax_map = cx.background_spawn(parse_task).await;
-                    this.update(cx, move |this, cx| {
-                        let grammar_changed = || {
-                            this.language.as_ref().is_none_or(|current_language| {
-                                !Arc::ptr_eq(&language, current_language)
-                            })
-                        };
-                        let language_registry_changed = || {
-                            new_syntax_map.contains_unknown_injections()
-                                && language_registry.is_some_and(|registry| {
-                                    registry.version() != new_syntax_map.language_registry_version()
+        if may_block {
+            match cx
+                .background_executor()
+                .block_with_timeout(self.sync_parse_timeout, parse_task)
+            {
+                Ok(new_syntax_snapshot) => {
+                    self.did_finish_parsing(new_syntax_snapshot, cx);
+                    self.reparse = None;
+                }
+                Err(parse_task) => {
+                    self.reparse = Some(cx.spawn(async move |this, cx| {
+                        let new_syntax_map = cx.background_spawn(parse_task).await;
+                        this.update(cx, move |this, cx| {
+                            let grammar_changed = || {
+                                this.language.as_ref().is_none_or(|current_language| {
+                                    !Arc::ptr_eq(&language, current_language)
                                 })
-                        };
-                        let parse_again = this.version.changed_since(&parsed_version)
-                            || language_registry_changed()
-                            || grammar_changed();
-                        this.did_finish_parsing(new_syntax_map, cx);
-                        this.reparse = None;
-                        if parse_again {
-                            this.reparse(cx);
-                        }
-                    })
-                    .ok();
-                }));
+                            };
+                            let language_registry_changed = || {
+                                new_syntax_map.contains_unknown_injections()
+                                    && language_registry.is_some_and(|registry| {
+                                        registry.version()
+                                            != new_syntax_map.language_registry_version()
+                                    })
+                            };
+                            let parse_again = this.version.changed_since(&parsed_version)
+                                || language_registry_changed()
+                                || grammar_changed();
+                            this.did_finish_parsing(new_syntax_map, cx);
+                            this.reparse = None;
+                            if parse_again {
+                                this.reparse(cx, false);
+                            }
+                        })
+                        .ok();
+                    }));
+                }
             }
+        } else {
+            self.reparse = Some(cx.spawn(async move |this, cx| {
+                let new_syntax_map = cx.background_spawn(parse_task).await;
+                this.update(cx, move |this, cx| {
+                    let grammar_changed = || {
+                        this.language.as_ref().is_none_or(|current_language| {
+                            !Arc::ptr_eq(&language, current_language)
+                        })
+                    };
+                    let language_registry_changed = || {
+                        new_syntax_map.contains_unknown_injections()
+                            && language_registry.is_some_and(|registry| {
+                                registry.version() != new_syntax_map.language_registry_version()
+                            })
+                    };
+                    let parse_again = this.version.changed_since(&parsed_version)
+                        || language_registry_changed()
+                        || grammar_changed();
+                    this.did_finish_parsing(new_syntax_map, cx);
+                    this.reparse = None;
+                    if parse_again {
+                        this.reparse(cx, false);
+                    }
+                })
+                .ok();
+            }));
         }
     }
 
@@ -2588,7 +2637,7 @@ impl Buffer {
             return;
         }
 
-        self.reparse(cx);
+        self.reparse(cx, true);
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
@@ -4252,7 +4301,10 @@ impl BufferSnapshot {
             let bracket_matches = match tree_sitter_data.brackets_by_chunks[chunk.id].take() {
                 Some(cached_brackets) => cached_brackets,
                 None => {
-                    let mut bracket_pairs_ends = Vec::new();
+                    let mut all_brackets = Vec::new();
+                    let mut opens = Vec::new();
+                    let mut color_pairs = Vec::new();
+
                     let mut matches =
                         self.syntax
                             .matches(chunk_range.clone(), &self.text, |grammar| {
@@ -4264,62 +4316,76 @@ impl BufferSnapshot {
                         .map(|grammar| grammar.brackets_config.as_ref().unwrap())
                         .collect::<Vec<_>>();
 
-                    let chunk_range = chunk_range.clone();
-                    let new_matches = iter::from_fn(move || {
-                        while let Some(mat) = matches.peek() {
-                            let mut open = None;
-                            let mut close = None;
-                            let depth = mat.depth;
-                            let config = configs[mat.grammar_index];
-                            let pattern = &config.patterns[mat.pattern_index];
-                            for capture in mat.captures {
-                                if capture.index == config.open_capture_ix {
-                                    open = Some(capture.node.byte_range());
-                                } else if capture.index == config.close_capture_ix {
-                                    close = Some(capture.node.byte_range());
-                                }
-                            }
-
-                            matches.advance();
-
-                            let Some((open_range, close_range)) = open.zip(close) else {
-                                continue;
-                            };
-
-                            let bracket_range = open_range.start..=close_range.end;
-                            if !bracket_range.overlaps(&chunk_range) {
-                                continue;
-                            }
-
-                            return Some((open_range, close_range, pattern, depth));
-                        }
-                        None
-                    })
-                    .sorted_by_key(|(open_range, _, _, _)| open_range.start)
-                    .map(|(open_range, close_range, pattern, syntax_layer_depth)| {
-                        while let Some(&last_bracket_end) = bracket_pairs_ends.last() {
-                            if last_bracket_end <= open_range.start {
-                                bracket_pairs_ends.pop();
-                            } else {
-                                break;
+                    while let Some(mat) = matches.peek() {
+                        let mut open = None;
+                        let mut close = None;
+                        let syntax_layer_depth = mat.depth;
+                        let config = configs[mat.grammar_index];
+                        let pattern = &config.patterns[mat.pattern_index];
+                        for capture in mat.captures {
+                            if capture.index == config.open_capture_ix {
+                                open = Some(capture.node.byte_range());
+                            } else if capture.index == config.close_capture_ix {
+                                close = Some(capture.node.byte_range());
                             }
                         }
 
-                        let bracket_depth = bracket_pairs_ends.len();
-                        bracket_pairs_ends.push(close_range.end);
+                        matches.advance();
 
-                        BracketMatch {
-                            open_range,
-                            close_range,
-                            syntax_layer_depth,
+                        let Some((open_range, close_range)) = open.zip(close) else {
+                            continue;
+                        };
+
+                        let bracket_range = open_range.start..=close_range.end;
+                        if !bracket_range.overlaps(&chunk_range) {
+                            continue;
+                        }
+
+                        let index = all_brackets.len();
+                        all_brackets.push(BracketMatch {
+                            open_range: open_range.clone(),
+                            close_range: close_range.clone(),
                             newline_only: pattern.newline_only,
-                            color_index: pattern.rainbow_exclude.not().then_some(bracket_depth),
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                            syntax_layer_depth,
+                            color_index: None,
+                        });
 
-                    new_bracket_matches.insert(chunk.id, new_matches.clone());
-                    new_matches
+                        // Certain languages have "brackets" that are not brackets, e.g. tags. and such
+                        // bracket will match the entire tag with all text inside.
+                        // For now, avoid highlighting any pair that has more than single char in each bracket.
+                        // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
+                        let should_color = !pattern.rainbow_exclude
+                            && (open_range.len() == 1 || close_range.len() == 1);
+                        if should_color {
+                            opens.push(open_range.clone());
+                            color_pairs.push((open_range, close_range, index));
+                        }
+                    }
+
+                    opens.sort_by_key(|r| (r.start, r.end));
+                    opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
+                    color_pairs.sort_by_key(|(_, close, _)| close.end);
+
+                    let mut open_stack = Vec::new();
+                    let mut open_index = 0;
+                    for (open, close, index) in color_pairs {
+                        while open_index < opens.len() && opens[open_index].start < close.start {
+                            open_stack.push(opens[open_index].clone());
+                            open_index += 1;
+                        }
+
+                        if open_stack.last() == Some(&open) {
+                            let depth_index = open_stack.len() - 1;
+                            all_brackets[index].color_index = Some(depth_index);
+                            open_stack.pop();
+                        }
+                    }
+
+                    all_brackets.sort_by_key(|bracket_match| {
+                        (bracket_match.open_range.start, bracket_match.open_range.end)
+                    });
+                    new_bracket_matches.insert(chunk.id, all_brackets.clone());
+                    all_brackets
                 }
             };
             all_bracket_matches.insert(chunk.row_range(), bracket_matches);
@@ -5326,6 +5392,7 @@ impl Default for Diagnostic {
             is_unnecessary: false,
             underline: true,
             data: None,
+            registration_id: None,
         }
     }
 }

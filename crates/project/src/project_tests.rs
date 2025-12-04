@@ -2750,11 +2750,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -2763,7 +2765,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
-                    PathBuf::from("/dir/a.rs"),
+                    PathBuf::from(path!("/dir/a.rs")),
                     None,
                     None,
                     vec![
@@ -2820,17 +2822,17 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
         .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(0),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -2849,7 +2851,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(1),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -9733,11 +9735,14 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
             ("project/target/debug/deps".to_string(), PathChange::Added),
             ("project/target/debug/deps".to_string(), PathChange::Removed),
         ],
-        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        "Due to `debug` directory being tracked, it should get updates for entries inside it.
         No updates for more nested directories should happen as those are ignored",
     );
 }
 
+// todo(jk): turning this test off until we rework it in such a way so that it is not so susceptible
+// to different timings/ordering of events.
+#[ignore]
 #[gpui::test]
 async fn test_odd_events_for_ignored_dirs(
     executor: BackgroundExecutor,

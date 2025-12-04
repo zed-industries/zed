@@ -291,7 +291,7 @@ impl Editor {
             }),
         };
 
-        let mut visible_excerpts = self.visible_excerpts(cx);
+        let mut visible_excerpts = self.visible_excerpts(true, cx);
         let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
@@ -2211,7 +2211,7 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| editor.visible_excerpts(cx))
+            .update(cx, |editor, _window, cx| editor.visible_excerpts(true, cx))
             .unwrap();
         assert_eq!(
             ranges.len(),

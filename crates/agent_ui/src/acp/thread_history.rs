@@ -446,9 +446,10 @@ impl AcpThreadHistory {
                                 .tooltip(move |_window, cx| {
                                     Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
-                                ),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_thread(ix, cx);
+                                    cx.stop_propagation()
+                                })),
                         )
                     } else {
                         None
@@ -527,14 +528,10 @@ impl Render for AcpThreadHistory {
                         )
                         .p_1()
                         .pr_4()
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .flex_grow(),
                     )
-                    .vertical_scrollbar_for(
-                        self.scroll_handle.clone(),
-                        window,
-                        cx,
-                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
                 }
             })
             .when(!has_no_history, |this| {

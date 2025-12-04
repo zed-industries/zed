@@ -1118,7 +1118,7 @@ impl Render for TerminalView {
                                     ScrollAxes::Vertical,
                                     cx.theme().colors().editor_background,
                                 )
-                                .tracked_scroll_handle(self.scroll_handle.clone()),
+                                .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,
                         )
@@ -1269,7 +1269,11 @@ impl Item for TerminalView {
         false
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1430,6 +1434,7 @@ impl SearchableItem for TerminalView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        _active_match_index: Option<usize>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
