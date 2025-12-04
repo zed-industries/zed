@@ -545,7 +545,7 @@ impl ExtensionImports for WasmState {
                     futures::pin_mut!(body);
                     self.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
+                        .extract_archive(&destination_path, Archive::new(body))
                         .await?;
                 }
                 DownloadedFileType::Zip => {

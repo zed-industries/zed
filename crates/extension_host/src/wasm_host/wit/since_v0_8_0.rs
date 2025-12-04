@@ -10,7 +10,7 @@ use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
-use async_compression::futures::bufread::GzipDecoder;
+use async_compression::futures::bufread::{GzipDecoder, XzDecoder};
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
@@ -1079,7 +1079,15 @@ impl ExtensionImports for WasmState {
                     futures::pin_mut!(body);
                     self.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
+                        .extract_archive(&destination_path, Archive::new(body))
+                        .await?;
+                }
+                DownloadedFileType::Xz => {
+                    let body = XzDecoder::new(body);
+                    futures::pin_mut!(body);
+                    self.host
+                        .fs
+                        .extract_archive(&destination_path, Archive::new(body))
                         .await?;
                 }
                 DownloadedFileType::Zip => {

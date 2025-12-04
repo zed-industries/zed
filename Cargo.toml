@@ -447,7 +447,7 @@ anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
-async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-compression = { version = "0.4", features = ["gzip", "xz", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
 async-lock = "2.1"
