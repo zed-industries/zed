@@ -289,7 +289,7 @@ struct TreeKey {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitTreeDirEntry {
     key: TreeKey,
-    name: String,
+    name: SharedString,
     depth: usize,
     staged_state: ToggleState,
     expanded: bool,
@@ -297,9 +297,9 @@ struct GitTreeDirEntry {
 
 #[derive(Default)]
 struct TreeNode {
-    name: String,
+    name: SharedString,
     path: Option<RepoPath>,
-    children: BTreeMap<String, TreeNode>,
+    children: BTreeMap<SharedString, TreeNode>,
     files: Vec<GitStatusEntry>,
 }
 
@@ -3443,7 +3443,8 @@ impl GitPanel {
             return Vec::new();
         }
 
-        // Tree view can only sort by path. I don't think sort by status making sense in Tree View
+        // Tree view can only sort by path. I don't think sort by status makes sense in Tree View
+        // todo! look into this more: Anthony
         entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
 
         let mut root = TreeNode::default();
@@ -3467,11 +3468,14 @@ impl GitPanel {
                     current_path.push_str(component);
                     let dir_path = RepoPath::new(&current_path)
                         .expect("repo path from status entry component");
+
+                    let component = SharedString::from(component.to_string());
+
                     current = current
                         .children
-                        .entry(component.to_string())
+                        .entry(component.clone())
                         .or_insert_with(|| TreeNode {
-                            name: component.to_string(),
+                            name: component,
                             path: Some(dir_path),
                             ..Default::default()
                         });
@@ -3483,10 +3487,12 @@ impl GitPanel {
         flattened
     }
 
-    fn compact_directory_chain<'a>(mut node: &'a TreeNode) -> (&'a TreeNode, String) {
+    fn compact_directory_chain<'a>(mut node: &'a TreeNode) -> (&'a TreeNode, SharedString) {
         let mut parts = vec![node.name.clone()];
         while node.files.is_empty() && node.children.len() == 1 {
-            let child = node.children.values().next().unwrap();
+            let Some(child) = node.children.values().next() else {
+                continue;
+            };
             if child.path.is_none() {
                 break;
             }
@@ -3494,7 +3500,7 @@ impl GitPanel {
             node = child;
         }
         let name = parts.join("/");
-        (node, name)
+        (node, SharedString::from(name))
     }
 
     fn flatten_tree(

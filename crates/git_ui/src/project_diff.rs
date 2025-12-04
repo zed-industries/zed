@@ -644,6 +644,8 @@ impl ProjectDiff {
 }
 
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+    // todo! we probably want tree view to only be sorted by tracked sort prefix
+    // ask Anthony more about this
     if GitPanelSettings::get_global(cx).sort_by_path {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
