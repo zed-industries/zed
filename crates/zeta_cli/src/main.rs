@@ -21,15 +21,12 @@ use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
-use edit_prediction_context::{
-    EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions,
-};
+use edit_prediction_context::EditPredictionExcerptOptions;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
 use metrics::delta_chr_f;
-use project::{Project, Worktree};
+use project::{Project, Worktree, lsp_store::OpenLspBufferHandle};
 use reqwest_client::ReqwestClient;
-use serde_json::json;
 use std::io::{self};
 use std::time::Duration;
 use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc};
@@ -97,7 +94,7 @@ struct ContextArgs {
 enum ContextProvider {
     Zeta1,
     #[default]
-    Syntax,
+    Zeta2,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -204,19 +201,12 @@ enum PredictionProvider {
     Sweep,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta::ZetaOptions {
+fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
     zeta::ZetaOptions {
-        context: ContextMode::Syntax(EditPredictionContextOptions {
-            max_retrieved_declarations: args.max_retrieved_definitions,
-            use_imports: !args.disable_imports_gathering,
-            excerpt: EditPredictionExcerptOptions {
-                max_bytes: args.max_excerpt_bytes,
-                min_bytes: args.min_excerpt_bytes,
-                target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
-            },
-            score: EditPredictionScoreOptions {
-                omit_excerpt_overlaps,
-            },
+        context: ContextMode::Lsp(EditPredictionExcerptOptions {
+            max_bytes: args.max_excerpt_bytes,
+            min_bytes: args.min_excerpt_bytes,
+            target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
         }),
         max_diagnostic_bytes: args.max_diagnostic_bytes,
         max_prompt_bytes: args.max_prompt_bytes,
@@ -295,6 +285,7 @@ struct LoadedContext {
     worktree: Entity<Worktree>,
     project: Entity<Project>,
     buffer: Entity<Buffer>,
+    lsp_open_handle: Option<OpenLspBufferHandle>,
 }
 
 async fn load_context(
@@ -330,7 +321,7 @@ async fn load_context(
         .await?;
 
     let mut ready_languages = HashSet::default();
-    let (_lsp_open_handle, buffer) = if *use_language_server {
+    let (lsp_open_handle, buffer) = if *use_language_server {
         let (lsp_open_handle, _, buffer) = open_buffer_with_language_server(
             project.clone(),
             worktree.clone(),
@@ -377,10 +368,11 @@ async fn load_context(
         worktree,
         project,
         buffer,
+        lsp_open_handle,
     })
 }
 
-async fn zeta2_syntax_context(
+async fn zeta2_context(
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
@@ -390,6 +382,7 @@ async fn zeta2_syntax_context(
         project,
         buffer,
         clipped_cursor,
+        lsp_open_handle: _handle,
         ..
     } = load_context(&args, app_state, cx).await?;
 
@@ -406,30 +399,26 @@ async fn zeta2_syntax_context(
                 zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
             let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                zeta.set_options(zeta2_args_to_options(&args.zeta2_args, true));
+                zeta.set_options(zeta2_args_to_options(&args.zeta2_args));
                 zeta.register_buffer(&buffer, &project, cx);
                 zeta.wait_for_initial_indexing(&project, cx)
             });
             cx.spawn(async move |cx| {
                 indexing_done_task.await?;
-                let request = zeta
-                    .update(cx, |zeta, cx| {
-                        let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
-                        zeta.cloud_request_for_zeta_cli(&project, &buffer, cursor, cx)
-                    })?
-                    .await?;
+                let updates_rx = zeta.update(cx, |zeta, cx| {
+                    let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
+                    zeta.set_use_context(true);
+                    zeta.refresh_context_if_needed(&project, &buffer, cursor, cx);
+                    zeta.project_context_updates(&project).unwrap()
+                })?;
 
-                let (prompt_string, section_labels) = cloud_zeta2_prompt::build_prompt(&request)?;
+                updates_rx.recv().await.ok();
 
-                match args.zeta2_args.output_format {
-                    OutputFormat::Prompt => anyhow::Ok(prompt_string),
-                    OutputFormat::Request => anyhow::Ok(serde_json::to_string_pretty(&request)?),
-                    OutputFormat::Full => anyhow::Ok(serde_json::to_string_pretty(&json!({
-                        "request": request,
-                        "prompt": prompt_string,
-                        "section_labels": section_labels,
-                    }))?),
-                }
+                let context = zeta.update(cx, |zeta, cx| {
+                    zeta.context_for_project(&project, cx).to_vec()
+                })?;
+
+                anyhow::Ok(serde_json::to_string_pretty(&context).unwrap())
             })
         })?
         .await?;
@@ -482,7 +471,6 @@ fn main() {
                 None => {
                     if args.printenv {
                         ::util::shell_env::print_env();
-                        return;
                     } else {
                         panic!("Expected a command");
                     }
@@ -494,7 +482,7 @@ fn main() {
                         arguments.extension,
                         arguments.limit,
                         arguments.skip,
-                        zeta2_args_to_options(&arguments.zeta2_args, false),
+                        zeta2_args_to_options(&arguments.zeta2_args),
                         cx,
                     )
                     .await;
@@ -507,10 +495,8 @@ fn main() {
                                 zeta1_context(context_args, &app_state, cx).await.unwrap();
                             serde_json::to_string_pretty(&context.body).unwrap()
                         }
-                        ContextProvider::Syntax => {
-                            zeta2_syntax_context(context_args, &app_state, cx)
-                                .await
-                                .unwrap()
+                        ContextProvider::Zeta2 => {
+                            zeta2_context(context_args, &app_state, cx).await.unwrap()
                         }
                     };
                     println!("{}", result);

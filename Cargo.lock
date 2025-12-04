@@ -5343,6 +5343,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_context2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "env_logger 0.11.8",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "lsp",
+ "parking_lot",
+ "pretty_assertions",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "text",
+ "tree-sitter",
+ "util",
+ "zlog",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -21693,6 +21719,7 @@ dependencies = [
  "db",
  "edit_prediction",
  "edit_prediction_context",
+ "edit_prediction_context2",
  "editor",
  "feature_flags",
  "fs",
@@ -21742,7 +21769,6 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "collections",
  "edit_prediction_context",
  "editor",
