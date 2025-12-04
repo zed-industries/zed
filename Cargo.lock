@@ -5312,41 +5312,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec",
- "clap",
  "cloud_llm_client",
- "collections",
- "futures 0.3.31",
- "gpui",
- "hashbrown 0.15.5",
- "indoc",
- "itertools 0.14.0",
- "language",
- "log",
- "ordered-float 2.10.1",
- "postage",
- "pretty_assertions",
- "project",
- "regex",
- "serde",
- "serde_json",
- "settings",
- "slotmap",
- "strum 0.27.2",
- "text",
- "tree-sitter",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-go",
- "util",
- "zlog",
-]
-
-[[package]]
-name = "edit_prediction_context2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "collections",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -21719,7 +21685,6 @@ dependencies = [
  "db",
  "edit_prediction",
  "edit_prediction_context",
- "edit_prediction_context2",
  "editor",
  "feature_flags",
  "fs",

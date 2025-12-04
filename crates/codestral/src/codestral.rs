@@ -239,7 +239,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 cursor_point,
                 &snapshot,
                 &EXCERPT_OPTIONS,
-                None,
             )
             .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 

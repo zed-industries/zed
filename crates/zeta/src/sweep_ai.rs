@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::Event;
 use credentials_provider::CredentialsProvider;
-use edit_prediction_context2::RelatedFile;
+use edit_prediction_context::RelatedFile;
 use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
     App, AppContext as _, Entity, Task,

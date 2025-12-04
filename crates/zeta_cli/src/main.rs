@@ -5,7 +5,6 @@ mod metrics;
 mod paths;
 mod predict;
 mod source_location;
-mod syntax_retrieval_stats;
 mod util;
 
 use crate::{
@@ -14,7 +13,6 @@ use crate::{
     headless::ZetaCliAppState,
     predict::run_predict,
     source_location::SourceLocation,
-    syntax_retrieval_stats::retrieval_stats,
     util::{open_buffer, open_buffer_with_language_server},
 };
 use ::util::paths::PathStyle;
@@ -45,7 +43,6 @@ struct ZetaCliArgs {
 #[derive(Subcommand, Debug)]
 enum Command {
     Context(ContextArgs),
-    ContextStats(ContextStatsArgs),
     Predict(PredictArguments),
     Eval(EvaluateArguments),
     ConvertExample {
@@ -58,20 +55,6 @@ enum Command {
         actual_patch: PathBuf,
     },
     Clean,
-}
-
-#[derive(Debug, Args)]
-struct ContextStatsArgs {
-    #[arg(long)]
-    worktree: PathBuf,
-    #[arg(long)]
-    extension: Option<String>,
-    #[arg(long)]
-    limit: Option<usize>,
-    #[arg(long)]
-    skip: Option<usize>,
-    #[clap(flatten)]
-    zeta2_args: Zeta2Args,
 }
 
 #[derive(Debug, Args)]
@@ -398,13 +381,11 @@ async fn zeta2_context(
             let zeta = cx.new(|cx| {
                 zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
-            let indexing_done_task = zeta.update(cx, |zeta, cx| {
+            zeta.update(cx, |zeta, cx| {
                 zeta.set_options(zeta2_args_to_options(&args.zeta2_args));
                 zeta.register_buffer(&buffer, &project, cx);
-                zeta.wait_for_initial_indexing(&project, cx)
             });
             cx.spawn(async move |cx| {
-                indexing_done_task.await?;
                 let updates_rx = zeta.update(cx, |zeta, cx| {
                     let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
                     zeta.set_use_context(true);
@@ -474,19 +455,6 @@ fn main() {
                     } else {
                         panic!("Expected a command");
                     }
-                }
-                Some(Command::ContextStats(arguments)) => {
-                    let result = retrieval_stats(
-                        arguments.worktree,
-                        app_state,
-                        arguments.extension,
-                        arguments.limit,
-                        arguments.skip,
-                        zeta2_args_to_options(&arguments.zeta2_args),
-                        cx,
-                    )
-                    .await;
-                    println!("{}", result.unwrap());
                 }
                 Some(Command::Context(context_args)) => {
                     let result = match context_args.provider {

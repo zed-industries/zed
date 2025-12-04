@@ -13,11 +13,8 @@ use cloud_zeta2_prompt::{CURSOR_MARKER, DEFAULT_MAX_PROMPT_BYTES};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use edit_prediction_context::{
-    EditPredictionContextOptions, EditPredictionExcerpt, EditPredictionExcerptOptions,
-    EditPredictionScoreOptions, Line, SyntaxIndex,
-};
-use edit_prediction_context2::{
     RelatedExcerpt, RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile,
 };
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
@@ -126,16 +123,6 @@ pub const DEFAULT_AGENTIC_CONTEXT_OPTIONS: AgenticContextOptions = AgenticContex
     excerpt: DEFAULT_EXCERPT_OPTIONS,
 };
 
-pub const DEFAULT_SYNTAX_CONTEXT_OPTIONS: EditPredictionContextOptions =
-    EditPredictionContextOptions {
-        use_imports: true,
-        max_retrieved_declarations: 0,
-        excerpt: DEFAULT_EXCERPT_OPTIONS,
-        score: EditPredictionScoreOptions {
-            omit_excerpt_overlaps: true,
-        },
-    };
-
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     context: DEFAULT_CONTEXT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
@@ -229,7 +216,6 @@ pub struct ZetaOptions {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContextMode {
     Agentic(AgenticContextOptions),
-    Syntax(EditPredictionContextOptions),
     Lsp(EditPredictionExcerptOptions),
 }
 
@@ -242,7 +228,6 @@ impl ContextMode {
     pub fn excerpt(&self) -> &EditPredictionExcerptOptions {
         match self {
             ContextMode::Agentic(options) => &options.excerpt,
-            ContextMode::Syntax(options) => &options.excerpt,
             ContextMode::Lsp(options) => &options,
         }
     }
@@ -299,7 +284,6 @@ struct ZetaProject {
 }
 
 enum ZetaProjectContext {
-    Syntax(Entity<SyntaxIndex>),
     Lsp(Entity<RelatedExcerptStore>),
     Agentic {
         refresh_context_task: Option<LogErrorFuture<Task<Result<()>>>>,
@@ -626,7 +610,6 @@ impl Zeta {
         self.projects
             .get(&project.entity_id())
             .and_then(|project| match &project.context {
-                ZetaProjectContext::Syntax(_) => None,
                 ZetaProjectContext::Lsp(store) => Some(store.read(cx).related_files()),
                 ZetaProjectContext::Agentic { context, .. } => Some(context.as_slice()),
             })
@@ -672,9 +655,6 @@ impl Zeta {
                         refresh_context_timestamp: None,
                         context: Vec::new(),
                     },
-                    ContextMode::Syntax(_) => ZetaProjectContext::Syntax(cx.new(|cx| {
-                        SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
-                    })),
                     ContextMode::Lsp(_) => {
                         let related_excerpt_store =
                             cx.new(|cx| RelatedExcerptStore::new(project, cx));
@@ -1651,7 +1631,6 @@ impl Zeta {
                     cursor_point,
                     &active_snapshot,
                     &excerpt_options,
-                    None,
                 ) else {
                     return Ok((None, None));
                 };
@@ -2104,7 +2083,6 @@ impl Zeta {
         };
 
         match &mut zeta_project.context {
-            ZetaProjectContext::Syntax(_entity) => {}
             ZetaProjectContext::Lsp(related_excerpt_store) => {
                 related_excerpt_store.update(cx, |store, cx| {
                     store.refresh(buffer.clone(), cursor_position, cx);
@@ -2177,12 +2155,9 @@ impl Zeta {
 
         let snapshot = buffer.read(cx).snapshot();
         let cursor_point = cursor_position.to_point(&snapshot);
-        let Some(cursor_excerpt) = EditPredictionExcerpt::select_from_buffer(
-            cursor_point,
-            &snapshot,
-            &options.excerpt,
-            None,
-        ) else {
+        let Some(cursor_excerpt) =
+            EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, &options.excerpt)
+        else {
             return Task::ready(Ok(()));
         };
 
@@ -2423,19 +2398,6 @@ impl Zeta {
         }
 
         (results, diagnostic_groups_truncated)
-    }
-
-    pub fn wait_for_initial_indexing(
-        &mut self,
-        project: &Entity<Project>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let zeta_project = self.get_or_init_zeta_project(project, cx);
-        if let ZetaProjectContext::Syntax(syntax_index) = &zeta_project.context {
-            syntax_index.read(cx).wait_for_initial_file_indexing(cx)
-        } else {
-            Task::ready(Ok(()))
-        }
     }
 
     fn is_file_open_source(

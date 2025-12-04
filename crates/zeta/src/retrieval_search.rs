@@ -1,7 +1,7 @@
 use anyhow::Result;
 use cloud_zeta2_prompt::retrieval_prompt::SearchToolQuery;
 use collections::HashMap;
-use edit_prediction_context2::{RelatedExcerpt, RelatedFile};
+use edit_prediction_context::{RelatedExcerpt, RelatedFile};
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedSender},
