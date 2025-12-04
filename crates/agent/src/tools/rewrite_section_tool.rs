@@ -15,6 +15,7 @@ use crate::{AgentTool, ToolCallEventStream};
 pub struct RewriteSectionInput {
     /// A brief description of the edit you have made.
     ///
+    /// The description may use markdown formatting if you wish.
     /// This is optional - if the edit is simple or obvious, you should leave it empty.
     pub description: String,
 

@@ -1132,7 +1132,7 @@ impl InlineAssistant {
             let mut to_remove = decorations.removed_line_block_ids;
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
-            if let Some(tool_description_block_id) = decorations.tool_description_block_id {
+            if let Some(tool_description_block_id) = decorations.model_explanation {
                 to_remove.insert(tool_description_block_id);
             }
             editor.remove_blocks(to_remove, None, cx);
@@ -1455,59 +1455,59 @@ impl InlineAssistant {
         let old_snapshot = codegen.snapshot(cx);
         let old_buffer = codegen.old_buffer(cx);
         let deleted_row_ranges = codegen.diff(cx).deleted_row_ranges.clone();
-        let tool_description = codegen.tool_description(cx).map(|s| s.to_string());
+        // let model_explanation = codegen.model_explanation(cx);
 
         editor.update(cx, |editor, cx| {
             // Update tool description block
-            if let Some(description) = tool_description {
-                if let Some(block_id) = decorations.tool_description_block_id {
-                    editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
-                    let new_block_id = editor.insert_blocks(
-                        [BlockProperties {
-                            style: BlockStyle::Flex,
-                            placement: BlockPlacement::Below(assist.range.end),
-                            height: Some(1),
-                            render: Arc::new({
-                                let description = description.clone();
-                                move |cx| {
-                                    div()
-                                        .w_full()
-                                        .py_1()
-                                        .px_2()
-                                        .bg(cx.theme().colors().editor_background)
-                                        .border_y_1()
-                                        .border_color(cx.theme().status().info_border)
-                                        .child(
-                                            Label::new(description.clone())
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        )
-                                        .into_any_element()
-                                }
-                            }),
-                            priority: 0,
-                        }],
-                        None,
-                        cx,
-                    );
-                    decorations.tool_description_block_id = new_block_id.into_iter().next();
-                }
-            } else if let Some(block_id) = decorations.tool_description_block_id {
-                // Hide the block if there's no description
-                editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
-                let new_block_id = editor.insert_blocks(
-                    [BlockProperties {
-                        style: BlockStyle::Flex,
-                        placement: BlockPlacement::Below(assist.range.end),
-                        height: Some(0),
-                        render: Arc::new(|_cx| div().into_any_element()),
-                        priority: 0,
-                    }],
-                    None,
-                    cx,
-                );
-                decorations.tool_description_block_id = new_block_id.into_iter().next();
-            }
+            // if let Some(description) = model_explanation {
+            //     if let Some(block_id) = decorations.model_explanation {
+            //         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+            //         let new_block_id = editor.insert_blocks(
+            //             [BlockProperties {
+            //                 style: BlockStyle::Flex,
+            //                 placement: BlockPlacement::Below(assist.range.end),
+            //                 height: Some(1),
+            //                 render: Arc::new({
+            //                     let description = description.clone();
+            //                     move |cx| {
+            //                         div()
+            //                             .w_full()
+            //                             .py_1()
+            //                             .px_2()
+            //                             .bg(cx.theme().colors().editor_background)
+            //                             .border_y_1()
+            //                             .border_color(cx.theme().status().info_border)
+            //                             .child(
+            //                                 Label::new(description.clone())
+            //                                     .color(Color::Muted)
+            //                                     .size(LabelSize::Small),
+            //                             )
+            //                             .into_any_element()
+            //                     }
+            //                 }),
+            //                 priority: 0,
+            //             }],
+            //             None,
+            //             cx,
+            //         );
+            //         decorations.model_explanation = new_block_id.into_iter().next();
+            //     }
+            // } else if let Some(block_id) = decorations.model_explanation {
+            //     // Hide the block if there's no description
+            //     editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+            //     let new_block_id = editor.insert_blocks(
+            //         [BlockProperties {
+            //             style: BlockStyle::Flex,
+            //             placement: BlockPlacement::Below(assist.range.end),
+            //             height: Some(0),
+            //             render: Arc::new(|_cx| div().into_any_element()),
+            //             priority: 0,
+            //         }],
+            //         None,
+            //         cx,
+            //     );
+            //     decorations.model_explanation = new_block_id.into_iter().next();
+            // }
 
             let old_blocks = mem::take(&mut decorations.removed_line_block_ids);
             editor.remove_blocks(old_blocks, None, cx);
@@ -1776,7 +1776,7 @@ impl InlineAssist {
                 prompt_block_id,
                 prompt_editor: prompt_editor.clone(),
                 removed_line_block_ids: Default::default(),
-                tool_description_block_id: Some(tool_description_block_id),
+                model_explanation: Some(tool_description_block_id),
                 end_block_id,
             }),
             range,
@@ -1880,7 +1880,7 @@ struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
     prompt_editor: Entity<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
-    tool_description_block_id: Option<CustomBlockId>,
+    model_explanation: Option<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
 

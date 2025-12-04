@@ -40,6 +40,7 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+use ui::SharedString;
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,
@@ -221,11 +222,8 @@ impl BufferCodegen {
         self.active_alternative().read(cx).last_equal_ranges()
     }
 
-    pub fn tool_description<'a>(&self, cx: &'a App) -> Option<&'a str> {
-        self.active_alternative()
-            .read(cx)
-            .tool_description
-            .as_deref()
+    pub fn model_explanation<'a>(&self, cx: &'a App) -> Option<SharedString> {
+        self.active_alternative().read(cx).model_explanation.clone()
     }
 }
 
@@ -251,7 +249,7 @@ pub struct CodegenAlternative {
     elapsed_time: Option<f64>,
     completion: Option<String>,
     pub message_id: Option<String>,
-    pub tool_description: Option<String>,
+    pub model_explanation: Option<SharedString>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -309,7 +307,7 @@ impl CodegenAlternative {
             range,
             elapsed_time: None,
             completion: None,
-            tool_description: None,
+            model_explanation: None,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
@@ -1067,7 +1065,7 @@ impl CodegenAlternative {
                             // Apply the replacement text to the buffer and compute diff
                             let batch_diff_task = codegen
                                 .update(cx, |this, cx| {
-                                    this.tool_description = description;
+                                    this.model_explanation = description.map(Into::into);
                                     let range = this.range.clone();
                                     this.apply_edits(
                                         std::iter::once((range, input.replacement_text)),
@@ -1097,7 +1095,7 @@ impl CodegenAlternative {
                         Ok(input) => {
                             let _ = codegen.update(cx, |this, _cx| {
                                 // Store the failure message as the tool description
-                                this.tool_description = Some(input.message);
+                                this.model_explanation = Some(input.message.into());
                             });
                             finish_with_status(CodegenStatus::Done, cx);
                             return;

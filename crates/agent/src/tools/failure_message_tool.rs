@@ -14,6 +14,8 @@ use crate::{AgentTool, ToolCallEventStream};
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FailureMessageInput {
     /// A brief message to the user explaining why you're unable to fulfill the request.
+    ///
+    /// The message may use markdown formatting if you wish.
     pub message: String,
 }
 
