@@ -19,6 +19,7 @@ pub mod task_store;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
+pub mod trusted_worktrees;
 pub mod worktree_store;
 
 #[cfg(test)]
