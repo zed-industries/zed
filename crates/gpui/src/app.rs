@@ -1929,8 +1929,7 @@ impl App {
         let render_image = tray
             .icon
             .as_ref()
-            .map(|icon| icon.to_image_data(self.svg_renderer.clone()).ok())
-            .flatten();
+            .and_then(|icon| icon.to_image_data(self.svg_renderer.clone()).ok());
         tray.rendered_icon =
             render_image.map(|image| TrayIconData::from_render_image(image.as_ref()));
 

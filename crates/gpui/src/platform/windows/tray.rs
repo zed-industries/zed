@@ -223,7 +223,7 @@ impl Icon {
         let pixels =
             unsafe { std::slice::from_raw_parts_mut(rgba.as_ptr() as *mut Pixel, pixel_count) };
         for pixel in pixels {
-            and_mask.push((pixel.a as u8).wrapping_sub(u8::MAX)); // invert alpha channel
+            and_mask.push(pixel.a.wrapping_sub(u8::MAX)); // invert alpha channel
         }
         assert_eq!(and_mask.len(), pixel_count);
         let handle = unsafe {
@@ -233,7 +233,7 @@ impl Icon {
                 height as i32,
                 1,
                 (PIXEL_SIZE * 8) as u8,
-                and_mask.as_ptr() as *const u8,
+                and_mask.as_ptr(),
                 rgba.as_ptr(),
             )
             .expect("Failed to create tray icon")

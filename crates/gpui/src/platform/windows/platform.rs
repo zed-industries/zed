@@ -1358,18 +1358,18 @@ fn build_muda_menu(
                 ..
             } => {
                 if *checked {
-                    let muda_item = CheckMenuItem::new(name.to_string(), true, *checked, None);
+                    let muda_item = CheckMenuItem::new(name, true, *checked, None);
                     action_map.insert(muda_item.id().clone(), action.boxed_clone());
                     let _ = menu.append(&muda_item);
                 } else {
-                    let muda_item = muda::MenuItem::new(name.to_string(), true, None);
+                    let muda_item = muda::MenuItem::new(name, true, None);
                     action_map.insert(muda_item.id().clone(), action.boxed_clone());
                     let _ = menu.append(&muda_item);
                 }
             }
             MenuItem::Submenu(_submenu) => {
                 let child_menu = build_muda_menu(&_submenu.items, action_map);
-                let submenu = Submenu::new(_submenu.name.to_string(), true);
+                let submenu = Submenu::new(&_submenu.name, true);
                 for item in child_menu.items() {
                     match item {
                         MenuItemKind::Check(item) => {
