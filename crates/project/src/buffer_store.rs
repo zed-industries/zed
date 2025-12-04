@@ -21,11 +21,13 @@ use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
     proto::{self},
 };
+use settings::WorktreeId;
 
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
-use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
+use worktree::{File, PathChange, ProjectEntryId, Worktree};
+
 
 /// A set of open buffers.
 pub struct BufferStore {
@@ -167,7 +169,7 @@ impl RemoteBufferStore {
                 let buffer_result = maybe!({
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
-                        let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
+                        let worktree_id = WorktreeId::from_proto(file.worktree_id);
                         let worktree = self
                             .worktree_store
                             .read(cx)
@@ -906,7 +908,7 @@ impl BufferStore {
             this.update(cx, |this, cx| {
                 old_file.clone().and_then(|file| {
                     this.path_to_buffer_id.remove(&ProjectPath {
-                        worktree_id: file.project_worktree(cx).into(),
+                        worktree_id: file.worktree_id(cx),
                         path: file.path().clone(),
                     })
                 });

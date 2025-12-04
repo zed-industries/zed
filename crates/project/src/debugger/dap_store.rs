@@ -32,7 +32,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
-use settings::InlayHintKind;
+use settings::{InlayHintKind, WorktreeId};
 
 use remote::RemoteClient;
 use rpc::{
@@ -40,7 +40,7 @@ use rpc::{
     proto::{self},
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, ProjectWorktree};
+use settings::{ProjectWorktree, Settings, SettingsLocation};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -253,7 +253,7 @@ impl DapStore {
                 };
 
                 let settings_location = SettingsLocation {
-                    worktree: worktree.read(cx).id(),
+                    worktree: worktree.read(cx).project_worktree(),
                     path: RelPath::empty(),
                 };
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
@@ -855,9 +855,10 @@ impl DapStore {
 
         let worktree = this
             .update(&mut cx, |this, cx| {
-                this.worktree_store
-                    .read(cx)
-                    .worktree_for_id(ProjectWorktree::from_proto(envelope.payload.worktree_id), cx)
+                this.worktree_store.read(cx).worktree_for_id(
+                    WorktreeId::from_proto(envelope.payload.worktree_id),
+                    cx,
+                )
             })?
             .context("Failed to find worktree with a given ID")?;
         let binary = this
@@ -971,7 +972,7 @@ impl DapAdapterDelegate {
 
 #[async_trait]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
-    fn worktree_id(&self) -> ProjectWorktree {
+    fn worktree_id(&self) -> WorktreeId {
         self.worktree.id()
     }
 

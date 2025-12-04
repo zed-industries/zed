@@ -294,7 +294,7 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
-    fn worktree_id(&self) -> ProjectWorktree;
+    fn project_worktree(&self) -> ProjectWorktree;
     fn worktree_root_path(&self) -> &Path;
     fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);

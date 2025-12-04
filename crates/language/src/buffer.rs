@@ -37,7 +37,7 @@ use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::{Mutex, RawMutex, lock_api::MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::ProjectWorktree;
+use settings::{ProjectWorktree, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -396,7 +396,7 @@ pub trait File: Send + Sync + Any {
     fn project_worktree(&self, cx: &App) -> ProjectWorktree;
 
     /// worktree_id
-    fn worktree_id(&self, cx: &App) -> u64 {
+    fn worktree_id(&self, cx: &App) -> WorktreeId {
         self.project_worktree(cx).worktree_id
     }
 

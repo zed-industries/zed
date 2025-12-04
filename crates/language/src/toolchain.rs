@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{App, AsyncApp, SharedString};
-use settings::ProjectWorktree;
+use settings::WorktreeId;
 use task::ShellKind;
 use util::rel_path::RelPath;
 
@@ -36,7 +36,7 @@ pub struct Toolchain {
 /// - Only in the subproject they're currently in.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ToolchainScope {
-    Subproject(ProjectWorktree, Arc<RelPath>),
+    Subproject(WorktreeId, Arc<RelPath>),
     Project,
     /// Available in all projects on this box. It wouldn't make sense to show suggestions across machines.
     Global,
@@ -130,7 +130,7 @@ pub struct ToolchainMetadata {
 pub trait LanguageToolchainStore: Send + Sync + 'static {
     async fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: ProjectWorktree,
+        worktree_id: WorktreeId,
         relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
@@ -140,7 +140,7 @@ pub trait LanguageToolchainStore: Send + Sync + 'static {
 pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
     fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: ProjectWorktree,
+        worktree_id: WorktreeId,
         relative_path: &Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
@@ -151,7 +151,7 @@ pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
 impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
     async fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: ProjectWorktree,
+        worktree_id: WorktreeId,
         relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,

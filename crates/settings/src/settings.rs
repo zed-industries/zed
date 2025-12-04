@@ -20,7 +20,7 @@ pub mod private {
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, str};
+use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use base_keymap_setting::*;
@@ -46,10 +46,50 @@ pub struct ActiveSettingsProfileName(pub String);
 
 impl Global for ActiveSettingsProfileName {}
 
+/// Worktree ID within a project. Prefer [`ProjectWorktree`] when something globally unique is needed.
+///
+/// These are usually globally unique, but not always (particularly with remote projects).
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
+pub struct WorktreeId(pub usize);
+
+impl From<WorktreeId> for usize {
+    fn from(value: WorktreeId) -> Self {
+        value.0
+    }
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(self) -> usize {
+        self.0
+    }
+    pub fn with_project_id(self, project_id: u64) -> ProjectWorktree {
+        ProjectWorktree {
+            project_id,
+            worktree_id: self,
+        }
+    }
+}
+
+/// `worktree_id` and the `project_id` it belongs to.
+///
+/// `worktree_id` is usually globally unique, but sometimes only unique within a
+/// project (e.g., when remoting).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct ProjectWorktree {
     pub project_id: u64,
-    pub worktree_id: u64,
+    pub worktree_id: WorktreeId,
 }
 
 impl ProjectWorktree {
@@ -57,8 +97,14 @@ impl ProjectWorktree {
     pub fn from_u64(n: u64) -> Self {
         Self {
             project_id: 0,
-            worktree_id: n,
+            worktree_id: WorktreeId(n as usize),
         }
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
     }
 }
 

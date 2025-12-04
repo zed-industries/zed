@@ -180,7 +180,7 @@ impl ProjectEnvironment {
                         worktree
                             .as_ref()
                             .map(|(worktree, path)| settings::SettingsLocation {
-                                worktree: worktree.read(cx).id(),
+                                worktree: worktree.read(cx).project_worktree(),
                                 path: &path,
                             }),
                         cx,

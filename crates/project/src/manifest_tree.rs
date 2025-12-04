@@ -16,7 +16,8 @@ pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::SettingsStore;
 use util::rel_path::RelPath;
-use worktree::{Event as WorktreeEvent, Snapshot, Worktree, WorktreeId};
+use settings::WorktreeId;
+use worktree::{Event as WorktreeEvent, Snapshot, Worktree, };
 
 use crate::{
     ProjectPath,
@@ -96,7 +97,7 @@ impl ManifestTree {
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> Option<ProjectPath> {
-        debug_assert_eq!(delegate.worktree_id().worktree_id, worktree_id.to_usize() as u64);
+        debug_assert_eq!(delegate.worktree_id().worktree_id, *worktree_id);
         let (mut marked_path, mut current_presence) = (None, LabelPresence::KnownAbsent);
         let worktree_roots = match self.root_points.entry(*worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),

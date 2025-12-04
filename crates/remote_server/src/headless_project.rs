@@ -92,7 +92,7 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone());
+            let mut store = WorktreeStore::local(REMOTE_SERVER_PROJECT_ID, true, fs.clone());
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });

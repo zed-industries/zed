@@ -1166,7 +1166,7 @@ impl GitStore {
                     return;
                 }
                 self.update_repositories_from_worktree(
-                    *worktree_id,
+                    worktree_id.worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
                     downstream

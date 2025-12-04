@@ -15,8 +15,9 @@ use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
+use settings::WorktreeId;
 use util::{ResultExt, rel_path::RelPath};
-use worktree::{LoadedBinaryFile, PathChange, Worktree, WorktreeId};
+use worktree::{LoadedBinaryFile, PathChange, Worktree, };
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct ImageId(NonZeroU64);

@@ -18,8 +18,7 @@ use language::{
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
-use settings::{Settings, SettingsLocation};
-use worktree::WorktreeId;
+use settings::{WorktreeId,Settings, SettingsLocation};
 use std::sync::OnceLock;
 use util::rel_path::RelPath;
 

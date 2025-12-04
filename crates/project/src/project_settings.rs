@@ -21,12 +21,12 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
-    SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    SettingsLocation, SettingsStore, WorktreeId, parse_json_with_comments, watch_config_file,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
-use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
+use worktree::{PathChange, UpdatedEntriesSet, Worktree};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
@@ -702,8 +702,8 @@ impl SettingsObserver {
 
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
-            let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, content) in store.local_settings(worktree.read(cx).id()) {
+            let worktree_id = worktree.read(cx).id();
+            for (path, content) in store.local_settings(worktree_id.with_project_id(project_id)) {
                 let content = serde_json::to_string(&content).unwrap();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {

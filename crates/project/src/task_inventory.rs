@@ -19,6 +19,7 @@ use language::{
 };
 use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
+use settings::WorktreeId;
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
@@ -26,7 +27,6 @@ use task::{
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
-use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
@@ -682,8 +682,9 @@ impl Inventory {
             TaskSettingsLocation::Worktree(location) => {
                 let new_templates = new_templates.collect::<Vec<_>>();
                 if new_templates.is_empty() {
-                    if let Some(worktree_tasks) =
-                        parsed_templates.worktree.get_mut(&WorktreeId(location.worktree.worktree_id as usize))
+                    if let Some(worktree_tasks) = parsed_templates
+                        .worktree
+                        .get_mut(&WorktreeId(location.worktree.worktree_id as usize))
                     {
                         worktree_tasks.remove(location.path);
                     }
@@ -848,8 +849,8 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 mod test_inventory {
     use gpui::{AppContext as _, Entity, Task, TestAppContext};
     use itertools::Itertools;
+    use settings::WorktreeId;
     use task::TaskContext;
-    use worktree::WorktreeId;
 
     use crate::Inventory;
 
@@ -1397,8 +1398,8 @@ mod tests {
         init_test(cx);
         let inventory = cx.update(|cx| Inventory::new(cx));
         let common_name = "common_task_name";
-        let worktree_1 = WorktreeId::from_usize(1);
-        let worktree_2 = WorktreeId::from_usize(2);
+        let worktree_1 = WorktreeId::from_usize(1).with_project_id(0);
+        let worktree_2 = WorktreeId::from_usize(2).with_project_id(0);
 
         cx.run_until_parked();
         let worktree_independent_tasks = vec![
@@ -1427,7 +1428,7 @@ mod tests {
         let worktree_1_tasks = [
             (
                 TaskSourceKind::Worktree {
-                    id: worktree_1,
+                    id: worktree_1.worktree_id,
                     directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
@@ -1435,7 +1436,7 @@ mod tests {
             ),
             (
                 TaskSourceKind::Worktree {
-                    id: worktree_1,
+                    id: worktree_1.worktree_id,
                     directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
@@ -1445,7 +1446,7 @@ mod tests {
         let worktree_2_tasks = [
             (
                 TaskSourceKind::Worktree {
-                    id: worktree_2,
+                    id: worktree_2.worktree_id,
                     directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
@@ -1453,7 +1454,7 @@ mod tests {
             ),
             (
                 TaskSourceKind::Worktree {
-                    id: worktree_2,
+                    id: worktree_2.worktree_id,
                     directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
@@ -1502,7 +1503,7 @@ mod tests {
             "Without a worktree, only worktree-independent tasks should be listed"
         );
         assert_eq!(
-            list_tasks_sorted_by_last_used(&inventory, Some(worktree_1), cx).await,
+            list_tasks_sorted_by_last_used(&inventory, Some(worktree_1.worktree_id), cx).await,
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -1511,7 +1512,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks_sorted_by_last_used(&inventory, Some(worktree_2), cx).await,
+            list_tasks_sorted_by_last_used(&inventory, Some(worktree_2.worktree_id), cx).await,
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -1526,7 +1527,7 @@ mod tests {
             "Without a worktree, only worktree-independent tasks should be listed"
         );
         assert_eq!(
-            list_tasks(&inventory, Some(worktree_1), cx).await,
+            list_tasks(&inventory, Some(worktree_1.worktree_id), cx).await,
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -1534,7 +1535,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks(&inventory, Some(worktree_2), cx).await,
+            list_tasks(&inventory, Some(worktree_2.worktree_id), cx).await,
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())

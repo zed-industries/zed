@@ -8,7 +8,6 @@ use lsp::{
     MessageType, TraceValue,
 };
 use rpc::proto;
-use settings::ProjectWorktree;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _, WorktreeId};
 

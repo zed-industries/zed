@@ -94,7 +94,7 @@ use rpc::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{ProjectWorktree, Settings, SettingsLocation, SettingsStore, WorktreeId};
 use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
@@ -134,7 +134,7 @@ pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeSettings,
 };
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -8477,7 +8477,12 @@ impl LspStore {
                 let worktree = lsp_store
                     .update(cx, |lsp_store, cx| {
                         lsp_store.worktree_store.update(cx, |worktree_store, cx| {
-                            worktree_store.create_worktree(&worktree_root_target, self.project_id_for_settings(cx), false, cx)
+                            worktree_store.create_worktree(
+                                &worktree_root_target,
+                                self.project_id_for_settings(cx),
+                                false,
+                                cx,
+                            )
                         })
                     })?
                     .await?;
@@ -13609,7 +13614,7 @@ pub fn language_server_settings<'a>(
 ) -> Option<&'a LspSettings> {
     language_server_settings_for(
         SettingsLocation {
-            worktree: delegate.worktree_id(),
+            worktree: delegate.project_worktree(),
             path: RelPath::empty(),
         },
         language,
@@ -13628,6 +13633,7 @@ pub(crate) fn language_server_settings_for<'a>(
 pub struct LocalLspAdapterDelegate {
     lsp_store: WeakEntity<LspStore>,
     worktree: worktree::Snapshot,
+    project_worktree: ProjectWorktree,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
@@ -13647,9 +13653,12 @@ impl LocalLspAdapterDelegate {
         let load_shell_env_task =
             environment.update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx));
 
+        let project_worktree = worktree.read(cx).snapshot().project_worktree();
+
         Arc::new(Self {
             lsp_store,
             worktree: worktree.read(cx).snapshot(),
+            project_worktree,
             fs,
             http_client,
             language_registry,
@@ -13688,8 +13697,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.http_client.clone()
     }
 
-    fn worktree_id(&self) -> WorktreeId {
-        self.worktree.id()
+    fn project_worktree(&self) -> ProjectWorktree {
+        self.project_worktree
     }
 
     fn worktree_root_path(&self) -> &Path {

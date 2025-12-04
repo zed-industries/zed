@@ -38,7 +38,7 @@ use rpc::{
     AnyProtoClient,
     proto::{self, split_worktree_update},
 };
-use settings::{ProjectWorktree, Settings, SettingsLocation, SettingsStore};
+use settings::{ProjectWorktree, Settings, SettingsLocation, SettingsStore, WorktreeId};
 use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
@@ -70,45 +70,6 @@ use util::{
 pub use worktree_settings::WorktreeSettings;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
-pub struct WorktreeId(pub usize);
-
-impl From<WorktreeId> for usize {
-    fn from(value: WorktreeId) -> Self {
-        value.0
-    }
-}
-
-impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
-    }
-
-    pub fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(self) -> usize {
-        self.0
-    }
-}
-
-impl From<ProjectWorktree> for WorktreeId {
-    fn from(value: ProjectWorktree) -> Self {
-        Self(value.worktree_id as usize)
-    }
-}
-
-impl fmt::Display for WorktreeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -535,7 +496,7 @@ impl Worktree {
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
                 worktree: settings::ProjectWorktree {
-                    worktree_id: worktree_id.to_proto(),
+                    worktree_id,
                     project_id: project_id_for_settings,
                 },
                 path: RelPath::empty(),
@@ -658,7 +619,7 @@ impl Worktree {
         SettingsLocation {
             worktree: ProjectWorktree {
                 project_id: self.project_id_for_settings,
-                worktree_id: self.id.to_proto(),
+                worktree_id: self.id,
             },
             path: RelPath::empty(),
         }
@@ -2110,7 +2071,7 @@ impl Snapshot {
 
     pub fn project_worktree(&self) -> ProjectWorktree {
         ProjectWorktree {
-            worktree_id: self.id.0 as u64,
+            worktree_id: self.id,
             project_id: self.project_id_for_settings,
         }
     }

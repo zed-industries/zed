@@ -28,7 +28,7 @@ struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
 #[async_trait]
 impl WorktreeDelegate for WorktreeDelegateAdapter {
     fn id(&self) -> u64 {
-        self.0.worktree_id().to_proto()
+        self.0.project_worktree().worktree_id.to_proto()
     }
 
     fn root_path(&self) -> String {

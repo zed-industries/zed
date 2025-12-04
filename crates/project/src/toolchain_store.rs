@@ -19,10 +19,9 @@ use rpc::{
         resolve_toolchain_response::Response as ResolveResponsePayload,
     },
 };
-use settings::ProjectWorktree;
+use settings::{ProjectWorktree, WorktreeId};
 use task::Shell;
 use util::{ResultExt as _, rel_path::RelPath};
-use worktree::WorktreeId;
 
 use crate::{
     ProjectEnvironment, ProjectPath,
@@ -399,7 +398,7 @@ pub struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
-    active_toolchains: BTreeMap<(ProjectWorktree, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
+    active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
     manifest_tree: Entity<ManifestTree>,
     fs: Arc<dyn Fs>,
 }
@@ -408,7 +407,7 @@ pub struct LocalToolchainStore {
 impl language::LocalLanguageToolchainStore for LocalStore {
     fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: ProjectWorktree,
+        worktree_id: WorktreeId,
         path: &Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
@@ -425,14 +424,14 @@ impl language::LocalLanguageToolchainStore for LocalStore {
 impl language::LanguageToolchainStore for RemoteStore {
     async fn active_toolchain(
         self: Arc<Self>,
-        worktree_id: ProjectWorktree,
+        worktree_id: WorktreeId,
         path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
             .update(cx, |this, cx| {
-                this.active_toolchain(ProjectPath { worktree_id, path }, language_name, cx)
+                this.active_toolchain(ProjectPath { worktree_id: worktree_id.worktree_id, path }, language_name, cx)
             })
             .ok()?
             .await
@@ -443,7 +442,7 @@ pub struct EmptyToolchainStore;
 impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
     fn active_toolchain(
         self: Arc<Self>,
-        _: ProjectWorktree,
+        _: WorktreeId,
         _: &Arc<RelPath>,
         _: LanguageName,
         _: &mut AsyncApp,

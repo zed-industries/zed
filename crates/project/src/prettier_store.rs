@@ -22,13 +22,11 @@ use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
+use settings::WorktreeId;
 use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
-use crate::{
-    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
-    worktree_store::WorktreeStore,
-};
+use crate::{File, PathChange, ProjectEntryId, Worktree, worktree_store::WorktreeStore};
 
 pub struct PrettierStore {
     node: NodeRuntime,

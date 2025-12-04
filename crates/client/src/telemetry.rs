@@ -10,7 +10,7 @@ use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Reques
 use parking_lot::Mutex;
 use regex::Regex;
 use release_channel::ReleaseChannel;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, WorktreeId};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::File;
@@ -20,7 +20,7 @@ use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
 use util::TryFutureExt;
-use worktree::{UpdatedEntriesSet, WorktreeId};
+use worktree::UpdatedEntriesSet;
 
 use self::event_coalescer::EventCoalescer;
 
@@ -604,10 +604,11 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use settings::WorktreeId;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
     use util::rel_path::RelPath;
-    use worktree::{PathChange, ProjectEntryId, WorktreeId};
+    use worktree::{PathChange, ProjectEntryId};
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {

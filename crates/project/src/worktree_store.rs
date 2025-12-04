@@ -17,6 +17,7 @@ use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
 };
+use settings::WorktreeId;
 use smol::{
     channel::{Receiver, Sender},
     stream::StreamExt,
@@ -29,7 +30,7 @@ use util::{
 };
 use worktree::{
     CreatedEntry, Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
-    WorktreeId, WorktreeSettings,
+    WorktreeSettings,
 };
 
 use crate::{ProjectPath, search::SearchQuery};
@@ -52,6 +53,7 @@ enum WorktreeStoreState {
 }
 
 pub struct WorktreeStore {
+    project_id: u64,
     next_entry_id: Arc<AtomicUsize>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     retain_worktrees: bool,
@@ -86,8 +88,9 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
     }
 
-    pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
+    pub fn local(project_id: u64, retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
         Self {
+            project_id,
             next_entry_id: Default::default(),
             loading_worktrees: Default::default(),
             downstream_client: None,
@@ -101,10 +104,12 @@ impl WorktreeStore {
     pub fn remote(
         retain_worktrees: bool,
         upstream_client: AnyProtoClient,
+        local_project_id: u64,
         upstream_project_id: u64,
         path_style: PathStyle,
     ) -> Self {
         Self {
+            project_id: local_project_id,
             next_entry_id: Default::default(),
             loading_worktrees: Default::default(),
             downstream_client: None,
@@ -197,7 +202,7 @@ impl WorktreeStore {
         if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
         } else {
-            let worktree = self.create_worktree(abs_path, visible, cx);
+            let worktree = self.create_worktree(abs_path,  visible, cx);
             cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty().into())) })
         }
     }
@@ -463,7 +468,6 @@ impl WorktreeStore {
     pub fn create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
-        project_id_for_settings: u64,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
@@ -479,12 +483,20 @@ impl WorktreeStore {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
                         let abs_path = RemotePathBuf::new(abs_path.to_string(), *path_style);
-                        self.create_remote_worktree(upstream_client.clone(), project_id_for_settings, abs_path, visible, cx)
+                        self.create_remote_worktree(
+                            upstream_client.clone(),
+                            abs_path,
+                            visible,
+                            cx,
+                        )
                     }
                 }
-                WorktreeStoreState::Local { fs } => {
-                    self.create_local_worktree(fs.clone(), project_id_for_settings, abs_path.clone(), visible, cx)
-                }
+                WorktreeStoreState::Local { fs } => self.create_local_worktree(
+                    fs.clone(),
+                    abs_path.clone(),
+                    visible,
+                    cx,
+                ),
             };
 
             self.loading_worktrees
@@ -528,7 +540,7 @@ impl WorktreeStore {
             let path = RemotePathBuf::new(abs_path, path_style);
             let response = client
                 .request(proto::AddWorktree {
-                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    project_id: self.project_id,
                     path: path.to_proto(),
                     visible,
                 })
@@ -548,7 +560,7 @@ impl WorktreeStore {
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    REMOTE_SERVER_PROJECT_ID,
+                    self.project_id,
                     ReplicaId::REMOTE_SERVER,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,

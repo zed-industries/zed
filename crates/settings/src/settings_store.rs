@@ -32,7 +32,8 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, ThemeName, VsCodeSettings, ProjectWorktree, fallible_options,
+    LanguageToSettingsMap, ProjectWorktree, ThemeName, VsCodeSettings,
+    fallible_options,
     merge_from::MergeFrom,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
@@ -150,7 +151,8 @@ pub struct SettingsStore {
     merged_settings: Rc<SettingsContent>,
 
     local_settings: BTreeMap<(ProjectWorktree, Arc<RelPath>), SettingsContent>,
-    raw_editorconfig_settings: BTreeMap<(ProjectWorktree, Arc<RelPath>), (String, Option<Editorconfig>)>,
+    raw_editorconfig_settings:
+        BTreeMap<(ProjectWorktree, Arc<RelPath>), (String, Option<Editorconfig>)>,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
@@ -246,7 +248,12 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn all_local_values(&self) -> Vec<(ProjectWorktree, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
-    fn set_local_value(&mut self, root_id: ProjectWorktree, path: Arc<RelPath>, value: Box<dyn Any>);
+    fn set_local_value(
+        &mut self,
+        root_id: ProjectWorktree,
+        path: Arc<RelPath>,
+        value: Box<dyn Any>,
+    );
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -980,13 +987,8 @@ impl SettingsStore {
         root_id: ProjectWorktree,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, &ProjectSettingsContent)> {
         self.local_settings
-            .range(
-                (root_id, RelPath::empty().into())
-                    ..(
-                        ProjectWorktree{ project_id: root_id.project_id, worktree_id: root_id.worktree_id + 1},
-                        RelPath::empty().into(),
-                    ),
-            )
+            .range((root_id, RelPath::empty().into())..)
+            .take_while(move |((project_worktree, _), _)| *project_worktree == root_id)
             .map(|((_, path), content)| (path.clone(), &content.project))
     }
 
@@ -995,13 +997,8 @@ impl SettingsStore {
         root_id: ProjectWorktree,
     ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
         self.raw_editorconfig_settings
-            .range(
-                (root_id, RelPath::empty().into())
-                    ..(
-                        ProjectWorktree{ project_id: root_id.project_id, worktree_id: root_id.worktree_id + 1},
-                        RelPath::empty().into(),
-                    ),
-            )
+            .range((root_id, RelPath::empty().into())..)
+            .take_while(move |((project_worktree, _), _)| *project_worktree == root_id)
             .map(|((_, path), (content, parsed_content))| {
                 (path.clone(), content.clone(), parsed_content.clone())
             })
@@ -1310,7 +1307,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     }
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
-        if let Some(SettingsLocation { worktree: worktree_id, path }) = path {
+        if let Some(SettingsLocation {
+            worktree: worktree_id,
+            path,
+        }) = path
+        {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
                 if worktree_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
@@ -1327,7 +1328,12 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         self.global_value = Some(*value.downcast().unwrap());
     }
 
-    fn set_local_value(&mut self, root_id: ProjectWorktree, path: Arc<RelPath>, value: Box<dyn Any>) {
+    fn set_local_value(
+        &mut self,
+        root_id: ProjectWorktree,
+        path: Arc<RelPath>,
+        value: Box<dyn Any>,
+    ) {
         let value = *value.downcast().unwrap();
         match self
             .local_values
@@ -1344,7 +1350,8 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings, settings_content::LanguageSettingsContent, test_settings
+        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, WorktreeId, default_settings,
+        settings_content::LanguageSettingsContent, test_settings,
     };
 
     use super::*;
@@ -1449,7 +1456,10 @@ mod tests {
             ClosePosition::Left
         );
 
-        let worktree = ProjectWorktree { project_id: 1, worktree_id: 1 };
+        let worktree = ProjectWorktree {
+            project_id: 1,
+            worktree_id: WorktreeId(1),
+        };
 
         store
             .set_local_settings(
@@ -2131,7 +2141,6 @@ mod tests {
     fn test_get_overrides_for_field(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
-
 
         let wt0_root = (ProjectWorktree::from_u64(0), RelPath::empty().into_arc());
         let wt0_child1 = (ProjectWorktree::from_u64(0), rel_path("child1").into_arc());

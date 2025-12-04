@@ -104,7 +104,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore, WorktreeId};
 use smol::channel::Receiver;
 use snippet::Snippet;
 pub use snippet_provider;
@@ -133,7 +133,7 @@ use util::{
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeSettings,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -367,7 +367,7 @@ pub struct ProjectPath {
 impl ProjectPath {
     pub fn from_file(value: &dyn language::File, cx: &App) -> Self {
         ProjectPath {
-            worktree_id: WorktreeId(value.project_worktree(cx).worktree_id as usize),
+            worktree_id: value.project_worktree(cx).worktree_id,
             path: value.path().clone(),
         }
     }
@@ -1520,6 +1520,7 @@ impl Project {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
+                self.id,
                 response.payload.project_id,
                 path_style,
             )
@@ -5507,7 +5508,7 @@ impl ProjectItem for Buffer {
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.file().map(|file| ProjectPath {
-            worktree_id: file.project_worktree(cx).worktree_id(),
+            worktree_id: file.project_worktree(cx).worktree_id.into(),
             path: file.path().clone(),
         })
     }
