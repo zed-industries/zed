@@ -6,7 +6,6 @@ mod modal_layer;
 pub mod notifications;
 pub mod pane;
 pub mod pane_group;
-mod panelet;
 mod path_list;
 mod persistence;
 pub mod searchable;
@@ -16,6 +15,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+mod utility_pane;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -129,11 +129,11 @@ use zed_actions::{Spawn, feedback::FileBugReport};
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
-    panelet::Panelet,
     persistence::{
         SerializedAxis,
         model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
+    utility_pane::UtilityPane,
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -1179,7 +1179,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
-    panelet: bool,
+    utility_pane: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1471,12 +1471,16 @@ impl Workspace {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
+
+        let mut center = PaneGroup::new(center_pane.clone());
+        center.set_is_center(true);
+
         Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
             previous_dock_drag_coordinates: None,
-            center: PaneGroup::new(center_pane.clone()),
+            center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
@@ -1524,7 +1528,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
-            panelet: false,
+            utility_pane: false,
         }
     }
 
@@ -5684,6 +5688,8 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
+                    workspace.center.set_is_center(true);
+
                     if let Some(active_pane) = active_pane {
                         workspace.set_active_pane(&active_pane, window, cx);
                         cx.focus_self(window);
@@ -6831,9 +6837,9 @@ impl Render for Workspace {
                                                         window,
                                                         cx,
                                                     ))
-                                                    .when(self.panelet, |this| {
+                                                    .when(self.utility_pane, |this| {
                                                         this.child(
-                                                            Panelet::new(cx)
+                                                            UtilityPane::new(cx)
                                                         )
                                                     })
                                                     .child(

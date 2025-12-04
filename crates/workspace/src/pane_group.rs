@@ -28,6 +28,7 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
+    pub is_center: bool,
 }
 
 pub struct PaneRenderResult {
@@ -37,13 +38,21 @@ pub struct PaneRenderResult {
 
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
-        Self { root }
+        Self {
+            root,
+            is_center: false,
+        }
     }
 
     pub fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
+            is_center: false,
         }
+    }
+
+    pub fn set_is_center(&mut self, is_center: bool) {
+        self.is_center = is_center;
     }
 
     pub fn split(

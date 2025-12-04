@@ -396,6 +396,7 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+    pub has_utility: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -540,7 +541,12 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            has_utility: false,
         }
+    }
+
+    pub fn set_has_utility(&mut self, has_utility: bool) {
+        self.has_utility = has_utility;
     }
 
     fn alternate_file(&mut self, _: &AlternateFile, window: &mut Window, cx: &mut Context<Pane>) {
@@ -3063,7 +3069,9 @@ impl Pane {
                 let workspace = self.workspace.clone();
                 move |_, window, cx| {
                     workspace
-                        .update(cx, |workspace, cx| workspace.toggle_panelet(window, cx))
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_utility_pane(window, cx)
+                        })
                         .ok();
                 }
             });
@@ -3115,9 +3123,13 @@ impl Pane {
         let pinned_tabs = tab_items;
 
         let render_aside_toggle = self
-            .workspace
-            .upgrade()
-            .map(|entity| !entity.read(cx).panelet)
+            .has_utility
+            .then(|| {
+                self.workspace
+                    .upgrade()
+                    .map(|entity| !entity.read(cx).utility_pane)
+            })
+            .flatten()
             .unwrap_or(false);
 
         TabBar::new("tab_bar")
