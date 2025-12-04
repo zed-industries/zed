@@ -76,7 +76,7 @@ x11rb::atom_manager! {
         TEXT,
         TEXT_MIME_UNKNOWN: b"text/plain",
 
-        // HTML: b"text/html",
+        HTML_MIME: b"text/html",
         // URI_LIST: b"text/uri-list",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
@@ -986,6 +986,26 @@ impl Clipboard {
             bytes: message.into_owned().into_bytes(),
             format: self.inner.atoms.UTF8_STRING,
         }];
+        self.inner.write(data, selection, wait)
+    }
+
+    pub(crate) fn set_text_with_html(
+        &self,
+        text: Cow<'_, str>,
+        html: Cow<'_, str>,
+        selection: ClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        let data = vec![
+            ClipboardData {
+                bytes: text.into_owned().into_bytes(),
+                format: self.inner.atoms.UTF8_STRING,
+            },
+            ClipboardData {
+                bytes: html.into_owned().into_bytes(),
+                format: self.inner.atoms.HTML_MIME,
+            },
+        ];
         self.inner.write(data, selection, wait)
     }
 
