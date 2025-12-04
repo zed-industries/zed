@@ -32,7 +32,7 @@ use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use ui::{
-    ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
+    ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
