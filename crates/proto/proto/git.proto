@@ -124,6 +124,8 @@ message UpdateRepository {
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
     repeated StashEntry stash_entries = 13;
+    optional string remote_upstream_url = 14;
+    optional string remote_origin_url = 15;
 }
 
 message RemoveRepository {
@@ -500,8 +502,8 @@ message BlameBufferResponse {
     message BlameResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
-        optional string remote_url = 4;
         reserved 3;
+        reserved 4;
     }
 
     optional BlameResponse blame_response = 5;
