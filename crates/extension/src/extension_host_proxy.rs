@@ -386,7 +386,7 @@ pub trait ExtensionContextServerProxy: Send + Sync + 'static {
     fn unregister_context_server(&self, server_id: Arc<str>, cx: &mut App);
 }
 
-/// A boxed function that registers a language model provider with the registry.
+/// A function that registers a language model provider with the registry.
 /// This allows extension_host to create the provider (which requires WasmExtension)
 /// and pass a registration closure to the language_models crate.
 pub type LanguageModelProviderRegistration = Box<dyn FnOnce(&mut App) + Send + Sync + 'static>;

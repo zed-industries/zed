@@ -665,21 +665,10 @@ impl LanguageModel for ExtensionLanguageModel {
         let provider_id = self.provider_info.id.clone();
         let model_id = self.model_info.id.clone();
 
-        eprintln!(
-            "[EXT LLM DEBUG] stream_completion called for provider={}, model={}",
-            provider_id, model_id
-        );
-
         let wit_request = convert_request_to_wit(request);
-        eprintln!(
-            "[EXT LLM DEBUG] Converted request: {} messages, {} tools",
-            wit_request.messages.len(),
-            wit_request.tools.len()
-        );
 
         async move {
             // Start the stream
-            eprintln!("[EXT LLM DEBUG] Calling llm_stream_completion_start...");
             let stream_id_result = extension
                 .call({
                     let provider_id = provider_id.clone();
@@ -703,16 +692,9 @@ impl LanguageModel for ExtensionLanguageModel {
                 })
                 .await;
 
-            eprintln!(
-                "[EXT LLM DEBUG] llm_stream_completion_start result: {:?}",
-                stream_id_result
-            );
-
             let stream_id = stream_id_result
                 .map_err(LanguageModelCompletionError::Other)?
                 .map_err(LanguageModelCompletionError::Other)?;
-
-            eprintln!("[EXT LLM DEBUG] Got stream_id: {}", stream_id);
 
             // Create a stream that polls for events
             let stream = futures::stream::unfold(
@@ -741,37 +723,12 @@ impl LanguageModel for ExtensionLanguageModel {
 
                     match result {
                         Ok(Some(event)) => {
-                            let event_desc = match &event {
-                                LlmCompletionEvent::Started => "Started".to_string(),
-                                LlmCompletionEvent::Text(t) => format!("Text: {:?}", t),
-                                LlmCompletionEvent::Thinking(th) => {
-                                    format!("Thinking: {:?}", th.text)
-                                }
-                                LlmCompletionEvent::RedactedThinking(r) => {
-                                    format!("RedactedThinking: {:?}", r)
-                                }
-                                LlmCompletionEvent::ToolUse(tu) => {
-                                    format!("ToolUse: name={}, input={}", tu.name, tu.input)
-                                }
-                                LlmCompletionEvent::ToolUseJsonParseError(e) => {
-                                    format!("ToolUseJsonParseError: {:?}", e.error)
-                                }
-                                LlmCompletionEvent::Stop(r) => format!("Stop({:?})", r),
-                                LlmCompletionEvent::Usage(u) => {
-                                    format!("Usage: in={}, out={}", u.input_tokens, u.output_tokens)
-                                }
-                                LlmCompletionEvent::ReasoningDetails(d) => {
-                                    format!("ReasoningDetails: {:?}", d)
-                                }
-                            };
-                            eprintln!("[EXT LLM DEBUG] Got event: {}", event_desc);
                             let converted = convert_completion_event(event);
                             let is_done =
                                 matches!(&converted, Ok(LanguageModelCompletionEvent::Stop(_)));
                             Some((converted, (extension, stream_id, is_done)))
                         }
                         Ok(None) => {
-                            eprintln!("[EXT LLM DEBUG] Stream returned None, closing");
                             // Stream complete, close it
                             let _ = extension
                                 .call({
@@ -788,13 +745,10 @@ impl LanguageModel for ExtensionLanguageModel {
                                 .await;
                             None
                         }
-                        Err(e) => {
-                            eprintln!("[EXT LLM DEBUG] Stream error: {:?}", e);
-                            Some((
-                                Err(LanguageModelCompletionError::Other(e)),
-                                (extension, stream_id, true),
-                            ))
-                        }
+                        Err(e) => Some((
+                            Err(LanguageModelCompletionError::Other(e)),
+                            (extension, stream_id, true),
+                        )),
                     }
                 },
             );
