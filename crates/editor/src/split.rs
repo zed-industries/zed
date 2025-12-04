@@ -8,6 +8,7 @@ use language::{Buffer, Capability, LanguageRegistry};
 use multi_buffer::{Anchor, ExcerptRange, MultiBuffer, PathKey};
 use project::Project;
 use rope::Point;
+use text::OffsetRangeExt as _;
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
     Styled as _, Window, div,
@@ -241,6 +242,8 @@ impl SplittableEditor {
             });
         }
     }
+
+    // FIXME need add_diff management in here too
 
     pub fn set_excerpts_for_path(
         &mut self,

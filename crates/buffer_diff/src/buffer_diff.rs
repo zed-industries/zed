@@ -27,10 +27,19 @@ pub struct BufferDiff {
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
     secondary_diff: Option<Box<BufferDiffSnapshot>>,
+}
+
+impl std::fmt::Debug for BufferDiffSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferDiffSnapshot")
+            .field("inner", &self.inner)
+            .field("secondary_diff", &self.secondary_diff)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -338,9 +347,16 @@ impl BufferDiffSnapshot {
     pub fn hunks_intersecting_base_text_range<'a>(
         &'a self,
         range: Range<usize>,
+        main_buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        // FIXME
-        std::iter::empty()
+        let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
+        let filter = move |summary: &DiffHunkSummary| {
+            let before_start = summary.diff_base_byte_range.end < range.start;
+            let after_end = summary.diff_base_byte_range.start > range.end;
+            !before_start && !after_end
+        };
+        self.inner
+            .hunks_intersecting_range_impl(filter, main_buffer, unstaged_counterpart)
     }
 
     pub fn base_text(&self) -> &language::BufferSnapshot {
@@ -623,15 +639,22 @@ impl BufferDiffInner {
         secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let range = range.to_offset(buffer);
+        let filter = move |summary: &DiffHunkSummary| {
+            let summary_range = summary.buffer_range.to_offset(buffer);
+            let before_start = summary_range.end < range.start;
+            let after_end = summary_range.start > range.end;
+            !before_start && !after_end
+        };
+        self.hunks_intersecting_range_impl(filter, buffer, secondary)
+    }
 
-        let mut cursor = self
-            .hunks
-            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
-                let summary_range = summary.buffer_range.to_offset(buffer);
-                let before_start = summary_range.end < range.start;
-                let after_end = summary_range.start > range.end;
-                !before_start && !after_end
-            });
+    fn hunks_intersecting_range_impl<'a>(
+        &'a self,
+        filter: impl 'a + Fn(&DiffHunkSummary) -> bool,
+        buffer: &'a text::BufferSnapshot,
+        secondary: Option<&'a Self>,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let mut cursor = self.hunks.filter::<_, DiffHunkSummary>(buffer, filter);
 
         let anchor_iter = iter::from_fn(move || {
             cursor.next();
@@ -781,13 +804,19 @@ impl BufferDiffInner {
         })
     }
 
-    fn compare(&self, old: &Self, new_snapshot: &text::BufferSnapshot) -> Option<Range<Anchor>> {
+    fn compare(
+        &self,
+        old: &Self,
+        new_snapshot: &text::BufferSnapshot,
+    ) -> (Option<Range<Anchor>>, Option<Range<usize>>) {
         let mut new_cursor = self.hunks.cursor::<()>(new_snapshot);
         let mut old_cursor = old.hunks.cursor::<()>(new_snapshot);
         old_cursor.next();
         new_cursor.next();
         let mut start = None;
         let mut end = None;
+        let mut base_text_start = None;
+        let mut base_text_end = None;
 
         loop {
             match (new_cursor.item(), old_cursor.item()) {
@@ -799,12 +828,15 @@ impl BufferDiffInner {
                     {
                         Ordering::Less => {
                             start.get_or_insert(new_hunk.buffer_range.start);
+                            base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                             end.replace(new_hunk.buffer_range.end);
+                            base_text_end.get_or_insert(new_hunk.diff_base_byte_range.end);
                             new_cursor.next();
                         }
                         Ordering::Equal => {
                             if new_hunk != old_hunk {
                                 start.get_or_insert(new_hunk.buffer_range.start);
+                                base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                                 if old_hunk
                                     .buffer_range
                                     .end
@@ -812,8 +844,10 @@ impl BufferDiffInner {
                                     .is_ge()
                                 {
                                     end.replace(old_hunk.buffer_range.end);
+                                    base_text_end.replace(old_hunk.diff_base_byte_range.end);
                                 } else {
                                     end.replace(new_hunk.buffer_range.end);
+                                    base_text_end.replace(new_hunk.diff_base_byte_range.end);
                                 }
                             }
 
@@ -822,26 +856,37 @@ impl BufferDiffInner {
                         }
                         Ordering::Greater => {
                             start.get_or_insert(old_hunk.buffer_range.start);
+                            base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
                             end.replace(old_hunk.buffer_range.end);
+                            base_text_end.replace(old_hunk.diff_base_byte_range.end);
                             old_cursor.next();
                         }
                     }
                 }
                 (Some(new_hunk), None) => {
                     start.get_or_insert(new_hunk.buffer_range.start);
+                    base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                     end.replace(new_hunk.buffer_range.end);
+                    base_text_end.replace(new_hunk.diff_base_byte_range.end);
                     new_cursor.next();
                 }
                 (None, Some(old_hunk)) => {
                     start.get_or_insert(old_hunk.buffer_range.start);
+                    base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
                     end.replace(old_hunk.buffer_range.end);
+                    base_text_end.replace(old_hunk.diff_base_byte_range.end);
                     old_cursor.next();
                 }
                 (None, None) => break,
             }
         }
 
-        start.zip(end).map(|(start, end)| start..end)
+        (
+            start.zip(end).map(|(start, end)| start..end),
+            base_text_start
+                .zip(base_text_end)
+                .map(|(start, end)| start..end),
+        )
     }
 }
 
@@ -1135,7 +1180,7 @@ impl BufferDiff {
             });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::min_max_range_for_buffer(self.buffer_id)),
-                base_text_changed_range: todo!(),
+                base_text_changed_range: Some(0..self.base_text().len()),
             });
         }
     }
@@ -1161,9 +1206,11 @@ impl BufferDiff {
         ));
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
+            let base_text_changed_range =
+                first.diff_base_byte_range.start..last.diff_base_byte_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(changed_range),
-                base_text_changed_range: todo!(),
+                base_text_changed_range: Some(base_text_changed_range),
             });
         }
         new_index_text
@@ -1174,18 +1221,19 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &text::BufferSnapshot,
         cx: &App,
-    ) -> Option<Range<Anchor>> {
-        let start = self
+    ) -> (Option<Range<Anchor>>, Option<Range<usize>>) {
+        let first_hunk = self
             .hunks_intersecting_range(range.clone(), buffer, cx)
-            .next()?
-            .buffer_range
-            .start;
-        let end = self
-            .hunks_intersecting_range_rev(range, buffer)
-            .next()?
-            .buffer_range
-            .end;
-        Some(start..end)
+            .next();
+        let last_hunk = self.hunks_intersecting_range_rev(range, buffer).next();
+        let range = first_hunk
+            .as_ref()
+            .zip(last_hunk.as_ref())
+            .map(|(first, last)| first.buffer_range.start..last.buffer_range.end);
+        let base_text_range = first_hunk
+            .zip(last_hunk)
+            .map(|(first, last)| first.diff_base_byte_range.start..last.diff_base_byte_range.end);
+        (range, base_text_range)
     }
 
     pub async fn update_diff(
@@ -1247,9 +1295,9 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         let new_state = new_snapshot.inner;
-        let (base_text_changed, mut changed_range) =
+        let (base_text_changed, (mut changed_range, mut base_text_changed_range)) =
             match (state.base_text_exists, new_state.base_text_exists) {
-                (false, false) => (true, None),
+                (false, false) => (true, (None, None)),
                 (true, true)
                     if state.base_text.remote_id() == new_state.base_text.remote_id()
                         && state.base_text.syntax_update_count()
@@ -1259,12 +1307,15 @@ impl BufferDiff {
                 }
                 _ => (
                     true,
-                    Some(text::Anchor::min_max_range_for_buffer(self.buffer_id)),
+                    (
+                        Some(text::Anchor::min_max_range_for_buffer(self.buffer_id)),
+                        Some(0..new_state.base_text.len()),
+                    ),
                 ),
             };
 
         if let Some(secondary_changed_range) = secondary_diff_change
-            && let Some(secondary_hunk_range) =
+            && let (Some(secondary_hunk_range), Some(secondary_base_range)) =
                 self.range_to_hunk_range(secondary_changed_range, buffer, cx)
         {
             if let Some(range) = &mut changed_range {
@@ -1272,6 +1323,13 @@ impl BufferDiff {
                 range.end = *secondary_hunk_range.end.max(&range.end, buffer);
             } else {
                 changed_range = Some(secondary_hunk_range);
+            }
+
+            if let Some(base_text_range) = &mut base_text_changed_range {
+                base_text_range.start = secondary_base_range.start.min(base_text_range.start);
+                base_text_range.end = secondary_base_range.end.max(base_text_range.end);
+            } else {
+                base_text_changed_range = Some(secondary_base_range);
             }
         }
 
@@ -1288,13 +1346,22 @@ impl BufferDiff {
                 } else {
                     changed_range = Some(first.buffer_range.start..last.buffer_range.end);
                 }
+
+                if let Some(base_text_range) = &mut base_text_changed_range {
+                    base_text_range.start =
+                        base_text_range.start.min(first.diff_base_byte_range.start);
+                    base_text_range.end = base_text_range.end.max(last.diff_base_byte_range.end);
+                } else {
+                    base_text_changed_range =
+                        Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
+                }
             }
             state.pending_hunks = SumTree::new(buffer);
         }
 
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range: changed_range.clone(),
-            base_text_changed_range: todo!(),
+            base_text_changed_range,
         });
         changed_range
     }
@@ -2163,7 +2230,7 @@ mod tests {
 
         let empty_diff = cx.update(|cx| BufferDiffSnapshot::empty(&buffer, cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let range = diff_1.inner.compare(&empty_diff.inner, &buffer).unwrap();
+        let range = diff_1.inner.compare(&empty_diff.inner, &buffer).0.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
         // Edit does not affect the diff.
@@ -2181,7 +2248,7 @@ mod tests {
             .unindent(),
         );
         let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer));
+        assert_eq!(None, diff_2.inner.compare(&diff_1.inner, &buffer).0);
 
         // Edit turns a deletion hunk into a modification.
         buffer.edit_via_marked_text(
@@ -2198,7 +2265,7 @@ mod tests {
             .unindent(),
         );
         let diff_3 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let range = diff_3.inner.compare(&diff_2.inner, &buffer).unwrap();
+        let range = diff_3.inner.compare(&diff_2.inner, &buffer).0.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
 
         // Edit turns a modification hunk into a deletion.
@@ -2215,7 +2282,7 @@ mod tests {
             .unindent(),
         );
         let diff_4 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        let range = diff_4.inner.compare(&diff_3.inner, &buffer).unwrap();
+        let range = diff_4.inner.compare(&diff_3.inner, &buffer).0.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
 
         // Edit introduces a new insertion hunk.
@@ -2233,7 +2300,7 @@ mod tests {
             .unindent(),
         );
         let diff_5 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text.clone(), cx);
-        let range = diff_5.inner.compare(&diff_4.inner, &buffer).unwrap();
+        let range = diff_5.inner.compare(&diff_4.inner, &buffer).0.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
 
         // Edit removes a hunk.
@@ -2251,7 +2318,7 @@ mod tests {
             .unindent(),
         );
         let diff_6 = BufferDiffSnapshot::new_sync(buffer.snapshot(), base_text, cx);
-        let range = diff_6.inner.compare(&diff_5.inner, &buffer).unwrap();
+        let range = diff_6.inner.compare(&diff_5.inner, &buffer).0.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
     }
 
