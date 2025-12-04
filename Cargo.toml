@@ -505,7 +505,7 @@ ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
-fancy-regex = "0.14.0"
+fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
 futures-batch = "0.6.1"
@@ -531,7 +531,7 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 json_dotpath = "1.1"
-jsonschema = "0.30.0"
+jsonschema = "0.37.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = "0.10.0"
 jupyter-websocket-client = "0.15.0"
@@ -658,7 +658,7 @@ sysinfo = "0.37.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "7249f999c5fdf9bf3cc5c288c964454e4dac0c00" }
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "2570c4387a8505fb8f1d3f3557454b474f1e8271" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
