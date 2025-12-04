@@ -1494,28 +1494,17 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
 
-        async move {
-            let remote_url = if let Some(remote_url) = self.remote_url("upstream").await {
-                Some(remote_url)
-            } else if let Some(remote_url) = self.remote_url("origin").await {
-                Some(remote_url)
-            } else {
-                None
-            };
-            executor
-                .spawn(async move {
-                    crate::blame::Blame::for_path(
-                        &git_binary_path,
-                        &working_directory?,
-                        &path,
-                        &content,
-                        remote_url,
-                    )
-                    .await
-                })
+        executor
+            .spawn(async move {
+                crate::blame::Blame::for_path(
+                    &git_binary_path,
+                    &working_directory?,
+                    &path,
+                    &content,
+                )
                 .await
-        }
-        .boxed()
+            })
+            .boxed()
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
