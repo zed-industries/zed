@@ -93,9 +93,6 @@ enum FindSearchCandidates {
         /// based on disk contents of a buffer. This step is not performed for buffers we already have in memory.
         confirm_contents_will_match_tx: Sender<MatchingEntry>,
         confirm_contents_will_match_rx: Receiver<MatchingEntry>,
-        /// Of those that contain at least one match (or are already in memory), look for rest of matches (and figure out their ranges).
-        /// But wait - first, we need to go back to the main thread to open a buffer (& create an entity for it).
-        get_buffer_for_full_scan_tx: Sender<ProjectPath>,
     },
     Remote,
     OpenBuffersOnly,
@@ -226,7 +223,7 @@ impl Search {
                             .boxed_local(),
                             cx.background_spawn(Self::maintain_sorted_search_results(
                                 sorted_search_results_rx,
-                                get_buffer_for_full_scan_tx.clone(),
+                                get_buffer_for_full_scan_tx,
                                 self.limit,
                             ))
                             .boxed_local(),
@@ -234,7 +231,6 @@ impl Search {
                         (
                             FindSearchCandidates::Local {
                                 fs,
-                                get_buffer_for_full_scan_tx,
                                 confirm_contents_will_match_tx,
                                 confirm_contents_will_match_rx,
                                 input_paths_rx,
@@ -593,7 +589,6 @@ impl Worker<'_> {
             input_paths_rx,
             confirm_contents_will_match_rx,
             mut confirm_contents_will_match_tx,
-            mut get_buffer_for_full_scan_tx,
             fs,
         ) = match self.candidates {
             FindSearchCandidates::Local {
@@ -601,21 +596,15 @@ impl Worker<'_> {
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx,
             } => (
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx,
                 Some(fs),
             ),
-            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => (
-                unbounded().1,
-                unbounded().1,
-                unbounded().0,
-                unbounded().0,
-                None,
-            ),
+            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => {
+                (unbounded().1, unbounded().1, unbounded().0, None)
+            }
         };
         // WorkerA: grabs a request for "find all matches in file/a" <- takes 5 minutes
         // right after: WorkerB: grabs a request for "find all matches in file/b" <- takes 5 seconds
