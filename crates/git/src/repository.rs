@@ -1646,7 +1646,7 @@ impl GitRepository for RealGitRepository {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory?)
                         .envs(env.iter())
-                        .args(["update-index", "--add", "--remove", "--"])
+                        .args(["add", "--"])
                         .args(paths.iter().map(|p| p.as_unix_str()))
                         .output()
                         .await?;
@@ -2322,7 +2322,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
-        OsString::from("--no-renames"),
+        OsString::from("--find-renames"),
         OsString::from("-z"),
     ];
     args.extend(
