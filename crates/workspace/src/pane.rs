@@ -257,41 +257,6 @@ pub struct SplitVertical {
     pub operation: SplitOperation,
 }
 
-// TODO not so sure if we need/want those?
-macro_rules! impl_split_operations {
-    ($($split_type:ty),+ $(,)?) => {
-        $(
-            impl $split_type {
-                pub fn and_clone() -> Self {
-                    Self {
-                        operation: SplitOperation::Clone,
-                    }
-                }
-
-                pub fn and_clear() -> Self {
-                    Self {
-                        operation: SplitOperation::Clear,
-                    }
-                }
-
-                pub fn and_move() -> Self {
-                    Self {
-                        operation: SplitOperation::Move,
-                    }
-                }
-            }
-        )+
-    };
-}
-impl_split_operations!(
-    SplitLeft,
-    SplitRight,
-    SplitUp,
-    SplitDown,
-    SplitHorizontal,
-    SplitVertical,
-);
-
 actions!(
     pane,
     [
@@ -3732,11 +3697,12 @@ fn default_render_tab_bar_buttons(
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
+                        let operation = SplitOperation::Move;
                         if can_split_move {
-                            menu.action("Split Right", SplitRight::and_move().boxed_clone())
-                                .action("Split Left", SplitLeft::and_move().boxed_clone())
-                                .action("Split Up", SplitUp::and_move().boxed_clone())
-                                .action("Split Down", SplitDown::and_move().boxed_clone())
+                            menu.action("Split Right", SplitRight { operation }.boxed_clone())
+                                .action("Split Left", SplitLeft { operation }.boxed_clone())
+                                .action("Split Up", SplitUp { operation }.boxed_clone())
+                                .action("Split Down", SplitDown { operation }.boxed_clone())
                         } else {
                             menu.action("Split Right", SplitRight::default().boxed_clone())
                                 .action("Split Left", SplitLeft::default().boxed_clone())
