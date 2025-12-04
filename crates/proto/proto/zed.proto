@@ -437,13 +437,18 @@ message Envelope {
         OpenImageResponse open_image_response = 392;
         CreateImageForPeer create_image_for_peer = 393;
 
+
         GitFileHistory git_file_history = 397;
         GitFileHistoryResponse git_file_history_response = 398;
 
         RunGitHook run_git_hook = 399;
 
         GitDeleteBranch git_delete_branch = 400;
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401; // current max
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401;
+
+        GitCreateRemote git_create_remote = 402;
+        GitRemoveRemote git_remove_remote = 403;// current max
     }
 
     reserved 87 to 88, 396;

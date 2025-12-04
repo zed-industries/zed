@@ -38,6 +38,7 @@ use util::{
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: Version = Version::new(0, 7, 0);
+#[allow(dead_code)]
 pub const MAX_VERSION: Version = Version::new(0, 8, 0);
 
 wasmtime::component::bindgen!({
@@ -1203,3 +1204,581 @@ impl ExtensionImports for WasmState {
 // =============================================================================
 
 impl llm_provider::Host for WasmState {}
+
+// =============================================================================
+// LLM Provider Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+use super::since_v0_8_0 as latest;
+
+impl From<llm_provider::ProviderInfo> for latest::llm_provider::ProviderInfo {
+    fn from(value: llm_provider::ProviderInfo) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            icon: value.icon,
+        }
+    }
+}
+
+impl From<llm_provider::ModelInfo> for latest::llm_provider::ModelInfo {
+    fn from(value: llm_provider::ModelInfo) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            max_token_count: value.max_token_count,
+            max_output_tokens: value.max_output_tokens,
+            capabilities: value.capabilities.into(),
+            is_default: value.is_default,
+            is_default_fast: value.is_default_fast,
+        }
+    }
+}
+
+impl From<llm_provider::ModelCapabilities> for latest::llm_provider::ModelCapabilities {
+    fn from(value: llm_provider::ModelCapabilities) -> Self {
+        Self {
+            supports_images: value.supports_images,
+            supports_tools: value.supports_tools,
+            supports_tool_choice_auto: value.supports_tool_choice_auto,
+            supports_tool_choice_any: value.supports_tool_choice_any,
+            supports_tool_choice_none: value.supports_tool_choice_none,
+            supports_thinking: value.supports_thinking,
+            tool_input_format: value.tool_input_format.into(),
+        }
+    }
+}
+
+impl From<llm_provider::ToolInputFormat> for latest::llm_provider::ToolInputFormat {
+    fn from(value: llm_provider::ToolInputFormat) -> Self {
+        match value {
+            llm_provider::ToolInputFormat::JsonSchema => Self::JsonSchema,
+            llm_provider::ToolInputFormat::Simplified => Self::Simplified,
+        }
+    }
+}
+
+impl From<llm_provider::CompletionEvent> for latest::llm_provider::CompletionEvent {
+    fn from(value: llm_provider::CompletionEvent) -> Self {
+        match value {
+            llm_provider::CompletionEvent::Started => Self::Started,
+            llm_provider::CompletionEvent::Text(s) => Self::Text(s),
+            llm_provider::CompletionEvent::Thinking(t) => Self::Thinking(t.into()),
+            llm_provider::CompletionEvent::RedactedThinking(s) => Self::RedactedThinking(s),
+            llm_provider::CompletionEvent::ToolUse(t) => Self::ToolUse(t.into()),
+            llm_provider::CompletionEvent::ToolUseJsonParseError(e) => {
+                Self::ToolUseJsonParseError(e.into())
+            }
+            llm_provider::CompletionEvent::Stop(r) => Self::Stop(r.into()),
+            llm_provider::CompletionEvent::Usage(u) => Self::Usage(u.into()),
+            llm_provider::CompletionEvent::ReasoningDetails(s) => Self::ReasoningDetails(s),
+        }
+    }
+}
+
+impl From<llm_provider::ThinkingContent> for latest::llm_provider::ThinkingContent {
+    fn from(value: llm_provider::ThinkingContent) -> Self {
+        Self {
+            text: value.text,
+            signature: value.signature,
+        }
+    }
+}
+
+impl From<llm_provider::ToolUse> for latest::llm_provider::ToolUse {
+    fn from(value: llm_provider::ToolUse) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            input: value.input,
+            thought_signature: value.thought_signature,
+        }
+    }
+}
+
+impl From<llm_provider::ToolUseJsonParseError> for latest::llm_provider::ToolUseJsonParseError {
+    fn from(value: llm_provider::ToolUseJsonParseError) -> Self {
+        Self {
+            id: value.id,
+            tool_name: value.tool_name,
+            raw_input: value.raw_input,
+            error: value.error,
+        }
+    }
+}
+
+impl From<llm_provider::StopReason> for latest::llm_provider::StopReason {
+    fn from(value: llm_provider::StopReason) -> Self {
+        match value {
+            llm_provider::StopReason::EndTurn => Self::EndTurn,
+            llm_provider::StopReason::MaxTokens => Self::MaxTokens,
+            llm_provider::StopReason::ToolUse => Self::ToolUse,
+            llm_provider::StopReason::Refusal => Self::Refusal,
+        }
+    }
+}
+
+impl From<llm_provider::TokenUsage> for latest::llm_provider::TokenUsage {
+    fn from(value: llm_provider::TokenUsage) -> Self {
+        Self {
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            cache_creation_input_tokens: value.cache_creation_input_tokens,
+            cache_read_input_tokens: value.cache_read_input_tokens,
+        }
+    }
+}
+
+impl From<llm_provider::CacheConfiguration> for latest::llm_provider::CacheConfiguration {
+    fn from(value: llm_provider::CacheConfiguration) -> Self {
+        Self {
+            max_cache_anchors: value.max_cache_anchors,
+            should_cache_tool_definitions: value.should_cache_tool_definitions,
+            min_total_token_count: value.min_total_token_count,
+        }
+    }
+}
+
+// Conversions from latest (v0.8.0) -> v0.7.0 for requests
+
+impl From<latest::llm_provider::CompletionRequest> for llm_provider::CompletionRequest {
+    fn from(value: latest::llm_provider::CompletionRequest) -> Self {
+        Self {
+            messages: value.messages.into_iter().map(Into::into).collect(),
+            tools: value.tools.into_iter().map(Into::into).collect(),
+            tool_choice: value.tool_choice.map(Into::into),
+            stop_sequences: value.stop_sequences,
+            temperature: value.temperature,
+            thinking_allowed: value.thinking_allowed,
+            max_tokens: value.max_tokens,
+        }
+    }
+}
+
+impl From<latest::llm_provider::RequestMessage> for llm_provider::RequestMessage {
+    fn from(value: latest::llm_provider::RequestMessage) -> Self {
+        Self {
+            role: value.role.into(),
+            content: value.content.into_iter().map(Into::into).collect(),
+            cache: value.cache,
+        }
+    }
+}
+
+impl From<latest::llm_provider::MessageRole> for llm_provider::MessageRole {
+    fn from(value: latest::llm_provider::MessageRole) -> Self {
+        match value {
+            latest::llm_provider::MessageRole::User => Self::User,
+            latest::llm_provider::MessageRole::Assistant => Self::Assistant,
+            latest::llm_provider::MessageRole::System => Self::System,
+        }
+    }
+}
+
+impl From<latest::llm_provider::MessageContent> for llm_provider::MessageContent {
+    fn from(value: latest::llm_provider::MessageContent) -> Self {
+        match value {
+            latest::llm_provider::MessageContent::Text(s) => Self::Text(s),
+            latest::llm_provider::MessageContent::Image(i) => Self::Image(i.into()),
+            latest::llm_provider::MessageContent::ToolUse(t) => Self::ToolUse(t.into()),
+            latest::llm_provider::MessageContent::ToolResult(t) => Self::ToolResult(t.into()),
+            latest::llm_provider::MessageContent::Thinking(t) => Self::Thinking(t.into()),
+            latest::llm_provider::MessageContent::RedactedThinking(s) => Self::RedactedThinking(s),
+        }
+    }
+}
+
+impl From<latest::llm_provider::ImageData> for llm_provider::ImageData {
+    fn from(value: latest::llm_provider::ImageData) -> Self {
+        Self {
+            source: value.source,
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
+impl From<latest::llm_provider::ToolUse> for llm_provider::ToolUse {
+    fn from(value: latest::llm_provider::ToolUse) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            input: value.input,
+            thought_signature: value.thought_signature,
+        }
+    }
+}
+
+impl From<latest::llm_provider::ToolResult> for llm_provider::ToolResult {
+    fn from(value: latest::llm_provider::ToolResult) -> Self {
+        Self {
+            tool_use_id: value.tool_use_id,
+            tool_name: value.tool_name,
+            is_error: value.is_error,
+            content: value.content.into(),
+        }
+    }
+}
+
+impl From<latest::llm_provider::ToolResultContent> for llm_provider::ToolResultContent {
+    fn from(value: latest::llm_provider::ToolResultContent) -> Self {
+        match value {
+            latest::llm_provider::ToolResultContent::Text(s) => Self::Text(s),
+            latest::llm_provider::ToolResultContent::Image(i) => Self::Image(i.into()),
+        }
+    }
+}
+
+impl From<latest::llm_provider::ThinkingContent> for llm_provider::ThinkingContent {
+    fn from(value: latest::llm_provider::ThinkingContent) -> Self {
+        Self {
+            text: value.text,
+            signature: value.signature,
+        }
+    }
+}
+
+impl From<latest::llm_provider::ToolDefinition> for llm_provider::ToolDefinition {
+    fn from(value: latest::llm_provider::ToolDefinition) -> Self {
+        Self {
+            name: value.name,
+            description: value.description,
+            input_schema: value.input_schema,
+        }
+    }
+}
+
+impl From<latest::llm_provider::ToolChoice> for llm_provider::ToolChoice {
+    fn from(value: latest::llm_provider::ToolChoice) -> Self {
+        match value {
+            latest::llm_provider::ToolChoice::Auto => Self::Auto,
+            latest::llm_provider::ToolChoice::Any => Self::Any,
+            latest::llm_provider::ToolChoice::None => Self::None,
+        }
+    }
+}
+
+// =============================================================================
+// Command Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+impl From<Command> for latest::Command {
+    fn from(value: Command) -> Self {
+        Self {
+            command: value.command,
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
+// =============================================================================
+// LSP Type Conversions (latest/v0.8.0 -> v0.7.0)
+// =============================================================================
+
+impl From<latest::lsp::Completion> for lsp::Completion {
+    fn from(value: latest::lsp::Completion) -> Self {
+        Self {
+            label: value.label,
+            label_details: value.label_details.map(Into::into),
+            detail: value.detail,
+            kind: value.kind.map(Into::into),
+            insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<latest::lsp::CompletionLabelDetails> for lsp::CompletionLabelDetails {
+    fn from(value: latest::lsp::CompletionLabelDetails) -> Self {
+        Self {
+            detail: value.detail,
+            description: value.description,
+        }
+    }
+}
+
+impl From<latest::lsp::CompletionKind> for lsp::CompletionKind {
+    fn from(value: latest::lsp::CompletionKind) -> Self {
+        match value {
+            latest::lsp::CompletionKind::Text => Self::Text,
+            latest::lsp::CompletionKind::Method => Self::Method,
+            latest::lsp::CompletionKind::Function => Self::Function,
+            latest::lsp::CompletionKind::Constructor => Self::Constructor,
+            latest::lsp::CompletionKind::Field => Self::Field,
+            latest::lsp::CompletionKind::Variable => Self::Variable,
+            latest::lsp::CompletionKind::Class => Self::Class,
+            latest::lsp::CompletionKind::Interface => Self::Interface,
+            latest::lsp::CompletionKind::Module => Self::Module,
+            latest::lsp::CompletionKind::Property => Self::Property,
+            latest::lsp::CompletionKind::Unit => Self::Unit,
+            latest::lsp::CompletionKind::Value => Self::Value,
+            latest::lsp::CompletionKind::Enum => Self::Enum,
+            latest::lsp::CompletionKind::Keyword => Self::Keyword,
+            latest::lsp::CompletionKind::Snippet => Self::Snippet,
+            latest::lsp::CompletionKind::Color => Self::Color,
+            latest::lsp::CompletionKind::File => Self::File,
+            latest::lsp::CompletionKind::Reference => Self::Reference,
+            latest::lsp::CompletionKind::Folder => Self::Folder,
+            latest::lsp::CompletionKind::EnumMember => Self::EnumMember,
+            latest::lsp::CompletionKind::Constant => Self::Constant,
+            latest::lsp::CompletionKind::Struct => Self::Struct,
+            latest::lsp::CompletionKind::Event => Self::Event,
+            latest::lsp::CompletionKind::Operator => Self::Operator,
+            latest::lsp::CompletionKind::TypeParameter => Self::TypeParameter,
+            latest::lsp::CompletionKind::Other(n) => Self::Other(n),
+        }
+    }
+}
+
+impl From<latest::lsp::InsertTextFormat> for lsp::InsertTextFormat {
+    fn from(value: latest::lsp::InsertTextFormat) -> Self {
+        match value {
+            latest::lsp::InsertTextFormat::PlainText => Self::PlainText,
+            latest::lsp::InsertTextFormat::Snippet => Self::Snippet,
+            latest::lsp::InsertTextFormat::Other(n) => Self::Other(n),
+        }
+    }
+}
+
+impl From<latest::lsp::Symbol> for lsp::Symbol {
+    fn from(value: latest::lsp::Symbol) -> Self {
+        Self {
+            kind: value.kind.into(),
+            name: value.name,
+        }
+    }
+}
+
+impl From<latest::lsp::SymbolKind> for lsp::SymbolKind {
+    fn from(value: latest::lsp::SymbolKind) -> Self {
+        match value {
+            latest::lsp::SymbolKind::File => Self::File,
+            latest::lsp::SymbolKind::Module => Self::Module,
+            latest::lsp::SymbolKind::Namespace => Self::Namespace,
+            latest::lsp::SymbolKind::Package => Self::Package,
+            latest::lsp::SymbolKind::Class => Self::Class,
+            latest::lsp::SymbolKind::Method => Self::Method,
+            latest::lsp::SymbolKind::Property => Self::Property,
+            latest::lsp::SymbolKind::Field => Self::Field,
+            latest::lsp::SymbolKind::Constructor => Self::Constructor,
+            latest::lsp::SymbolKind::Enum => Self::Enum,
+            latest::lsp::SymbolKind::Interface => Self::Interface,
+            latest::lsp::SymbolKind::Function => Self::Function,
+            latest::lsp::SymbolKind::Variable => Self::Variable,
+            latest::lsp::SymbolKind::Constant => Self::Constant,
+            latest::lsp::SymbolKind::String => Self::String,
+            latest::lsp::SymbolKind::Number => Self::Number,
+            latest::lsp::SymbolKind::Boolean => Self::Boolean,
+            latest::lsp::SymbolKind::Array => Self::Array,
+            latest::lsp::SymbolKind::Object => Self::Object,
+            latest::lsp::SymbolKind::Key => Self::Key,
+            latest::lsp::SymbolKind::Null => Self::Null,
+            latest::lsp::SymbolKind::EnumMember => Self::EnumMember,
+            latest::lsp::SymbolKind::Struct => Self::Struct,
+            latest::lsp::SymbolKind::Event => Self::Event,
+            latest::lsp::SymbolKind::Operator => Self::Operator,
+            latest::lsp::SymbolKind::TypeParameter => Self::TypeParameter,
+            latest::lsp::SymbolKind::Other(n) => Self::Other(n),
+        }
+    }
+}
+
+// =============================================================================
+// CodeLabel Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+impl From<CodeLabel> for latest::CodeLabel {
+    fn from(value: CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value.spans.into_iter().map(Into::into).collect(),
+            filter_range: value.filter_range.into(),
+        }
+    }
+}
+
+impl From<CodeLabelSpan> for latest::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(r) => Self::CodeRange(r.into()),
+            CodeLabelSpan::Literal(l) => Self::Literal(l.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for latest::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<Range> for latest::Range {
+    fn from(value: Range) -> Self {
+        Self {
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+// =============================================================================
+// SlashCommand Type Conversions (latest/v0.8.0 -> v0.7.0)
+// =============================================================================
+
+impl From<&latest::SlashCommand> for slash_command::SlashCommand {
+    fn from(value: &latest::SlashCommand) -> Self {
+        Self {
+            name: value.name.clone(),
+            description: value.description.clone(),
+            tooltip_text: value.tooltip_text.clone(),
+            requires_argument: value.requires_argument,
+        }
+    }
+}
+
+// =============================================================================
+// SlashCommand Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+impl From<slash_command::SlashCommandArgumentCompletion>
+    for latest::SlashCommandArgumentCompletion
+{
+    fn from(value: slash_command::SlashCommandArgumentCompletion) -> Self {
+        Self {
+            label: value.label,
+            new_text: value.new_text,
+            run_command: value.run_command,
+        }
+    }
+}
+
+impl From<slash_command::SlashCommandOutput> for latest::SlashCommandOutput {
+    fn from(value: slash_command::SlashCommandOutput) -> Self {
+        Self {
+            sections: value.sections.into_iter().map(Into::into).collect(),
+            text: value.text,
+        }
+    }
+}
+
+impl From<SlashCommandOutputSection> for latest::slash_command::SlashCommandOutputSection {
+    fn from(value: SlashCommandOutputSection) -> Self {
+        Self {
+            range: value.range.into(),
+            label: value.label,
+        }
+    }
+}
+
+// =============================================================================
+// ContextServer Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+impl From<context_server::ContextServerConfiguration>
+    for latest::context_server::ContextServerConfiguration
+{
+    fn from(value: context_server::ContextServerConfiguration) -> Self {
+        Self {
+            installation_instructions: value.installation_instructions,
+            settings_schema: value.settings_schema,
+            default_settings: value.default_settings,
+        }
+    }
+}
+
+// =============================================================================
+// DAP Type Conversions (v0.7.0 -> latest/v0.8.0)
+// =============================================================================
+
+impl From<dap::DebugAdapterBinary> for latest::dap::DebugAdapterBinary {
+    fn from(value: dap::DebugAdapterBinary) -> Self {
+        Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs,
+            cwd: value.cwd,
+            connection: value.connection.map(|c| latest::dap::TcpArguments {
+                host: c.host,
+                port: c.port,
+                timeout: c.timeout,
+            }),
+            request_args: latest::dap::StartDebuggingRequestArguments {
+                configuration: value.request_args.configuration,
+                request: match value.request_args.request {
+                    dap::StartDebuggingRequestArgumentsRequest::Launch => {
+                        latest::dap::StartDebuggingRequestArgumentsRequest::Launch
+                    }
+                    dap::StartDebuggingRequestArgumentsRequest::Attach => {
+                        latest::dap::StartDebuggingRequestArgumentsRequest::Attach
+                    }
+                },
+            },
+        }
+    }
+}
+
+impl From<dap::StartDebuggingRequestArgumentsRequest>
+    for latest::dap::StartDebuggingRequestArgumentsRequest
+{
+    fn from(value: dap::StartDebuggingRequestArgumentsRequest) -> Self {
+        match value {
+            dap::StartDebuggingRequestArgumentsRequest::Launch => Self::Launch,
+            dap::StartDebuggingRequestArgumentsRequest::Attach => Self::Attach,
+        }
+    }
+}
+
+impl From<dap::DebugScenario> for latest::dap::DebugScenario {
+    fn from(value: dap::DebugScenario) -> Self {
+        Self {
+            adapter: value.adapter,
+            label: value.label,
+            build: value.build.map(|b| match b {
+                dap::BuildTaskDefinition::ByName(name) => {
+                    latest::dap::BuildTaskDefinition::ByName(name)
+                }
+                dap::BuildTaskDefinition::Template(t) => {
+                    latest::dap::BuildTaskDefinition::Template(
+                        latest::dap::BuildTaskDefinitionTemplatePayload {
+                            locator_name: t.locator_name,
+                            template: latest::dap::BuildTaskTemplate {
+                                label: t.template.label,
+                                command: t.template.command,
+                                args: t.template.args,
+                                env: t.template.env,
+                                cwd: t.template.cwd,
+                            },
+                        },
+                    )
+                }
+            }),
+            config: value.config,
+            tcp_connection: value
+                .tcp_connection
+                .map(|t| latest::dap::TcpArgumentsTemplate {
+                    host: t.host,
+                    port: t.port,
+                    timeout: t.timeout,
+                }),
+        }
+    }
+}
+
+impl From<dap::DebugRequest> for latest::dap::DebugRequest {
+    fn from(value: dap::DebugRequest) -> Self {
+        match value {
+            dap::DebugRequest::Attach(a) => Self::Attach(latest::dap::AttachRequest {
+                process_id: a.process_id,
+            }),
+            dap::DebugRequest::Launch(l) => Self::Launch(latest::dap::LaunchRequest {
+                program: l.program,
+                cwd: l.cwd,
+                args: l.args,
+                envs: l.envs,
+            }),
+        }
+    }
+}

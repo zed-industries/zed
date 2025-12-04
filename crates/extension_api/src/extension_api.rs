@@ -274,10 +274,6 @@ pub trait Extension: Send + Sync {
         Err("`run_dap_locator` not implemented".to_string())
     }
 
-    // =========================================================================
-    // Language Model Provider Methods
-    // =========================================================================
-
     /// Returns information about language model providers offered by this extension.
     fn llm_providers(&self) -> Vec<LlmProviderInfo> {
         Vec::new()
@@ -427,7 +423,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.7.0",
+        path: "./wit/since_v0.8.0",
     });
 }
 
@@ -611,10 +607,6 @@ impl wit::Guest for Component {
     ) -> Result<DebugRequest, String> {
         extension().run_dap_locator(locator_name, build_task)
     }
-
-    // =========================================================================
-    // Language Model Provider Methods
-    // =========================================================================
 
     fn llm_providers() -> Vec<LlmProviderInfo> {
         extension().llm_providers()

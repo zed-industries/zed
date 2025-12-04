@@ -333,6 +333,19 @@ where
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth"
         );
+
+        cx.set_state(indoc! {r#"ˇ{{}}"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"«1{«2{}2»}1»
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "All markdown brackets should be colored based on their depth, again"
+        );
     }
 
     #[gpui::test]

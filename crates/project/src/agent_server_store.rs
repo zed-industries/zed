@@ -453,7 +453,9 @@ impl AgentServerStore {
                     .clone()
                     .and_then(|settings| settings.custom_command()),
                 http_client: http_client.clone(),
-                is_remote: downstream_client.is_some(),
+                no_browser: downstream_client
+                    .as_ref()
+                    .is_some_and(|(_, client)| !client.has_wsl_interop()),
             }),
         );
         self.external_agents.insert(
@@ -1355,7 +1357,7 @@ struct LocalCodex {
     project_environment: Entity<ProjectEnvironment>,
     http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
-    is_remote: bool,
+    no_browser: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -1375,7 +1377,7 @@ impl ExternalAgentServer for LocalCodex {
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
             .into();
-        let is_remote = self.is_remote;
+        let no_browser = self.no_browser;
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1388,7 +1390,7 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
-            if is_remote {
+            if no_browser {
                 env.insert("NO_BROWSER".to_owned(), "1".to_owned());
             }
 

@@ -1227,7 +1227,13 @@ impl EditorElement {
                 editor.hide_blame_popover(false, cx);
             }
         } else {
-            editor.hide_blame_popover(false, cx);
+            let keyboard_grace = editor
+                .inline_blame_popover
+                .as_ref()
+                .is_some_and(|state| state.keyboard_grace);
+            if !keyboard_grace {
+                editor.hide_blame_popover(false, cx);
+            }
         }
 
         let breakpoint_indicator = if gutter_hovered {
@@ -2511,7 +2517,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         line_height: Pixels,
-        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineBlameLayout> {
@@ -2580,16 +2585,6 @@ impl EditorElement {
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let bounds = Bounds::new(absolute_offset, size);
 
-        self.layout_blame_entry_popover(
-            entry.clone(),
-            blame,
-            line_height,
-            text_hitbox,
-            row_info.buffer_id?,
-            window,
-            cx,
-        );
-
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(InlineBlameLayout {
@@ -2600,16 +2595,48 @@ impl EditorElement {
         })
     }
 
-    fn layout_blame_entry_popover(
+    fn layout_blame_popover(
         &self,
-        blame_entry: BlameEntry,
-        blame: Entity<GitBlame>,
-        line_height: Pixels,
+        editor_snapshot: &EditorSnapshot,
         text_hitbox: &Hitbox,
-        buffer: BufferId,
+        line_height: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) {
+        if !self.editor.read(cx).inline_blame_popover.is_some() {
+            return;
+        }
+
+        let Some(blame) = self.editor.read(cx).blame.clone() else {
+            return;
+        };
+        let cursor_point = self
+            .editor
+            .read(cx)
+            .selections
+            .newest::<language::Point>(&editor_snapshot.display_snapshot)
+            .head();
+
+        let Some((buffer, buffer_point, _)) = editor_snapshot
+            .buffer_snapshot()
+            .point_to_buffer_point(cursor_point)
+        else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(buffer_point.row),
+            ..Default::default()
+        };
+
+        let Some((buffer_id, blame_entry)) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
         let Some((popover_state, target_point)) = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
@@ -2631,7 +2658,7 @@ impl EditorElement {
                 popover_state.markdown,
                 workspace,
                 &blame,
-                buffer,
+                buffer_id,
                 window,
                 cx,
             )
@@ -9813,7 +9840,6 @@ impl Element for EditorElement {
                                     scroll_position,
                                     scroll_pixel_position,
                                     line_height,
-                                    &text_hitbox,
                                     window,
                                     cx,
                                 ) {
@@ -10011,6 +10037,8 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
+
+                        self.layout_blame_popover(&snapshot, &hitbox, line_height, window, cx);
                     }
 
                     let mouse_context_menu = self.layout_mouse_context_menu(
