@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task, WeakEntity,
-    Window, actions, canvas, div, img, opaque_grey, point, px, size,
+    Window, actions, canvas, div, img, point, px,
 };
 use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
@@ -542,64 +542,9 @@ impl Render for ImageView {
                             })
                             .ml(pan_offset.x)
                             .mt(pan_offset.y)
-                            .child({
-                                // draw checkerboard pattern behind the image for transparency
-                                canvas(
-                                    |_, _, _| {},
-                                    move |bounds, _, window, _cx| {
-                                        let square_size: f32 = 8.0;
-
-                                        let start_y: f32 = bounds.origin.y.into();
-                                        let height: f32 = scaled_size
-                                            .map(|(_, h)| h.into())
-                                            .unwrap_or_else(|| bounds.size.height.into());
-                                        let start_x: f32 = bounds.origin.x.into();
-                                        let width: f32 = scaled_size
-                                            .map(|(w, _)| w.into())
-                                            .unwrap_or_else(|| bounds.size.width.into());
-
-                                        let mut y = start_y;
-                                        let mut x = start_x;
-                                        let mut color_swapper = true;
-                                        // draw checkerboard pattern
-                                        while y < start_y + height {
-                                            // keeping track of the grid in order to be resilient to resizing
-                                            let start_swap = color_swapper;
-                                            while x < start_x + width {
-                                                // clamp square dimensions to not exceed bounds
-                                                let square_width =
-                                                    square_size.min(start_x + width - x);
-                                                let square_height =
-                                                    square_size.min(start_y + height - y);
-
-                                                let rect = Bounds::new(
-                                                    point(px(x), px(y)),
-                                                    size(px(square_width), px(square_height)),
-                                                );
-
-                                                let color = if color_swapper {
-                                                    opaque_grey(0.6, 0.4)
-                                                } else {
-                                                    opaque_grey(0.7, 0.4)
-                                                };
-
-                                                window.paint_quad(gpui::fill(rect, color));
-                                                color_swapper = !color_swapper;
-                                                x += square_size;
-                                            }
-                                            x = start_x;
-                                            color_swapper = !start_swap;
-                                            y += square_size;
-                                        }
-                                    },
-                                )
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .size_full()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                            })
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
                             .child({
                                 let image_element = img(image).id("img");
 
