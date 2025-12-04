@@ -403,6 +403,7 @@ pub struct GitPanel {
     fs: Arc<dyn Fs>,
     new_count: usize,
     entry_count: usize,
+    changes_count: usize,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
@@ -566,6 +567,7 @@ impl GitPanel {
                 fs,
                 new_count: 0,
                 new_staged_count: 0,
+                changes_count: 0,
                 pending_commit: None,
                 amend_pending: false,
                 original_commit_message: None,
@@ -2997,6 +2999,7 @@ impl GitPanel {
         self.single_tracked_entry.take();
         self.conflicted_count = 0;
         self.conflicted_staged_count = 0;
+        self.changes_count = 0;
         self.new_count = 0;
         self.tracked_count = 0;
         self.new_staged_count = 0;
@@ -3027,6 +3030,7 @@ impl GitPanel {
         self.stash_entries = repo.cached_stash();
 
         for entry in repo.cached_status() {
+            self.changes_count += 1;
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
@@ -3303,18 +3307,24 @@ impl GitPanel {
         self.new_staged_count = 0;
         self.tracked_staged_count = 0;
         self.entry_count = 0;
-        for entry in &self.entries {
-            let Some(status_entry) = entry.status_entry() else {
-                continue;
+
+        for git_status in repo.cached_status() {
+            let staging = git_status.status.staging();
+
+            let entry = GitStatusEntry {
+                repo_path: git_status.repo_path.clone(),
+                status: git_status.status,
+                staging,
             };
             self.entry_count += 1;
-            let is_staging_or_staged = self.is_entry_staged(status_entry, repo);
-            if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
+
+            let is_staging_or_staged = self.is_entry_staged(&entry, repo);
+            if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
                 self.conflicted_count += 1;
                 if is_staging_or_staged {
                     self.conflicted_staged_count += 1;
                 }
-            } else if status_entry.status.is_created() {
+            } else if entry.status.is_created() {
                 self.new_count += 1;
                 if is_staging_or_staged {
                     self.new_staged_count += 1;
@@ -3885,10 +3895,10 @@ impl GitPanel {
                 ("Stage All", StageAll.boxed_clone(), true, "git add --all")
             };
 
-        let change_string = match self.entry_count {
+        let change_string = match self.changes_count {
             0 => "No Changes".to_string(),
             1 => "1 Change".to_string(),
-            _ => format!("{} Changes", self.entry_count),
+            count => format!("{} Changes", count),
         };
 
         Some(
