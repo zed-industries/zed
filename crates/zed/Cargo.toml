@@ -19,7 +19,7 @@ name = "zed"
 path = "src/main.rs"
 
 [features]
-default = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
+default = ["tracing/release_max_level_off", "tracing/max_level_off"]
 
 [dependencies]
 acp_tools.workspace = true

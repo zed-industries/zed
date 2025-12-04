@@ -13,7 +13,7 @@ path = "src/project.rs"
 doctest = false
 
 [features]
-default = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
+default = ["tracing/release_max_level_off", "tracing/max_level_off"]
 test-support = [
     "buffer_diff/test-support",
     "client/test-support",
