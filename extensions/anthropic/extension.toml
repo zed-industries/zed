@@ -8,3 +8,6 @@ repository = "https://github.com/zed-industries/zed"
 
 [language_model_providers.anthropic]
 name = "Anthropic"
+
+[language_model_providers.anthropic.auth]
+env_var = "ANTHROPIC_API_KEY"

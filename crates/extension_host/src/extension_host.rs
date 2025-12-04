@@ -80,6 +80,80 @@ pub use extension_settings::ExtensionSettings;
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
+/// Extension IDs that are being migrated from hardcoded LLM providers.
+/// For backwards compatibility, if the user has the corresponding env var set,
+/// we automatically enable env var reading for these extensions.
+const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
+    "anthropic",
+    "copilot_chat",
+    "google-ai",
+    "open_router",
+    "openai",
+];
+
+/// Migrates legacy LLM provider extensions by auto-enabling env var reading
+/// if the env var is currently present in the environment.
+fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut App) {
+    // Only apply migration to known legacy LLM extensions
+    if !LEGACY_LLM_EXTENSION_IDS.contains(&manifest.id.as_ref()) {
+        return;
+    }
+
+    // Check each provider in the manifest
+    for (provider_id, provider_entry) in &manifest.language_model_providers {
+        let Some(auth_config) = &provider_entry.auth else {
+            continue;
+        };
+        let Some(env_var_name) = &auth_config.env_var else {
+            continue;
+        };
+
+        // Check if the env var is present and non-empty
+        let env_var_is_set = std::env::var(env_var_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        if !env_var_is_set {
+            continue;
+        }
+
+        let full_provider_id: Arc<str> = format!("{}:{}", manifest.id, provider_id).into();
+
+        // Check if already in settings
+        let already_allowed = ExtensionSettings::get_global(cx)
+            .allowed_env_var_providers
+            .contains(full_provider_id.as_ref());
+
+        if already_allowed {
+            continue;
+        }
+
+        // Auto-enable env var reading for this provider
+        log::info!(
+            "Migrating legacy LLM provider {}: auto-enabling {} env var reading",
+            full_provider_id,
+            env_var_name
+        );
+
+        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
+            let full_provider_id = full_provider_id.clone();
+            move |settings, _| {
+                let providers = settings
+                    .extension
+                    .allowed_env_var_providers
+                    .get_or_insert_with(Vec::new);
+
+                if !providers
+                    .iter()
+                    .any(|id| id.as_ref() == full_provider_id.as_ref())
+                {
+                    providers.push(full_provider_id);
+                }
+            }
+        });
+    }
+}
+
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
@@ -781,6 +855,11 @@ impl ExtensionStore {
 
             if let ExtensionOperation::Install = operation {
                 this.update(cx, |this, cx| {
+                    // Check for legacy LLM provider migration
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        migrate_legacy_llm_provider_env_var(&manifest, cx);
+                    }
+
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx)
                         && let Some(manifest) = this.extension_manifest_for_id(&extension_id)

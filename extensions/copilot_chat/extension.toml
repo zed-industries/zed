@@ -8,3 +8,6 @@ repository = "https://github.com/zed-industries/zed"
 
 [language_model_providers.copilot_chat]
 name = "Copilot Chat"
+
+[language_model_providers.copilot_chat.auth]
+env_var = "GH_COPILOT_TOKEN"
