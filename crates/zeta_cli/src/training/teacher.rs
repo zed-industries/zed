@@ -9,13 +9,15 @@ pub struct TeacherModel {
 }
 
 impl TeacherModel {
+    const PROMPT: &str = include_str!("teacher.prompt.md");
+    const REGION_START: &str = "<|editable_region_start|>\n";
+    const REGION_END: &str = "<|editable_region_end|>";
+
     pub fn new(llm_name: String, context: ContextType) -> Self {
         TeacherModel { llm_name, context }
     }
 
     pub async fn predict(&self, input: Example) -> Result<String> {
-        static PROMPT: &str = include_str!("teacher.prompt.md");
-
         let mut hasher = std::hash::DefaultHasher::new();
         input.hash(&mut hasher);
         let disambiguator = hasher.finish();
@@ -25,7 +27,7 @@ impl TeacherModel {
 
         let context = "";
 
-        let prompt = PROMPT
+        let prompt = Self::PROMPT
             .replace("{{context}}", context)
             .replace("{{edit_history}}", &input.edit_history);
 
@@ -58,7 +60,11 @@ impl TeacherModel {
     }
 
     fn parse_response(&self, content: &str) -> String {
-        Self::extract_codeblock(content)
+        let codeblock = Self::extract_codeblock(content);
+        let editable_region = Self::extract_editable_region(&codeblock);
+
+        // todo: apply
+        editable_region
     }
 
     /// Extract content from code fences if any, or else return content as is
@@ -82,6 +88,15 @@ impl TeacherModel {
 
         text.to_string()
     }
+
+    fn extract_editable_region(text: &str) -> String {
+        let start = text
+            .find(Self::REGION_START)
+            .map_or(0, |pos| pos + Self::REGION_START.len());
+        let end = text.find(Self::REGION_END).unwrap_or(text.len());
+
+        text[start..end].to_string()
+    }
 }
 
 mod tests {
@@ -103,5 +118,31 @@ mod tests {
             "};
         let parsed = teacher.parse_response(response);
         assert_eq!(parsed, "actual response");
+    }
+
+    #[test]
+    fn test_extract_editable_region() {
+        let teacher = TeacherModel::new("test".to_string(), ContextType::CurrentFile);
+        let response = indoc::indoc! {"
+            some lines
+            are
+            here
+            <|editable_region_start|>
+            one
+            two three
+
+            <|editable_region_end|>
+            more
+            lines here
+            "};
+        let parsed = teacher.parse_response(response);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three
+
+            "}
+        );
     }
 }
