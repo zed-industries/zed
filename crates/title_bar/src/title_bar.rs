@@ -139,7 +139,7 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
-    untrusted_worktrees: HashSet<PathBuf>,
+    restricted_worktrees: HashSet<PathBuf>,
 }
 
 impl Render for TitleBar {
@@ -298,41 +298,44 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
-        let mut untrusted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
+        let mut restricted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
                 subscriptions.push(trusted_worktrees_storage.subscribe(
                     cx,
                     move |title_bar, e, cx| match e {
-                        TrustedWorktreesEvent::Trusted(abs_path) => {
-                            title_bar.untrusted_worktrees.remove(abs_path);
+                        TrustedWorktreesEvent::Trusted(trusted_paths) => {
+                            for trusted_path in trusted_paths {
+                                title_bar.restricted_worktrees.remove(trusted_path);
+                            }
                         }
-                        TrustedWorktreesEvent::StoppedTrusting(abs_path) => {
+                        TrustedWorktreesEvent::Restricted(abs_paths) => {
                             title_bar
                                 .workspace
                                 .update(cx, |workspace, cx| {
-                                    if workspace
-                                        .project()
-                                        .read(cx)
-                                        .find_worktree(abs_path, cx)
-                                        .is_some()
-                                    {
-                                        title_bar.untrusted_worktrees.insert(abs_path.clone());
-                                    };
+                                    let project = workspace.project().read(cx);
+                                    title_bar.restricted_worktrees.extend(
+                                        abs_paths
+                                            .into_iter()
+                                            .filter(|abs_path| {
+                                                project.find_worktree(abs_path, cx).is_some()
+                                            })
+                                            .cloned(),
+                                    );
                                 })
                                 .ok();
                         }
                     },
                 ));
-                trusted_worktrees_storage.untrusted_worktrees().clone()
+                trusted_worktrees_storage.restricted_worktrees().clone()
             })
         } else {
             HashSet::default()
         };
-        untrusted_worktrees.retain(|untrusted_path| {
+        restricted_worktrees.retain(|restricted_path| {
             workspace
                 .project()
                 .read(cx)
-                .find_worktree(untrusted_path, cx)
+                .find_worktree(restricted_path, cx)
                 .is_some()
         });
 
@@ -360,7 +363,7 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            untrusted_worktrees,
+            restricted_worktrees,
             screen_share_popover_handle: PopoverMenuHandle::default(),
         }
     }
@@ -451,7 +454,7 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.untrusted_worktrees.is_empty() || !cx.has_global::<TrustedWorktreesStorage>() {
+        if self.restricted_worktrees.is_empty() || !cx.has_global::<TrustedWorktreesStorage>() {
             return None;
         }
 
