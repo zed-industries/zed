@@ -3847,6 +3847,7 @@ mod tests {
                                 let mut buf = Vec::new();
                                 body.read_to_end(&mut buf).await.ok();
                                 let req = serde_json::from_slice(&buf).unwrap();
+
                                 let (res_tx, res_rx) = oneshot::channel();
                                 predict_req_tx.unbounded_send((req, res_tx)).unwrap();
                                 serde_json::to_string(&res_rx.await?).unwrap()
