@@ -382,7 +382,7 @@ impl TerminalPanel {
             }
             &pane::Event::Split {
                 direction,
-                ref operation,
+                operation,
             } => {
                 match operation {
                     SplitOperation::Clone | SplitOperation::Clear => {
