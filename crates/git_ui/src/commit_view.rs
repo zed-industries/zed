@@ -150,7 +150,6 @@ impl CommitView {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
             editor.disable_inline_diagnostics();
-            editor.disable_indent_guides();
             editor.set_expand_all_diff_hunks(cx);
 
             editor
@@ -259,6 +258,8 @@ impl CommitView {
 
                 this.editor.update(cx, |editor, cx| {
                     editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+                    editor
+                        .disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
 
                     editor.insert_blocks(
                         [BlockProperties {
