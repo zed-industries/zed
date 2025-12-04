@@ -31,10 +31,12 @@ fn should_appear_in_profile(kitty: Cat) {
 Then either compile Zed with `cargo r --release  --no-default-features`. The release build is optional but highly recommended as like every program Zeds performance characteristics change dramatically with optimizations. You do not want to chase slowdowns that do not exist in release.
 
 ## One time Setup/Building the profiler:
+
 Download the profiler:
 [linux x86_64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-profiler-linux-x86_64)
 
 ### Alternative: Building it yourself
+
 - Clone the repo at git@github.com:wolfpld/tracy.git
 - `cd profiler && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
@@ -59,11 +61,13 @@ The profiler always runs in the background. You can save a trace from its UI or
 look at the results live.
 
 ## Setup/Building the importer:
+
 Download the importer
 [linux x86_64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-import-miniprofiler-linux-x86_64)
 [mac aarch64](https://zed-tracy-import-miniprofiler.nyc3.digitaloceanspaces.com/tracy-import-miniprofiler-macos-aarch64)
 
 ### Alternative: Building it yourself
+
 - Clone the repo at git@github.com:zed-industries/tracy.git on v0.12.2 branch
 - `cd import && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
