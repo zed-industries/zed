@@ -628,52 +628,48 @@ impl SettingsObserver {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
 
-        let weak_settings_observer = cx.weak_entity();
         let _trusted_worktrees_watcher = if cx.has_global::<TrustedWorktreesStorage>() {
             cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
-                let watcher = trusted_worktrees.subscribe(cx, move |_, e, cx| match e {
-                    crate::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
-                        weak_settings_observer
-                            .update(cx, |settings_observer, cx| {
-                                if let Some(pending_local_settings) = settings_observer
-                                    .pending_local_settings
-                                    .remove(trusted_path)
+                let watcher =
+                    trusted_worktrees.subscribe(cx, move |settings_observer, e, cx| match e {
+                        crate::trusted_worktrees::Event::TrustedWorktree(trusted_path) => {
+                            if let Some(pending_local_settings) = settings_observer
+                                .pending_local_settings
+                                .remove(trusted_path)
+                            {
+                                for ((worktree_id, directory_path), settings_contents) in
+                                    pending_local_settings
                                 {
-                                    for ((worktree_id, directory_path), settings_contents) in
-                                        pending_local_settings
+                                    apply_local_settings(
+                                        worktree_id,
+                                        &directory_path,
+                                        LocalSettingsKind::Settings,
+                                        &settings_contents,
+                                        cx,
+                                    );
+                                    if let Some(downstream_client) =
+                                        &settings_observer.downstream_client
                                     {
-                                        apply_local_settings(
-                                            worktree_id,
-                                            &directory_path,
-                                            LocalSettingsKind::Settings,
-                                            &settings_contents,
-                                            cx,
-                                        );
-                                        if let Some(downstream_client) =
-                                            &settings_observer.downstream_client
-                                        {
-                                            downstream_client
-                                                .send(proto::UpdateWorktreeSettings {
-                                                    project_id: settings_observer.project_id,
-                                                    worktree_id: worktree_id.to_proto(),
-                                                    path: directory_path.to_proto(),
-                                                    content: settings_contents,
-                                                    kind: Some(
-                                                        local_settings_kind_to_proto(
-                                                            LocalSettingsKind::Settings,
-                                                        )
-                                                        .into(),
-                                                    ),
-                                                })
-                                                .log_err();
-                                        }
+                                        downstream_client
+                                            .send(proto::UpdateWorktreeSettings {
+                                                project_id: settings_observer.project_id,
+                                                worktree_id: worktree_id.to_proto(),
+                                                path: directory_path.to_proto(),
+                                                content: settings_contents,
+                                                kind: Some(
+                                                    local_settings_kind_to_proto(
+                                                        LocalSettingsKind::Settings,
+                                                    )
+                                                    .into(),
+                                                ),
+                                            })
+                                            .log_err();
                                     }
                                 }
-                            })
-                            .ok();
-                    }
-                    crate::trusted_worktrees::Event::UntrustedWorktree(_) => {}
-                });
+                            }
+                        }
+                        crate::trusted_worktrees::Event::UntrustedWorktree(_) => {}
+                    });
                 Some(watcher)
             })
         } else {
