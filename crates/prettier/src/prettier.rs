@@ -2,7 +2,8 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
-use language::{Buffer, Diff, language_settings::language_settings};
+use language::language_settings::PrettierSettings;
+use language::{Buffer, Diff, Language, language_settings::language_settings};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -12,7 +13,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::{PathMatcher, PathStyle};
+use util::{
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
 
 #[derive(Debug, Clone)]
 pub enum Prettier {
@@ -119,20 +123,32 @@ impl Prettier {
                                             None
                                         }
                                     }).any(|workspace_definition| {
-                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition], PathStyle::local()).ok().is_some_and(|path_matcher| path_matcher.is_match(subproject_path))
+                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition], PathStyle::local()).ok().is_some_and(
+                                            |path_matcher| RelPath::new(subproject_path, PathStyle::local()).is_ok_and(|path|  path_matcher.is_match(path)))
                                     }) {
-                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Path {path_to_check:?} is the workspace root for project in {closest_package_json_path:?}, but it has no prettier installed");
-                                        log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {closest_package_json_path:?}");
+                                        anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?,
+                                            "Path {path_to_check:?} is the workspace root for project in \
+                                            {closest_package_json_path:?}, but it has no prettier installed"
+                                        );
+                                        log::info!(
+                                            "Found prettier path {path_to_check:?} in the workspace \
+                                            root for project in {closest_package_json_path:?}"
+                                        );
                                         return Ok(ControlFlow::Continue(Some(path_to_check)));
                                     } else {
-                                        log::warn!("Skipping path {path_to_check:?} workspace root with workspaces {workspaces:?} that have no prettier installed");
+                                        log::warn!(
+                                            "Skipping path {path_to_check:?} workspace root with \
+                                            workspaces {workspaces:?} that have no prettier installed"
+                                        );
                                     }
                                 }
                                 Some(unknown) => log::error!(
-                                    "Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."
+                                    "Failed to parse workspaces for {path_to_check:?} from package.json, \
+                                    got {unknown:?}. Skipping."
                                 ),
                                 None => log::warn!(
-                                    "Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"
+                                    "Skipping path {path_to_check:?} that has no prettier \
+                                    dependency and no workspaces section in its package.json"
                                 ),
                             }
                         }
@@ -221,7 +237,12 @@ impl Prettier {
                                         )
                                         .ok()
                                         .is_some_and(
-                                            |path_matcher| path_matcher.is_match(subproject_path),
+                                            |path_matcher| {
+                                                RelPath::new(subproject_path, PathStyle::local())
+                                                    .is_ok_and(|rel_path| {
+                                                        path_matcher.is_match(rel_path)
+                                                    })
+                                            },
                                         )
                                 })
                             {
@@ -329,7 +350,7 @@ impl Prettier {
             Self::Real(local) => {
                 let params = buffer
                     .update(cx, |buffer, cx| {
-                        let buffer_language = buffer.language();
+                        let buffer_language = buffer.language().map(|language| language.as_ref());
                         let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
@@ -429,15 +450,7 @@ impl Prettier {
                             })
                             .collect();
 
-                        let mut prettier_parser = prettier_settings.parser.as_deref();
-                        if buffer_path.is_none() {
-                            prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
-                            if prettier_parser.is_none() {
-                                log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                                anyhow::bail!("Cannot determine prettier parser for unsaved file");
-                            }
-
-                        }
+                        let parser = prettier_parser_name(buffer_path.as_deref(), buffer_language, prettier_settings).context("getting prettier parser")?;
 
                         let ignore_path = ignore_dir.and_then(|dir| {
                             let ignore_file = dir.join(".prettierignore");
@@ -455,15 +468,15 @@ impl Prettier {
                         anyhow::Ok(FormatParams {
                             text: buffer.text(),
                             options: FormatOptions {
-                                parser: prettier_parser.map(ToOwned::to_owned),
-                                plugins,
                                 path: buffer_path,
+                                parser,
+                                plugins,
                                 prettier_options,
                                 ignore_path,
                             },
                         })
-                    })?
-                    .context("building prettier request")?;
+                })?
+                .context("building prettier request")?;
 
                 let response = local
                     .server
@@ -483,7 +496,26 @@ impl Prettier {
                     {
                         Some("rust") => anyhow::bail!("prettier does not support Rust"),
                         Some(_other) => {
-                            let formatted_text = buffer.text() + FORMAT_SUFFIX;
+                            let mut formatted_text = buffer.text() + FORMAT_SUFFIX;
+
+                            let buffer_language =
+                                buffer.language().map(|language| language.as_ref());
+                            let language_settings = language_settings(
+                                buffer_language.map(|l| l.name()),
+                                buffer.file(),
+                                cx,
+                            );
+                            let prettier_settings = &language_settings.prettier;
+                            let parser = prettier_parser_name(
+                                buffer_path.as_deref(),
+                                buffer_language,
+                                prettier_settings,
+                            )?;
+
+                            if let Some(parser) = parser {
+                                formatted_text = format!("{formatted_text}\n{parser}");
+                            }
+
                             Ok(buffer.diff(formatted_text, cx))
                         }
                         None => panic!("Should not format buffer without a language with prettier"),
@@ -529,6 +561,40 @@ impl Prettier {
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
+}
+
+fn prettier_parser_name(
+    buffer_path: Option<&Path>,
+    buffer_language: Option<&Language>,
+    prettier_settings: &PrettierSettings,
+) -> anyhow::Result<Option<String>> {
+    let parser = if buffer_path.is_none() {
+        let parser = prettier_settings
+            .parser
+            .as_deref()
+            .or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
+        if parser.is_none() {
+            log::error!(
+                "Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}"
+            );
+            anyhow::bail!("Cannot determine prettier parser for unsaved file");
+        }
+        parser
+    } else if let (Some(buffer_language), Some(buffer_path)) = (buffer_language, buffer_path)
+        && buffer_path.extension().is_some_and(|extension| {
+            !buffer_language
+                .config()
+                .matcher
+                .path_suffixes
+                .contains(&extension.to_string_lossy().into_owned())
+        })
+    {
+        buffer_language.prettier_parser_name()
+    } else {
+        prettier_settings.parser.as_deref()
+    };
+
+    Ok(parser.map(ToOwned::to_owned))
 }
 
 async fn has_prettier_in_node_modules(fs: &dyn Fs, path: &Path) -> anyhow::Result<bool> {

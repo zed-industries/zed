@@ -10,9 +10,8 @@ use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, VimFlavor,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset,
     actions::{Backtab, Tab},
-    vim_flavor,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -433,10 +432,8 @@ impl Render for BufferSearchBar {
             }))
             .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
-                    .when(in_replace, |this| {
-                        this.on_action(cx.listener(Self::replace_next))
-                            .on_action(cx.listener(Self::replace_all))
-                    })
+                    .on_action(cx.listener(Self::replace_next))
+                    .on_action(cx.listener(Self::replace_all))
             })
             .when(case, |this| {
                 this.on_action(cx.listener(Self::toggle_case_sensitive))
@@ -828,8 +825,7 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&active_searchable_item.downgrade())
         {
-            let collapse = editor::vim_flavor(cx) == Some(VimFlavor::Vim);
-            active_searchable_item.activate_match(match_ix, matches, collapse, window, cx)
+            active_searchable_item.activate_match(match_ix, matches, window, cx)
         }
     }
 
@@ -870,7 +866,11 @@ impl BufferSearchBar {
                     .buffer()
                     .update(cx, |replacement_buffer, cx| {
                         let len = replacement_buffer.len(cx);
-                        replacement_buffer.edit([(0..len, replacement.unwrap())], None, cx);
+                        replacement_buffer.edit(
+                            [(MultiBufferOffset(0)..len, replacement.unwrap())],
+                            None,
+                            cx,
+                        );
                     });
             });
     }
@@ -894,7 +894,7 @@ impl BufferSearchBar {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
                     let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
+                    query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
             });
             self.set_search_options(options, cx);
@@ -976,8 +976,7 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-        self.select_match(Direction::Next, 1, collapse, window, cx);
+        self.select_match(Direction::Next, 1, window, cx);
     }
 
     fn select_prev_match(
@@ -986,8 +985,7 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-        self.select_match(Direction::Prev, 1, collapse, window, cx);
+        self.select_match(Direction::Prev, 1, window, cx);
     }
 
     pub fn select_all_matches(
@@ -1012,7 +1010,6 @@ impl BufferSearchBar {
         &mut self,
         direction: Direction,
         count: usize,
-        collapse: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1034,8 +1031,8 @@ impl BufferSearchBar {
             let new_match_index = searchable_item
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
-            searchable_item.update_matches(matches, window, cx);
-            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
+            searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
 
@@ -1048,9 +1045,8 @@ impl BufferSearchBar {
             if matches.is_empty() {
                 return;
             }
-            searchable_item.update_matches(matches, window, cx);
-            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-            searchable_item.activate_match(0, matches, collapse, window, cx);
+            searchable_item.update_matches(matches, Some(0), window, cx);
+            searchable_item.activate_match(0, matches, window, cx);
         }
     }
 
@@ -1064,9 +1060,8 @@ impl BufferSearchBar {
                 return;
             }
             let new_match_index = matches.len() - 1;
-            searchable_item.update_matches(matches, window, cx);
-            let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
-            searchable_item.activate_match(new_match_index, matches, collapse, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
+            searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
 
@@ -1305,7 +1300,12 @@ impl BufferSearchBar {
                                 if matches.is_empty() {
                                     active_searchable_item.clear_matches(window, cx);
                                 } else {
-                                    active_searchable_item.update_matches(matches, window, cx);
+                                    active_searchable_item.update_matches(
+                                        matches,
+                                        this.active_match_index,
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 let _ = done_tx.send(());
                             }
@@ -1340,6 +1340,18 @@ impl BufferSearchBar {
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
+            if !self.dismissed {
+                if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        if !matches.is_empty() {
+                            searchable_item.update_matches(matches, new_index, window, cx);
+                        }
+                    }
+                }
+            }
             cx.notify();
         }
     }
@@ -2549,6 +2561,52 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
             .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace_focus(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("What a bad day!", window, cx)
+        });
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("bad", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        // Calling `toggle_replace` in the search bar ensures that the "Replace
+        // *" buttons are rendered, so we can then simulate clicking the
+        // buttons.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx)
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("great", window, cx);
+            });
+        });
+
+        // Focus on the editor instead of the search bar, as we want to ensure
+        // that pressing the "Replace Next Match" button will work, even if the
+        // search bar is not focused.
+        cx.focus(&editor);
+
+        // We'll not simulate clicking the "Replace Next Match " button, asserting that
+        // the replacement was done.
+        let button_bounds = cx
+            .debug_bounds("ICON-ReplaceNext")
+            .expect("'Replace Next Match' button should be visible");
+        cx.simulate_click(button_bounds.center(), gpui::Modifiers::none());
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "What a great day!"
         );
     }
 

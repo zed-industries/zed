@@ -223,7 +223,6 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
                 if let Some(mut menu) = request_layout.menu_element.take() {
                     menu.paint(window, cx);
-                    return;
                 }
 
                 let Some(builder) = this.menu_builder.take() else {

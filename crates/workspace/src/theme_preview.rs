@@ -6,9 +6,9 @@ use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
     AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
-    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, TintColor,
-    Tooltip, prelude::*, utils::calculate_contrast_ratio,
+    Checkbox, CollaboratorAvailability, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
+    IconDecoration, Indicator, KeybindingHint, Switch, TintColor, Tooltip, prelude::*,
+    utils::calculate_contrast_ratio,
 };
 
 use crate::{Item, Workspace};

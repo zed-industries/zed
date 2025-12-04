@@ -8,7 +8,7 @@ use crate::{
 };
 use gpui::{Pixels, WindowTextSystem};
 use language::{CharClassifier, Point};
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::{MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
@@ -358,28 +358,28 @@ pub fn adjust_greedy_deletion(
 
     let mut whitespace_sequences = Vec::new();
     let mut current_offset = trimmed_delete_range.start;
-    let mut whitespace_sequence_length = 0;
-    let mut whitespace_sequence_start = 0;
+    let mut whitespace_sequence_length = MultiBufferOffset(0);
+    let mut whitespace_sequence_start = MultiBufferOffset(0);
     for ch in map
         .buffer_snapshot()
         .text_for_range(trimmed_delete_range.clone())
         .flat_map(str::chars)
     {
         if ch.is_whitespace() {
-            if whitespace_sequence_length == 0 {
+            if whitespace_sequence_length == MultiBufferOffset(0) {
                 whitespace_sequence_start = current_offset;
             }
             whitespace_sequence_length += 1;
         } else {
-            if whitespace_sequence_length >= 2 {
+            if whitespace_sequence_length >= MultiBufferOffset(2) {
                 whitespace_sequences.push((whitespace_sequence_start, current_offset));
             }
-            whitespace_sequence_start = 0;
-            whitespace_sequence_length = 0;
+            whitespace_sequence_start = MultiBufferOffset(0);
+            whitespace_sequence_length = MultiBufferOffset(0);
         }
         current_offset += ch.len_utf8();
     }
-    if whitespace_sequence_length >= 2 {
+    if whitespace_sequence_length >= MultiBufferOffset(2) {
         whitespace_sequences.push((whitespace_sequence_start, current_offset));
     }
 
@@ -731,7 +731,7 @@ pub fn find_preceding_boundary_trail(
     }
 
     let trail = trail_offset
-        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Left));
+        .map(|trail_offset| map.clip_point(trail_offset.to_display_point(map), Bias::Left));
 
     (
         trail,
@@ -779,7 +779,7 @@ pub fn find_boundary_trail(
     }
 
     let trail = trail_offset
-        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
+        .map(|trail_offset| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
 
     (
         trail,
@@ -810,8 +810,8 @@ pub fn find_boundary_exclusive(
 /// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_after(
     map: &DisplaySnapshot,
-    mut offset: usize,
-) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    mut offset: MultiBufferOffset,
+) -> impl Iterator<Item = (char, Range<MultiBufferOffset>)> + '_ {
     map.buffer_snapshot().chars_at(offset).map(move |ch| {
         let before = offset;
         offset += ch.len_utf8();
@@ -824,8 +824,8 @@ pub fn chars_after(
 /// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_before(
     map: &DisplaySnapshot,
-    mut offset: usize,
-) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    mut offset: MultiBufferOffset,
+) -> impl Iterator<Item = (char, Range<MultiBufferOffset>)> + '_ {
     map.buffer_snapshot()
         .reversed_chars_at(offset)
         .map(move |ch| {
@@ -1018,8 +1018,9 @@ mod tests {
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
-        let inlays = (0..buffer_snapshot.len())
+        let inlays = (0..buffer_snapshot.len().0)
             .flat_map(|offset| {
+                let offset = MultiBufferOffset(offset);
                 [
                     Inlay::edit_prediction(
                         post_inc(&mut id),
@@ -1058,7 +1059,7 @@ mod tests {
             ),
             snapshot
                 .buffer_snapshot()
-                .offset_to_point(5)
+                .offset_to_point(MultiBufferOffset(5))
                 .to_display_point(&snapshot),
             "Should not stop at inlays when looking for boundaries"
         );

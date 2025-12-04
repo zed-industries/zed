@@ -24,8 +24,8 @@ use ui::{
     IconSize, InteractiveElement, IntoElement, ListHeader, ListItem, StyledTypography, div, h_flex,
     v_flex,
 };
-use workspace::{Item, ItemHandle as _};
-use zeta2::{
+use workspace::Item;
+use zeta::{
     Zeta, ZetaContextRetrievalDebugInfo, ZetaContextRetrievalStartedDebugInfo, ZetaDebugInfo,
     ZetaSearchQueryDebugInfo,
 };
@@ -402,11 +402,11 @@ impl Item for Zeta2ContextView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<gpui::AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.runs.get(self.current_ix)?.editor.to_any())
+            Some(self.runs.get(self.current_ix)?.editor.clone().into())
         } else {
             None
         }

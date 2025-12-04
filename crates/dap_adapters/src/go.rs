@@ -366,7 +366,7 @@ impl DebugAdapter for GoDebugAdapter {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
                     "request": "attach",
-                    "mode": "debug",
+                    "mode": "local",
                     "processId": attach_config.process_id,
                 })
             }

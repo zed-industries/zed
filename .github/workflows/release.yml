@@ -10,7 +10,7 @@ on:
     - v*
 jobs:
   run_tests_mac:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-mini-macos
     steps:
     - name: steps::checkout_repo
@@ -33,7 +33,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 300
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -42,7 +42,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_linux:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -80,7 +80,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 250
       shell: bash -euxo pipefail {0}
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: bash -euxo pipefail {0}
     - name: steps::cleanup_cargo_config
       if: always()
@@ -89,7 +89,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_windows:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -112,7 +112,7 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
     - name: steps::cargo_nextest
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -121,7 +121,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -150,7 +150,7 @@ jobs:
       shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   create_draft_release:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo

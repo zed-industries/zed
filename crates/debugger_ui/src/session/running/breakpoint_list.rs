@@ -575,7 +575,7 @@ impl BreakpointList {
         )
         .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
         .with_width_from_item(self.max_width_index)
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .flex_1()
     }
 
@@ -776,7 +776,7 @@ impl Render for BreakpointList {
             .child(self.render_list(cx))
             .custom_scrollbars(
                 ui::Scrollbars::new(ScrollAxes::Both)
-                    .tracked_scroll_handle(self.scroll_handle.clone())
+                    .tracked_scroll_handle(&self.scroll_handle)
                     .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
                     .tracked_entity(cx.entity_id()),
                 window,
@@ -1407,7 +1407,6 @@ impl RenderOnce for BreakpointOptionsStrip {
 
         h_flex()
             .gap_px()
-            .mr_3() // Space to avoid overlapping with the scrollbar
             .justify_end()
             .when(has_logs || self.is_selected, |this| {
                 this.child(

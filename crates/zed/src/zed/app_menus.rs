@@ -39,7 +39,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             ],
         }),
         MenuItem::separator(),
-        MenuItem::action("Project Panel", project_panel::ToggleFocus),
+        MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
@@ -69,7 +69,11 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     items: vec![
                         MenuItem::action("Open Settings", zed_actions::OpenSettings),
                         MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
+                        MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
+                        MenuItem::action(
+                            "Open Project Settings File",
+                            super::OpenProjectSettingsFile,
+                        ),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
                         MenuItem::action("Open Keymap", zed_actions::OpenKeymap),

@@ -439,11 +439,15 @@ pub fn into_google(
                     })]
                 }
                 language_model::MessageContent::ToolUse(tool_use) => {
+                    // Normalize empty string signatures to None
+                    let thought_signature = tool_use.thought_signature.filter(|s| !s.is_empty());
+
                     vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
+                        thought_signature,
                     })]
                 }
                 language_model::MessageContent::ToolResult(tool_result) => {
@@ -655,6 +659,11 @@ impl GoogleEventMapper {
                             let id: LanguageModelToolUseId =
                                 format!("{}-{}", name, next_tool_id).into();
 
+                            // Normalize empty string signatures to None
+                            let thought_signature = function_call_part
+                                .thought_signature
+                                .filter(|s| !s.is_empty());
+
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id,
@@ -662,6 +671,7 @@ impl GoogleEventMapper {
                                     is_input_complete: true,
                                     raw_input: function_call_part.function_call.args.to_string(),
                                     input: function_call_part.function_call.args,
+                                    thought_signature,
                                 },
                             )));
                         }
@@ -888,6 +898,431 @@ impl Render for ConfigurationView {
                     this.tooltip_label(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR_NAME} and {GOOGLE_AI_API_KEY_VAR_NAME} environment variables are unset."))
                 })
                 .into_any_element()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use google_ai::{
+        Content, FunctionCall, FunctionCallPart, GenerateContentCandidate, GenerateContentResponse,
+        Part, Role as GoogleRole, TextPart,
+    };
+    use language_model::{LanguageModelToolUseId, MessageContent, Role};
+    use serde_json::json;
+
+    #[test]
+    fn test_function_call_with_signature_creates_tool_use_with_signature() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![Part::FunctionCallPart(FunctionCallPart {
+                        function_call: FunctionCall {
+                            name: "test_function".to_string(),
+                            args: json!({"arg": "value"}),
+                        },
+                        thought_signature: Some("test_signature_123".to_string()),
+                    })],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        assert_eq!(events.len(), 2); // ToolUse event + Stop event
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            assert_eq!(tool_use.name.as_ref(), "test_function");
+            assert_eq!(
+                tool_use.thought_signature.as_deref(),
+                Some("test_signature_123")
+            );
+        } else {
+            panic!("Expected ToolUse event");
+        }
+    }
+
+    #[test]
+    fn test_function_call_without_signature_has_none() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![Part::FunctionCallPart(FunctionCallPart {
+                        function_call: FunctionCall {
+                            name: "test_function".to_string(),
+                            args: json!({"arg": "value"}),
+                        },
+                        thought_signature: None,
+                    })],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            assert_eq!(tool_use.thought_signature, None);
+        } else {
+            panic!("Expected ToolUse event");
+        }
+    }
+
+    #[test]
+    fn test_empty_string_signature_normalized_to_none() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![Part::FunctionCallPart(FunctionCallPart {
+                        function_call: FunctionCall {
+                            name: "test_function".to_string(),
+                            args: json!({"arg": "value"}),
+                        },
+                        thought_signature: Some("".to_string()),
+                    })],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            assert_eq!(tool_use.thought_signature, None);
+        } else {
+            panic!("Expected ToolUse event");
+        }
+    }
+
+    #[test]
+    fn test_parallel_function_calls_preserve_signatures() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![
+                        Part::FunctionCallPart(FunctionCallPart {
+                            function_call: FunctionCall {
+                                name: "function_1".to_string(),
+                                args: json!({"arg": "value1"}),
+                            },
+                            thought_signature: Some("signature_1".to_string()),
+                        }),
+                        Part::FunctionCallPart(FunctionCallPart {
+                            function_call: FunctionCall {
+                                name: "function_2".to_string(),
+                                args: json!({"arg": "value2"}),
+                            },
+                            thought_signature: None,
+                        }),
+                    ],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        assert_eq!(events.len(), 3); // 2 ToolUse events + Stop event
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            assert_eq!(tool_use.name.as_ref(), "function_1");
+            assert_eq!(tool_use.thought_signature.as_deref(), Some("signature_1"));
+        } else {
+            panic!("Expected ToolUse event for function_1");
+        }
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[1] {
+            assert_eq!(tool_use.name.as_ref(), "function_2");
+            assert_eq!(tool_use.thought_signature, None);
+        } else {
+            panic!("Expected ToolUse event for function_2");
+        }
+    }
+
+    #[test]
+    fn test_tool_use_with_signature_converts_to_function_call_part() {
+        let tool_use = language_model::LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("test_id"),
+            name: "test_function".into(),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("test_signature_456".to_string()),
+        };
+
+        let request = super::into_google(
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolUse(tool_use)],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            "gemini-2.5-flash".to_string(),
+            GoogleModelMode::Default,
+        );
+
+        assert_eq!(request.contents[0].parts.len(), 1);
+        if let Part::FunctionCallPart(fc_part) = &request.contents[0].parts[0] {
+            assert_eq!(fc_part.function_call.name, "test_function");
+            assert_eq!(
+                fc_part.thought_signature.as_deref(),
+                Some("test_signature_456")
+            );
+        } else {
+            panic!("Expected FunctionCallPart");
+        }
+    }
+
+    #[test]
+    fn test_tool_use_without_signature_omits_field() {
+        let tool_use = language_model::LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("test_id"),
+            name: "test_function".into(),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let request = super::into_google(
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolUse(tool_use)],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            "gemini-2.5-flash".to_string(),
+            GoogleModelMode::Default,
+        );
+
+        assert_eq!(request.contents[0].parts.len(), 1);
+        if let Part::FunctionCallPart(fc_part) = &request.contents[0].parts[0] {
+            assert_eq!(fc_part.thought_signature, None);
+        } else {
+            panic!("Expected FunctionCallPart");
+        }
+    }
+
+    #[test]
+    fn test_empty_signature_in_tool_use_normalized_to_none() {
+        let tool_use = language_model::LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("test_id"),
+            name: "test_function".into(),
+            raw_input: json!({"arg": "value"}).to_string(),
+            input: json!({"arg": "value"}),
+            is_input_complete: true,
+            thought_signature: Some("".to_string()),
+        };
+
+        let request = super::into_google(
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolUse(tool_use)],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            "gemini-2.5-flash".to_string(),
+            GoogleModelMode::Default,
+        );
+
+        if let Part::FunctionCallPart(fc_part) = &request.contents[0].parts[0] {
+            assert_eq!(fc_part.thought_signature, None);
+        } else {
+            panic!("Expected FunctionCallPart");
+        }
+    }
+
+    #[test]
+    fn test_round_trip_preserves_signature() {
+        let mut mapper = GoogleEventMapper::new();
+
+        // Simulate receiving a response from Google with a signature
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![Part::FunctionCallPart(FunctionCallPart {
+                        function_call: FunctionCall {
+                            name: "test_function".to_string(),
+                            args: json!({"arg": "value"}),
+                        },
+                        thought_signature: Some("round_trip_sig".to_string()),
+                    })],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        let tool_use = if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            tool_use.clone()
+        } else {
+            panic!("Expected ToolUse event");
+        };
+
+        // Convert back to Google format
+        let request = super::into_google(
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolUse(tool_use)],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+            "gemini-2.5-flash".to_string(),
+            GoogleModelMode::Default,
+        );
+
+        // Verify signature is preserved
+        if let Part::FunctionCallPart(fc_part) = &request.contents[0].parts[0] {
+            assert_eq!(fc_part.thought_signature.as_deref(), Some("round_trip_sig"));
+        } else {
+            panic!("Expected FunctionCallPart");
+        }
+    }
+
+    #[test]
+    fn test_mixed_text_and_function_call_with_signature() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![
+                        Part::TextPart(TextPart {
+                            text: "I'll help with that.".to_string(),
+                        }),
+                        Part::FunctionCallPart(FunctionCallPart {
+                            function_call: FunctionCall {
+                                name: "helper_function".to_string(),
+                                args: json!({"query": "help"}),
+                            },
+                            thought_signature: Some("mixed_sig".to_string()),
+                        }),
+                    ],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        assert_eq!(events.len(), 3); // Text event + ToolUse event + Stop event
+
+        if let Ok(LanguageModelCompletionEvent::Text(text)) = &events[0] {
+            assert_eq!(text, "I'll help with that.");
+        } else {
+            panic!("Expected Text event");
+        }
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[1] {
+            assert_eq!(tool_use.name.as_ref(), "helper_function");
+            assert_eq!(tool_use.thought_signature.as_deref(), Some("mixed_sig"));
+        } else {
+            panic!("Expected ToolUse event");
+        }
+    }
+
+    #[test]
+    fn test_special_characters_in_signature_preserved() {
+        let mut mapper = GoogleEventMapper::new();
+
+        let signature_with_special_chars = "sig<>\"'&%$#@!{}[]".to_string();
+
+        let response = GenerateContentResponse {
+            candidates: Some(vec![GenerateContentCandidate {
+                index: Some(0),
+                content: Content {
+                    parts: vec![Part::FunctionCallPart(FunctionCallPart {
+                        function_call: FunctionCall {
+                            name: "test_function".to_string(),
+                            args: json!({"arg": "value"}),
+                        },
+                        thought_signature: Some(signature_with_special_chars.clone()),
+                    })],
+                    role: GoogleRole::Model,
+                },
+                finish_reason: None,
+                finish_message: None,
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: None,
+        };
+
+        let events = mapper.map_event(response);
+
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] {
+            assert_eq!(
+                tool_use.thought_signature.as_deref(),
+                Some(signature_with_special_chars.as_str())
+            );
+        } else {
+            panic!("Expected ToolUse event");
         }
     }
 }

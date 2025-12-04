@@ -5,7 +5,7 @@ use crate::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -132,8 +132,11 @@ impl TestAppContext {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
+        let mut app = App::new_app(platform.clone(), asset_source, http_client);
+        app.borrow_mut().mode = GpuiMode::test();
+
         Self {
-            app: App::new_app(platform.clone(), asset_source, http_client),
+            app,
             background_executor,
             foreground_executor,
             dispatcher,
@@ -142,6 +145,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Skip all drawing operations for the duration of this test.
+    pub fn skip_drawing(&mut self) {
+        self.app.borrow_mut().mode = GpuiMode::Test { skip_drawing: true };
     }
 
     /// Create a single TestAppContext, for non-multi-client tests

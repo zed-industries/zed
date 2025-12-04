@@ -350,7 +350,7 @@ impl Render for Onboarding {
                             .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -449,7 +449,7 @@ pub async fn handle_import_vscode_settings(
         match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
             Ok(vscode_settings) => vscode_settings,
             Err(err) => {
-                zlog::error!("{err}");
+                zlog::error!("{err:?}");
                 let _ = cx.prompt(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),

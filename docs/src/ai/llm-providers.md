@@ -89,12 +89,32 @@ To do this:
 
 #### Cross-Region Inference
 
-The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
+The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) to improve availability and throughput.
 With Cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
 
-For example, if you use `Claude Sonnet 3.7 Thinking` from `us-east-1`, it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
-Cross-Region inference requests are kept within the AWS Regions that are part of the geography where the data originally resides.
-For example, a request made within the US is kept within the AWS Regions in the US.
+##### Regional vs Global Inference Profiles
+
+Bedrock supports two types of cross-region inference profiles:
+
+- **Regional profiles** (default): Route requests within a specific geography (US, EU, APAC). For example, `us-east-1` uses the `us.*` profile which routes across `us-east-1`, `us-east-2`, and `us-west-2`.
+- **Global profiles**: Route requests across all commercial AWS Regions for maximum availability and performance.
+
+By default, Zed uses **regional profiles** which keep your data within the same geography. You can opt into global profiles by adding `"allow_global": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_global": true
+    }
+  }
+}
+```
+
+**Note:** Only select newer models support global inference profiles. See the [AWS Bedrock supported models documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html#inference-profiles-support-system) for the current list of models that support global inference. If you encounter availability issues with a model in your region, enabling `allow_global` may resolve them.
 
 Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
 All data will be transmitted encrypted across Amazon's secure network.

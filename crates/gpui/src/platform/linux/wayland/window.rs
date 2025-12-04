@@ -1270,10 +1270,21 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
-        state.decorations = decorations;
-        if let Some(decoration) = state.surface_state.decoration() {
-            decoration.set_mode(decorations.to_xdg());
-            update_window(state);
+        match state.surface_state.decoration().as_ref() {
+            Some(decoration) => {
+                decoration.set_mode(decorations.to_xdg());
+                state.decorations = decorations;
+                update_window(state);
+            }
+            None => {
+                if matches!(decorations, WindowDecorations::Server) {
+                    log::info!(
+                        "Server-side decorations requested, but the Wayland server does not support them. Falling back to client-side decorations."
+                    );
+                }
+                state.decorations = WindowDecorations::Client;
+                update_window(state);
+            }
         }
     }
 

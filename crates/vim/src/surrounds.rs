@@ -4,7 +4,7 @@ use crate::{
     object::{Object, surrounding_markers},
     state::Mode,
 };
-use editor::{Bias, movement};
+use editor::{Bias, MultiBufferOffset, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -175,7 +175,7 @@ impl Vim {
                         while let Some((ch, offset)) = chars_and_offset.next() {
                             if ch.to_string() == pair.start {
                                 let start = offset;
-                                let mut end = start + 1;
+                                let mut end = start + 1usize;
                                 if surround
                                     && let Some((next_ch, _)) = chars_and_offset.peek()
                                     && next_ch.eq(&' ')
@@ -193,7 +193,7 @@ impl Vim {
                         while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
                             if ch.to_string() == pair.end {
                                 let mut start = offset;
-                                let end = start + 1;
+                                let end = start + 1usize;
                                 if surround
                                     && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
                                     && next_ch.eq(&' ')
@@ -282,7 +282,7 @@ impl Vim {
                             // that the end replacement string does not exceed
                             // this value. Helpful when dealing with newlines.
                             let mut edit_len = 0;
-                            let mut open_range_end = 0;
+                            let mut open_range_end = MultiBufferOffset(0);
                             let mut chars_and_offset = display_map
                                 .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
                                 .peekable();
@@ -291,7 +291,7 @@ impl Vim {
                                 if ch.to_string() == will_replace_pair.start {
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
-                                    open_range_end = start + 1;
+                                    open_range_end = start + 1usize;
                                     while let Some((next_ch, _)) = chars_and_offset.next()
                                         && next_ch == ' '
                                     {
@@ -322,7 +322,7 @@ impl Vim {
                                 if ch.to_string() == will_replace_pair.end {
                                     let mut close_str = String::new();
                                     let mut start = offset;
-                                    let end = start + 1;
+                                    let end = start + 1usize;
                                     while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
                                         && next_ch == ' '
                                         && close_str.len() < edit_len - 1

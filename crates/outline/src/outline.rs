@@ -6,7 +6,7 @@ use std::{
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
-use editor::{RowHighlightOptions, SelectionEffects};
+use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -247,7 +247,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let cursor_offset = editor
                     .selections
-                    .newest::<usize>(&editor.display_snapshot(cx))
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                     .head();
                 (buffer, cursor_offset)
             });
@@ -259,8 +259,8 @@ impl PickerDelegate for OutlineViewDelegate {
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
                     let distance_to_closest_endpoint = cmp::min(
-                        (range.start as isize - cursor_offset as isize).abs(),
-                        (range.end as isize - cursor_offset as isize).abs(),
+                        (range.start.0 as isize - cursor_offset.0 as isize).abs(),
+                        (range.end.0 as isize - cursor_offset.0 as isize).abs(),
                     );
                     let depth = if range.contains(&cursor_offset) {
                         Some(item.depth)

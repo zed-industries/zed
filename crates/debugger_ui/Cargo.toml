@@ -70,6 +70,7 @@ theme.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
 workspace.workspace = true

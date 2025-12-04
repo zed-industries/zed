@@ -622,9 +622,10 @@ impl WrapSnapshot {
         if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
-        let input_end = self
-            .to_tab_point(output_end)
-            .min(self.tab_snapshot.max_point());
+        let input_end = self.to_tab_point(output_end);
+        let max_point = self.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         WrapChunks {
             input_chunks: self.tab_snapshot.chunks(
                 input_start..input_end,
@@ -777,11 +778,12 @@ impl WrapSnapshot {
     }
 
     pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
-        self.tab_snapshot.to_point(self.to_tab_point(point), bias)
+        self.tab_snapshot
+            .tab_point_to_point(self.to_tab_point(point), bias)
     }
 
     pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
-        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
+        self.tab_point_to_wrap_point(self.tab_snapshot.point_to_tab_point(point, bias))
     }
 
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
@@ -789,6 +791,14 @@ impl WrapSnapshot {
             self.transforms
                 .find::<Dimensions<TabPoint, WrapPoint>, _>((), &point, Bias::Right);
         WrapPoint(start.1.0 + (point.0 - start.0.0))
+    }
+
+    pub fn wrap_point_cursor(&self) -> WrapPointCursor<'_> {
+        WrapPointCursor {
+            cursor: self
+                .transforms
+                .cursor::<Dimensions<TabPoint, WrapPoint>>(()),
+        }
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
@@ -912,6 +922,22 @@ impl WrapSnapshot {
     }
 }
 
+pub struct WrapPointCursor<'transforms> {
+    cursor: Cursor<'transforms, 'static, Transform, Dimensions<TabPoint, WrapPoint>>,
+}
+
+impl WrapPointCursor<'_> {
+    pub fn map(&mut self, point: TabPoint) -> WrapPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&point, Bias::Right);
+        } else {
+            cursor.seek(&point, Bias::Right);
+        }
+        WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
+    }
+}
+
 impl WrapChunks<'_> {
     pub(crate) fn seek(&mut self, rows: Range<WrapRow>) {
         let output_start = WrapPoint::new(rows.start, 0);
@@ -921,10 +947,10 @@ impl WrapChunks<'_> {
         if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
-        let input_end = self
-            .snapshot
-            .to_tab_point(output_end)
-            .min(self.snapshot.tab_snapshot.max_point());
+        let input_end = self.snapshot.to_tab_point(output_end);
+        let max_point = self.snapshot.tab_snapshot.max_point();
+        let input_start = input_start.min(max_point);
+        let input_end = input_end.min(max_point);
         self.input_chunks.seek(input_start..input_end);
         self.input_chunk = Chunk::default();
         self.output_position = output_start;
@@ -1030,6 +1056,7 @@ impl Iterator for WrapRows<'_> {
             RowInfo {
                 buffer_id: None,
                 buffer_row: None,
+                base_text_row: None,
                 multibuffer_row: None,
                 diff_status,
                 expand_info: None,

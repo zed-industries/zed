@@ -559,7 +559,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            path_style.separator()
+                            path_style.primary_separator()
                         } else {
                             ""
                         }
@@ -569,7 +569,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            path_style.separator()
+                            path_style.primary_separator()
                         } else {
                             ""
                         }
@@ -826,7 +826,13 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{}]filename.ext", self.path_style.separator()).as_str())
+        Arc::from(
+            format!(
+                "[directory{}]filename.ext",
+                self.path_style.primary_separator()
+            )
+            .as_str(),
+        )
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

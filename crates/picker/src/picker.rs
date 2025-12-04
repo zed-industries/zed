@@ -607,7 +607,7 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                if self.is_modal {
+                if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
@@ -619,7 +619,9 @@ impl<D: PickerDelegate> Picker<D> {
         let Head::Empty(_) = &self.head else {
             panic!("unexpected call");
         };
-        self.cancel(&menu::Cancel, window, cx);
+        if window.is_window_active() {
+            self.cancel(&menu::Cancel, window, cx);
+        }
     }
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
@@ -778,7 +780,7 @@ impl<D: PickerDelegate> Picker<D> {
             })
             .flex_grow()
             .py_1()
-            .track_scroll(scroll_handle.clone())
+            .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
                 state.clone(),
@@ -864,12 +866,12 @@ impl<D: PickerDelegate> Render for Picker<D> {
 
                             this.map(|this| match &self.element_container {
                                 ElementContainer::List(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    base_scrollbar_config.tracked_scroll_handle(state),
                                     window,
                                     cx,
                                 ),
                                 ElementContainer::UniformList(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    base_scrollbar_config.tracked_scroll_handle(state),
                                     window,
                                     cx,
                                 ),

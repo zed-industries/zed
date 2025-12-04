@@ -7,7 +7,7 @@ use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::run_platform_tests,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{FluentBuilder, NamedJob},
+    steps::{CommonJobConditions, FluentBuilder, NamedJob},
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -83,9 +83,7 @@ fn check_style() -> NamedJob {
 
 fn release_job(deps: &[&NamedJob]) -> Job {
     let job = Job::default()
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .timeout_minutes(60u32);
     if deps.len() > 0 {
         job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())

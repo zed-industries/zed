@@ -11,5 +11,6 @@ brackets = [
 tab_size = 2
 prettier_parser_name = "json"
 debuggers = ["JavaScript"]
+
 [overrides.string]
-completion_query_characters = [":", " "]
+completion_query_characters = [":", " ", "."]

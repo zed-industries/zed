@@ -7,7 +7,7 @@ use editor::{
     RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
-    AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
+    App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
 };
 use language::{BufferSnapshot, Capability, Point, Selection, SelectionGoal, TreeSitterOptions};
@@ -418,17 +418,17 @@ impl Item for StackTraceView {
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

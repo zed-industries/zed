@@ -500,6 +500,7 @@ impl Editor {
                         editor.register_visible_buffers(cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                         editor.update_lsp_data(None, window, cx);
+                        editor.colorize_brackets(false, cx);
                     })
                     .ok();
             });

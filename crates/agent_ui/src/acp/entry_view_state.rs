@@ -405,7 +405,7 @@ mod tests {
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
 
     use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
@@ -432,24 +432,11 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let tool_call = acp::ToolCall {
-            id: acp::ToolCallId("tool".into()),
-            title: "Tool call".into(),
-            kind: acp::ToolKind::Other,
-            status: acp::ToolCallStatus::InProgress,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/hello.txt".into(),
-                    old_text: Some("hi world".into()),
-                    new_text: "hello world".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call = acp::ToolCall::new("tool", "Tool call")
+            .status(acp::ToolCallStatus::InProgress)
+            .content(vec![acp::ToolCallContent::Diff(
+                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+            )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
@@ -539,7 +526,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }
 }

@@ -261,7 +261,7 @@ impl ExampleContext {
                             .expect("Unknown tool_name content in meta");
 
                         tool_uses_by_id.insert(
-                            tool_call.id,
+                            tool_call.tool_call_id,
                             ToolUse {
                                 name: tool_name.to_string(),
                                 value: tool_call.raw_input.unwrap_or_default(),
@@ -277,7 +277,9 @@ impl ExampleContext {
                     ThreadEvent::ToolCallUpdate(tool_call_update) => {
                         if let acp_thread::ToolCallUpdate::UpdateFields(update) = tool_call_update {
                             if let Some(raw_input) = update.fields.raw_input {
-                                if let Some(tool_use) = tool_uses_by_id.get_mut(&update.id) {
+                                if let Some(tool_use) =
+                                    tool_uses_by_id.get_mut(&update.tool_call_id)
+                                {
                                     tool_use.value = raw_input;
                                 }
                             }
@@ -290,7 +292,7 @@ impl ExampleContext {
                                     update.fields.status == Some(acp::ToolCallStatus::Completed);
 
                                 let tool_use = tool_uses_by_id
-                                    .remove(&update.id)
+                                    .remove(&update.tool_call_id)
                                     .expect("Unrecognized tool call completed");
 
                                 let log_message = if succeeded {
@@ -337,10 +339,7 @@ impl ExampleContext {
                         acp::StopReason::MaxTurnRequests => {
                             return Err(anyhow!("Exceeded maximum turn requests"));
                         }
-                        acp::StopReason::Refusal => {
-                            return Err(anyhow!("Refusal"));
-                        }
-                        acp::StopReason::Cancelled => return Err(anyhow!("Cancelled")),
+                        stop_reason => return Err(anyhow!("{stop_reason:?}")),
                     },
                 }
             }

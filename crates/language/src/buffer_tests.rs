@@ -1111,9 +1111,10 @@ fn test_text_objects(cx: &mut App) {
 
 #[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut App) {
-    let mut assert = |selection_text, range_markers| {
+    #[track_caller]
+    fn assert(selection_text: &'static str, range_markers: Vec<&'static str>, cx: &mut App) {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
-    };
+    }
 
     assert(
         indoc! {"
@@ -1130,6 +1131,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1156,6 +1158,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1182,6 +1185,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1199,6 +1203,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1209,7 +1214,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let fˇoo = 1;"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 
     // Regression test: avoid crash when querying at the end of the buffer.
@@ -1221,7 +1227,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let foo = 1;ˇ"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 }
 
@@ -3420,7 +3427,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .selections_in_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), false)
             .map(|(replica_id, _, _, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
@@ -3453,6 +3460,25 @@ fn test_contiguous_ranges() {
         .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
     );
+}
+
+#[gpui::test]
+fn test_insertion_after_deletion(cx: &mut gpui::App) {
+    let buffer = cx.new(|cx| Buffer::local("struct Foo {\n    \n}", cx));
+    buffer.update(cx, |buffer, cx| {
+        let mut anchor = buffer.anchor_after(17);
+        buffer.edit([(12..18, "")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {}");
+        if !anchor.is_valid(&snapshot) {
+            anchor = snapshot.anchor_after(snapshot.offset_for_anchor(&anchor));
+        }
+        buffer.edit([(anchor..anchor, "\n")], None, cx);
+        buffer.edit([(anchor..anchor, "field1:")], None, cx);
+        buffer.edit([(anchor..anchor, " i32,")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {\nfield1: i32,}");
+    })
 }
 
 #[gpui::test(iterations = 500)]

@@ -1723,6 +1723,10 @@ impl ProtoClient for Client {
     fn is_via_collab(&self) -> bool {
         true
     }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }
 
 /// prefix for the zed:// url scheme

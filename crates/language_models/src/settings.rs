@@ -58,6 +58,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 profile_name: bedrock.profile,
                 role_arn: None, // todo(was never a setting for this...)
                 authentication_method: bedrock.authentication_method.map(Into::into),
+                allow_global: bedrock.allow_global,
             },
             deepseek: DeepSeekSettings {
                 api_url: deepseek.api_url.unwrap(),

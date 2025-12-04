@@ -544,6 +544,32 @@ impl PickerDelegate for RecentProjectsDelegate {
             paths,
         };
 
+        let secondary_actions = h_flex()
+            .gap_px()
+            .child(
+                IconButton::new("open_new_window", IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Open Project in New Window"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        this.delegate.set_selected_index(ix, window, cx);
+                        this.delegate.confirm(true, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("delete", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Delete from Recent Projects"))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+
+                        this.delegate.delete_recent_project(ix, window, cx)
+                    })),
+            )
+            .into_any_element();
+
         Some(
             ListItem::new(ix)
                 .toggle_state(selected)
@@ -577,24 +603,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }),
                 )
                 .map(|el| {
-                    let delete_button = div()
-                        .child(
-                            IconButton::new("delete", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    cx.stop_propagation();
-                                    window.prevent_default();
-
-                                    this.delegate.delete_recent_project(ix, window, cx)
-                                }))
-                                .tooltip(Tooltip::text("Delete from Recent Projects...")),
-                        )
-                        .into_any_element();
-
                     if self.selected_index() == ix {
-                        el.end_slot::<AnyElement>(delete_button)
+                        el.end_slot(secondary_actions)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button)
+                        el.end_hover_slot(secondary_actions)
                     }
                 })
                 .tooltip(move |_, cx| {

@@ -524,6 +524,16 @@ impl Room {
         self.id
     }
 
+    pub fn room_id(&self) -> impl Future<Output = Option<String>> + 'static {
+        let room = self.live_kit.as_ref().map(|lk| lk.room.clone());
+        async move {
+            let room = room?;
+            let sid = room.sid().await;
+            let name = room.name();
+            Some(format!("{} (sid: {sid})", name))
+        }
+    }
+
     pub fn status(&self) -> RoomStatus {
         self.status
     }

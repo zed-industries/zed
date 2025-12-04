@@ -9,6 +9,7 @@ use crate::tasks::workflows::{
 
 use super::{runners, steps};
 use gh_workflow::*;
+use indoc::indoc;
 
 pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
@@ -42,10 +43,11 @@ pub fn run_bundling() -> Workflow {
 fn bundle_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .when(deps.len() == 0, |job|
-                job.cond(Expression::new(
-                "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                 (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
-            )))
+            job.cond(Expression::new(
+                indoc! {
+                    r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+                    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
+                })))
         .timeout_minutes(60u32)
 }
 

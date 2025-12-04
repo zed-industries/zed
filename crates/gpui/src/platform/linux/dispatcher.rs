@@ -26,12 +26,13 @@ pub(crate) struct LinuxDispatcher {
     main_thread_id: thread::ThreadId,
 }
 
+const MIN_THREADS: usize = 2;
+
 impl LinuxDispatcher {
     pub fn new(main_sender: Sender<RunnableVariant>) -> Self {
         let (background_sender, background_receiver) = flume::unbounded::<RunnableVariant>();
-        let thread_count = std::thread::available_parallelism()
-            .map(|i| i.get())
-            .unwrap_or(1);
+        let thread_count =
+            std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
 
         let mut background_threads = (0..thread_count)
             .map(|i| {

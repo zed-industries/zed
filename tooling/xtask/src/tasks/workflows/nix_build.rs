@@ -1,6 +1,6 @@
 use crate::tasks::workflows::{
     runners::{Arch, Platform},
-    steps::NamedJob,
+    steps::{CommonJobConditions, NamedJob},
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -71,9 +71,7 @@ pub(crate) fn build_nix(
     let mut job = Job::default()
         .timeout_minutes(60u32)
         .continue_on_error(true)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .runs_on(runner)
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))

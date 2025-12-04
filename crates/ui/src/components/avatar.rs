@@ -91,7 +91,18 @@ impl RenderOnce for Avatar {
                 self.image
                     .size(image_size)
                     .rounded_full()
-                    .bg(cx.theme().colors().ghost_element_background),
+                    .bg(cx.theme().colors().element_disabled)
+                    .with_fallback(|| {
+                        h_flex()
+                            .size_full()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::Person)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
+                            .into_any_element()
+                    }),
             )
             .children(self.indicator.map(|indicator| div().child(indicator)))
     }

@@ -1,16 +1,18 @@
 [
   {
     "bindings": {
-      "ctrl-alt-s": "zed::OpenSettingsFile",
+      "ctrl-alt-s": "zed::OpenSettings",
       "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem",
       "shift-escape": null, // Unmap workspace::zoom
+      "ctrl-~": "git::Branch",
       "ctrl-f2": "debugger::Stop",
       "f6": "debugger::Pause",
       "f7": "debugger::StepInto",
       "f8": "debugger::StepOver",
       "shift-f8": "debugger::StepOut",
       "f9": "debugger::Continue",
+      "shift-f9": "debugger::Start",
       "alt-shift-f9": "debugger::Start"
     }
   },
@@ -46,7 +48,7 @@
       "alt-f7": "editor::FindAllReferences",
       "ctrl-alt-f7": "editor::FindAllReferences",
       "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
-      "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleRightDock
+      "ctrl-alt-b": "editor::GoToImplementation", // Conflicts with workspace::ToggleRightDock
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
@@ -70,7 +72,11 @@
       "ctrl-r": ["buffer_search::Deploy", { "replace_enabled": true }],
       "ctrl-shift-n": "file_finder::Toggle",
       "ctrl-g": "go_to_line::Toggle",
-      "alt-enter": "editor::ToggleCodeActions"
+      "alt-enter": "editor::ToggleCodeActions",
+      "ctrl-space": "editor::ShowCompletions",
+      "ctrl-q": "editor::Hover",
+      "ctrl-p": "editor::ShowSignatureHelp",
+      "ctrl-\\": "assistant::InlineAssist"
     }
   },
   {
@@ -94,9 +100,13 @@
       "ctrl-shift-f12": "workspace::ToggleAllDocks",
       "ctrl-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "alt-shift-f10": "task::Spawn",
+      "shift-f10": "task::Spawn",
+      "ctrl-f5": "task::Rerun",
       "ctrl-e": "file_finder::Toggle",
-      // "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      "ctrl-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "ctrl-shift-n": "file_finder::Toggle",
+      "ctrl-n": "project_symbols::Toggle",
+      "ctrl-alt-n": "file_finder::Toggle",
       "ctrl-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
@@ -133,7 +143,9 @@
     "context": "Pane",
     "bindings": {
       "ctrl-alt-left": "pane::GoBack",
-      "ctrl-alt-right": "pane::GoForward"
+      "ctrl-alt-right": "pane::GoForward",
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
     }
   },
   {
@@ -152,8 +164,6 @@
     "bindings": {
       "ctrl-shift-t": "workspace::NewTerminal",
       "alt-f12": "workspace::CloseActiveDock",
-      "alt-left": "pane::ActivatePreviousItem",
-      "alt-right": "pane::ActivateNextItem",
       "ctrl-up": "terminal::ScrollLineUp",
       "ctrl-down": "terminal::ScrollLineDown",
       "shift-pageup": "terminal::ScrollPageUp",

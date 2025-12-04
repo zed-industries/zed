@@ -469,7 +469,7 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
         true
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &gpui::App) -> bool {
         false
     }
 
@@ -542,7 +542,7 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
         true
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &gpui::App) -> bool {
         false
     }
 

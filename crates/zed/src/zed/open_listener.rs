@@ -54,7 +54,7 @@ pub enum OpenRequestKind {
         schema_path: String,
     },
     Setting {
-        // None just opens settings without navigating to a specific path
+        /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
     },
 }

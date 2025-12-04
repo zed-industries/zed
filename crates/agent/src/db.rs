@@ -150,6 +150,7 @@ impl DbThread {
                                     .unwrap_or_default(),
                                 input: tool_use.input,
                                 is_input_complete: true,
+                                thought_signature: None,
                             },
                         ));
                     }
@@ -181,6 +182,7 @@ impl DbThread {
                     crate::Message::Agent(AgentMessage {
                         content,
                         tool_results,
+                        reasoning_details: None,
                     })
                 }
                 language_model::Role::System => {
@@ -364,7 +366,7 @@ impl ThreadsDatabase {
 
             for (id, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
-                    id: acp::SessionId(id),
+                    id: acp::SessionId::new(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });
@@ -418,6 +420,22 @@ impl ThreadsDatabase {
             "})?;
 
             delete(id.0)?;
+
+            Ok(())
+        })
+    }
+
+    pub fn delete_threads(&self) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+
+            let mut delete = connection.exec_bound::<()>(indoc! {"
+                DELETE FROM threads
+            "})?;
+
+            delete(())?;
 
             Ok(())
         })

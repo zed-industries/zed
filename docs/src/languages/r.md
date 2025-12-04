@@ -8,7 +8,7 @@ R support is available via multiple R Zed extensions:
   - Language-Server: [REditorSupport/languageserver](https://github.com/REditorSupport/languageserver)
 
 - [posit-dev/air](https://github.com/posit-dev/air/tree/main/editors/zed)
-  - Language-Server: [posit-dev/air](https://github.com/posit-dev/air)
+  - Formatter: [posit-dev/air](https://posit-dev.github.io/air/)
 
 ## Installation
 
@@ -20,22 +20,11 @@ install.packages("languageserver")
 install.packages("lintr")
 ```
 
-3. Install the [ocsmit/zed-r](https://github.com/ocsmit/zed-r) through Zed's extensions manager.
+3. Install the [R](https://github.com/ocsmit/zed-r) extension through Zed's extensions manager for basic R language support (syntax highlighting, tree-sitter support) and for [REditorSupport/languageserver](https://github.com/REditorSupport/languageserver) support.
 
-For example on macOS:
+4. Install the [Air](https://posit-dev.github.io/air/) extension through Zed's extensions manager for R code formatting via Air.
 
-```sh
-brew install --cask r
-Rscript --version
-Rscript -e 'options(repos = "https://cran.rstudio.com/"); install.packages("languageserver")'
-Rscript -e 'options(repos = "https://cran.rstudio.com/"); install.packages("lintr")'
-Rscript -e 'packageVersion("languageserver")'
-Rscript -e 'packageVersion("lintr")'
-```
-
-## Configuration
-
-### Linting
+## Linting
 
 `REditorSupport/languageserver` bundles support for [r-lib/lintr](https://github.com/r-lib/lintr) as a linter. This can be configured via the use of a `.lintr` inside your project (or in your home directory for global defaults).
 
@@ -59,7 +48,56 @@ exclusions: list(".")
 
 See [Using lintr](https://lintr.r-lib.org/articles/lintr.html) for a complete list of options,
 
-### Formatting
+## Formatting
+
+### Air
+
+[Air](https://posit-dev.github.io/air/) provides code formatting for R, including support for format-on-save. The [Air documentation for Zed](https://posit-dev.github.io/air/editor-zed.html) contains the most up-to-date advice for running Air in Zed.
+
+Ensure that you have installed both the [ocsmit/zed-r](https://github.com/ocsmit/zed-r) extension (for general R language awareness in Zed) and the [Air](https://posit-dev.github.io/air/) extension.
+
+Enable Air in your `settings.json`:
+
+```json [settings]
+{
+  "languages": {
+    "R": {
+      "language_servers": ["air"]
+    }
+  }
+}
+```
+
+If you use the `"r_language_server"` from `REditorSupport/languageserver`, but would still like to use Air for formatting, use the following configuration:
+
+```json [settings]
+{
+  "languages": {
+    "R": {
+      "language_servers": ["air", "r_language_server"],
+      "use_on_type_format": false
+    }
+  }
+}
+```
+
+Note that `"air"` must come first in this list, otherwise [r-lib/styler](https://github.com/r-lib/styler) will be invoked via `"r_language_server"`.
+
+`"r_language_server"` provides on-type-formatting that differs from Air's formatting rules. To avoid this entirely and let Air be fully in charge of formatting your R files, also set `"use_on_type_format": false` as shown above.
+
+#### Configuring Air
+
+Air is minimally configurable via an `air.toml` file placed in the root directory of your project:
+
+```toml
+[format]
+line-width = 80
+indent-width = 2
+```
+
+For more details, refer to the Air documentation about [configuration](https://posit-dev.github.io/air/configuration.html).
+
+### Styler
 
 `REditorSupport/languageserver` bundles support for [r-lib/styler](https://github.com/r-lib/styler) as a formatter. See [Customizing Styler](https://cran.r-project.org/web/packages/styler/vignettes/customizing_styler.html) for more information on how to customize its behavior.
 

@@ -269,6 +269,7 @@ impl StashListDelegate {
             repo.downgrade(),
             self.workspace.clone(),
             Some(stash_index),
+            None,
             window,
             cx,
         );

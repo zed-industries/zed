@@ -159,7 +159,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                         cx,
                         |s| s.select_ranges([len..len]),
                     );
-                    if len > 0 {
+                    if len.0 > 0 {
                         editor.insert("\n\n", window, cx);
                     }
                     editor.insert(&entry_heading, window, cx);

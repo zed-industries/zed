@@ -13,7 +13,6 @@ path = "src/zeta2_tools.rs"
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
@@ -24,9 +23,7 @@ feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-log.workspace = true
 multi_buffer.workspace = true
-ordered-float.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -36,7 +33,7 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
-zeta2.workspace = true
+zeta.workspace = true
 
 [dev-dependencies]
 clap.workspace = true

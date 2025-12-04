@@ -233,18 +233,11 @@ fn collect_diagnostics(
     options: Options,
     cx: &mut App,
 ) -> Task<Result<Option<SlashCommandOutput>>> {
-    let error_source = if let Some(path_matcher) = &options.path_matcher {
-        debug_assert_eq!(path_matcher.sources().len(), 1);
-        Some(path_matcher.sources().first().cloned().unwrap_or_default())
-    } else {
-        None
-    };
-
     let path_style = project.read(cx).path_style(cx);
     let glob_is_exact_file_match = if let Some(path) = options
         .path_matcher
         .as_ref()
-        .and_then(|pm| pm.sources().first())
+        .and_then(|pm| pm.sources().next())
     {
         project
             .read(cx)
@@ -266,6 +259,13 @@ fn collect_diagnostics(
         .collect();
 
     cx.spawn(async move |cx| {
+        let error_source = if let Some(path_matcher) = &options.path_matcher {
+            debug_assert_eq!(path_matcher.sources().count(), 1);
+            Some(path_matcher.sources().next().unwrap_or_default())
+        } else {
+            None
+        };
+
         let mut output = SlashCommandOutput::default();
 
         if let Some(error_source) = error_source.as_ref() {
@@ -277,7 +277,7 @@ fn collect_diagnostics(
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
             if let Some(path_matcher) = &options.path_matcher
-                && !path_matcher.is_match(&path.as_std_path())
+                && !path_matcher.is_match(&path)
             {
                 continue;
             }

@@ -35,7 +35,7 @@ To switch to `intelephense`, add the following to your `settings.json`:
 {
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
     }
   }
 }

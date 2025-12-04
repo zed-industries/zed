@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use gpui::{Context, Entity, Window};
-use multi_buffer::{MultiBuffer, ToOffset};
+use multi_buffer::{BufferOffset, MultiBuffer, ToOffset};
 use std::ops::Range;
 use util::ResultExt as _;
 
@@ -546,9 +546,10 @@ pub(crate) fn handle_from(
                 if edit_range_offset.start != edit_range_offset.end {
                     continue;
                 }
-                if let Some(selection) =
-                    buffer_selection_map.get_mut(&(edit_range_offset.start, edit_range_offset.end))
-                {
+                if let Some(selection) = buffer_selection_map.get_mut(&(
+                    BufferOffset(edit_range_offset.start),
+                    BufferOffset(edit_range_offset.end),
+                )) {
                     if selection.0.head().bias() != text::Bias::Right
                         || selection.0.tail().bias() != text::Bias::Right
                     {
@@ -621,7 +622,7 @@ mod jsx_tag_autoclose_tests {
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
     use languages::language;
-    use multi_buffer::ExcerptRange;
+    use multi_buffer::{ExcerptRange, MultiBufferOffset};
     use text::Selection;
 
     async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
@@ -842,9 +843,9 @@ mod jsx_tag_autoclose_tests {
         cx.update_editor(|editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select(vec![
-                    Selection::from_offset(4),
-                    Selection::from_offset(9),
-                    Selection::from_offset(15),
+                    Selection::from_offset(MultiBufferOffset(4)),
+                    Selection::from_offset(MultiBufferOffset(9)),
+                    Selection::from_offset(MultiBufferOffset(15)),
                 ])
             })
         });

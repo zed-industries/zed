@@ -1,7 +1,7 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings, Inlay,
+    DisplayPoint, EditorSettings, Inlay, MultiBufferOffset,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
     display_map::DisplayRow,
     test::{
@@ -878,7 +878,8 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
                     if !snapshot.buffer_snapshot().is_empty() {
-                        let position = rng.random_range(0..snapshot.buffer_snapshot().len());
+                        let position = rng
+                            .random_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
                         let position = snapshot.buffer_snapshot().clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",

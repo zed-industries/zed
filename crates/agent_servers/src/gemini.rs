@@ -37,6 +37,7 @@ impl AgentServer for Gemini {
         let store = delegate.store.downgrade();
         let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
+        let default_model = self.default_model(cx);
 
         cx.spawn(async move |cx| {
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
@@ -69,6 +70,7 @@ impl AgentServer for Gemini {
                 command,
                 root_dir.as_ref(),
                 default_mode,
+                default_model,
                 is_remote,
                 cx,
             )

@@ -88,7 +88,9 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("coffeescript", &["coffee"]),
     (
         "cpp",
-        &["c++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl", "ixx"],
+        &[
+            "c++", "h++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
+        ],
     ),
     ("crystal", &["cr", "ecr"]),
     ("csharp", &["cs"]),
@@ -165,6 +167,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("nim", &["nim"]),
     ("nix", &["nix"]),
     ("ocaml", &["ml", "mli"]),
+    ("odin", &["odin"]),
     ("php", &["php"]),
     (
         "prettier",
@@ -330,6 +333,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("nim", "icons/file_icons/nim.svg"),
     ("nix", "icons/file_icons/nix.svg"),
     ("ocaml", "icons/file_icons/ocaml.svg"),
+    ("odin", "icons/file_icons/odin.svg"),
     ("phoenix", "icons/file_icons/phoenix.svg"),
     ("php", "icons/file_icons/php.svg"),
     ("prettier", "icons/file_icons/prettier.svg"),

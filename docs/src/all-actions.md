@@ -1,3 +1,3 @@
-## All Actions
+# All Actions
 
 {#ACTIONS_TABLE#}

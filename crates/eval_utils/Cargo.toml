@@ -1,0 +1,18 @@
+[package]
+name = "eval_utils"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/eval_utils.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+serde.workspace = true
+smol.workspace = true

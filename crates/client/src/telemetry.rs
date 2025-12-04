@@ -158,7 +158,7 @@ pub fn os_version() -> String {
         let mut info = unsafe { std::mem::zeroed() };
         let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
         if status.is_ok() {
-            gpui::SemanticVersion::new(
+            semver::Version::new(
                 info.dwMajorVersion as _,
                 info.dwMinorVersion as _,
                 info.dwBuildNumber as _,
@@ -293,10 +293,11 @@ impl Telemetry {
     }
 
     pub fn metrics_enabled(self: &Arc<Self>) -> bool {
-        let state = self.state.lock();
-        let enabled = state.settings.metrics;
-        drop(state);
-        enabled
+        self.state.lock().settings.metrics
+    }
+
+    pub fn diagnostics_enabled(self: &Arc<Self>) -> bool {
+        self.state.lock().settings.diagnostics
     }
 
     pub fn set_authenticated_user_info(

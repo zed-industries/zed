@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use crate::{Disclosure, Label, h_flex, prelude::*};
+use crate::{Disclosure, prelude::*};
+use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
 use settings::Settings;
 use theme::ThemeSettings;
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ListHeader {
     /// The label of the header.
     label: SharedString,
@@ -136,5 +137,82 @@ impl RenderOnce for ListHeader {
                         )
                     }),
             )
+    }
+}
+
+impl Component for ListHeader {
+    fn scope() -> ComponentScope {
+        ComponentScope::DataDisplay
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A header component for lists with support for icons, actions, and collapsible sections.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Headers",
+                        vec![
+                            single_example(
+                                "Simple",
+                                ListHeader::new("Section Header").into_any_element(),
+                            ),
+                            single_example(
+                                "With Icon",
+                                ListHeader::new("Files")
+                                    .start_slot(Icon::new(IconName::File))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "With End Slot",
+                                ListHeader::new("Recent")
+                                    .end_slot(Label::new("5").color(Color::Muted))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Collapsible Headers",
+                        vec![
+                            single_example(
+                                "Expanded",
+                                ListHeader::new("Expanded Section")
+                                    .toggle(Some(true))
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Collapsed",
+                                ListHeader::new("Collapsed Section")
+                                    .toggle(Some(false))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "States",
+                        vec![
+                            single_example(
+                                "Selected",
+                                ListHeader::new("Selected Header")
+                                    .toggle_state(true)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Inset",
+                                ListHeader::new("Inset Header")
+                                    .inset(true)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

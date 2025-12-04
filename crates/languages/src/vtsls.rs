@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
 use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use regex::Regex;
@@ -228,6 +228,7 @@ impl LspAdapter for VtslsLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let tsdk_path = self.tsdk_path(delegate).await;

@@ -5,7 +5,7 @@ use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::{AppState, Workspace};
+use workspace::{ActivatePreviousItem, AppState, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -197,6 +197,8 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
             json!({
                 "1.txt": "First file",
                 "2.txt": "Second file",
+                "3.txt": "Third file",
+                "4.txt": "Fourth file",
             }),
         )
         .await;
@@ -206,78 +208,45 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
+    let tab_3 = open_buffer("3.txt", &workspace, cx).await;
     let tab_2 = open_buffer("2.txt", &workspace, cx).await;
+    let tab_4 = open_buffer("4.txt", &workspace, cx).await;
+
+    // After opening all buffers, let's navigate to the previous item two times, finishing with:
+    //
+    // 1.txt | [3.txt] | 2.txt | 4.txt
+    //
+    // With 3.txt being the active item in the pane.
+    cx.dispatch_action(ActivatePreviousItem);
+    cx.dispatch_action(ActivatePreviousItem);
+    cx.run_until_parked();
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
     tab_switcher.update(cx, |tab_switcher, _| {
-        assert_eq!(tab_switcher.delegate.matches.len(), 2);
-        assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+        assert_eq!(tab_switcher.delegate.matches.len(), 4);
+        assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_2.boxed_clone());
+        assert_match_at_position(tab_switcher, 2, tab_4.boxed_clone());
+        assert_match_at_position(tab_switcher, 3, tab_1.boxed_clone());
     });
 
     cx.simulate_modifiers_change(Modifiers::control());
     cx.dispatch_action(CloseSelectedItem);
     tab_switcher.update(cx, |tab_switcher, _| {
-        assert_eq!(tab_switcher.delegate.matches.len(), 1);
-        assert_match_selection(tab_switcher, 0, tab_2);
+        assert_eq!(tab_switcher.delegate.matches.len(), 3);
+        assert_match_selection(tab_switcher, 0, tab_3);
+        assert_match_at_position(tab_switcher, 1, tab_4);
+        assert_match_at_position(tab_switcher, 2, tab_1);
     });
 
     // Still switches tab on modifiers release
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        assert_eq!(active_editor.read(cx).title(cx), "2.txt");
+        assert_eq!(active_editor.read(cx).title(cx), "3.txt");
     });
     assert_tab_switcher_is_closed(workspace, cx);
-}
-
-#[gpui::test]
-async fn test_close_preserves_selected_position(cx: &mut gpui::TestAppContext) {
-    let app_state = init_test(cx);
-    app_state
-        .fs
-        .as_fake()
-        .insert_tree(
-            path!("/root"),
-            json!({
-                "1.txt": "First file",
-                "2.txt": "Second file",
-                "3.txt": "Third file",
-            }),
-        )
-        .await;
-
-    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-    let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-    let tab_1 = open_buffer("1.txt", &workspace, cx).await;
-    let tab_2 = open_buffer("2.txt", &workspace, cx).await;
-    let tab_3 = open_buffer("3.txt", &workspace, cx).await;
-
-    let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
-        assert_eq!(tab_switcher.delegate.matches.len(), 3);
-        assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_2.boxed_clone());
-        assert_match_at_position(tab_switcher, 2, tab_1.boxed_clone());
-    });
-
-    // Verify that if the selected tab was closed, tab at the same position is selected.
-    cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
-        assert_eq!(tab_switcher.delegate.matches.len(), 2);
-        assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
-    });
-
-    // But if the position is no longer valid, fall back to the position above.
-    cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
-        assert_eq!(tab_switcher.delegate.matches.len(), 1);
-        assert_match_selection(tab_switcher, 0, tab_3.boxed_clone());
-    });
 }
 
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

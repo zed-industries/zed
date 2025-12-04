@@ -126,7 +126,7 @@ impl ErrorExt for anyhow::Error {
         if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.cloned()
         } else {
-            anyhow::anyhow!("{self}")
+            anyhow::anyhow!("{self:#}")
         }
     }
 }

@@ -2160,7 +2160,7 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .vertical_scrollbar_for(state.scroll_handle, window, cx),
+                        .vertical_scrollbar_for(&state.scroll_handle, window, cx),
                 ),
             )
             .into_any_element()
