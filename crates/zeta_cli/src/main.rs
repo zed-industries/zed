@@ -6,6 +6,7 @@ mod paths;
 mod predict;
 mod source_location;
 mod syntax_retrieval_stats;
+mod training;
 mod util;
 
 use crate::{
@@ -15,9 +16,10 @@ use crate::{
     predict::run_predict,
     source_location::SourceLocation,
     syntax_retrieval_stats::retrieval_stats,
+    training::distill::run_distill,
     util::{open_buffer, open_buffer_with_language_server},
 };
-use ::util::paths::PathStyle;
+use ::util::{ResultExt, paths::PathStyle};
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
@@ -51,6 +53,7 @@ enum Command {
     ContextStats(ContextStatsArgs),
     Predict(PredictArguments),
     Eval(EvaluateArguments),
+    Distill(DistillArguments),
     ConvertExample {
         path: PathBuf,
         #[arg(long, value_enum, default_value_t = ExampleFormat::Md)]
@@ -131,6 +134,11 @@ pub struct PredictArguments {
     example_path: PathBuf,
     #[clap(flatten)]
     options: PredictionOptions,
+}
+
+#[derive(Debug, Args)]
+pub struct DistillArguments {
+    split_commit_dataset: PathBuf,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -520,6 +528,13 @@ fn main() {
                 }
                 Some(Command::Eval(arguments)) => {
                     run_evaluate(arguments, &app_state, cx).await;
+                }
+                Some(Command::Distill(arguments)) => {
+                    let _guard = cx
+                        .update(|cx| gpui_tokio::Tokio::handle(cx))
+                        .unwrap()
+                        .enter();
+                    run_distill(arguments).await.log_err();
                 }
                 Some(Command::ConvertExample {
                     path,

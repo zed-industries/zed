@@ -13,6 +13,7 @@ name = "zeta"
 path = "src/main.rs"
 
 [dependencies]
+anthropic-sdk-rust = "0.1.1"
 
 anyhow.workspace = true
 chrono.workspace = true
