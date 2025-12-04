@@ -20090,6 +20090,11 @@ impl Editor {
         self.show_indent_guides
     }
 
+    pub fn disable_indent_guides(&mut self) -> Option<bool> {
+        self.show_indent_guides = Some(false);
+        self.show_indent_guides
+    }
+
     pub fn toggle_line_numbers(
         &mut self,
         _: &ToggleLineNumbers,
