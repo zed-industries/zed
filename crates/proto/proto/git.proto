@@ -190,6 +190,19 @@ message GitRenameBranch {
     string new_name = 4;
 }
 
+message GitCreateRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+    string remote_url = 4;
+}
+
+message GitRemoveRemote {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string remote_name = 3;
+}
+
 message GitDeleteBranch {
     uint64 project_id = 1;
     uint64 repository_id = 2;
@@ -288,6 +301,29 @@ message GitCheckoutFiles {
     uint64 repository_id = 3;
     string commit = 4;
     repeated string paths = 5;
+}
+
+message GitFileHistory {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string path = 4;
+    uint64 skip = 5;
+    optional uint64 limit = 6;
+}
+
+message GitFileHistoryResponse {
+    repeated FileHistoryEntry entries = 1;
+    string path = 2;
+}
+
+message FileHistoryEntry {
+    string sha = 1;
+    string subject = 2;
+    string message = 3;
+    int64 commit_timestamp = 4;
+    string author_name = 5;
+    string author_email = 6;
 }
 
 // Move to `git.proto` once collab's min version is >=0.171.0.
@@ -542,6 +578,7 @@ message GitCreateWorktree {
 message RunGitHook {
     enum GitHook {
         PRE_COMMIT = 0;
+        PRE_PUSH = 1;
     }
 
     uint64 project_id = 1;

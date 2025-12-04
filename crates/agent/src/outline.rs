@@ -66,11 +66,9 @@ pub async fn get_buffer_content_or_outline(
         let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
 
         let text = if let Some(path) = path {
-            format!(
-                "# File outline for {path} (file too large to show full content)\n\n{outline_text}",
-            )
+            format!("# File outline for {path}\n\n{outline_text}",)
         } else {
-            format!("# File outline (file too large to show full content)\n\n{outline_text}",)
+            format!("# File outline\n\n{outline_text}",)
         };
         Ok(BufferContent {
             text,

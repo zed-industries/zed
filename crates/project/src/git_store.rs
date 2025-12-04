@@ -472,6 +472,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
+        client.add_entity_request_handler(Self::handle_create_remote);
+        client.add_entity_request_handler(Self::handle_remove_remote);
         client.add_entity_request_handler(Self::handle_delete_branch);
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
@@ -488,6 +490,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
+        client.add_entity_request_handler(Self::handle_file_history);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -1057,6 +1060,30 @@ impl GitStore {
         })
     }
 
+    pub fn file_history(
+        &self,
+        repo: &Entity<Repository>,
+        path: RepoPath,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::FileHistory>> {
+        let rx = repo.update(cx, |repo, _| repo.file_history(path));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
+    pub fn file_history_paginated(
+        &self,
+        repo: &Entity<Repository>,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+        cx: &mut App,
+    ) -> Task<Result<git::repository::FileHistory>> {
+        let rx = repo.update(cx, |repo, _| repo.file_history_paginated(path, skip, limit));
+
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -1105,6 +1132,7 @@ impl GitStore {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                         let origin_url = backend
                             .remote_url(&remote)
+                            .await
                             .with_context(|| format!("remote \"{remote}\" not found"))?;
 
                         let sha = backend.head_sha().await.context("reading HEAD SHA")?;
@@ -2248,6 +2276,25 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_create_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+        let remote_url = envelope.payload.remote_url;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_remote(remote_name, remote_url)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_delete_branch(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitDeleteBranch>,
@@ -2260,6 +2307,24 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.delete_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_remove_remote(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRemoveRemote>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let remote_name = envelope.payload.remote_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.remove_remote(remote_name)
             })?
             .await??;
 
@@ -2311,6 +2376,40 @@ impl GitStore {
                     new_text: file.new_text,
                 })
                 .collect(),
+        })
+    }
+
+    async fn handle_file_history(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitFileHistory>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitFileHistoryResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = RepoPath::from_proto(&envelope.payload.path)?;
+        let skip = envelope.payload.skip as usize;
+        let limit = envelope.payload.limit.map(|l| l as usize);
+
+        let file_history = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.file_history_paginated(path, skip, limit)
+            })?
+            .await??;
+
+        Ok(proto::GitFileHistoryResponse {
+            entries: file_history
+                .entries
+                .into_iter()
+                .map(|entry| proto::FileHistoryEntry {
+                    sha: entry.sha.to_string(),
+                    subject: entry.subject.to_string(),
+                    message: entry.message.to_string(),
+                    commit_timestamp: entry.commit_timestamp,
+                    author_name: entry.author_name.to_string(),
+                    author_email: entry.author_email.to_string(),
+                })
+                .collect(),
+            path: file_history.path.to_proto(),
         })
     }
 
@@ -4016,6 +4115,55 @@ impl Repository {
         })
     }
 
+    pub fn file_history(
+        &mut self,
+        path: RepoPath,
+    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    pub fn file_history_paginated(
+        &mut self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.file_history_paginated(path, skip, limit).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                    let response = client
+                        .request(proto::GitFileHistory {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            path: path.to_proto(),
+                            skip: skip as u64,
+                            limit: limit.map(|l| l as u64),
+                        })
+                        .await?;
+                    Ok(git::repository::FileHistory {
+                        entries: response
+                            .entries
+                            .into_iter()
+                            .map(|entry| git::repository::FileHistoryEntry {
+                                sha: entry.sha.into(),
+                                subject: entry.subject.into(),
+                                message: entry.message.into(),
+                                commit_timestamp: entry.commit_timestamp,
+                                author_name: entry.author_name.into(),
+                                author_email: entry.author_email.into(),
+                            })
+                            .collect(),
+                        path: RepoPath::from_proto(&response.path)?,
+                    })
+                }
+            }
+        })
+    }
+
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
         Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
@@ -4540,9 +4688,11 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
+        let rx = self.run_hook(RunHook::PrePush, cx);
         self.send_job(
             Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
+                rx.await??;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -4754,6 +4904,61 @@ impl Repository {
         )
     }
 
+    pub fn create_remote(
+        &mut self,
+        remote_name: String,
+        remote_url: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remote add {remote_name} {remote_url}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_remote(remote_name, remote_url).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCreateRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                                remote_url,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn remove_remote(&mut self, remote_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git remove remote {remote_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_remote(remote_name).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRemoveRemote {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                remote_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn get_remotes(
         &mut self,
         branch_name: Option<String>,
@@ -4791,7 +4996,7 @@ impl Repository {
                     let remotes = response
                         .remotes
                         .into_iter()
-                        .map(|remotes| git::repository::Remote {
+                        .map(|remotes| Remote {
                             name: remotes.name.into(),
                         })
                         .collect();
@@ -5337,7 +5542,8 @@ impl Repository {
                 git_hosting_providers::register_additional_providers(
                     git_hosting_provider_registry,
                     state.backend.clone(),
-                );
+                )
+                .await;
             }
             let state = RepositoryState::Local(state);
             let mut jobs = VecDeque::new();
@@ -5942,8 +6148,8 @@ async fn compute_snapshot(
     }
 
     // Used by edit prediction data collection
-    let remote_origin_url = backend.remote_url("origin");
-    let remote_upstream_url = backend.remote_url("upstream");
+    let remote_origin_url = backend.remote_url("origin").await;
+    let remote_upstream_url = backend.remote_url("upstream").await;
 
     let snapshot = RepositorySnapshot {
         id,

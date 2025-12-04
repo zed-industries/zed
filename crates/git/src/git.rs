@@ -43,6 +43,8 @@ actions!(
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
+        /// Shows the git history for the current file.
+        FileHistory,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
@@ -230,12 +232,14 @@ impl From<Oid> for usize {
 #[derive(Copy, Clone, Debug)]
 pub enum RunHook {
     PreCommit,
+    PrePush,
 }
 
 impl RunHook {
     pub fn as_str(&self) -> &str {
         match self {
             Self::PreCommit => "pre-commit",
+            Self::PrePush => "pre-push",
         }
     }
 
@@ -246,6 +250,7 @@ impl RunHook {
     pub fn from_proto(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::PreCommit),
+            1 => Some(Self::PrePush),
             _ => None,
         }
     }

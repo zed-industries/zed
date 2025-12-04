@@ -596,7 +596,7 @@ pub enum HitboxBehavior {
     /// ```
     ///
     /// This has effects beyond event handling - any use of hitbox checking, such as hover
-    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// styles and tooltips. These other behaviors are the main point of this mechanism. An
     /// alternative might be to not affect mouse event handling - but this would allow
     /// inconsistent UI where clicks and moves interact with elements that are not considered to
     /// be hovered.
@@ -624,7 +624,7 @@ pub enum HitboxBehavior {
     /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
     ///
     /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
-    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// hover styles and tooltips. These other behaviors are the main point of this mechanism.
     /// An alternative might be to not affect mouse event handling - but this would allow
     /// inconsistent UI where clicks and moves interact with elements that are not considered to
     /// be hovered.
@@ -2006,7 +2006,9 @@ impl Window {
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
-        self.draw_roots(cx);
+        if !cx.mode.skip_drawing() {
+            self.draw_roots(cx);
+        }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 

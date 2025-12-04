@@ -271,7 +271,7 @@ impl CodegenAlternative {
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
             buffer.set_language(language, cx);
             if let Some(language_registry) = language_registry {
-                buffer.set_language_registry(language_registry)
+                buffer.set_language_registry(language_registry);
             }
             buffer
         });
@@ -719,6 +719,7 @@ impl CodegenAlternative {
                             output_tokens = usage.output_tokens,
                         )
                     }
+
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
                 })

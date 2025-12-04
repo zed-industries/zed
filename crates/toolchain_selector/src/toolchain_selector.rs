@@ -588,19 +588,20 @@ impl ToolchainSelector {
             .worktree_for_id(worktree_id, cx)?
             .read(cx)
             .abs_path();
-        let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
         cx.spawn_in(window, async move |workspace, cx| {
-            let active_toolchain = workspace::WORKSPACE_DB
-                .toolchain(
-                    workspace_id,
-                    worktree_id,
-                    relative_path.clone(),
-                    language_name.clone(),
-                )
-                .await
-                .ok()
-                .flatten();
+            let active_toolchain = project
+                .read_with(cx, |this, cx| {
+                    this.active_toolchain(
+                        ProjectPath {
+                            worktree_id,
+                            path: relative_path.clone(),
+                        },
+                        language_name.clone(),
+                        cx,
+                    )
+                })?
+                .await;
             workspace
                 .update_in(cx, |this, window, cx| {
                     this.toggle_modal(window, cx, move |window, cx| {
@@ -618,6 +619,7 @@ impl ToolchainSelector {
                     });
                 })
                 .ok();
+            anyhow::Ok(())
         })
         .detach();
 

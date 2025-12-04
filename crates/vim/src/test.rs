@@ -2255,6 +2255,79 @@ async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_yank_paragraph_with_paste(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        first paragraph
+        ˇstill first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("y a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("first paragraph\nstill first\n\n");
+
+    cx.simulate_shared_keystrokes("j j p").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        first paragraph
+        still first
+
+        ˇfirst paragraph
+        still first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    });
+}
+
+#[perf]
+#[gpui::test]
+async fn test_change_paragraph(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        first paragraph
+        ˇstill first
+
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("c a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("first paragraph\nstill first\n\n");
+
+    cx.simulate_shared_keystrokes("escape").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        ˇ
+        second paragraph
+        still second
+
+        third paragraph
+        "
+    });
+}
+
+#[perf]
+#[gpui::test]
 async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.set_state(

@@ -1114,7 +1114,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
