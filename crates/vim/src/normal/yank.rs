@@ -59,7 +59,7 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(None, window, cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn yank_object(
@@ -81,7 +81,11 @@ impl Vim {
                         start_positions.insert(selection.id, start_position);
                     });
                 });
-                vim.yank_selections_content(editor, MotionKind::Exclusive, window, cx);
+                let kind = match object.target_visual_mode(vim.mode, around) {
+                    Mode::VisualLine => MotionKind::Linewise,
+                    _ => MotionKind::Exclusive,
+                };
+                vim.yank_selections_content(editor, kind, window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
@@ -90,7 +94,7 @@ impl Vim {
                 });
             });
         });
-        self.exit_temporary_normal(None, window, cx);
+        self.exit_temporary_normal(window, cx);
     }
 
     pub fn yank_selections_content(
@@ -223,7 +227,7 @@ impl Vim {
 
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
-            |colors| colors.colors().editor_document_highlight_read_background,
+            |_, colors| colors.colors().editor_document_highlight_read_background,
             cx,
         );
         cx.spawn(async move |this, cx| {

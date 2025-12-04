@@ -24,7 +24,10 @@ use bedrock::{
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, FontWeight, Subscription, Task};
+use gpui::{
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, FontWeight, Subscription, Task, Window,
+    actions,
+};
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
@@ -46,6 +49,8 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+
+actions!(bedrock, [Tab, TabPrev]);
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
@@ -965,6 +970,7 @@ pub fn map_to_language_model_completion_events(
                                         is_input_complete: true,
                                         raw_input: tool_use.input_json,
                                         input,
+                                        thought_signature: None,
                                     },
                                 ))
                             }),
@@ -1012,6 +1018,7 @@ struct ConfigurationView {
     region_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    focus_handle: FocusHandle,
 }
 
 impl ConfigurationView {
@@ -1022,10 +1029,40 @@ impl ConfigurationView {
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
         .detach();
+
+        let access_key_id_editor = cx.new(|cx| {
+            InputField::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
+                .label("Access Key ID")
+                .tab_index(0)
+                .tab_stop(true)
+        });
+
+        let secret_access_key_editor = cx.new(|cx| {
+            InputField::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
+                .label("Secret Access Key")
+                .tab_index(1)
+                .tab_stop(true)
+        });
+
+        let session_token_editor = cx.new(|cx| {
+            InputField::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
+                .label("Session Token (Optional)")
+                .tab_index(2)
+                .tab_stop(true)
+        });
+
+        let region_editor = cx.new(|cx| {
+            InputField::new(window, cx, Self::PLACEHOLDER_REGION)
+                .label("Region")
+                .tab_index(3)
+                .tab_stop(true)
+        });
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -1046,22 +1083,13 @@ impl ConfigurationView {
         }));
 
         Self {
-            access_key_id_editor: cx.new(|cx| {
-                InputField::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
-                    .label("Access Key ID")
-            }),
-            secret_access_key_editor: cx.new(|cx| {
-                InputField::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
-                    .label("Secret Access Key")
-            }),
-            session_token_editor: cx.new(|cx| {
-                InputField::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
-                    .label("Session Token (Optional)")
-            }),
-            region_editor: cx
-                .new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_REGION).label("Region")),
+            access_key_id_editor,
+            secret_access_key_editor,
+            session_token_editor,
+            region_editor,
             state,
             load_credentials_task,
+            focus_handle,
         }
     }
 
@@ -1141,6 +1169,19 @@ impl ConfigurationView {
     fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         self.state.read(cx).is_authenticated()
     }
+
+    fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, _: &mut Context<Self>) {
+        window.focus_next();
+    }
+
+    fn on_tab_prev(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.focus_prev();
+    }
 }
 
 impl Render for ConfigurationView {
@@ -1190,6 +1231,9 @@ impl Render for ConfigurationView {
 
         v_flex()
             .size_full()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_tab))
+            .on_action(cx.listener(Self::on_tab_prev))
             .on_action(cx.listener(ConfigurationView::save_credentials))
             .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
             .child(Label::new("But, to access models on AWS, you need to:").mt_1())
@@ -1234,6 +1278,7 @@ impl ConfigurationView {
     fn render_static_credentials_ui(&self) -> impl IntoElement {
         v_flex()
             .my_2()
+            .tab_group()
             .gap_1p5()
             .child(
                 Label::new("Static Keys")

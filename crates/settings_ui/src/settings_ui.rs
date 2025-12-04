@@ -409,16 +409,30 @@ pub fn init(cx: &mut App) {
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_basic_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            Button::new("open-in-settings-file", "Edit in settings.json")
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .tab_index(0_isize)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
-                })
-                .into_any_element()
-        })
+        .add_renderer::<UnimplementedSettingField>(
+            |settings_window, item, _, settings_file, _, sub_field, _, cx| {
+                render_settings_item(
+                    settings_window,
+                    item,
+                    settings_file,
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .tab_index(0_isize)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Edit in settings.json",
+                            &OpenCurrentFile,
+                            &settings_window.focus_handle,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
+                        }))
+                        .into_any_element(),
+                    sub_field,
+                    cx,
+                )
+            },
+        )
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
@@ -443,6 +457,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
@@ -451,6 +466,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
@@ -497,12 +513,12 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
-        .add_basic_renderer::<settings::MaybeDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
         .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
+        .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -596,7 +612,10 @@ pub fn open_settings_editor(
                 window_background: cx.theme().window_background_appearance(),
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
-                window_min_size: Some(scaled_bounds),
+                window_min_size: Some(gpui::Size {
+                    width: px(360.0),
+                    height: px(240.0),
+                }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
@@ -2158,6 +2177,11 @@ impl SettingsWindow {
                 Button::new(edit_in_json_id, "Edit in settings.json")
                     .tab_index(0_isize)
                     .style(ButtonStyle::OutlinedGhost)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Edit in settings.json",
+                        &OpenCurrentFile,
+                        &self.focus_handle,
+                    ))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_current_settings_file(window, cx);
                     })),
@@ -2178,7 +2202,7 @@ impl SettingsWindow {
                         format!(
                             "{}{}{}",
                             directory_name,
-                            path_style.separator(),
+                            path_style.primary_separator(),
                             path.display(path_style)
                         )
                     }
@@ -2441,9 +2465,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.navbar_scroll_handle.clone()),
+                        .track_scroll(&self.navbar_scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.navbar_scroll_handle, window, cx),
             )
             .child(
                 h_flex()
@@ -2831,17 +2855,35 @@ impl SettingsWindow {
                 .into_any_element();
         } else {
             page_header = h_flex()
-                .ml_neg_1p5()
-                .gap_1()
+                .w_full()
+                .justify_between()
                 .child(
-                    IconButton::new("back-btn", IconName::ArrowLeft)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
+                    h_flex()
+                        .ml_neg_1p5()
+                        .gap_1()
+                        .child(
+                            IconButton::new("back-btn", IconName::ArrowLeft)
+                                .icon_size(IconSize::Small)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.pop_sub_page(cx);
+                                })),
+                        )
+                        .child(self.render_sub_page_breadcrumbs()),
+                )
+                .child(
+                    Button::new("open-in-settings-file", "Edit in settings.json")
+                        .tab_index(0_isize)
+                        .style(ButtonStyle::OutlinedGhost)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Edit in settings.json",
+                            &OpenCurrentFile,
+                            &self.focus_handle,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_current_settings_file(window, cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs())
                 .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
@@ -2985,10 +3027,10 @@ impl SettingsWindow {
                 window.focus_prev();
             }))
             .when(sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.list_state, window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(&self.sub_page_scroll_handle, window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .pt_6()

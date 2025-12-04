@@ -87,7 +87,7 @@ pub trait EditPredictionProvider: 'static + Sized {
         cursor_position: language::Anchor,
         cx: &App,
     ) -> bool;
-    fn is_refreshing(&self) -> bool;
+    fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &mut self,
         buffer: Entity<Buffer>,
@@ -200,7 +200,7 @@ where
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {
-        self.read(cx).is_refreshing()
+        self.read(cx).is_refreshing(cx)
     }
 
     fn refresh(

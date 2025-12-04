@@ -96,7 +96,7 @@ impl HeadlessExtensionStore {
 
             for extension in to_load {
                 if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
-                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                    log::info!("failed to load extension: {}, {:#}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
                     missing.push(extension)
@@ -279,7 +279,8 @@ impl HeadlessExtensionStore {
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
-                .await?;
+                .await
+                .context("Failed to rename {tmp_path:?} to {path:?}")?;
 
             Self::load_extension(this, extension, cx).await
         })

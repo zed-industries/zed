@@ -33,7 +33,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 
 #### Installation
 
-The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli). This installation is only available to Zed and is kept up to date as you use the agent.
 
 By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
 
@@ -168,6 +168,8 @@ To ensure you're using your billing method of choice, [open a new Codex thread](
 
 If you are already logged in and want to change your authentication method, type `/logout` in the thread and authenticate again.
 
+If you want to use a third-party provider with Codex, you can configure that with your [Codex config.toml](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) or pass extra [args/env variables](https://github.com/openai/codex/blob/main/docs/config.md#model-selection) to your Codex agent servers settings.
+
 #### Installation
 
 The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp). This installation is only available to Zed and is kept up to date as you use the agent.
@@ -194,6 +196,7 @@ You can also add agents through your `settings.json`, by specifying certain fiel
 {
   "agent_servers": {
     "My Custom Agent": {
+      "type": "custom",
       "command": "node",
       "args": ["~/projects/agent/index.js", "--acp"],
       "env": {}

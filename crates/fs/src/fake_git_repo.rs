@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
-    Oid,
+    Oid, RunHook,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
@@ -138,6 +138,7 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: Arc<HashMap<String, String>>,
+        _is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(message) = &state.simulated_index_write_error_message {
@@ -151,8 +152,8 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn remote_url(&self, _name: &str) -> Option<String> {
-        None
+    fn remote_url(&self, _name: &str) -> BoxFuture<'_, Option<String>> {
+        async move { None }.boxed()
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
@@ -431,6 +432,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn delete_branch(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
@@ -439,6 +444,25 @@ impl GitRepository for FakeGitRepository {
                 .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
+    }
+
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
+        async move {
+            Ok(git::repository::FileHistory {
+                entries: Vec::new(),
+                path,
+            })
+        }
+        .boxed()
     }
 
     fn stage_paths(
@@ -532,6 +556,14 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn run_hook(
+        &self,
+        _hook: RunHook,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn push(
         &self,
         _branch: String,
@@ -566,7 +598,15 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
+    fn get_push_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
+
+    fn get_branch_remote(&self, _branch: String) -> BoxFuture<'_, Result<Option<Remote>>> {
+        unimplemented!()
+    }
+
+    fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
         unimplemented!()
     }
 
