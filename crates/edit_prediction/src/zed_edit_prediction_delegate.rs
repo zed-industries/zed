@@ -1,10 +1,10 @@
-use std::{cmp, sync::Arc, time::Duration};
+use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{DataCollectionState, Direction, EditPredictionDelegate};
 use gpui::{App, Entity, prelude::*};
-use language::ToPoint as _;
+use language::{Buffer, ToPoint as _};
 use project::Project;
 
 use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
@@ -12,13 +12,13 @@ use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
 pub struct ZedEditPredictionDelegate {
     store: Entity<EditPredictionStore>,
     project: Entity<Project>,
+    singleton_buffer: Option<Entity<Buffer>>,
 }
 
 impl ZedEditPredictionDelegate {
-    pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
-
     pub fn new(
         project: Entity<Project>,
+        singleton_buffer: Option<Entity<Buffer>>,
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
         cx: &mut Context<Self>,
@@ -36,6 +36,7 @@ impl ZedEditPredictionDelegate {
         Self {
             project: project,
             store: store,
+            singleton_buffer,
         }
     }
 }
@@ -46,7 +47,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn display_name() -> &'static str {
-        "Zed's Edit Predictions 2"
+        "Zed's Edit Predictions"
     }
 
     fn show_predictions_in_menu() -> bool {
@@ -57,13 +58,34 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         true
     }
 
-    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
-        // TODO [zeta2]
-        DataCollectionState::Unsupported
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        if let Some(buffer) = &self.singleton_buffer
+            && let Some(file) = buffer.read(cx).file()
+        {
+            let is_project_open_source =
+                self.store
+                    .read(cx)
+                    .is_file_open_source(&self.project, file, cx);
+            if self.store.read(cx).data_collection_choice.is_enabled() {
+                DataCollectionState::Enabled {
+                    is_project_open_source,
+                }
+            } else {
+                DataCollectionState::Disabled {
+                    is_project_open_source,
+                }
+            }
+        } else {
+            return DataCollectionState::Disabled {
+                is_project_open_source: false,
+            };
+        }
     }
 
-    fn toggle_data_collection(&mut self, _cx: &mut App) {
-        // TODO [zeta2]
+    fn toggle_data_collection(&mut self, cx: &mut App) {
+        self.store.update(cx, |store, cx| {
+            store.toggle_data_collection_choice(cx);
+        });
     }
 
     fn usage(&self, cx: &App) -> Option<client::EditPredictionUsage> {

@@ -235,7 +235,13 @@ fn assign_edit_prediction_provider(
 
                 if has_model {
                     let provider = cx.new(|cx| {
-                        ZedEditPredictionDelegate::new(project.clone(), &client, &user_store, cx)
+                        ZedEditPredictionDelegate::new(
+                            project.clone(),
+                            singleton_buffer,
+                            &client,
+                            &user_store,
+                            cx,
+                        )
                     });
                     editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }

@@ -54,10 +54,10 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 mod license_detection;
 mod onboarding_modal;
 mod prediction;
-mod provider;
 pub mod sweep_ai;
 pub mod udiff;
 mod xml_edits;
+mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
 
@@ -71,8 +71,8 @@ pub use crate::prediction::EditPredictionId;
 pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
-pub use provider::ZedEditPredictionDelegate;
 pub use telemetry_events::EditPredictionRating;
+pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 
 actions!(
     edit_prediction,
@@ -1726,6 +1726,17 @@ impl EditPredictionStore {
             }
             None => DataCollectionChoice::NotAnswered,
         }
+    }
+
+    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_choice = self.data_collection_choice.toggle();
+        let new_choice = self.data_collection_choice;
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                new_choice.is_enabled().to_string(),
+            )
+        });
     }
 
     pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
