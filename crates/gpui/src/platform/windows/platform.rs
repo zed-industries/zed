@@ -27,7 +27,7 @@ use windows::{
     core::*,
 };
 
-use crate::*;
+use crate::{platform::windows::WindowsTray, *};
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -59,6 +59,7 @@ pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: RefCell<Vec<OwnedMenu>>,
     jump_list: RefCell<JumpList>,
+    tray: RefCell<Option<WindowsTray>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     directx_devices: RefCell<Option<DirectXDevices>>,
@@ -88,6 +89,7 @@ impl WindowsPlatformState {
             current_cursor: Cell::new(current_cursor),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
+            tray: RefCell::new(None),
         }
     }
 }
@@ -557,6 +559,23 @@ impl Platform for WindowsPlatform {
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
         self.set_dock_menus(menus);
+    }
+
+    fn set_tray(&self, mut tray: Tray, _menus: Option<Vec<MenuItem>>, _keymap: &Keymap) {
+        // let mut actions = Vec::new();
+        // if let Some(menus) = menus {
+        //     menus.into_iter().for_each(|menu| {
+        //         if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+        //             actions.push(dock_menu);
+        //         }
+        //     });
+        // }
+        let mut windows_tray = self.inner.state.tray.borrow_mut();
+        if let Some(windows_tray) = windows_tray.as_mut() {
+            windows_tray.update(&tray);
+        } else {
+            windows_tray.replace(WindowsTray::create(&tray));
+        }
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -1202,7 +1221,7 @@ fn handle_gpu_device_lost(
     Ok(())
 }
 
-const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("GPUI::PlatformWindow");
 
 fn register_platform_window_class() {
     let wc = WNDCLASSW {

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{App, Image, MenuItem, SharedString};
+use crate::{App, MenuItem, SharedString};
 
 /// System tray icon.
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct Tray {
     /// Tray title after the Icon.
     pub title: Option<SharedString>,
     /// Tray icon image.
-    pub icon: Option<Rc<Image>>,
+    pub icon: Option<Rc<image::RgbaImage>>,
     /// Function to build the context menu.
     pub menu_builder: Option<Rc<dyn Fn(&mut App) -> Vec<MenuItem>>>,
     /// Visibility of the tray icon.
@@ -42,7 +42,7 @@ impl Tray {
     }
 
     /// Set the icon image, defaults to None.
-    pub fn icon(mut self, icon: Image) -> Self {
+    pub fn icon(mut self, icon: image::RgbaImage) -> Self {
         self.icon = Some(Rc::new(icon));
         self
     }

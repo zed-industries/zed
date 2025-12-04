@@ -1,5 +1,5 @@
 use gpui::{
-    App, Application, Context, Global, Image, MenuItem, SharedString, Tray, Window, WindowOptions,
+    App, Application, Context, Global, MenuItem, SharedString, Tray, Window, WindowOptions,
     actions, div, prelude::*,
 };
 
@@ -90,13 +90,11 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
+        let icon = image::load_from_memory(include_bytes!("image/app-icon.png")).unwrap();
         Self {
             view_mode: ViewMode::List,
             tray: Tray::new()
-                .icon(Image::from_bytes(
-                    gpui::ImageFormat::Png,
-                    include_bytes!("image/app-icon.png").to_vec(),
-                ))
+                .icon(icon.to_rgba8())
                 .title("Tray App")
                 .tooltip("This is a tray icon")
                 .menu(Self::build_menus),
