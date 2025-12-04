@@ -103,22 +103,12 @@ impl LanguageModels {
     }
 
     fn refresh_list(&mut self, cx: &App) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!("[{}ms] LanguageModels::refresh_list called", now);
         let providers = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
-        eprintln!(
-            "[{}ms] LanguageModels::refresh_list got {} authenticated providers",
-            now,
-            providers.len()
-        );
 
         let mut language_model_list = IndexMap::default();
         let mut recommended_models = HashSet::default();
@@ -156,15 +146,6 @@ impl LanguageModels {
 
         self.models = models;
         self.model_list = acp_thread::AgentModelList::Grouped(language_model_list);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!(
-            "[{}ms] LanguageModels::refresh_list completed with {} models in list",
-            now,
-            self.models.len()
-        );
         self.refresh_models_tx.send(()).ok();
     }
 
@@ -622,14 +603,6 @@ impl NativeAgent {
         _event: &language_model::Event,
         cx: &mut Context<Self>,
     ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!(
-            "[{}ms] NativeAgent::handle_models_updated_event called",
-            now
-        );
         self.models.refresh_list(cx);
 
         let registry = LanguageModelRegistry::read_global(cx);

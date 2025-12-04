@@ -414,14 +414,9 @@ impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
         cx: &mut App,
     ) {
         let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
-            eprintln!(
-                "Failed to register LLM provider '{}': language_model_provider_proxy not yet initialized",
-                provider_id
-            );
             return;
         };
 
-        eprintln!("Registering LLM provider: {}", provider_id);
         proxy.register_language_model_provider(provider_id, register_fn, cx)
     }
 

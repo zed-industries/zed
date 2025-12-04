@@ -46,13 +46,7 @@ pub fn language_model_selector(
 }
 
 fn all_models(cx: &App) -> GroupedModels {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    eprintln!("[{}ms] all_models() called", now);
     let providers = LanguageModelRegistry::global(cx).read(cx).providers();
-    eprintln!("[{}ms] all_models: got {} providers", now, providers.len());
 
     let recommended = providers
         .iter()
@@ -70,38 +64,16 @@ fn all_models(cx: &App) -> GroupedModels {
     let all: Vec<ModelInfo> = providers
         .iter()
         .flat_map(|provider| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            eprintln!(
-                "[{}ms] all_models: calling provided_models for {:?}",
-                now,
-                provider.id()
-            );
-            let models = provider.provided_models(cx);
-            eprintln!(
-                "[{}ms] all_models: provider {:?} returned {} models",
-                now,
-                provider.id(),
-                models.len()
-            );
-            models.into_iter().map(|model| ModelInfo {
-                model,
-                icon: provider.icon(),
-            })
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| ModelInfo {
+                    model,
+                    icon: provider.icon(),
+                })
         })
         .collect();
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    eprintln!(
-        "[{}ms] all_models: returning {} total models",
-        now,
-        all.len()
-    );
     GroupedModels::new(all, recommended)
 }
 
@@ -132,18 +104,8 @@ impl LanguageModelPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!("[{}ms] LanguageModelPickerDelegate::new() called", now);
         let on_model_changed = Arc::new(on_model_changed);
         let models = all_models(cx);
-        eprintln!(
-            "[{}ms] LanguageModelPickerDelegate::new() got {} models from all_models()",
-            now,
-            models.all.len()
-        );
         let entries = models.entries();
 
         Self {
@@ -154,76 +116,28 @@ impl LanguageModelPickerDelegate {
             get_active_model: Arc::new(get_active_model),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _refresh_models_task: {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis();
-                eprintln!(
-                    "[{}ms] LanguageModelPickerDelegate::new() setting up refresh task for LanguageModelRegistry",
-                    now
-                );
-
                 // Create a channel to signal when models need refreshing
                 let (refresh_tx, mut refresh_rx) = mpsc::unbounded::<()>();
 
                 // Subscribe to registry events and send refresh signals through the channel
                 let registry = LanguageModelRegistry::global(cx);
-                eprintln!(
-                    "[{}ms] LanguageModelPickerDelegate::new() subscribing to registry entity_id: {:?}",
-                    now,
-                    registry.entity_id()
-                );
-                cx.subscribe(&registry, move |_picker, _, event, _cx| {
-                    match event {
-                        language_model::Event::ProviderStateChanged(id) => {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis();
-                            eprintln!(
-                                "[{}ms] LanguageModelSelector: ProviderStateChanged event for {:?}, sending refresh signal",
-                                now, id
-                            );
-                            refresh_tx.unbounded_send(()).ok();
-                        }
-                        language_model::Event::AddedProvider(id) => {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis();
-                            eprintln!(
-                                "[{}ms] LanguageModelSelector: AddedProvider event for {:?}, sending refresh signal",
-                                now, id
-                            );
-                            refresh_tx.unbounded_send(()).ok();
-                        }
-                        language_model::Event::RemovedProvider(id) => {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis();
-                            eprintln!(
-                                "[{}ms] LanguageModelSelector: RemovedProvider event for {:?}, sending refresh signal",
-                                now, id
-                            );
-                            refresh_tx.unbounded_send(()).ok();
-                        }
-                        _ => {}
+                cx.subscribe(&registry, move |_picker, _, event, _cx| match event {
+                    language_model::Event::ProviderStateChanged(_) => {
+                        refresh_tx.unbounded_send(()).ok();
                     }
+                    language_model::Event::AddedProvider(_) => {
+                        refresh_tx.unbounded_send(()).ok();
+                    }
+                    language_model::Event::RemovedProvider(_) => {
+                        refresh_tx.unbounded_send(()).ok();
+                    }
+                    _ => {}
                 })
                 .detach();
 
                 // Spawn a task that listens for refresh signals and updates the picker
                 cx.spawn_in(window, async move |this, cx| {
                     while let Some(()) = refresh_rx.next().await {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis();
-                        eprintln!(
-                            "[{}ms] LanguageModelSelector: refresh signal received, updating models",
-                            now
-                        );
                         let result = this.update_in(cx, |picker, window, cx| {
                             picker.delegate.all_models = Arc::new(all_models(cx));
                             picker.refresh(window, cx);

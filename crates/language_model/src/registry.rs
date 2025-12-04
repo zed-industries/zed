@@ -158,19 +158,7 @@ impl LanguageModelRegistry {
         }
 
         self.providers.insert(id.clone(), provider);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!(
-            "[{}ms] LanguageModelRegistry: About to emit AddedProvider event for {:?}",
-            now, id
-        );
-        cx.emit(Event::AddedProvider(id.clone()));
-        eprintln!(
-            "[{}ms] LanguageModelRegistry: Emitted AddedProvider event for {:?}",
-            now, id
-        );
+        cx.emit(Event::AddedProvider(id));
     }
 
     pub fn unregister_provider(&mut self, id: LanguageModelProviderId, cx: &mut Context<Self>) {
@@ -180,18 +168,6 @@ impl LanguageModelRegistry {
     }
 
     pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        eprintln!(
-            "[{}ms] LanguageModelRegistry::providers() called, {} providers in registry",
-            now,
-            self.providers.len()
-        );
-        for (id, _) in &self.providers {
-            eprintln!("  - provider: {:?}", id);
-        }
         let zed_provider_id = LanguageModelProviderId("zed.dev".into());
         let mut providers = Vec::with_capacity(self.providers.len());
         if let Some(provider) = self.providers.get(&zed_provider_id) {
@@ -204,11 +180,6 @@ impl LanguageModelRegistry {
                 None
             }
         }));
-        eprintln!(
-            "[{}ms] LanguageModelRegistry::providers() returning {} providers",
-            now,
-            providers.len()
-        );
         providers
     }
 
