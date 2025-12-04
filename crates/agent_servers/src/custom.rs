@@ -54,6 +54,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    allowed_paths: None,
                 });
 
             match settings {
@@ -90,6 +91,7 @@ impl AgentServer for CustomAgentServer {
                 .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
                     default_model: None,
                     default_mode: None,
+                    allowed_paths: None,
                 });
 
             match settings {
@@ -114,6 +116,15 @@ impl AgentServer for CustomAgentServer {
         let default_model = self.default_model(cx);
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
+        let allowed_paths = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .custom
+                .get(&self.name())
+                .map(|s| s.allowed_paths().to_vec())
+                .unwrap_or_default()
+        });
+
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
@@ -137,6 +148,7 @@ impl AgentServer for CustomAgentServer {
                 root_dir.as_ref(),
                 default_mode,
                 default_model,
+                allowed_paths,
                 is_remote,
                 cx,
             )

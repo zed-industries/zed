@@ -41,6 +41,7 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     root_dir: PathBuf,
+    allowed_paths: Vec<PathBuf>,
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
@@ -62,6 +63,7 @@ pub async fn connect(
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
+    allowed_paths: Vec<PathBuf>,
     is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
@@ -71,6 +73,7 @@ pub async fn connect(
         root_dir,
         default_mode,
         default_model,
+        allowed_paths,
         is_remote,
         cx,
     )
@@ -87,6 +90,7 @@ impl AcpConnection {
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
+        allowed_paths: Vec<PathBuf>,
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -227,6 +231,7 @@ impl AcpConnection {
         Ok(Self {
             auth_methods: response.auth_methods,
             root_dir: root_dir.to_owned(),
+            allowed_paths,
             connection,
             server_name,
             telemetry_id,
@@ -430,6 +435,7 @@ impl AgentConnection for AcpConnection {
 
             let session_id = response.session_id;
             let action_log = cx.new(|_| ActionLog::new(project.clone()))?;
+            let allowed_paths = self.allowed_paths.clone();
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     self.server_name.clone(),
@@ -439,6 +445,7 @@ impl AgentConnection for AcpConnection {
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
                     watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                    allowed_paths,
                     cx,
                 )
             })?;

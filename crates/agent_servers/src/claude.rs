@@ -85,6 +85,14 @@ impl AgentServer for ClaudeCode {
         let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
+        let allowed_paths = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .claude
+                .as_ref()
+                .map(|s| s.allowed_paths.clone())
+                .unwrap_or_default()
+        });
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -107,6 +115,7 @@ impl AgentServer for ClaudeCode {
                 root_dir.as_ref(),
                 default_mode,
                 default_model,
+                allowed_paths,
                 is_remote,
                 cx,
             )
