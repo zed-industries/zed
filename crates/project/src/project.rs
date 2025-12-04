@@ -1023,6 +1023,7 @@ impl settings::Settings for DisableAiSettings {
 
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
+        trusted_worktrees::init(cx);
         connection_manager::init(client.clone(), cx);
 
         let client: AnyProtoClient = client.clone().into();

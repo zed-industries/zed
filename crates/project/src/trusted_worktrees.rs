@@ -205,4 +205,10 @@ impl TrustedWorktreesStorage {
             trusted_worktrees.clear(cx);
         });
     }
+
+    pub fn take_task(&self, cx: &mut App) -> Task<()> {
+        self.trusted.update(cx, |trusted_worktrees, _| {
+            std::mem::replace(&mut trusted_worktrees.serialization_task, Task::ready(()))
+        })
+    }
 }
