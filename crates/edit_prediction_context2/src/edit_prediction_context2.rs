@@ -203,6 +203,11 @@ impl RelatedExcerptStore {
             return Ok(());
         };
 
+        let file = snapshot.file().cloned();
+        if let Some(file) = &file {
+            log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
+        }
+
         this.update(cx, |_, cx| {
             cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
         })?;
@@ -280,6 +285,14 @@ impl RelatedExcerptStore {
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
         let (new_cache, related_files) = rebuild_related_files(new_cache, cx).await?;
+
+        if let Some(file) = &file {
+            log::debug!(
+                "finished retrieving context buffer:{}, latency:{:?}",
+                file.path().as_unix_str(),
+                start_time.elapsed()
+            );
+        }
 
         this.update(cx, |this, cx| {
             this.cache = new_cache;

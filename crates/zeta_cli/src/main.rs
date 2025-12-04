@@ -21,13 +21,11 @@ use ::util::paths::PathStyle;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
-use edit_prediction_context::{
-    EditPredictionContextOptions, EditPredictionExcerptOptions, EditPredictionScoreOptions,
-};
+use edit_prediction_context::EditPredictionExcerptOptions;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
 use metrics::delta_chr_f;
-use project::{Project, Worktree};
+use project::{Project, Worktree, lsp_store::OpenLspBufferHandle};
 use reqwest_client::ReqwestClient;
 use std::io::{self};
 use std::time::Duration;
@@ -203,19 +201,12 @@ enum PredictionProvider {
     Sweep,
 }
 
-fn zeta2_args_to_options(args: &Zeta2Args, omit_excerpt_overlaps: bool) -> zeta::ZetaOptions {
+fn zeta2_args_to_options(args: &Zeta2Args) -> zeta::ZetaOptions {
     zeta::ZetaOptions {
-        context: ContextMode::Syntax(EditPredictionContextOptions {
-            max_retrieved_declarations: args.max_retrieved_definitions,
-            use_imports: !args.disable_imports_gathering,
-            excerpt: EditPredictionExcerptOptions {
-                max_bytes: args.max_excerpt_bytes,
-                min_bytes: args.min_excerpt_bytes,
-                target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
-            },
-            score: EditPredictionScoreOptions {
-                omit_excerpt_overlaps,
-            },
+        context: ContextMode::Lsp(EditPredictionExcerptOptions {
+            max_bytes: args.max_excerpt_bytes,
+            min_bytes: args.min_excerpt_bytes,
+            target_before_cursor_over_total_bytes: args.target_before_cursor_over_total_bytes,
         }),
         max_diagnostic_bytes: args.max_diagnostic_bytes,
         max_prompt_bytes: args.max_prompt_bytes,
@@ -294,6 +285,7 @@ struct LoadedContext {
     worktree: Entity<Worktree>,
     project: Entity<Project>,
     buffer: Entity<Buffer>,
+    lsp_open_handle: Option<OpenLspBufferHandle>,
 }
 
 async fn load_context(
@@ -329,7 +321,7 @@ async fn load_context(
         .await?;
 
     let mut ready_languages = HashSet::default();
-    let (_lsp_open_handle, buffer) = if *use_language_server {
+    let (lsp_open_handle, buffer) = if *use_language_server {
         let (lsp_open_handle, _, buffer) = open_buffer_with_language_server(
             project.clone(),
             worktree.clone(),
@@ -376,6 +368,7 @@ async fn load_context(
         worktree,
         project,
         buffer,
+        lsp_open_handle,
     })
 }
 
@@ -389,6 +382,7 @@ async fn zeta2_context(
         project,
         buffer,
         clipped_cursor,
+        lsp_open_handle: _handle,
         ..
     } = load_context(&args, app_state, cx).await?;
 
@@ -405,7 +399,7 @@ async fn zeta2_context(
                 zeta::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
             });
             let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                zeta.set_options(zeta2_args_to_options(&args.zeta2_args, true));
+                zeta.set_options(zeta2_args_to_options(&args.zeta2_args));
                 zeta.register_buffer(&buffer, &project, cx);
                 zeta.wait_for_initial_indexing(&project, cx)
             });
@@ -413,6 +407,7 @@ async fn zeta2_context(
                 indexing_done_task.await?;
                 let updates_rx = zeta.update(cx, |zeta, cx| {
                     let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
+                    zeta.set_use_context(true);
                     zeta.refresh_context_if_needed(&project, &buffer, cursor, cx);
                     zeta.project_context_updates(&project).unwrap()
                 })?;
@@ -476,7 +471,6 @@ fn main() {
                 None => {
                     if args.printenv {
                         ::util::shell_env::print_env();
-                        return;
                     } else {
                         panic!("Expected a command");
                     }
@@ -488,7 +482,7 @@ fn main() {
                         arguments.extension,
                         arguments.limit,
                         arguments.skip,
-                        zeta2_args_to_options(&arguments.zeta2_args, false),
+                        zeta2_args_to_options(&arguments.zeta2_args),
                         cx,
                     )
                     .await;

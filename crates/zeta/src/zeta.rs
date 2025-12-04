@@ -609,6 +609,10 @@ impl Zeta {
         self.options = options;
     }
 
+    pub fn set_use_context(&mut self, use_context: bool) {
+        self.use_context = use_context;
+    }
+
     pub fn clear_history(&mut self) {
         for zeta_project in self.projects.values_mut() {
             zeta_project.events.clear();

@@ -2,7 +2,8 @@ use anyhow::{Result, anyhow};
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AsyncApp, Entity, Task};
-use language::{Buffer, LanguageId, LanguageServerId, ParseStatus};
+use language::{Buffer, LanguageId, LanguageNotFound, LanguageServerId, ParseStatus};
+use project::lsp_store::OpenLspBufferHandle;
 use project::{Project, ProjectPath, Worktree};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -40,7 +41,7 @@ pub async fn open_buffer_with_language_server(
     path: Arc<RelPath>,
     ready_languages: &mut HashSet<LanguageId>,
     cx: &mut AsyncApp,
-) -> Result<(Entity<Entity<Buffer>>, LanguageServerId, Entity<Buffer>)> {
+) -> Result<(OpenLspBufferHandle, LanguageServerId, Entity<Buffer>)> {
     let buffer = open_buffer(project.clone(), worktree, path.clone(), cx).await?;
 
     let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
@@ -50,6 +51,17 @@ pub async fn open_buffer_with_language_server(
         )
     })?;
 
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
+    let result = language_registry
+        .load_language_for_file_path(path.as_std_path())
+        .await;
+
+    if let Err(error) = result
+        && !error.is::<LanguageNotFound>()
+    {
+        anyhow::bail!(error);
+    }
+
     let Some(language_id) = buffer.read_with(cx, |buffer, _cx| {
         buffer.language().map(|language| language.id())
     })?
@@ -57,9 +69,9 @@ pub async fn open_buffer_with_language_server(
         return Err(anyhow!("No language for {}", path.display(path_style)));
     };
 
-    let log_prefix = path.display(path_style);
+    let log_prefix = format!("{} | ", path.display(path_style));
     if !ready_languages.contains(&language_id) {
-        wait_for_lang_server(&project, &buffer, log_prefix.into_owned(), cx).await?;
+        wait_for_lang_server(&project, &buffer, log_prefix, cx).await?;
         ready_languages.insert(language_id);
     }
 
@@ -95,7 +107,7 @@ pub fn wait_for_lang_server(
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
-    println!("{}⏵ Waiting for language server", log_prefix);
+    eprintln!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
@@ -137,7 +149,7 @@ pub fn wait_for_lang_server(
                     ..
                 } = event
                 {
-                    println!("{}⟲ {message}", log_prefix)
+                    eprintln!("{}⟲ {message}", log_prefix)
                 }
             }
         }),
@@ -162,7 +174,7 @@ pub fn wait_for_lang_server(
     cx.spawn(async move |cx| {
         if !has_lang_server {
             // some buffers never have a language server, so this aborts quickly in that case.
-            let timeout = cx.background_executor().timer(Duration::from_secs(5));
+            let timeout = cx.background_executor().timer(Duration::from_secs(500));
             futures::select! {
                 _ = added_rx.next() => {},
                 _ = timeout.fuse() => {
@@ -173,7 +185,7 @@ pub fn wait_for_lang_server(
         let timeout = cx.background_executor().timer(Duration::from_secs(60 * 5));
         let result = futures::select! {
             _ = rx.next() => {
-                println!("{}⚑ Language server idle", log_prefix);
+                eprintln!("{}⚑ Language server idle", log_prefix);
                 anyhow::Ok(())
             },
             _ = timeout.fuse() => {
