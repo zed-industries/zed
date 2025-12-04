@@ -1324,22 +1324,40 @@ unsafe extern "system" fn window_procedure(
 
 /// Builds a [`muda::Menu`] from a `Vec<MenuItem>`.
 fn build_muda_menu(items: &Vec<MenuItem>) -> muda::Menu {
+    use muda::{CheckMenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
+
     let mut menu = muda::Menu::new();
     for item in items {
         match item {
             MenuItem::Separator => {
-                let _ = menu.append(&muda::PredefinedMenuItem::separator());
+                let _ = menu.append(&PredefinedMenuItem::separator());
             }
             MenuItem::Action { name, checked, .. } => {
-                let _ = menu.append(&muda::CheckMenuItem::new(
-                    name.to_string(),
-                    true,
-                    *checked,
-                    None,
-                ));
+                let _ = menu.append(&CheckMenuItem::new(name.to_string(), true, *checked, None));
             }
             MenuItem::Submenu(_submenu) => {
-                // TODO: Implement submenu creation
+                let child_menu = build_muda_menu(&_submenu.items);
+                let submenu = Submenu::new(_submenu.name.to_string(), true);
+                for item in child_menu.items() {
+                    match item {
+                        MenuItemKind::Check(item) => {
+                            let _ = submenu.append(&item);
+                        }
+                        MenuItemKind::Icon(item) => {
+                            let _ = submenu.append(&item);
+                        }
+                        MenuItemKind::Predefined(item) => {
+                            let _ = submenu.append(&item);
+                        }
+                        MenuItemKind::Submenu(item) => {
+                            let _ = submenu.append(&item);
+                        }
+                        MenuItemKind::MenuItem(item) => {
+                            let _ = submenu.append(&item);
+                        }
+                    }
+                }
+                let _ = menu.append(&submenu);
             }
             _ => {}
         }

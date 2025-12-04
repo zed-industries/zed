@@ -130,6 +130,13 @@ impl AppState {
                 .checked(app_state.view_mode == ViewMode::Grid),
             MenuItem::separator(),
             MenuItem::action("Hide Tray Icon", ToggleVisible),
+            MenuItem::submenu(gpui::Menu {
+                name: "Submenu".into(),
+                items: vec![
+                    MenuItem::action("Toggle Check", ToggleCheck),
+                    MenuItem::action("Toggle Visible", ToggleVisible),
+                ],
+            }),
             MenuItem::separator(),
             MenuItem::action("Quit", Quit),
         ]
