@@ -13,7 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-default-features = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
+default = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
 test-support = ["multi_buffer/test-support"]
 
 [dependencies]

@@ -13,6 +13,7 @@ path = "src/editor.rs"
 doctest = false
 
 [features]
+default = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
 test-support = [
     "text/test-support",
     "language/test-support",

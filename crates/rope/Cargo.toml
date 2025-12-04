@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
-default-features = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
+default = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
 
 [lib]
 path = "src/rope.rs"
