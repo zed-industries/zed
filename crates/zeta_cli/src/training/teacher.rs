@@ -1,7 +1,7 @@
 use crate::{
     example::Example,
     source_location::SourceLocation,
-    training::context::{ContextType, collect_context},
+    training::context::{ContextType, collect_context, strip_special_tags},
 };
 use anthropic_sdk::{Anthropic, ContentBlock, MessageCreateBuilder};
 use anyhow::Result;
@@ -17,6 +17,7 @@ pub struct TeacherOutput {
     prompt: String,
     raw_llm_response: String,
     context: String,
+    diff: String,
 }
 
 impl TeacherModel {
@@ -78,11 +79,18 @@ impl TeacherModel {
 
         let parsed_output = self.parse_response(&response_text);
 
+        let original_editable_region = Self::extract_editable_region(&context);
+        let context_after_edit = context.replace(&original_editable_region, &parsed_output);
+        let context_after_edit = strip_special_tags(&context_after_edit);
+        let context_before_edit = strip_special_tags(&context);
+        let diff = language::unified_diff(&context_before_edit, &context_after_edit);
+
         Ok(TeacherOutput {
             parsed_output,
             prompt,
             raw_llm_response: response_text,
             context,
+            diff,
         })
     }
 
@@ -90,7 +98,6 @@ impl TeacherModel {
         let codeblock = Self::extract_codeblock(content);
         let editable_region = Self::extract_editable_region(&codeblock);
 
-        // todo: apply?
         editable_region
     }
 
@@ -109,7 +116,7 @@ impl TeacherModel {
 
             if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
                 let code_block = &text[backtick_end..backtick_end + end_pos];
-                return code_block.trim().to_string();
+                return code_block.to_string();
             }
         }
 

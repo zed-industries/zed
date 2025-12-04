@@ -80,3 +80,10 @@ fn add_special_tags(context: &str, worktree_dir: &Path, cursor: SourceLocation) 
         context.to_string()
     }
 }
+
+pub fn strip_special_tags(context: &str) -> String {
+    context
+        .replace(TeacherModel::REGION_START, "")
+        .replace(TeacherModel::REGION_END, "")
+        .replace(TeacherModel::USER_CURSOR, "")
+}
