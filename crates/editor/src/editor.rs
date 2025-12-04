@@ -1079,6 +1079,7 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
+    buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
@@ -2204,6 +2205,7 @@ impl Editor {
             show_breakpoints: None,
             show_wrap_guides: None,
             show_indent_guides,
+            buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
@@ -20090,9 +20092,18 @@ impl Editor {
         self.show_indent_guides
     }
 
-    pub fn disable_indent_guides(&mut self) -> Option<bool> {
-        self.show_indent_guides = Some(false);
-        self.show_indent_guides
+    pub fn disable_indent_guides_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffers_with_disabled_indent_guides.insert(buffer_id);
+        cx.notify();
+    }
+
+    pub fn has_indent_guides_disabled_for_buffer(&self, buffer_id: BufferId) -> bool {
+        self.buffers_with_disabled_indent_guides
+            .contains(&buffer_id)
     }
 
     pub fn toggle_line_numbers(
