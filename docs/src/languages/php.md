@@ -24,7 +24,7 @@ sudo dnf install php-cli
 sudo pacman -S php
 
 # check PHP path
-## macOS and Linux 
+## macOS and Linux
 which php
 
 ## Windows
