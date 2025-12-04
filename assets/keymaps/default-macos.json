@@ -1437,8 +1437,8 @@
   {
     "context": "Zeta2Context > Editor",
     "bindings": {
-      "alt-left": "dev::Zeta2ContextGoBack",
-      "alt-right": "dev::Zeta2ContextGoForward"
+      "alt-left": "dev::EditPredictionContextGoBack",
+      "alt-right": "dev::EditPredictionContextGoForward"
     }
   },
   {

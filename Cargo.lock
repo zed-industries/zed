@@ -5170,41 +5170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "edit_prediction_button"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "cloud_llm_client",
- "codestral",
- "copilot",
- "edit_prediction",
- "edit_prediction_types",
- "editor",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "language",
- "lsp",
- "menu",
- "paths",
- "project",
- "regex",
- "serde_json",
- "settings",
- "supermaven",
- "telemetry",
- "theme",
- "ui",
- "ui_input",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "edit_prediction_cli"
 version = "0.1.0"
 dependencies = [
@@ -5284,6 +5249,43 @@ dependencies = [
  "client",
  "gpui",
  "language",
+]
+
+[[package]]
+name = "edit_prediction_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "cloud_llm_client",
+ "codestral",
+ "copilot",
+ "edit_prediction",
+ "edit_prediction_types",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "menu",
+ "multi_buffer",
+ "paths",
+ "project",
+ "regex",
+ "serde_json",
+ "settings",
+ "supermaven",
+ "telemetry",
+ "text",
+ "theme",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -20426,7 +20428,7 @@ dependencies = [
  "debugger_ui",
  "diagnostics",
  "edit_prediction",
- "edit_prediction_button",
+ "edit_prediction_ui",
  "editor",
  "env_logger 0.11.8",
  "extension",
@@ -20537,7 +20539,6 @@ dependencies = [
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",
- "zeta2_tools",
  "zlog",
  "zlog_settings",
 ]
@@ -20847,34 +20848,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
-]
-
-[[package]]
-name = "zeta2_tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "client",
- "collections",
- "edit_prediction",
- "editor",
- "feature_flags",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "language",
- "multi_buffer",
- "pretty_assertions",
- "project",
- "serde",
- "serde_json",
- "settings",
- "text",
- "ui",
- "util",
- "workspace",
- "zlog",
 ]
 
 [[package]]
