@@ -6,6 +6,7 @@ mod unclipped;
 
 use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
+use tracing::instrument;
 use std::{
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
@@ -428,6 +429,7 @@ impl Rope {
             })
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;

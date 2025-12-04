@@ -200,7 +200,7 @@ impl TabSnapshot {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(rows))]
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
         let input_start = self.tab_point_to_fold_point(range.start, Bias::Left).0;
         let input_end = self.tab_point_to_fold_point(range.end, Bias::Right).0;

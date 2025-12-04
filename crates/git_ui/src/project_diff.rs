@@ -33,6 +33,7 @@ use project::{
 };
 use settings::{Settings, SettingsStore};
 use smol::future::yield_now;
+use tracing::instrument;
 use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
@@ -469,6 +470,7 @@ impl ProjectDiff {
         }
     }
 
+    #[instrument(skip_all)]
     fn register_buffer(
         &mut self,
         path_key: PathKey,

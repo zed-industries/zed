@@ -810,7 +810,7 @@ impl InlaySnapshot {
         InlayPoint(self.transforms.summary().output.lines)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(point))]
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let (start, _, item) = self
             .transforms

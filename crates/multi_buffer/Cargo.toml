@@ -42,6 +42,7 @@ sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
+tracing.workspace =true
 util.workspace = true
 
 [dev-dependencies]

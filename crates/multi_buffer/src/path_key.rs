@@ -6,6 +6,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
+use tracing::instrument;
 use util::{post_inc, rel_path::RelPath};
 
 use crate::{
@@ -69,6 +70,7 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
+    #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,

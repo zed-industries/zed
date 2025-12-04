@@ -13,7 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-default = []
+default-features = ["tracing/release_max_level_trace", "tracing/max_level_trace"]
 test-support = ["multi_buffer/test-support"]
 
 [dependencies]
@@ -62,6 +62,7 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
+tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

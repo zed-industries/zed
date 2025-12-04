@@ -679,7 +679,7 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, fields(rows))]
     pub fn text_summary_for_range(&self, rows: Range<WrapRow>) -> TextSummary {
         let mut summary = TextSummary::default();
 
