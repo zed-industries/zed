@@ -560,6 +560,7 @@ pub struct MultiBufferSnapshot {
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
     show_headers: bool,
+    show_only_staged_hunks: bool,
     show_only_unstaged_hunks: bool,
 }
 
@@ -1889,6 +1890,7 @@ impl MultiBuffer {
             trailing_excerpt_update_count,
             all_diff_hunks_expanded: _,
             show_headers: _,
+            show_only_staged_hunks: _,
             show_only_unstaged_hunks: _,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
@@ -2576,6 +2578,19 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], false, cx);
     }
 
+    pub fn set_show_only_staged_hunks(&mut self, show_only_staged: bool, cx: &mut Context<Self>) {
+        self.snapshot.get_mut().show_only_staged_hunks = show_only_staged;
+        if let Some(follower) = &self.follower {
+            follower.update(cx, |follower, _cx| {
+                follower.snapshot.get_mut().show_only_staged_hunks = show_only_staged;
+            });
+        }
+    }
+
+    pub fn show_only_staged_hunks(&self) -> bool {
+        self.snapshot.borrow().show_only_staged_hunks
+    }
+
     pub fn set_show_only_unstaged_hunks(
         &mut self,
         show_only_unstaged: bool,
@@ -2959,6 +2974,7 @@ impl MultiBuffer {
             trailing_excerpt_update_count: _,
             all_diff_hunks_expanded: _,
             show_headers: _,
+            show_only_staged_hunks: _,
             show_only_unstaged_hunks: _,
         } = snapshot;
         *is_dirty = false;
@@ -3316,6 +3332,9 @@ impl MultiBuffer {
 
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
                     if hunk.is_created_file() && !all_diff_hunks_expanded {
+                        continue;
+                    }
+                    if snapshot.show_only_staged_hunks && !hunk.is_visible_when_staged_only() {
                         continue;
                     }
                     if snapshot.show_only_unstaged_hunks && !hunk.is_visible_when_unstaged_only() {
@@ -3875,6 +3894,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
+        let show_only_staged = self.show_only_staged_hunks;
         let show_only_unstaged = self.show_only_unstaged_hunks;
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let diff = self.diffs.get(&buffer.remote_id())?;
@@ -3884,6 +3904,9 @@ impl MultiBufferSnapshot {
                 diff.hunks_intersecting_range(buffer_start..buffer_end, buffer)
                     .filter_map(move |hunk| {
                         if hunk.is_created_file() && !self.all_diff_hunks_expanded {
+                            return None;
+                        }
+                        if show_only_staged && !hunk.is_visible_when_staged_only() {
                             return None;
                         }
                         if show_only_unstaged && !hunk.is_visible_when_unstaged_only() {
