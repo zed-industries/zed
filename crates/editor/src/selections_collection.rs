@@ -419,22 +419,30 @@ impl SelectionsCollection {
             mutable_collection.disjoint.iter().for_each(|selection| {
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}",
+                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
             });
             if let Some(pending) = &mutable_collection.pending {
                 let selection = &pending.selection;
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "pending selection start is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.start.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "pending selection end is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.end.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
             }
         }
