@@ -43,6 +43,10 @@ For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode`
 
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
+## Per-file Settings
+
+Zed has some compatibility support for Emacs and Vim [modelines](./modelines.md), so you can set some settings per-file.
+
 ## Per-release Channel Overrides
 
 Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly).
@@ -2793,6 +2797,16 @@ Positive `integer` values or `null` for unlimited tabs
 **Options**
 
 `boolean` values
+
+## Modeline Lines
+
+- Description: Number of lines to search for modelines at the beginning and end of files. Modelines contain editor directives (e.g., vim/emacs settings) that configure the editor behavior for specific files. See [Modelines](./modelines.md) for more details on supported modeline variables.
+- Setting: `modeline_lines`
+- Default: `5`
+
+**Options**
+
+Positive `integer` values. Set to `0` to disable modeline parsing.
 
 ## Multi Cursor Modifier
 
