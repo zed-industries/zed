@@ -121,6 +121,12 @@ actions!(
         ContinueWithBurnMode,
         /// Toggles burn mode for faster responses.
         ToggleBurnMode,
+        /// Activates the next thread tab.
+        ActivateNextThread,
+        /// Activates the previous thread tab.
+        ActivatePreviousThread,
+        /// Closes the currently active thread.
+        CloseActiveThread,
     ]
 );
 

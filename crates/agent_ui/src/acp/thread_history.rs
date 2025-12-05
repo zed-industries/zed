@@ -54,6 +54,7 @@ impl ListItemType {
 
 pub enum ThreadHistoryEvent {
     Open(HistoryEntry),
+    ThreadRemoved(String),
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
@@ -331,6 +332,11 @@ impl AcpThreadHistory {
             }),
         };
         task.detach_and_log_err(cx);
+        let id_string = match entry.id() {
+            agent::HistoryEntryId::AcpThread(id) => id.to_string(),
+            agent::HistoryEntryId::TextThread(path) => path.to_string_lossy().to_string(),
+        };
+        cx.emit(ThreadHistoryEvent::ThreadRemoved(id_string));
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {

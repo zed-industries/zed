@@ -1071,12 +1071,16 @@ impl AcpThread {
         self.title.clone()
     }
 
-    pub fn entries(&self) -> &[AgentThreadEntry] {
-        &self.entries
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn session_id(&self) -> &acp::SessionId {
         &self.session_id
+    }
+
+    pub fn entries(&self) -> &[AgentThreadEntry] {
+        &self.entries
     }
 
     pub fn status(&self) -> ThreadStatus {
