@@ -4,28 +4,29 @@ use std::{
 };
 
 use collections::HashSet;
-use gpui::BorrowAppContext;
-use gpui::{DismissEvent, EventEmitter, Focusable};
+use gpui::{BorrowAppContext, DismissEvent, EventEmitter, FocusHandle, Focusable};
 use project::trusted_worktrees::TrustedWorktreesStorage;
 use theme::ActiveTheme;
 use ui::{
-    AlertModal, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color, Context,
-    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, Label, LabelCommon as _,
-    ListBulletItem, ParentElement as _, Render, Styled, ToggleState, Window, h_flex, rems, v_flex,
+    AlertModal, App, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color,
+    Context, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding, Label,
+    LabelCommon as _, ListBulletItem, ParentElement as _, Render, Styled, ToggleState, Window,
+    h_flex, rems, v_flex,
 };
 
-use crate::{DismissDecision, ModalView};
+use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     pub paths: HashSet<PathBuf>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
+    focus_handle: FocusHandle,
 }
 
 impl Focusable for SecurityModal {
-    fn focus_handle(&self, cx: &ui::App) -> gpui::FocusHandle {
-        cx.focus_handle()
+    fn focus_handle(&self, _: &ui::App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -59,6 +60,7 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
+        let focus_handle = self.focus_handle(cx);
 
         AlertModal::new("security-modal")
             .header(
@@ -108,6 +110,11 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                             .gap_1()
                             .child(
                                 Button::new("open-in-restricted-mode", "Restricted Mode")
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ToggleWorktreeSecurity,
+                                        &focus_handle,
+                                        cx,
+                                    ))
                                     .color(Color::Muted)
                                     .on_click(cx.listener(move |security_modal, _, _, cx| {
                                         security_modal.dismiss(cx);
@@ -129,9 +136,10 @@ Review .zed/settings.json for any extensions or commands configured by this proj
 }
 
 impl SecurityModal {
-    pub fn new(paths: HashSet<PathBuf>) -> Self {
+    pub fn new(paths: HashSet<PathBuf>, cx: &App) -> Self {
         Self {
             paths,
+            focus_handle: cx.focus_handle(),
             dismissed: false,
             trust_parents: false,
             home_dir: std::env::home_dir(),
