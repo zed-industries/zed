@@ -55,7 +55,7 @@ zed_actions.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
-command_palette.workspace = true
+command_palette = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 git_ui.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

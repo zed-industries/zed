@@ -437,26 +437,14 @@ impl LanguageRegistry {
         language_name: impl Into<LanguageName>,
         mut adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
-        let language_name = language_name.into();
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        let adapter = CachedLspAdapter::new(Arc::new(adapter));
-        {
-            let mut state = self.state.write();
-            state
-                .lsp_adapters
-                .entry(language_name)
-                .or_default()
-                .push(adapter.clone());
-            state.all_lsp_adapters.insert(adapter.name(), adapter);
-        }
-
-        self.register_fake_language_server(adapter_name, capabilities, initializer)
+        self.register_fake_lsp_adapter(language_name, adapter);
+        self.register_fake_lsp_server(adapter_name, capabilities, initializer)
     }
 
     /// Register a fake lsp adapter (without the language server)
-    /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
     pub fn register_fake_lsp_adapter(
         &self,
@@ -479,7 +467,7 @@ impl LanguageRegistry {
     /// Register a fake language server (without the adapter)
     /// The returned channel receives a new instance of the language server every time it is started
     #[cfg(any(feature = "test-support", test))]
-    pub fn register_fake_language_server(
+    pub fn register_fake_lsp_server(
         &self,
         lsp_name: LanguageServerName,
         capabilities: lsp::ServerCapabilities,

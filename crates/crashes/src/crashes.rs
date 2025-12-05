@@ -3,6 +3,8 @@ use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(target_os = "windows"))]
 use smol::process::Command;
 
 #[cfg(target_os = "macos")]
@@ -70,11 +72,16 @@ pub async fn init(crash_init: InitCrashHandler) {
     // used by the crash handler isn't destroyed correctly which causes it to stay on the file
     // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
+    #[cfg(not(target_os = "windows"))]
     let _crash_handler = Command::new(exe)
         .arg("--crash-handler")
         .arg(&socket_name)
         .spawn()
         .expect("unable to spawn server process");
+
+    #[cfg(target_os = "windows")]
+    spawn_crash_handler_windows(&exe, &socket_name);
+
     #[cfg(target_os = "linux")]
     let server_pid = _crash_handler.id();
     info!("spawning crash handler process");
@@ -339,6 +346,57 @@ pub fn panic_hook(info: &PanicHookInfo) {
             }
         }
         thread::sleep(retry_frequency);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
+    use std::ffi::OsStr;
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Threading::{
+        CreateProcessW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTF_FORCEOFFFEEDBACK,
+        STARTUPINFOW,
+    };
+    use windows::core::PWSTR;
+
+    let mut command_line: Vec<u16> = OsStr::new(&format!(
+        "\"{}\" --crash-handler \"{}\"",
+        exe.display(),
+        socket_name.display()
+    ))
+    .encode_wide()
+    .chain(once(0))
+    .collect();
+
+    let mut startup_info = STARTUPINFOW::default();
+    startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+    // By default, Windows enables a "busy" cursor when a GUI application is launched.
+    // This cursor is disabled once the application starts processing window messages.
+    // Since the crash handler process doesn't process messages, this "busy" cursor stays enabled for a long time.
+    // Disable the cursor feedback to prevent this from happening.
+    startup_info.dwFlags = STARTF_FORCEOFFFEEDBACK;
+
+    let mut process_info = PROCESS_INFORMATION::default();
+
+    unsafe {
+        CreateProcessW(
+            None,
+            Some(PWSTR(command_line.as_mut_ptr())),
+            None,
+            None,
+            false,
+            PROCESS_CREATION_FLAGS(0),
+            None,
+            None,
+            &startup_info,
+            &mut process_info,
+        )
+        .expect("unable to spawn server process");
+
+        windows::Win32::Foundation::CloseHandle(process_info.hProcess).ok();
+        windows::Win32::Foundation::CloseHandle(process_info.hThread).ok();
     }
 }
 

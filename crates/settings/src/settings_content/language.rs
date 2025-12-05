@@ -62,6 +62,8 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
+    /// Enables the experimental edit prediction context retrieval system.
+    pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
 /// The provider that supplies edit predictions.
@@ -418,6 +420,13 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: true
+    pub word_diff_enabled: Option<bool>,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     ///
     /// Default: false

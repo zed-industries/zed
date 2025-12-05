@@ -784,28 +784,48 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         outline
             .items
             .iter()
-            .map(|item| (item.text.as_str(), item.depth))
+            .map(|item| (
+                item.text.as_str(),
+                item.depth,
+                item.to_point(&snapshot).body_range(&snapshot)
+                    .map(|range| minimize_space(&snapshot.text_for_range(range).collect::<String>()))
+            ))
             .collect::<Vec<_>>(),
         &[
-            ("struct Person", 0),
-            ("name", 1),
-            ("age", 1),
-            ("mod module", 0),
-            ("enum LoginState", 1),
-            ("LoggedOut", 2),
-            ("LoggingOn", 2),
-            ("LoggedIn", 2),
-            ("person", 3),
-            ("time", 3),
-            ("impl Eq for Person", 0),
-            ("impl Drop for Person", 0),
-            ("fn drop", 1),
+            ("struct Person", 0, Some("name: String, age: usize,".to_string())),
+            ("name", 1, None),
+            ("age", 1, None),
+            (
+                "mod module",
+                0,
+                Some(
+                    "enum LoginState { LoggedOut, LoggingOn, LoggedIn { person: Person, time: Instant, } }".to_string()
+                )
+            ),
+            (
+                "enum LoginState",
+                1,
+                Some("LoggedOut, LoggingOn, LoggedIn { person: Person, time: Instant, }".to_string())
+            ),
+            ("LoggedOut", 2, None),
+            ("LoggingOn", 2, None),
+            ("LoggedIn", 2, Some("person: Person, time: Instant,".to_string())),
+            ("person", 3, None),
+            ("time", 3, None),
+            ("impl Eq for Person", 0, None),
+            (
+                "impl Drop for Person",
+                0,
+                Some("fn drop(&mut self) { println!(\"bye\"); }".to_string())
+            ),
+            ("fn drop", 1, Some("println!(\"bye\");".to_string())),
         ]
     );
 
@@ -839,6 +859,11 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
             ("fn drop", vec![]),
         ]
     );
+
+    fn minimize_space(text: &str) -> String {
+        static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new("[\\n\\s]+").unwrap());
+        WHITESPACE.replace_all(text, " ").trim().to_string()
+    }
 
     async fn search<'a>(
         outline: &'a Outline<Anchor>,

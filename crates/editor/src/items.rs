@@ -929,7 +929,11 @@ impl Item for Editor {
         })
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1483,6 +1487,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1493,7 +1498,13 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.colors().search_match_background,
+            move |index, theme| {
+                if active_match_index == Some(*index) {
+                    theme.colors().search_active_match_background
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
             cx,
         );
         if updated {
@@ -1887,15 +1898,20 @@ fn path_for_buffer<'a>(
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
-    path_for_file(file.as_ref(), height, include_filename, cx)
+    path_for_file(file, height, include_filename, cx)
 }
 
 fn path_for_file<'a>(
-    file: &'a dyn language::File,
+    file: &'a Arc<dyn language::File>,
     mut height: usize,
     include_filename: bool,
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
+    if project::File::from_dyn(Some(file)).is_none() {
+        return None;
+    }
+
+    let file = file.as_ref();
     // Ensure we always render at least the filename.
     height += 1;
 
@@ -1942,11 +1958,11 @@ mod tests {
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
-        let file = TestFile {
+        let file: Arc<dyn language::File> = Arc::new(TestFile {
             path: RelPath::empty().into(),
             root_name: String::new(),
             local_root: None,
-        };
+        });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }
 

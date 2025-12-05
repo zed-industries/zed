@@ -1,11 +1,5 @@
 use crate::FeatureFlag;
 
-pub struct PredictEditsRateCompletionsFeatureFlag;
-
-impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
-    const NAME: &'static str = "predict-edits-rate-completions";
-}
-
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {
