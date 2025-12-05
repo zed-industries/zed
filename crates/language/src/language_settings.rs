@@ -51,7 +51,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -656,7 +656,7 @@ impl settings::Settings for AllLanguageSettings {
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
@@ -665,7 +665,10 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().unwrap());
+            file_types.insert(
+                language.clone(),
+                (builder.build().unwrap(), patterns.0.clone()),
+            );
         }
 
         Self {
