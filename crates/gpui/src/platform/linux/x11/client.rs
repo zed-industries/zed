@@ -1023,7 +1023,7 @@ impl X11Client {
                 // The modifiers in the event are sometimes outdated.
                 // This results in short-pressed modifiers being sometimes ignored
                 // which causes macros to sometimes arrive without the modifiers.
-                // We therefore upate the mask from the global state.
+                // We therefore update the mask from the global state.
                 let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
                 let event_state_bits = u32::from(event.state.bits());
                 let depressed_mods = event_state_bits & !locked_mods_mask;
@@ -1107,7 +1107,7 @@ impl X11Client {
                 // The modifiers in the event are sometimes outdated.
                 // This results in short-pressed modifiers being sometimes ignored
                 // which causes macros to sometimes arrive without the modifiers.
-                // We therefore upate the mask from the global state.
+                // We therefore update the mask from the global state.
                 let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
                 let event_state_bits = u32::from(event.state.bits());
                 let depressed_mods = event_state_bits & !locked_mods_mask;
