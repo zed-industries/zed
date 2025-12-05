@@ -140,7 +140,6 @@ libc.workspace = true
 pin-project = "1.1.10"
 circular-buffer.workspace = true
 spin = "0.10.0"
-muda = { version = "0.17.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -236,11 +235,12 @@ x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 flume = "0.11"
+muda = { version = "0.17.1", default-features = false }
 rand.workspace = true
-windows.workspace = true
 windows-core.workspace = true
 windows-numerics = "0.2"
 windows-registry = "0.5"
+windows.workspace = true
 
 [dev-dependencies]
 backtrace.workspace = true
