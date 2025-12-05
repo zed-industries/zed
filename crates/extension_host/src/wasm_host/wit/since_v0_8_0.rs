@@ -1,4 +1,3 @@
-use crate::ExtensionSettings;
 use crate::wasm_host::wit::since_v0_8_0::{
     dap::{
         AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
@@ -1129,6 +1128,33 @@ impl llm_provider::Host for WasmState {
 
     async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
+
+        // Check if this provider has an env var configured and if the user has allowed it
+        let env_var_name = self
+            .manifest
+            .language_model_providers
+            .get(&Arc::<str>::from(provider_id.as_str()))
+            .and_then(|entry| entry.auth.as_ref())
+            .and_then(|auth| auth.env_var.clone());
+
+        if let Some(env_var_name) = env_var_name {
+            let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
+            // Use cached settings from WasmHost instead of going to main thread
+            let is_allowed = self
+                .host
+                .allowed_env_var_providers
+                .contains(&full_provider_id);
+
+            if is_allowed {
+                if let Ok(value) = env::var(&env_var_name) {
+                    if !value.is_empty() {
+                        return Ok(Some(value));
+                    }
+                }
+            }
+        }
+
+        // Fall back to credential store
         let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
 
         self.on_main_thread(move |cx| {
@@ -1214,20 +1240,12 @@ impl llm_provider::Host for WasmState {
         };
 
         // Check if the user has allowed this provider to read env vars
-        let full_provider_id = format!("{}:{}", extension_id, provider_id);
+        // Use cached settings from WasmHost instead of going to main thread
+        let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
         let is_allowed = self
-            .on_main_thread(move |cx| {
-                async move {
-                    cx.update(|cx| {
-                        ExtensionSettings::get_global(cx)
-                            .allowed_env_var_providers
-                            .contains(full_provider_id.as_str())
-                    })
-                    .unwrap_or(false)
-                }
-                .boxed_local()
-            })
-            .await;
+            .host
+            .allowed_env_var_providers
+            .contains(&full_provider_id);
 
         if !is_allowed {
             log::debug!(

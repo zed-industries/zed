@@ -1703,8 +1703,7 @@ impl AnthropicEventMapper {
                         let event = serde_json::from_str::<serde_json::Value>(&tool_use.input_json)
                             .ok()
                             .and_then(|input| {
-                                let input_json_roundtripped =
-                                    serde_json::to_string(&input).ok()?.to_string();
+                                let input_json_roundtripped = serde_json::to_string(&input).ok()?;
 
                                 if !tool_use.input_json.starts_with(&input_json_roundtripped) {
                                     return None;

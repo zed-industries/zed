@@ -5,6 +5,7 @@ use crate::capability_granter::CapabilityGranter;
 use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use collections::HashSet;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
@@ -59,6 +60,8 @@ pub struct WasmHost {
     pub work_dir: PathBuf,
     /// The capabilities granted to extensions running on the host.
     pub(crate) granted_capabilities: Vec<ExtensionCapability>,
+    /// Extension LLM providers allowed to read API keys from environment variables.
+    pub(crate) allowed_env_var_providers: HashSet<Arc<str>>,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -71,12 +74,6 @@ pub struct WasmExtension {
     #[allow(unused)]
     pub zed_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
-}
-
-impl Drop for WasmExtension {
-    fn drop(&mut self) {
-        self.tx.close_channel();
-    }
 }
 
 #[async_trait]
@@ -591,6 +588,7 @@ impl WasmHost {
             proxy,
             release_channel: ReleaseChannel::global(cx),
             granted_capabilities: extension_settings.granted_capabilities.clone(),
+            allowed_env_var_providers: extension_settings.allowed_env_var_providers.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })
