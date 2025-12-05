@@ -65,7 +65,7 @@ struct GitBlob {
     path: RepoPath,
     worktree_id: WorktreeId,
     is_deleted: bool,
-    display_name: Arc<str>,
+    display_name: String,
 }
 
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
@@ -183,9 +183,8 @@ impl CommitView {
                     .path
                     .file_name()
                     .map(|name| name.to_string())
-                    .unwrap_or_else(|| file.path.display(PathStyle::Posix).to_string());
-                let display_name: Arc<str> =
-                    Arc::from(format!("{short_sha} - {file_name}").into_boxed_str());
+                    .unwrap_or_else(|| file.path.display(PathStyle::local()).to_string());
+                let display_name = format!("{short_sha} - {file_name}");
 
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
