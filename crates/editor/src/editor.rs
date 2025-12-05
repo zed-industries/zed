@@ -1128,6 +1128,7 @@ pub struct Editor {
     edit_prediction_settings: EditPredictionSettings,
     edit_predictions_hidden_for_vim_mode: bool,
     show_edit_predictions_override: Option<bool>,
+    show_completions_on_input_override: Option<bool>,
     menu_edit_predictions_policy: MenuEditPredictionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
     edit_prediction_indent_conflict: bool,
@@ -2275,6 +2276,7 @@ impl Editor {
             editor_actions: Rc::default(),
             edit_predictions_hidden_for_vim_mode: false,
             show_edit_predictions_override: None,
+            show_completions_on_input_override: None,
             menu_edit_predictions_policy: MenuEditPredictionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
             edit_prediction_indent_conflict: false,
@@ -3155,6 +3157,10 @@ impl Editor {
             let show_edit_predictions = !self.edit_predictions_enabled();
             self.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
         }
+    }
+
+    pub fn set_show_completions_on_input(&mut self, show_completions_on_input: Option<bool>) {
+        self.show_completions_on_input_override = show_completions_on_input;
     }
 
     pub fn set_show_edit_predictions(
@@ -5533,7 +5539,10 @@ impl Editor {
         let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
         let completion_settings = language_settings.completions.clone();
 
-        if !menu_is_open && trigger.is_some() && !language_settings.show_completions_on_input {
+        let show_completions_on_input = self
+            .show_completions_on_input_override
+            .unwrap_or(language_settings.show_completions_on_input);
+        if !menu_is_open && trigger.is_some() && !show_completions_on_input {
             return;
         }
 
