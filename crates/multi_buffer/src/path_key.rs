@@ -305,7 +305,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
-            // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
+            // todo(lw): is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
             if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
                 last_entry.id.0 + 1
             } else {
