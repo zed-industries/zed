@@ -1020,9 +1020,8 @@ impl X11Client {
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
 
-                // The modifiers in the event are sometimes outdated.
-                // This results in short-pressed modifiers being sometimes ignored
-                // which causes macros to sometimes arrive without the modifiers.
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
                 // We therefore update the mask from the global state.
                 let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
                 let event_state_bits = u32::from(event.state.bits());
@@ -1104,9 +1103,8 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
 
-                // The modifiers in the event are sometimes outdated.
-                // This results in short-pressed modifiers being sometimes ignored
-                // which causes macros to sometimes arrive without the modifiers.
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
                 // We therefore update the mask from the global state.
                 let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
                 let event_state_bits = u32::from(event.state.bits());
