@@ -1,5 +1,5 @@
 [package]
-name = "open_router"
+name = "open-router"
 version = "0.1.0"
 edition = "2021"
 publish = false

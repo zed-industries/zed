@@ -1,4 +1,4 @@
-id = "open_router"
+id = "open-router"
 name = "OpenRouter"
 description = "OpenRouter LLM provider - access multiple AI models through a unified API."
 version = "0.1.0"
@@ -6,8 +6,8 @@ schema_version = 1
 authors = ["Zed Team"]
 repository = "https://github.com/zed-industries/zed"
 
-[language_model_providers.open_router]
+[language_model_providers.open-router]
 name = "OpenRouter"
 
-[language_model_providers.open_router.auth]
+[language_model_providers.open-router.auth]
 env_var = "OPENROUTER_API_KEY"

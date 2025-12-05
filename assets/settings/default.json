@@ -1726,7 +1726,7 @@
     "google-ai": true,
     "html": true,
     "openai": true,
-    "open_router": true
+    "open-router": true
   },
   // The capabilities granted to extensions.
   //
