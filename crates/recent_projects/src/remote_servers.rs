@@ -663,7 +663,10 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_inner(
-            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(window, cx)),
+            Mode::CreateRemoteDevContainer(
+                CreateRemoteDevContainer::new(window, cx)
+                    .progress(DevContainerCreationProgress::Creating),
+            ),
             false,
             fs,
             window,

@@ -217,6 +217,12 @@ pub fn init(cx: &mut App) {
                 }
             })
             .detach();
+
+            let fs = workspace.project().read(cx).fs().clone();
+            let handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::new_dev_container(fs, window, handle, cx)
+            });
         });
     });
 
