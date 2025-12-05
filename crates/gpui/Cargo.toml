@@ -140,7 +140,7 @@ libc.workspace = true
 pin-project = "1.1.10"
 circular-buffer.workspace = true
 spin = "0.10.0"
-muda = "0.17.1"
+muda = { version = "0.17.1", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"

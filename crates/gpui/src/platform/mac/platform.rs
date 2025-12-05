@@ -967,7 +967,7 @@ impl Platform for MacPlatform {
             }
         }
 
-        let tray_menu = state.tray_menu.clone();
+        let tray_menu = state.tray_menu;
         if let Some(mac_tray) = &mut state.tray {
             mac_tray.update(&tray, tray_menu);
         } else {
