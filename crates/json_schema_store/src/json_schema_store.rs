@@ -168,15 +168,26 @@ pub fn resolve_schema_request_inner(
     Ok(schema)
 }
 
-pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
-    let jsonc_globs = all_language_settings(None, cx)
+const JSONC_LANGUAGE_NAME: &str = "JSONC";
+
+pub fn all_schema_file_associations(
+    languages: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> serde_json::Value {
+    let extension_globs = languages
+        .available_language_for_name(JSONC_LANGUAGE_NAME)
+        .map(|language| language.matcher().path_suffixes.clone())
+        .into_iter()
+        .flatten()
+        // Path suffixes can be entire file names or just their extensions.
+        .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
+    let override_globs = all_language_settings(None, cx)
         .file_types
-        .get("JSONC")
+        .get(JSONC_LANGUAGE_NAME)
         .into_iter()
         .flat_map(|(_, glob_strings)| glob_strings)
-        .cloned()
-        .chain(["*.jsonc".to_string(), "*.JSONC".to_string()])
-        .collect::<Vec<_>>();
+        .cloned();
+    let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
 
     let mut file_associations = serde_json::json!([
         {
