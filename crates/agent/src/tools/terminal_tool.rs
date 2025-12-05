@@ -112,10 +112,9 @@ impl AgentTool for TerminalTool {
                 .await?;
 
             let terminal_id = terminal.id(cx)?;
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                content: Some(vec![acp::ToolCallContent::Terminal { terminal_id }]),
-                ..Default::default()
-            });
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
+            ]));
 
             let exit_status = terminal.wait_for_exit(cx)?.await;
             let output = terminal.current_output(cx)?;

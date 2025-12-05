@@ -16,7 +16,7 @@ use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_default_system_shell, maybe, rel_path::RelPath};
+use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
 
@@ -240,6 +240,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         Some(completion_tx),
@@ -369,6 +371,8 @@ impl Project {
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,
+                        settings.path_hyperlink_regexes,
+                        settings.path_hyperlink_timeout_ms,
                         is_via_remote,
                         cx.entity_id().as_u64(),
                         None,
@@ -505,13 +509,13 @@ impl Project {
                             None,
                             None,
                         )?;
-                        let mut command = std::process::Command::new(command_template.program);
+                        let mut command = new_std_command(command_template.program);
                         command.args(command_template.args);
                         command.envs(command_template.env);
                         Ok(command)
                     }
                     None => {
-                        let mut command = std::process::Command::new(command);
+                        let mut command = new_std_command(command);
                         command.args(args);
                         command.envs(env);
                         if let Some(path) = path {

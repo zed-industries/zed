@@ -169,6 +169,17 @@ pub struct PredictEditsBody {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    /// The trigger for this request.
+    #[serde(default)]
+    pub trigger: PredictEditsRequestTrigger,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum PredictEditsRequestTrigger {
+    Diagnostics,
+    Cli,
+    #[default]
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,15 +206,39 @@ pub struct AcceptEditPredictionBody {
     pub request_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RejectEditPredictionsBody {
     pub rejections: Vec<EditPredictionRejection>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectEditPredictionsBodyRef<'a> {
+    pub rejections: &'a [EditPredictionRejection],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EditPredictionRejection {
     pub request_id: String,
+    #[serde(default)]
+    pub reason: EditPredictionRejectReason,
     pub was_shown: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum EditPredictionRejectReason {
+    /// New requests were triggered before this one completed
+    Canceled,
+    /// No edits returned
+    Empty,
+    /// Edits returned, but none remained after interpolation
+    InterpolatedEmpty,
+    /// The new prediction was preferred over the current one
+    Replaced,
+    /// The current prediction was preferred over the new one
+    CurrentPreferred,
+    /// The current prediction was discarded
+    #[default]
+    Discarded,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]

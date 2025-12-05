@@ -2656,6 +2656,8 @@ impl Session {
             this.update(cx, |this, cx| {
                 this.memory.clear(cx.background_executor());
                 this.invalidate_command_type::<ReadMemory>();
+                this.invalidate_command_type::<VariablesCommand>();
+                cx.emit(SessionEvent::Variables);
                 match response {
                     Ok(response) => {
                         let event = dap::OutputEvent {

@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -705,7 +705,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut fake_servers = language_registry.register_fake_language_server(
+    let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
             completion_provider: Some(Default::default()),
@@ -866,7 +866,7 @@ fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);

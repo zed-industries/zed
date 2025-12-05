@@ -414,8 +414,9 @@
     }
   },
   {
-    "context": "vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu",
     "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
       "ctrl-[": "editor::Cancel"
@@ -475,6 +476,9 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
+
+      "n": "vim::HelixSelectNext",
+      "shift-n": "vim::HelixSelectPrevious",
 
       // Goto mode
       "g e": "vim::EndOfDocument",
@@ -853,6 +857,8 @@
       "ctrl-w shift-right": "workspace::SwapPaneRight",
       "ctrl-w shift-up": "workspace::SwapPaneUp",
       "ctrl-w shift-down": "workspace::SwapPaneDown",
+      "ctrl-w x": "workspace::SwapPaneAdjacent",
+      "ctrl-w ctrl-x": "workspace::SwapPaneAdjacent",
       "ctrl-w shift-h": "workspace::MovePaneLeft",
       "ctrl-w shift-l": "workspace::MovePaneRight",
       "ctrl-w shift-k": "workspace::MovePaneUp",

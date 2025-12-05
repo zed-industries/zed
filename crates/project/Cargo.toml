@@ -86,6 +86,7 @@ toml.workspace = true
 url.workspace = true
 util.workspace = true
 watch.workspace = true
+wax.workspace = true
 which.workspace = true
 worktree.workspace = true
 zeroize.workspace = true

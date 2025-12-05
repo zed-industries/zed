@@ -1,5 +1,5 @@
 pub mod copilot_chat;
-mod copilot_completion_provider;
+mod copilot_edit_prediction_delegate;
 pub mod copilot_responses;
 pub mod request;
 mod sign_in;
@@ -46,7 +46,7 @@ use util::rel_path::RelPath;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
-pub use crate::copilot_completion_provider::CopilotCompletionProvider;
+pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_and_sign_in};
 
 actions!(

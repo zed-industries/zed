@@ -43,9 +43,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install cargo nextest
-        shell: bash -euxo pipefail {0}
-        run: |
-          cargo install cargo-nextest --locked
+        uses: taiki-e/install-action@nextest
 
       - name: Limit target directory size
         shell: bash -euxo pipefail {0}
