@@ -947,7 +947,7 @@ impl WindowsPlatformInner {
             .get(&menu_id)
             .map(|action| action.boxed_clone())
         else {
-            log::error!("Tray menu for index {:?} not found", menu_id);
+            log::error!("Tray menu_id: {:?} not found", menu_id);
             return Some(1);
         };
         self.with_callback(
