@@ -253,10 +253,6 @@ interface llm-provider {
         min-total-token-count: u64,
     }
 
-    // =========================================================================
-    // OAuth Web Auth Flow Types
-    // =========================================================================
-
     /// Configuration for starting an OAuth web authentication flow.
     record oauth-web-auth-config {
         /// The URL to open in the user's browser to start authentication.
@@ -299,10 +295,6 @@ interface llm-provider {
         /// Response body as a string.
         body: string,
     }
-
-    // =========================================================================
-    // Import Functions (callable by extensions)
-    // =========================================================================
 
     /// Request a credential from the user.
     /// Returns true if the credential was provided, false if the user cancelled.
