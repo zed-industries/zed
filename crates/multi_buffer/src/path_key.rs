@@ -7,6 +7,7 @@ use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
+use ztracing::instrument;
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
@@ -69,6 +70,7 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
+    #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,

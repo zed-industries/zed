@@ -46,6 +46,7 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
+use ztracing::instrument;
 
 actions!(
     git,
@@ -469,6 +470,7 @@ impl ProjectDiff {
         }
     }
 
+    #[instrument(skip_all)]
     fn register_buffer(
         &mut self,
         path_key: PathKey,

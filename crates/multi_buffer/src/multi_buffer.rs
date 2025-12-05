@@ -57,6 +57,7 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
+use ztracing::instrument;
 
 pub use self::path_key::PathKey;
 
@@ -1671,6 +1672,7 @@ impl MultiBuffer {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
+    #[instrument(skip_all)]
     fn merge_excerpt_ranges<'a>(
         expanded_ranges: impl IntoIterator<Item = &'a ExcerptRange<Point>> + 'a,
     ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
@@ -4483,6 +4485,7 @@ impl MultiBufferSnapshot {
         self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_point)
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> MultiBufferOffset {
         self.convert_dimension(point, text::BufferSnapshot::point_to_offset)
     }
@@ -4536,6 +4539,7 @@ impl MultiBufferSnapshot {
         }
     }
 
+    #[instrument(skip_all)]
     fn convert_dimension<MBR1, MBR2, BR1, BR2>(
         &self,
         key: MBR1,
@@ -6684,6 +6688,7 @@ where
     MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
     BD: TextDimension + AddAssign<<MBD as Sub>::Output>,
 {
+    #[instrument(skip_all)]
     fn seek(&mut self, position: &MBD) {
         let position = OutputDimension(*position);
         self.cached_region.take();
