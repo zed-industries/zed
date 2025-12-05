@@ -1,4 +1,4 @@
-//! TODO kb also block language servers and MCP servers from starting
+//! TODO kb also block MCP servers from starting
 use std::path::{Path, PathBuf};
 
 use collections::HashSet;
@@ -119,6 +119,14 @@ impl TrustedWorktrees {
 impl Global for TrustedWorktreesStorage {}
 
 impl TrustedWorktreesStorage {
+    pub fn subscribe_app(
+        &self,
+        cx: &mut App,
+        mut on_event: impl FnMut(&TrustedWorktreesEvent, &mut App) + 'static,
+    ) -> Subscription {
+        cx.subscribe(&self.trusted, move |_, e, cx| on_event(e, cx))
+    }
+
     pub fn subscribe<T: 'static>(
         &self,
         cx: &mut Context<T>,
