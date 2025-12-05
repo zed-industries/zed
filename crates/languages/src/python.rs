@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
 use smol::lock::OnceCell;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
@@ -1101,13 +1101,33 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
-fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+// How far is this venv from the root of our current project?
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SubprojectDistance {
+    WithinSubproject(Reverse<usize>),
+    WithinWorktree(Reverse<usize>),
+    NotInWorktree,
+}
+
+fn wr_distance(
+    wr: &PathBuf,
+    subroot_relative_path: &RelPath,
+    venv: Option<&PathBuf>,
+) -> SubprojectDistance {
     if let Some(venv) = venv
         && let Ok(p) = venv.strip_prefix(wr)
     {
-        p.components().count()
+        if subroot_relative_path.components().next().is_some()
+            && let Ok(distance) = p
+                .strip_prefix(subroot_relative_path.as_std_path())
+                .map(|p| p.components().count())
+        {
+            SubprojectDistance::WithinSubproject(Reverse(distance))
+        } else {
+            SubprojectDistance::WithinWorktree(Reverse(p.components().count()))
+        }
     } else {
-        usize::MAX
+        SubprojectDistance::NotInWorktree
     }
 }
 
@@ -1170,11 +1190,14 @@ impl ToolchainLister for PythonToolchainProvider {
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = || {
-                let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
-                let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
-            };
+            let proj_ordering =
+                || {
+                    let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
+                    let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
+                    wr_distance(&wr, &subroot_relative_path, lhs_project.as_ref()).cmp(
+                        &wr_distance(&wr, &subroot_relative_path, rhs_project.as_ref()),
+                    )
+                };
 
             // Compare environment priorities
             let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));

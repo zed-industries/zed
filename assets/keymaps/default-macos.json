@@ -47,7 +47,7 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-z": "edit_prediction::RateCompletions",
+      "ctrl-cmd-z": "edit_prediction::RatePredictions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
@@ -1427,18 +1427,10 @@
     }
   },
   {
-    "context": "Zeta2Feedback > Editor",
+    "context": "EditPredictionContext > Editor",
     "bindings": {
-      "enter": "editor::Newline",
-      "cmd-enter up": "dev::Zeta2RatePredictionPositive",
-      "cmd-enter down": "dev::Zeta2RatePredictionNegative"
-    }
-  },
-  {
-    "context": "Zeta2Context > Editor",
-    "bindings": {
-      "alt-left": "dev::Zeta2ContextGoBack",
-      "alt-right": "dev::Zeta2ContextGoForward"
+      "alt-left": "dev::EditPredictionContextGoBack",
+      "alt-right": "dev::EditPredictionContextGoForward"
     }
   },
   {

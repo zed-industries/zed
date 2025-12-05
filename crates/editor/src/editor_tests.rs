@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
-    edit_prediction_tests::FakeEditPredictionProvider,
+    edit_prediction_tests::FakeEditPredictionDelegate,
     element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
@@ -8636,7 +8636,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
     cx.update_editor(|editor, window, cx| {
         editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
     });
@@ -8659,7 +8659,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
                 edit_preview: None,
@@ -19096,6 +19096,109 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::Prettier))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.settings"), Default::default())
+        .await;
+
+    let project = Project::test(fs, [path!("/file.settings").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    let ts_lang = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..LanguageMatcher::default()
+            },
+            prettier_parser_name: Some("typescript".to_string()),
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    ));
+
+    language_registry.add(ts_lang.clone());
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
+    });
+
+    let test_plugin = "test_plugin";
+    let _ = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            prettier_plugins: vec![test_plugin],
+            ..Default::default()
+        },
+    );
+
+    let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.settings"), cx)
+        })
+        .await
+        .unwrap();
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, ts_lang, cx)
+    });
+
+    let buffer_text = "one\ntwo\nthree\n";
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(buffer_text, window, cx)
+    });
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        buffer_text.to_string() + prettier_format_suffix + "\ntypescript",
+        "Test prettier formatting was not applied to the original buffer text",
+    );
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::default())
+    });
+    let format = editor.update_in(cx, |editor, window, cx| {
+        editor.perform_format(
+            project.clone(),
+            FormatTrigger::Manual,
+            FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+            window,
+            cx,
+        )
+    });
+    format.await.unwrap();
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        buffer_text.to_string()
+            + prettier_format_suffix
+            + "\ntypescript\n"
+            + prettier_format_suffix
+            + "\ntypescript",
+        "Autoformatting (via test prettier) was not applied to the original buffer text",
+    );
+}
+
+#[gpui::test]
 async fn test_addition_reverts(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
@@ -27393,6 +27496,65 @@ async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
     cx.assert_editor_state(&format!(
         "Hello, [editor]({url})ˇ.\nZed is [great]({url})ˇ (see this link: {url}ˇ)"
     ));
+}
+
+#[gpui::test]
+async fn test_markdown_list_indent_with_multi_cursor(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(&indoc! {"
+        - [ ] Item 1
+            - [ ] Item 1.a
+        - [ˇ] Item 2
+            - [ˇ] Item 2.a
+            - [ˇ] Item 2.b
+        "
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        - [ ] Item 1
+            - [ ] Item 1.a
+        - [Xˇ] Item 2
+            - [Xˇ] Item 2.a
+            - [Xˇ] Item 2.b
+        "
+    });
+}
+
+#[gpui::test]
+async fn test_markdown_list_indent_with_newline(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(indoc! {"
+        - [x] list item
+          - [x] sub list itemˇ
+        "
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        - [x] list item
+          - [x] sub list item
+          ˇ
+        "
+    });
 }
 
 #[gpui::test]

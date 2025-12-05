@@ -47,6 +47,7 @@ pub(crate) struct WslRemoteConnection {
     shell: String,
     shell_kind: ShellKind,
     default_system_shell: String,
+    has_wsl_interop: bool,
     connection_options: WslConnectionOptions,
 }
 
@@ -71,6 +72,7 @@ impl WslRemoteConnection {
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
+            has_wsl_interop: false,
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.shell = this
@@ -79,6 +81,15 @@ impl WslRemoteConnection {
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
         this.shell_kind = ShellKind::new(&this.shell, false);
+        this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
+        log::info!(
+            "Remote has wsl interop {}",
+            if this.has_wsl_interop {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         this.platform = this
             .detect_platform()
             .await
@@ -113,6 +124,14 @@ impl WslRemoteConnection {
             .inspect_err(|err| log::error!("Failed to detect remote shell: {err}"))
             .ok()
             .unwrap_or_else(|| "/bin/sh".to_string()))
+    }
+
+    async fn detect_has_wsl_interop(&self) -> Result<bool> {
+        Ok(self
+            .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop"])
+            .await
+            .inspect_err(|err| log::error!("Failed to detect wsl interop: {err}"))?
+            .contains("enabled"))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
@@ -317,6 +336,7 @@ impl RemoteConnection for WslRemoteConnection {
                 proxy_args.push(format!("{}={}", env_var, value));
             }
         }
+
         proxy_args.push(remote_binary_path.display(PathStyle::Posix).into_owned());
         proxy_args.push("proxy".to_owned());
         proxy_args.push("--identifier".to_owned());
@@ -488,6 +508,10 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn default_system_shell(&self) -> String {
         self.default_system_shell.clone()
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        self.has_wsl_interop
     }
 }
 

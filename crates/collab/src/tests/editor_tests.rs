@@ -3518,7 +3518,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
-        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
@@ -3603,10 +3602,6 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             for (idx, (buffer, entry)) in entries.iter().flatten().enumerate() {
                 let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
-                assert_eq!(
-                    details.permalink.unwrap().to_string(),
-                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
-                );
             }
         });
     });

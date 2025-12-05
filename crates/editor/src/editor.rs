@@ -51,7 +51,7 @@ pub mod test;
 
 pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
-pub use edit_prediction::Direction;
+pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
@@ -92,7 +92,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use edit_prediction::{EditPredictionProvider, EditPredictionProviderHandle};
+use edit_prediction_types::{EditPredictionDelegate, EditPredictionDelegateHandle};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -182,7 +182,7 @@ use std::{
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Not, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -191,7 +191,7 @@ use std::{
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
 use theme::{
-    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
+    AccentColors, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
 };
 use ui::{
@@ -1079,6 +1079,7 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
+    buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
@@ -1119,7 +1120,7 @@ pub struct Editor {
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    edit_prediction_provider: Option<RegisteredEditPredictionProvider>,
+    edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_edit_prediction: Option<EditPredictionState>,
     /// Used to prevent flickering as the user types while the menu is open
@@ -1206,9 +1207,15 @@ pub struct Editor {
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
-    accent_overrides: Vec<SharedString>,
+    accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
+}
+
+#[derive(Debug, PartialEq)]
+struct AccentData {
+    colors: AccentColors,
+    overrides: Vec<SharedString>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -1555,8 +1562,8 @@ pub struct RenameState {
 
 struct InvalidationStack<T>(Vec<T>);
 
-struct RegisteredEditPredictionProvider {
-    provider: Arc<dyn EditPredictionProviderHandle>,
+struct RegisteredEditPredictionDelegate {
+    provider: Arc<dyn EditPredictionDelegateHandle>,
     _subscription: Subscription,
 }
 
@@ -2198,6 +2205,7 @@ impl Editor {
             show_breakpoints: None,
             show_wrap_guides: None,
             show_indent_guides,
+            buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
@@ -2354,7 +2362,7 @@ impl Editor {
             lookup_key: None,
             select_next_is_case_sensitive: None,
             applicable_language_settings: HashMap::default(),
-            accent_overrides: Vec::new(),
+            accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             use_base_text_line_numbers: false,
         };
@@ -2364,7 +2372,7 @@ impl Editor {
         }
 
         editor.applicable_language_settings = editor.fetch_applicable_language_settings(cx);
-        editor.accent_overrides = editor.fetch_accent_overrides(cx);
+        editor.accent_data = editor.fetch_accent_data(cx);
 
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -2980,9 +2988,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
-        T: EditPredictionProvider,
+        T: EditPredictionDelegate,
     {
-        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionProvider {
+        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionDelegate {
             _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
                 if this.focus_handle.is_focused(window) {
                     this.update_visible_edit_prediction(window, cx);
@@ -7386,7 +7394,7 @@ impl Editor {
             && self
                 .edit_prediction_provider
                 .as_ref()
-                .is_some_and(|provider| provider.provider.show_completions_in_menu());
+                .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
@@ -8067,10 +8075,17 @@ impl Editor {
 
         if self.edit_prediction_indent_conflict {
             let cursor_point = cursor.to_point(&multibuffer);
+            let mut suggested_indent = None;
+            multibuffer.suggested_indents_callback(
+                cursor_point.row..cursor_point.row + 1,
+                |_, indent| {
+                    suggested_indent = Some(indent);
+                    ControlFlow::Break(())
+                },
+                cx,
+            );
 
-            let indents = multibuffer.suggested_indents(cursor_point.row..cursor_point.row + 1, cx);
-
-            if let Some((_, indent)) = indents.iter().next()
+            if let Some(indent) = suggested_indent
                 && indent.len == cursor_point.column
             {
                 self.edit_prediction_indent_conflict = false;
@@ -8080,12 +8095,12 @@ impl Editor {
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
         let (completion_id, edits, edit_preview) = match edit_prediction {
-            edit_prediction::EditPrediction::Local {
+            edit_prediction_types::EditPrediction::Local {
                 id,
                 edits,
                 edit_preview,
             } => (id, edits, edit_preview),
-            edit_prediction::EditPrediction::Jump {
+            edit_prediction_types::EditPrediction::Jump {
                 id,
                 snapshot,
                 target,
@@ -8226,7 +8241,7 @@ impl Editor {
         Some(())
     }
 
-    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionProviderHandle>> {
+    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionDelegateHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
     }
 
@@ -9548,7 +9563,7 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
     fn get_prediction_provider_icon_name(
-        provider: &Option<RegisteredEditPredictionProvider>,
+        provider: &Option<RegisteredEditPredictionDelegate>,
     ) -> IconName {
         match provider {
             Some(provider) => match provider.provider.name() {
@@ -20077,6 +20092,20 @@ impl Editor {
         self.show_indent_guides
     }
 
+    pub fn disable_indent_guides_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffers_with_disabled_indent_guides.insert(buffer_id);
+        cx.notify();
+    }
+
+    pub fn has_indent_guides_disabled_for_buffer(&self, buffer_id: BufferId) -> bool {
+        self.buffers_with_disabled_indent_guides
+            .contains(&buffer_id)
+    }
+
     pub fn toggle_line_numbers(
         &mut self,
         _: &ToggleLineNumbers,
@@ -21706,16 +21735,18 @@ impl Editor {
         cx.notify();
     }
 
-    fn fetch_accent_overrides(&self, cx: &App) -> Vec<SharedString> {
+    fn fetch_accent_data(&self, cx: &App) -> Option<AccentData> {
         if !self.mode.is_full() {
-            return Vec::new();
+            return None;
         }
 
         let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme = cx.theme();
+        let accent_colors = theme.accents().clone();
 
-        theme_settings
+        let accent_overrides = theme_settings
             .theme_overrides
-            .get(cx.theme().name.as_ref())
+            .get(theme.name.as_ref())
             .map(|theme_style| &theme_style.accents)
             .into_iter()
             .flatten()
@@ -21728,7 +21759,12 @@ impl Editor {
                     .flatten(),
             )
             .flat_map(|accent| accent.0.clone())
-            .collect()
+            .collect();
+
+        Some(AccentData {
+            colors: accent_colors,
+            overrides: accent_overrides,
+        })
     }
 
     fn fetch_applicable_language_settings(
@@ -21758,9 +21794,9 @@ impl Editor {
         let language_settings_changed = new_language_settings != self.applicable_language_settings;
         self.applicable_language_settings = new_language_settings;
 
-        let new_accent_overrides = self.fetch_accent_overrides(cx);
-        let accent_overrides_changed = new_accent_overrides != self.accent_overrides;
-        self.accent_overrides = new_accent_overrides;
+        let new_accents = self.fetch_accent_data(cx);
+        let accents_changed = new_accents != self.accent_data;
+        self.accent_data = new_accents;
 
         if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
@@ -21834,7 +21870,7 @@ impl Editor {
                 }
             }
 
-            if language_settings_changed || accent_overrides_changed {
+            if language_settings_changed || accents_changed {
                 self.colorize_brackets(true, cx);
             }
 

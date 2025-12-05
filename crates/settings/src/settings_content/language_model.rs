@@ -61,6 +61,7 @@ pub struct AmazonBedrockSettingsContent {
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
+    pub allow_global: Option<bool>,
 }
 
 #[with_fallible_options]

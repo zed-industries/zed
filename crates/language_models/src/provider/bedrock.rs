@@ -71,6 +71,7 @@ pub struct AmazonBedrockSettings {
     pub profile_name: Option<String>,
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
+    pub allow_global: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -238,6 +239,13 @@ impl State {
         credentials_region
             .or(settings_region)
             .unwrap_or(String::from("us-east-1"))
+    }
+
+    fn get_allow_global(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_global)
+            .unwrap_or(false)
     }
 }
 
@@ -545,11 +553,13 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let Ok(region) = cx.read_entity(&self.state, |state, _cx| state.get_region()) else {
+        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| {
+            (state.get_region(), state.get_allow_global())
+        }) else {
             return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
         };
 
-        let model_id = match self.model.cross_region_inference_id(&region) {
+        let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
             Err(e) => {
                 return async move { Err(e.into()) }.boxed();
