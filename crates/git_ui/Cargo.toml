@@ -78,3 +78,6 @@ settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

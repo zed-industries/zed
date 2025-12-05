@@ -24,3 +24,6 @@ tracing.workspace = true
 ctor.workspace = true
 rand.workspace = true
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
