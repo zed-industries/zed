@@ -17,8 +17,6 @@ pub use serde_json;
 pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
-    llm_delete_credential, llm_get_credential, llm_get_env_var, llm_oauth_http_request,
-    llm_oauth_open_browser, llm_oauth_start_web_auth, llm_request_credential, llm_store_credential,
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
@@ -45,6 +43,12 @@ pub use wit::{
         ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
         ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
         ToolUseJsonParseError as LlmToolUseJsonParseError,
+        delete_credential as llm_delete_credential, get_credential as llm_get_credential,
+        get_env_var as llm_get_env_var, oauth_open_browser as llm_oauth_open_browser,
+        oauth_start_web_auth as llm_oauth_start_web_auth,
+        request_credential as llm_request_credential,
+        send_oauth_http_request as llm_oauth_http_request,
+        store_credential as llm_store_credential,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,

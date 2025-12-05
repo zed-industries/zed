@@ -1110,12 +1110,10 @@ impl ExtensionImports for WasmState {
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
     }
+}
 
-    // =========================================================================
-    // LLM Provider Import Implementations
-    // =========================================================================
-
-    async fn llm_request_credential(
+impl llm_provider::Host for WasmState {
+    async fn request_credential(
         &mut self,
         _provider_id: String,
         _credential_type: llm_provider::CredentialType,
@@ -1123,16 +1121,13 @@ impl ExtensionImports for WasmState {
         _placeholder: String,
     ) -> wasmtime::Result<Result<bool, String>> {
         // For now, credential requests return false (not provided)
-        // Extensions should use llm_get_env_var to check for env vars first,
-        // then llm_store_credential/llm_get_credential for manual storage
+        // Extensions should use get_env_var to check for env vars first,
+        // then store_credential/get_credential for manual storage
         // Full UI credential prompting will be added in a future phase
         Ok(Ok(false))
     }
 
-    async fn llm_get_credential(
-        &mut self,
-        provider_id: String,
-    ) -> wasmtime::Result<Option<String>> {
+    async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
         let credential_key = format!("extension-llm-{}:{}", extension_id, provider_id);
 
@@ -1151,7 +1146,7 @@ impl ExtensionImports for WasmState {
         .await
     }
 
-    async fn llm_store_credential(
+    async fn store_credential(
         &mut self,
         provider_id: String,
         value: String,
@@ -1173,7 +1168,7 @@ impl ExtensionImports for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn llm_delete_credential(
+    async fn delete_credential(
         &mut self,
         provider_id: String,
     ) -> wasmtime::Result<Result<(), String>> {
@@ -1194,7 +1189,7 @@ impl ExtensionImports for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn llm_get_env_var(&mut self, name: String) -> wasmtime::Result<Option<String>> {
+    async fn get_env_var(&mut self, name: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
 
         // Find which provider (if any) declares this env var in its auth config
@@ -1247,7 +1242,7 @@ impl ExtensionImports for WasmState {
         Ok(env::var(&name).ok())
     }
 
-    async fn llm_oauth_start_web_auth(
+    async fn oauth_start_web_auth(
         &mut self,
         config: llm_provider::OauthWebAuthConfig,
     ) -> wasmtime::Result<Result<llm_provider::OauthWebAuthResult, String>> {
@@ -1345,7 +1340,7 @@ impl ExtensionImports for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn llm_oauth_http_request(
+    async fn send_oauth_http_request(
         &mut self,
         request: llm_provider::OauthHttpRequest,
     ) -> wasmtime::Result<Result<llm_provider::OauthHttpResponse, String>> {
@@ -1416,10 +1411,7 @@ impl ExtensionImports for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn llm_oauth_open_browser(
-        &mut self,
-        url: String,
-    ) -> wasmtime::Result<Result<(), String>> {
+    async fn oauth_open_browser(&mut self, url: String) -> wasmtime::Result<Result<(), String>> {
         self.on_main_thread(move |cx| {
             async move {
                 cx.update(|cx| {
@@ -1433,9 +1425,3 @@ impl ExtensionImports for WasmState {
         .to_wasmtime_result()
     }
 }
-
-// =============================================================================
-// LLM Provider Host Implementations
-// =============================================================================
-
-impl llm_provider::Host for WasmState {}

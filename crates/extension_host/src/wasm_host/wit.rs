@@ -7,7 +7,6 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
-mod since_v0_7_0;
 mod since_v0_8_0;
 use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
@@ -111,7 +110,6 @@ pub fn authorize_access_to_unreleased_wasm_api_version(
 
 pub enum Extension {
     V0_8_0(since_v0_8_0::Extension),
-    V0_7_0(since_v0_7_0::Extension),
     V0_6_0(since_v0_6_0::Extension),
     V0_5_0(since_v0_5_0::Extension),
     V0_4_0(since_v0_4_0::Extension),
@@ -142,15 +140,6 @@ impl Extension {
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_8_0(extension))
-        } else if version >= since_v0_7_0::MIN_VERSION {
-            let extension = since_v0_7_0::Extension::instantiate_async(
-                store,
-                component,
-                since_v0_7_0::linker(executor),
-            )
-            .await
-            .context("failed to instantiate wasm extension")?;
-            Ok(Self::V0_7_0(extension))
         } else if version >= since_v0_6_0::MIN_VERSION {
             let extension = since_v0_6_0::Extension::instantiate_async(
                 store,
@@ -238,7 +227,6 @@ impl Extension {
     pub async fn call_init_extension(&self, store: &mut Store<WasmState>) -> Result<()> {
         match self {
             Extension::V0_8_0(ext) => ext.call_init_extension(store).await,
-            Extension::V0_7_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_6_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_5_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_4_0(ext) => ext.call_init_extension(store).await,
@@ -263,10 +251,6 @@ impl Extension {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(Into::into)),
             Extension::V0_6_0(ext) => {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
@@ -330,14 +314,6 @@ impl Extension {
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V0_8_0(ext) => {
-                ext.call_language_server_initialization_options(
-                    store,
-                    &language_server_id.0,
-                    resource,
-                )
-                .await
-            }
-            Extension::V0_7_0(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
                     &language_server_id.0,
@@ -442,14 +418,6 @@ impl Extension {
                 )
                 .await
             }
-            Extension::V0_7_0(ext) => {
-                ext.call_language_server_workspace_configuration(
-                    store,
-                    &language_server_id.0,
-                    resource,
-                )
-                .await
-            }
             Extension::V0_6_0(ext) => {
                 ext.call_language_server_workspace_configuration(
                     store,
@@ -527,15 +495,6 @@ impl Extension {
                 )
                 .await
             }
-            Extension::V0_7_0(ext) => {
-                ext.call_language_server_additional_initialization_options(
-                    store,
-                    &language_server_id.0,
-                    &target_language_server_id.0,
-                    resource,
-                )
-                .await
-            }
             Extension::V0_6_0(ext) => {
                 ext.call_language_server_additional_initialization_options(
                     store,
@@ -581,15 +540,6 @@ impl Extension {
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V0_8_0(ext) => {
-                ext.call_language_server_additional_workspace_configuration(
-                    store,
-                    &language_server_id.0,
-                    &target_language_server_id.0,
-                    resource,
-                )
-                .await
-            }
-            Extension::V0_7_0(ext) => {
                 ext.call_language_server_additional_workspace_configuration(
                     store,
                     &language_server_id.0,
@@ -645,20 +595,6 @@ impl Extension {
                 ext.call_labels_for_completions(store, &language_server_id.0, &completions)
                     .await
             }
-            Extension::V0_7_0(ext) => ext
-                .call_labels_for_completions(
-                    store,
-                    &language_server_id.0,
-                    &completions
-                        .iter()
-                        .cloned()
-                        .map(Into::into)
-                        .collect::<Vec<_>>(),
-                )
-                .await
-                .map(|res| {
-                    res.map(|labels| labels.into_iter().map(|l| l.map(Into::into)).collect())
-                }),
             Extension::V0_6_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
@@ -765,16 +701,6 @@ impl Extension {
                 ext.call_labels_for_symbols(store, &language_server_id.0, &symbols)
                     .await
             }
-            Extension::V0_7_0(ext) => ext
-                .call_labels_for_symbols(
-                    store,
-                    &language_server_id.0,
-                    &symbols.iter().cloned().map(Into::into).collect::<Vec<_>>(),
-                )
-                .await
-                .map(|res| {
-                    res.map(|labels| labels.into_iter().map(|l| l.map(Into::into)).collect())
-                }),
             Extension::V0_6_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
@@ -881,13 +807,6 @@ impl Extension {
                 ext.call_complete_slash_command_argument(store, command, arguments)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                let command: since_v0_7_0::slash_command::SlashCommand = command.into();
-                Ok(ext
-                    .call_complete_slash_command_argument(store, &command, arguments)
-                    .await?
-                    .map(|completions| completions.into_iter().map(Into::into).collect()))
-            }
             Extension::V0_6_0(ext) => {
                 ext.call_complete_slash_command_argument(store, command, arguments)
                     .await
@@ -930,13 +849,6 @@ impl Extension {
                 ext.call_run_slash_command(store, command, arguments, resource)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                let command: since_v0_7_0::slash_command::SlashCommand = command.into();
-                Ok(ext
-                    .call_run_slash_command(store, &command, arguments, resource)
-                    .await?
-                    .map(Into::into))
-            }
             Extension::V0_6_0(ext) => {
                 ext.call_run_slash_command(store, command, arguments, resource)
                     .await
@@ -978,10 +890,6 @@ impl Extension {
                 ext.call_context_server_command(store, &context_server_id, project)
                     .await
             }
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_context_server_command(store, &context_server_id, project)
-                .await?
-                .map(Into::into)),
             Extension::V0_6_0(ext) => {
                 ext.call_context_server_command(store, &context_server_id, project)
                     .await
@@ -1022,10 +930,6 @@ impl Extension {
                 ext.call_context_server_configuration(store, &context_server_id, project)
                     .await
             }
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_context_server_configuration(store, &context_server_id, project)
-                .await?
-                .map(|opt| opt.map(Into::into))),
             Extension::V0_6_0(ext) => {
                 ext.call_context_server_configuration(store, &context_server_id, project)
                     .await
@@ -1053,7 +957,6 @@ impl Extension {
     ) -> Result<Result<Vec<String>, String>> {
         match self {
             Extension::V0_8_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
-            Extension::V0_7_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_6_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_5_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_4_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
@@ -1075,10 +978,6 @@ impl Extension {
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V0_8_0(ext) => {
-                ext.call_index_docs(store, provider, package_name, kv_store)
-                    .await
-            }
-            Extension::V0_7_0(ext) => {
                 ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
             }
@@ -1134,20 +1033,6 @@ impl Extension {
 
                 Ok(Ok(dap_binary))
             }
-            Extension::V0_7_0(ext) => {
-                let dap_binary = ext
-                    .call_get_dap_binary(
-                        store,
-                        &adapter_name,
-                        &task.try_into()?,
-                        user_installed_path.as_ref().and_then(|p| p.to_str()),
-                        resource,
-                    )
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(dap_binary.into()))
-            }
             Extension::V0_6_0(ext) => {
                 let dap_binary = ext
                     .call_get_dap_binary(
@@ -1182,16 +1067,6 @@ impl Extension {
 
                 Ok(Ok(result))
             }
-            Extension::V0_7_0(ext) => {
-                let config =
-                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
-                let result = ext
-                    .call_dap_request_kind(store, &adapter_name, &config)
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(result.into()))
-            }
             Extension::V0_6_0(ext) => {
                 let config =
                     serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
@@ -1213,15 +1088,6 @@ impl Extension {
         match self {
             Extension::V0_8_0(ext) => {
                 let config = config.into();
-                let result = ext
-                    .call_dap_config_to_scenario(store, &config)
-                    .await?
-                    .map_err(|e| anyhow!("{e:?}"))?;
-
-                Ok(Ok(result.try_into()?))
-            }
-            Extension::V0_7_0(ext) => {
-                let config: since_v0_7_0::dap::DebugConfig = config.into();
                 let result = ext
                     .call_dap_config_to_scenario(store, &config)
                     .await?
@@ -1264,21 +1130,6 @@ impl Extension {
 
                 Ok(result.map(TryInto::try_into).transpose()?)
             }
-            Extension::V0_7_0(ext) => {
-                let build_config_template: since_v0_7_0::dap::BuildTaskTemplate =
-                    build_config_template.into();
-                let result = ext
-                    .call_dap_locator_create_scenario(
-                        store,
-                        &locator_name,
-                        &build_config_template,
-                        &resolved_label,
-                        &debug_adapter_name,
-                    )
-                    .await?;
-
-                Ok(result.map(TryInto::try_into).transpose()?)
-            }
             Extension::V0_6_0(ext) => {
                 let build_config_template = build_config_template.into();
                 let dap_binary = ext
@@ -1303,7 +1154,7 @@ impl Extension {
         resolved_build_task: SpawnInTerminal,
     ) -> Result<Result<DebugRequest, String>> {
         match self {
-            Extension::V0_7_0(ext) => {
+            Extension::V0_8_0(ext) => {
                 let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
                     .call_run_dap_locator(store, &locator_name, &build_config_template)
@@ -1326,7 +1177,7 @@ impl Extension {
     }
 
     // =========================================================================
-    // LLM Provider Methods (v0.7.0+)
+    // LLM Provider Methods (v0.8.0+)
     // =========================================================================
 
     pub async fn call_llm_providers(
@@ -1335,12 +1186,6 @@ impl Extension {
     ) -> Result<Vec<latest::llm_provider::ProviderInfo>> {
         match self {
             Extension::V0_8_0(ext) => ext.call_llm_providers(store).await,
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_llm_providers(store)
-                .await?
-                .into_iter()
-                .map(Into::into)
-                .collect()),
             _ => Ok(Vec::new()),
         }
     }
@@ -1352,11 +1197,7 @@ impl Extension {
     ) -> Result<Result<Vec<latest::llm_provider::ModelInfo>, String>> {
         match self {
             Extension::V0_8_0(ext) => ext.call_llm_provider_models(store, provider_id).await,
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_llm_provider_models(store, provider_id)
-                .await?
-                .map(|models| models.into_iter().map(Into::into).collect())),
-            _ => anyhow::bail!("`llm_provider_models` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_provider_models` not available prior to v0.8.0"),
         }
     }
 
@@ -1367,10 +1208,6 @@ impl Extension {
     ) -> Result<Option<String>> {
         match self {
             Extension::V0_8_0(ext) => {
-                ext.call_llm_provider_settings_markdown(store, provider_id)
-                    .await
-            }
-            Extension::V0_7_0(ext) => {
                 ext.call_llm_provider_settings_markdown(store, provider_id)
                     .await
             }
@@ -1388,10 +1225,6 @@ impl Extension {
                 ext.call_llm_provider_is_authenticated(store, provider_id)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                ext.call_llm_provider_is_authenticated(store, provider_id)
-                    .await
-            }
             _ => Ok(false),
         }
     }
@@ -1403,8 +1236,7 @@ impl Extension {
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V0_8_0(ext) => ext.call_llm_provider_authenticate(store, provider_id).await,
-            Extension::V0_7_0(ext) => ext.call_llm_provider_authenticate(store, provider_id).await,
-            _ => anyhow::bail!("`llm_provider_authenticate` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_provider_authenticate` not available prior to v0.8.0"),
         }
     }
 
@@ -1418,11 +1250,7 @@ impl Extension {
                 ext.call_llm_provider_reset_credentials(store, provider_id)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                ext.call_llm_provider_reset_credentials(store, provider_id)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_provider_reset_credentials` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_provider_reset_credentials` not available prior to v0.8.0"),
         }
     }
 
@@ -1438,12 +1266,7 @@ impl Extension {
                 ext.call_llm_count_tokens(store, provider_id, model_id, request)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                let request: since_v0_7_0::llm_provider::CompletionRequest = request.clone().into();
-                ext.call_llm_count_tokens(store, provider_id, model_id, &request)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_count_tokens` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_count_tokens` not available prior to v0.8.0"),
         }
     }
 
@@ -1459,12 +1282,7 @@ impl Extension {
                 ext.call_llm_stream_completion_start(store, provider_id, model_id, request)
                     .await
             }
-            Extension::V0_7_0(ext) => {
-                let request: since_v0_7_0::llm_provider::CompletionRequest = request.clone().into();
-                ext.call_llm_stream_completion_start(store, provider_id, model_id, &request)
-                    .await
-            }
-            _ => anyhow::bail!("`llm_stream_completion_start` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_stream_completion_start` not available prior to v0.8.0"),
         }
     }
 
@@ -1475,11 +1293,7 @@ impl Extension {
     ) -> Result<Result<Option<latest::llm_provider::CompletionEvent>, String>> {
         match self {
             Extension::V0_8_0(ext) => ext.call_llm_stream_completion_next(store, stream_id).await,
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_llm_stream_completion_next(store, stream_id)
-                .await?
-                .map(|opt| opt.map(Into::into))),
-            _ => anyhow::bail!("`llm_stream_completion_next` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_stream_completion_next` not available prior to v0.8.0"),
         }
     }
 
@@ -1490,8 +1304,7 @@ impl Extension {
     ) -> Result<()> {
         match self {
             Extension::V0_8_0(ext) => ext.call_llm_stream_completion_close(store, stream_id).await,
-            Extension::V0_7_0(ext) => ext.call_llm_stream_completion_close(store, stream_id).await,
-            _ => anyhow::bail!("`llm_stream_completion_close` not available prior to v0.7.0"),
+            _ => anyhow::bail!("`llm_stream_completion_close` not available prior to v0.8.0"),
         }
     }
 
@@ -1506,10 +1319,6 @@ impl Extension {
                 ext.call_llm_cache_configuration(store, provider_id, model_id)
                     .await
             }
-            Extension::V0_7_0(ext) => Ok(ext
-                .call_llm_cache_configuration(store, provider_id, model_id)
-                .await?
-                .map(Into::into)),
             _ => Ok(None),
         }
     }
