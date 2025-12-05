@@ -10,9 +10,9 @@ use anthropic_sdk::{ContentBlock, MessageCreateBuilder};
 use anyhow::Result;
 
 pub struct TeacherModel {
-    llm_name: String,
-    context: ContextType,
-    client: LlmClient,
+    pub llm_name: String,
+    pub context: ContextType,
+    pub client: LlmClient,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -199,7 +199,7 @@ mod tests {
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain(),
+            LlmClient::plain().unwrap(),
         );
         let response = "This is a test response.";
         let parsed = teacher.parse_response(response);
@@ -240,7 +240,7 @@ mod tests {
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain(),
+            LlmClient::plain().unwrap(),
         );
         let response = indoc::indoc! {"
             some lines

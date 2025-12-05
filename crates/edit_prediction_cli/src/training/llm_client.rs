@@ -1,3 +1,6 @@
+use anthropic_sdk::BatchCreateParams;
+use anthropic_sdk::BatchRequest;
+use anthropic_sdk::MessageCreateBuilder;
 use indoc::indoc;
 use sqlez::bindable::Bind;
 use sqlez::bindable::StaticColumnCount;
@@ -5,21 +8,20 @@ use sqlez_macros::sql;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use anthropic_sdk::{Anthropic, Message, MessageCreateParams};
+use anthropic_sdk::{Anthropic, BatchRequestBuilder, Message, MessageCreateParams};
 use anyhow::Result;
 
-pub enum LlmClient {
-    // No batching
-    Plain(PlainLlmClient),
-    Batch(BatchingLlmClient),
+pub struct PlainLlmClient {
+    client: Anthropic,
 }
 
-pub struct PlainLlmClient;
-
 impl PlainLlmClient {
-    async fn generate(&self, message: MessageCreateParams) -> Result<Message> {
+    fn new() -> Result<Self> {
         let client = Anthropic::from_env()?;
-        Ok(client.messages().create(message).await?)
+        Ok(Self { client })
+    }
+    async fn generate(&self, message: MessageCreateParams) -> Result<Message> {
+        Ok(self.client.messages().create(message).await?)
     }
 }
 
@@ -108,6 +110,61 @@ impl BatchingLlmClient {
         Ok(None)
     }
 
+    /// Uploads pending requests as a new batch; downloads finished batches if any.
+    async fn sync_batches(&self) -> Result<()> {
+        self.upload_pending_requests().await?;
+        self.download_finished_batches().await
+    }
+    async fn download_finished_batches(&self) -> Result<()> {
+        Ok(())
+    }
+
+    // https://on.tty-share.com/s/scB68CoH4O9K0xGHResjdM34DziPJGxyNzrUfFO3BsMm0YaodM49qmPxSP3yGPs7mh8/
+
+    async fn upload_pending_requests(&self) -> Result<String> {
+        let q = sql!(
+        SELECT request_hash, request FROM cache WHERE batch_id IS NULL AND response IS NULL
+        );
+
+        let rows: Vec<(String, String)> = self.connection.select(q)?()?;
+
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
+
+        let batch_requests = rows
+            .iter()
+            .map(|(hash, request_str)| {
+                let params: MessageCreateParams = serde_json::from_str(&request_str).unwrap();
+                let custom_id = format!("req_hash_{}", hash);
+                BatchRequest {
+                    custom_id,
+                    method: "POST".to_string(),
+                    url: "/v1/messages".to_string(),
+                    params,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let client = Anthropic::from_env()?;
+
+        let batch = client
+            .batches()
+            .create(BatchCreateParams::new(batch_requests))
+            .await?;
+
+        let q = sql!(
+            UPDATE cache SET batch_id = ? WHERE batch_id is NULL
+        );
+        self.connection.exec_bound(q)?(batch.id.as_str())?;
+
+        Ok(batch.id)
+
+        // // Check batch status
+        // let status = client.batches().retrieve(&batch.id).await?;
+        // println!("Batch status: {:?}", status.processing_status);
+    }
+
     fn request_hash(message: &MessageCreateParams) -> String {
         let mut hasher = std::hash::DefaultHasher::new();
         message_text(&message).hash(&mut hasher);
@@ -128,14 +185,15 @@ fn message_text(message: &MessageCreateParams) -> String {
         .join("\n")
 }
 
-// prompt_hash  request   null
-// prompt_hash  request   batch_id response
+pub enum LlmClient {
+    // No batching
+    Plain(PlainLlmClient),
+    Batch(BatchingLlmClient),
+}
 
-// If I'm preparing a batch, will I reuse any of the existing results?
-//
 impl LlmClient {
-    pub fn plain() -> Self {
-        Self::Plain(PlainLlmClient)
+    pub fn plain() -> Result<Self> {
+        Ok(Self::Plain(PlainLlmClient::new()?))
     }
     pub fn batch(cache_path: &str) -> Result<Self> {
         Ok(Self::Batch(BatchingLlmClient::new(cache_path)?))
@@ -146,6 +204,13 @@ impl LlmClient {
                 plain_llm_client.generate(message).await.map(Some)
             }
             LlmClient::Batch(batching_llm_client) => batching_llm_client.generate(message).await,
+        }
+    }
+
+    pub async fn sync_batches(&self) -> Result<()> {
+        match self {
+            LlmClient::Plain(_) => Ok(()),
+            LlmClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
         }
     }
 

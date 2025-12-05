@@ -28,10 +28,9 @@ pub async fn run_distill(arguments: DistillArguments) -> Result<()> {
         .map(|line| serde_json::from_str(line).expect("Failed to parse JSON line"))
         .collect();
 
-    let llm_client = arguments.batch.map_or_else(
-        || Ok(LlmClient::plain()),
-        |cache_path| LlmClient::batch(&cache_path),
-    )?;
+    let llm_client = arguments
+        .batch
+        .map_or_else(LlmClient::plain, |cache_path| LlmClient::batch(&cache_path))?;
 
     let mut teacher = TeacherModel::new(
         "claude-sonnet-4-5".to_string(),
@@ -56,6 +55,8 @@ pub async fn run_distill(arguments: DistillArguments) -> Result<()> {
         "{} requests are marked for batching",
         num_marked_for_batching
     );
+    let llm_client = teacher.client;
+    llm_client.sync_batches().await?;
 
     Ok(())
 }

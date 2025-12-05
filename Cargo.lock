@@ -642,8 +642,6 @@ dependencies = [
 [[package]]
 name = "anthropic-sdk-rust"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45395c37cc1ce9981a0bd0ba573462ce4809586324cb7b358ecd2e5ed6652485"
 dependencies = [
  "async-trait",
  "backoff",

@@ -13,7 +13,7 @@ name = "ep_cli"
 path = "src/main.rs"
 
 [dependencies]
-anthropic-sdk-rust = "0.1.1"
+anthropic-sdk-rust = {path = "../../../opensource/anthropic-sdk-rust"}# "0.1.1"
 
 anyhow.workspace = true
 chrono.workspace = true
