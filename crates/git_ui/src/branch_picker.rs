@@ -1520,10 +1520,14 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(
-            branches
-                .into_iter()
-                .any(|branch| branch.name() == "new-feature-branch")
+        let new_branch = branches
+            .into_iter()
+            .find(|branch| branch.name() == "new-feature-branch")
+            .expect("new-feature-branch should exist");
+        assert_eq!(
+            new_branch.ref_name.as_ref(),
+            "refs/heads/new-feature-branch",
+            "branch ref_name should not have duplicate refs/heads/ prefix"
         );
     }
 
