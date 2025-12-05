@@ -48,6 +48,8 @@ mod view;
 mod window;
 
 #[cfg(doc)]
+pub mod _elements_and_terminology;
+#[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
