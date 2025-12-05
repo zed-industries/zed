@@ -257,6 +257,7 @@ fn main() {
         cx.set_menus(vec![Menu {
             name: "Image Gallery".into(),
             items: vec![MenuItem::action("Quit", Quit)],
+            disabled: false,
         }]);
 
         let window_options = WindowOptions {

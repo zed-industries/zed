@@ -302,6 +302,7 @@ fn main() {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
             items: vec![],
+            disabled: false,
         }]);
 
         cx.init_colors();

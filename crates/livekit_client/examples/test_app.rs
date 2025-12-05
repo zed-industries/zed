@@ -35,15 +35,9 @@ fn main() {
         cx.activate(true);
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Zed".into(),
-            items: vec![MenuItem::Action {
-                name: "Quit".into(),
-                action: Box::new(Quit),
-                os_action: None,
-                checked: false,
-            }],
-        }]);
+        cx.set_menus(vec![
+            Menu::new("Zed").items([MenuItem::action("Quit", Quit)]),
+        ]);
 
         let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or("http://localhost:7880".into());
         let livekit_key = std::env::var("LIVEKIT_KEY").unwrap_or("devkey".into());
