@@ -82,6 +82,7 @@ fn set_app_menus(cx: &mut App) {
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
             MenuItem::action("Disabled Item", gpui::NoAction).disabled(true),
+            MenuItem::submenu(Menu::new("Disabled Submenu").disabled(true)),
             MenuItem::separator(),
             MenuItem::action("List Mode", ToggleCheck)
                 .checked(app_state.view_mode == ViewMode::List),
