@@ -1656,49 +1656,6 @@ impl WorkspaceDb {
         }
     }
 
-    pub async fn toolchain(
-        &self,
-        workspace_id: WorkspaceId,
-        worktree_id: WorktreeId,
-        relative_worktree_path: Arc<RelPath>,
-        language_name: LanguageName,
-    ) -> Result<Option<Toolchain>> {
-        self.write(move |this| {
-            let mut select = this
-                .select_bound(sql!(
-                    SELECT
-                        name, path, raw_json
-                    FROM toolchains
-                    WHERE
-                        workspace_id = ? AND
-                        language_name = ? AND
-                        worktree_id = ? AND
-                        relative_worktree_path = ?
-                ))
-                .context("select toolchain")?;
-
-            let toolchain: Vec<(String, String, String)> = select((
-                workspace_id,
-                language_name.as_ref().to_string(),
-                worktree_id.to_usize(),
-                relative_worktree_path.as_unix_str().to_string(),
-            ))?;
-
-            Ok(toolchain
-                .into_iter()
-                .next()
-                .and_then(|(name, path, raw_json)| {
-                    Some(Toolchain {
-                        name: name.into(),
-                        path: path.into(),
-                        language_name,
-                        as_json: serde_json::Value::from_str(&raw_json).ok()?,
-                    })
-                }))
-        })
-        .await
-    }
-
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,

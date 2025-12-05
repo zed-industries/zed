@@ -508,7 +508,19 @@ impl GitBlame {
                     let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
                     let blame_buffer = project.blame_buffer(&buffer, None, cx);
-                    Some(async move { (id, snapshot, buffer_edits, blame_buffer.await) })
+                    let remote_url = project
+                        .git_store()
+                        .read(cx)
+                        .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+                        .and_then(|(repo, _)| {
+                            repo.read(cx)
+                                .remote_upstream_url
+                                .clone()
+                                .or(repo.read(cx).remote_origin_url.clone())
+                        });
+                    Some(
+                        async move { (id, snapshot, buffer_edits, blame_buffer.await, remote_url) },
+                    )
                 })
                 .collect::<Vec<_>>()
         });
@@ -524,13 +536,9 @@ impl GitBlame {
                             .await;
                         let mut res = vec![];
                         let mut errors = vec![];
-                        for (id, snapshot, buffer_edits, blame) in blame {
+                        for (id, snapshot, buffer_edits, blame, remote_url) in blame {
                             match blame {
-                                Ok(Some(Blame {
-                                    entries,
-                                    messages,
-                                    remote_url,
-                                })) => {
+                                Ok(Some(Blame { entries, messages })) => {
                                     let entries = build_blame_entry_sum_tree(
                                         entries,
                                         snapshot.max_point().row,

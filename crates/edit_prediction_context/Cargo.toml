@@ -12,41 +12,32 @@ workspace = true
 path = "src/edit_prediction_context.rs"
 
 [dependencies]
+parking_lot.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
-hashbrown.workspace = true
-indoc.workspace = true
-itertools.workspace = true
 language.workspace = true
-log.workspace = true
-ordered-float.workspace = true
-postage.workspace = true
+lsp.workspace = true
 project.workspace = true
-regex.workspace = true
+log.workspace = true
 serde.workspace = true
-slotmap.workspace = true
-strum.workspace = true
-text.workspace = true
+smallvec.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-clap.workspace = true
+env_logger.workspace = true
+indoc.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = {workspace= true, features = ["test-support"]}
 serde_json.workspace = true
 settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
-tree-sitter-c.workspace = true
-tree-sitter-cpp.workspace = true
-tree-sitter-go.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
