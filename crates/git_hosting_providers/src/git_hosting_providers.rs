@@ -26,7 +26,7 @@ pub fn init(cx: &mut App) {
     provider_registry.register_hosting_provider(Arc::new(Gitee));
     provider_registry.register_hosting_provider(Arc::new(Github::public_instance()));
     provider_registry.register_hosting_provider(Arc::new(Gitlab::public_instance()));
-    provider_registry.register_hosting_provider(Arc::new(Sourcehut));
+    provider_registry.register_hosting_provider(Arc::new(SourceHut::public_instance()));
 }
 
 /// Registers additional Git hosting providers.
@@ -51,6 +51,8 @@ pub async fn register_additional_providers(
         provider_registry.register_hosting_provider(Arc::new(gitea_self_hosted));
     } else if let Ok(bitbucket_self_hosted) = Bitbucket::from_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(bitbucket_self_hosted));
+    } else if let Ok(sourcehut_self_hosted) = SourceHut::from_remote_url(&origin_url) {
+        provider_registry.register_hosting_provider(Arc::new(sourcehut_self_hosted));
     }
 }
 
