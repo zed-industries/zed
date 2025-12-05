@@ -5,6 +5,7 @@ use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
 };
+
 use collections::HashMap;
 use core::str;
 use http_client::Url;
@@ -29,7 +30,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, ModMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -1018,6 +1019,26 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                // The modifiers in the event are sometimes outdated.
+                // This results in short-pressed modifiers being sometimes ignored
+                // which causes macros to sometimes arrive without the modifiers.
+                // We therefore upate the mask from the global state.
+                let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
+                let event_state_bits = u32::from(event.state.bits());
+                let depressed_mods = event_state_bits & !locked_mods_mask;
+                let latched_mods = state.xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+                let locked_mods = state.xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+                let locked_layout = state.xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+                state.xkb.update_mask(
+                    depressed_mods,
+                    latched_mods,
+                    locked_mods,
+                    0,
+                    0,
+                    locked_layout,
+                );
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -1082,6 +1103,25 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+
+                // The modifiers in the event are sometimes outdated.
+                // This results in short-pressed modifiers being sometimes ignored
+                // which causes macros to sometimes arrive without the modifiers.
+                // We therefore upate the mask from the global state.
+                let locked_mods_mask = (ModMask::LOCK | ModMask::M2).bits() as u32;
+                let event_state_bits = u32::from(event.state.bits());
+                let depressed_mods = event_state_bits & !locked_mods_mask;
+                let latched_mods = state.xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+                let locked_mods = state.xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+                let locked_layout = state.xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+                state.xkb.update_mask(
+                    depressed_mods,
+                    latched_mods,
+                    locked_mods,
+                    0,
+                    0,
+                    locked_layout,
+                );
 
                 let keystroke = {
                     let code = event.detail.into();
