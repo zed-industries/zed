@@ -1010,6 +1010,7 @@ impl Extension {
             }
         }
     }
+
     pub async fn call_get_dap_binary(
         &self,
         store: &mut Store<WasmState>,
@@ -1050,6 +1051,7 @@ impl Extension {
             _ => anyhow::bail!("`get_dap_binary` not available prior to v0.6.0"),
         }
     }
+
     pub async fn call_dap_request_kind(
         &self,
         store: &mut Store<WasmState>,
@@ -1080,6 +1082,7 @@ impl Extension {
             _ => anyhow::bail!("`dap_request_kind` not available prior to v0.6.0"),
         }
     }
+
     pub async fn call_dap_config_to_scenario(
         &self,
         store: &mut Store<WasmState>,
@@ -1107,6 +1110,7 @@ impl Extension {
             _ => anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0"),
         }
     }
+
     pub async fn call_dap_locator_create_scenario(
         &self,
         store: &mut Store<WasmState>,
@@ -1147,6 +1151,7 @@ impl Extension {
             _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
         }
     }
+
     pub async fn call_run_dap_locator(
         &self,
         store: &mut Store<WasmState>,
