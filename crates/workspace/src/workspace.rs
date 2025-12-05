@@ -6488,7 +6488,9 @@ impl Workspace {
         } else {
             let restricted_worktrees = restricted_worktrees(cx);
             if !restricted_worktrees.is_empty() {
-                self.toggle_modal(window, cx, |_, _| SecurityModal::new(restricted_worktrees));
+                self.toggle_modal(window, cx, |_, cx| {
+                    SecurityModal::new(restricted_worktrees, cx)
+                });
             }
         }
     }
