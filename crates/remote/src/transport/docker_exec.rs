@@ -3,6 +3,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
+use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::time::Instant;
@@ -11,6 +12,7 @@ use std::{
     process::Stdio,
     sync::Arc,
 };
+use util::ResultExt;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -35,7 +37,9 @@ pub struct DockerExecConnectionOptions {
 }
 
 pub(crate) struct DockerExecConnection {
-    remote_binary_path: Option<Arc<RelPath>>,
+    proxy_process: Mutex<Option<u32>>,
+    remote_dir_for_server: String,
+    remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerExecConnectionOptions,
     remote_platform: Option<RemotePlatform>,
     path_style: Option<PathStyle>,
@@ -49,7 +53,9 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut this = Self {
-            remote_binary_path: None,
+            proxy_process: Mutex::new(None),
+            remote_dir_for_server: "/".to_string(),
+            remote_binary_relpath: None,
             connection_options,
             remote_platform: None,
             path_style: None,
@@ -73,9 +79,23 @@ impl DockerExecConnection {
 
         this.shell = Some(this.discover_shell().await);
 
-        this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
-                .await?,
+        this.remote_dir_for_server = this
+            .docker_user_home_dir()
+            .await
+            .unwrap_or(this.connection_options.working_directory.clone())
+            .trim()
+            .to_string();
+
+        this.remote_binary_relpath = Some(
+            this.ensure_server_binary(
+                &delegate,
+                release_channel,
+                version,
+                &this.remote_dir_for_server,
+                commit,
+                cx,
+            )
+            .await?,
         );
 
         Ok(this)
@@ -149,6 +169,7 @@ impl DockerExecConnection {
         delegate: &Arc<dyn RemoteClientDelegate>,
         release_channel: ReleaseChannel,
         version: SemanticVersion,
+        remote_dir_for_server: &str,
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
@@ -186,9 +207,15 @@ impl DockerExecConnection {
                 ))
                 .unwrap(),
             );
-            self.upload_local_server_binary(&remote_server_path, &tmp_path, delegate, cx)
-                .await?;
-            self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
+            self.upload_local_server_binary(
+                &remote_server_path,
+                &tmp_path,
+                &remote_dir_for_server,
+                delegate,
+                cx,
+            )
+            .await?;
+            self.extract_server_binary(&dst_path, &tmp_path, &remote_dir_for_server, delegate, cx)
                 .await?;
             return Ok(dst_path);
         }
@@ -196,7 +223,7 @@ impl DockerExecConnection {
         if self
             .run_docker_exec(
                 &dst_path.display(self.path_style()),
-                &self.connection_options.working_directory,
+                &remote_dir_for_server,
                 &Default::default(),
                 &["version"],
             )
@@ -236,13 +263,19 @@ impl DockerExecConnection {
                 .await?
         {
             match self
-                .download_binary_on_server(&url, &tmp_path_gz, delegate, cx)
+                .download_binary_on_server(&url, &tmp_path_gz, &remote_dir_for_server, delegate, cx)
                 .await
             {
                 Ok(_) => {
-                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                        .await
-                        .context("extracting server binary")?;
+                    self.extract_server_binary(
+                        &dst_path,
+                        &tmp_path_gz,
+                        &remote_dir_for_server,
+                        delegate,
+                        cx,
+                    )
+                    .await
+                    .context("extracting server binary")?;
                     return Ok(dst_path);
                 }
                 Err(e) => {
@@ -262,19 +295,43 @@ impl DockerExecConnection {
             )
             .await
             .context("downloading server binary locally")?;
-        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
-            .await
-            .context("uploading server binary")?;
-        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-            .await
-            .context("extracting server binary")?;
+        self.upload_local_server_binary(
+            &src_path,
+            &tmp_path_gz,
+            &remote_dir_for_server,
+            delegate,
+            cx,
+        )
+        .await
+        .context("uploading server binary")?;
+        self.extract_server_binary(
+            &dst_path,
+            &tmp_path_gz,
+            &remote_dir_for_server,
+            delegate,
+            cx,
+        )
+        .await
+        .context("extracting server binary")?;
         Ok(dst_path)
+    }
+
+    async fn docker_user_home_dir(&self) -> Result<String> {
+        let inner_program = self.shell();
+        self.run_docker_exec(
+            &inner_program,
+            "",
+            &Default::default(),
+            &["-c", "echo $HOME"],
+        )
+        .await
     }
 
     async fn extract_server_binary(
         &self,
         dst_path: &RelPath,
         tmp_path: &RelPath,
+        remote_dir_for_server: &str,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -304,13 +361,9 @@ impl DockerExecConnection {
             format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
-        self.run_docker_exec(
-            "sh",
-            &self.connection_options.working_directory,
-            &Default::default(),
-            &args,
-        )
-        .await?;
+        self.run_docker_exec("sh", &remote_dir_for_server, &Default::default(), &args)
+            .await
+            .log_err();
         Ok(())
     }
 
@@ -318,13 +371,14 @@ impl DockerExecConnection {
         &self,
         src_path: &Path,
         tmp_path_gz: &RelPath,
+        remote_dir_for_server: &str,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.run_docker_exec(
                 "mkdir",
-                &self.connection_options.working_directory,
+                remote_dir_for_server,
                 &Default::default(),
                 &["-p", parent.display(self.path_style()).as_ref()],
             )
@@ -341,14 +395,19 @@ impl DockerExecConnection {
             tmp_path_gz,
             size / 1024
         );
-        self.upload_file(src_path, tmp_path_gz)
+        self.upload_file(src_path, tmp_path_gz, remote_dir_for_server)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
         Ok(())
     }
 
-    async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
+    async fn upload_file(
+        &self,
+        src_path: &Path,
+        dest_path: &RelPath,
+        remote_dir_for_server: &str,
+    ) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
 
         let src_path_display = src_path.display().to_string();
@@ -360,9 +419,7 @@ impl DockerExecConnection {
         command.arg(&src_path_display);
         command.arg(format!(
             "{}:{}/{}",
-            &self.connection_options.container_id,
-            self.connection_options.working_directory,
-            dest_path_str
+            &self.connection_options.container_id, remote_dir_for_server, dest_path_str
         ));
 
         let output = command.output().await?;
@@ -430,13 +487,14 @@ impl DockerExecConnection {
         &self,
         url: &str,
         tmp_path_gz: &RelPath,
+        remote_dir_for_server: &str,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.run_docker_exec(
                 "mkdir",
-                &self.connection_options.working_directory,
+                remote_dir_for_server,
                 &Default::default(),
                 &["-p", parent.display(self.path_style()).as_ref()],
             )
@@ -448,7 +506,7 @@ impl DockerExecConnection {
         match self
             .run_docker_exec(
                 "curl",
-                &self.connection_options.working_directory,
+                remote_dir_for_server,
                 &Default::default(),
                 &[
                     "-f",
@@ -465,7 +523,7 @@ impl DockerExecConnection {
                 if self
                     .run_docker_exec(
                         "which",
-                        &self.connection_options.working_directory,
+                        remote_dir_for_server,
                         &Default::default(),
                         &["curl"],
                     )
@@ -479,7 +537,7 @@ impl DockerExecConnection {
                 match self
                     .run_docker_exec(
                         "wget",
-                        &self.connection_options.working_directory,
+                        remote_dir_for_server,
                         &Default::default(),
                         &[url, "-O", &tmp_path_gz.display(self.path_style())],
                     )
@@ -490,7 +548,7 @@ impl DockerExecConnection {
                         if self
                             .run_docker_exec(
                                 "which",
-                                &self.connection_options.working_directory,
+                                remote_dir_for_server,
                                 &Default::default(),
                                 &["wget"],
                             )
@@ -507,6 +565,22 @@ impl DockerExecConnection {
         }
         Ok(())
     }
+
+    fn kill_inner(&self) -> Result<()> {
+        if let Some(pid) = self.proxy_process.lock().take() {
+            dbg!(&pid);
+            if let Ok(_) = util::command::new_std_command("kill")
+                .arg(pid.to_string())
+                .output()
+            {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to kill process"))
+            }
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -521,16 +595,23 @@ impl RemoteConnection for DockerExecConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        // We'll try connecting anew every time we open a devcontainer, so proactively try to kill any old connections.
+        if !self.has_been_killed() {
+            if let Err(e) = self.kill_inner() {
+                return Task::ready(Err(e));
+            };
+        }
+
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let Some(remote_binary_path) = self.remote_binary_path.clone() else {
+        let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
         let mut docker_args = vec![
             "exec".to_string(),
             "-w".to_string(),
-            self.connection_options.working_directory.clone(),
+            self.remote_dir_for_server.clone(),
             "-i".to_string(),
             self.connection_options.container_id.to_string(),
         ];
@@ -540,7 +621,9 @@ impl RemoteConnection for DockerExecConnection {
                 docker_args.push(format!("{}='{}'", env_var, value));
             }
         }
-        let val = remote_binary_path.display(self.path_style()).into_owned();
+        let val = remote_binary_relpath
+            .display(self.path_style())
+            .into_owned();
         docker_args.push(val);
         docker_args.push("proxy".to_string());
         docker_args.push("--identifier".to_string());
@@ -550,15 +633,20 @@ impl RemoteConnection for DockerExecConnection {
         }
         let mut command = util::command::new_smol_command("docker");
         command
+            .kill_on_drop(true)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .args(docker_args);
+
         let Ok(child) = command.spawn() else {
             return Task::ready(Err(anyhow::anyhow!(
                 "Failed to start remote server process"
             )));
         };
+
+        let mut proxy_process = self.proxy_process.lock();
+        *proxy_process = Some(child.id());
 
         super::handle_rpc_messages_over_child_process_stdio(
             child,
@@ -599,13 +687,11 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     async fn kill(&self) -> Result<()> {
-        // Docker exec is not stateful
-        Ok(())
+        self.kill_inner()
     }
 
     fn has_been_killed(&self) -> bool {
-        // Docker exec is not stateful
-        true
+        self.proxy_process.lock().is_none()
     }
 
     // This provides a TTY, but normally we can't count on one.
