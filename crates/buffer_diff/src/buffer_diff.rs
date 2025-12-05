@@ -1429,6 +1429,10 @@ impl DiffHunk {
             secondary: self.secondary_status,
         }
     }
+
+    pub fn is_visible_when_unstaged_only(&self) -> bool {
+        self.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
+    }
 }
 
 impl DiffHunkStatus {

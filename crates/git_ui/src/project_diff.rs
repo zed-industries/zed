@@ -16,7 +16,7 @@ use editor::{
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::FileStatus,
+    status::{FileStatus, StageStatus},
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
@@ -37,7 +37,7 @@ use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{Checkbox, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -70,6 +70,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    show_unstaged_only: bool,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -320,6 +321,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            show_unstaged_only: false,
             _task: task,
             _subscription: branch_diff_subscription,
         }
@@ -327,6 +329,31 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub fn show_unstaged_only(&self) -> bool {
+        self.show_unstaged_only
+    }
+
+    pub fn toggle_show_unstaged_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Full rebuild is necessary because excerpt boundaries encode context information.
+        // The MultiBuffer's update_path_excerpts only expands ranges (never contracts),
+        // so filtering at render time would leave incorrect context around hidden hunks.
+        // Rebuilding ensures context lines are properly recalculated around visible hunks.
+        self.show_unstaged_only = !self.show_unstaged_only;
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_show_only_unstaged_hunks(self.show_unstaged_only, cx);
+            let paths: Vec<_> = multibuffer.paths().collect();
+            for path in paths {
+                multibuffer.remove_excerpts_for_path(path, cx);
+            }
+        });
+        self.buffer_diff_subscriptions.clear();
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
     }
 
     pub fn move_to_entry(
@@ -475,6 +502,7 @@ impl ProjectDiff {
         file_status: FileStatus,
         buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
+        show_unstaged_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -498,13 +526,15 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
-        let diff_hunk_ranges = diff_read
+        let diff_hunk_ranges: Vec<_> = diff_read
             .hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(diff_read.buffer_id),
                 &snapshot,
                 cx,
             )
-            .map(|diff_hunk| diff_hunk.buffer_range);
+            .filter(|diff_hunk| !show_unstaged_only || diff_hunk.is_visible_when_unstaged_only())
+            .map(|diff_hunk| diff_hunk.buffer_range)
+            .collect();
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
             .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
@@ -575,11 +605,17 @@ impl ProjectDiff {
 
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
-        let buffers_to_load = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+        let (buffers_to_load, show_unstaged_only) = this.update(cx, |this, cx| {
+            let show_unstaged_only = this.show_unstaged_only;
+            let (repo, mut buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
+
+            if show_unstaged_only {
+                buffers_to_load.retain(|entry| entry.file_status.staging() != StageStatus::Staged);
+            }
+
             let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
@@ -601,7 +637,7 @@ impl ProjectDiff {
                     multibuffer.remove_excerpts_for_path(path, cx);
                 }
             });
-            buffers_to_load
+            (buffers_to_load, show_unstaged_only)
         })?;
 
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
@@ -609,9 +645,18 @@ impl ProjectDiff {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
+
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                        this.register_buffer(
+                            path_key,
+                            entry.file_status,
+                            buffer,
+                            diff,
+                            show_unstaged_only,
+                            window,
+                            cx,
+                        )
                     })
                     .ok();
                 })?;
@@ -1153,6 +1198,7 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let show_unstaged_only = project_diff.read(cx).show_unstaged_only();
 
         h_group_xl()
             .my_neg_1()
@@ -1160,6 +1206,24 @@ impl Render for ProjectDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_between()
+            .child(
+                h_group_sm()
+                    .items_center()
+                    .child({
+                        let project_diff_weak = project_diff.downgrade();
+                        Checkbox::new("show-unstaged", show_unstaged_only.into()).on_click(
+                            move |_, window, cx| {
+                                project_diff_weak
+                                    .update(cx, |project_diff, cx| {
+                                        project_diff.toggle_show_unstaged_only(window, cx);
+                                    })
+                                    .ok();
+                            },
+                        )
+                    })
+                    .child(Label::new("Unstaged")),
+            )
+            .child(vertical_divider())
             .child(
                 h_group_sm()
                     .when(button_states.selection, |el| {
