@@ -37,7 +37,7 @@ use std::any::{Any, TypeId};
 use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
-use tracing::instrument;
+use ztracing::instrument;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{

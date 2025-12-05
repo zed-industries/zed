@@ -13,7 +13,6 @@ path = "src/project.rs"
 doctest = false
 
 [features]
-default = ["tracing/release_max_level_off", "tracing/max_level_off"]
 test-support = [
     "buffer_diff/test-support",
     "client/test-support",
@@ -92,6 +91,7 @@ which.workspace = true
 worktree.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
+ztracing.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

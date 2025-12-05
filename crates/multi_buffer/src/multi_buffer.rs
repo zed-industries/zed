@@ -56,7 +56,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
-use tracing::instrument;
+use ztracing::instrument;
 use util::post_inc;
 
 pub use self::path_key::PathKey;

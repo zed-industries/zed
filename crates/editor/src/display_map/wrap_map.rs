@@ -86,7 +86,7 @@ pub struct WrapRows<'a> {
 }
 
 impl WrapRows<'_> {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, start_row: WrapRow) {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left);
@@ -102,7 +102,7 @@ impl WrapRows<'_> {
 }
 
 impl WrapMap {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn new(
         tab_snapshot: TabSnapshot,
         font: Font,
@@ -133,7 +133,7 @@ impl WrapMap {
         self.background_task.is_some()
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn sync(
         &mut self,
         tab_snapshot: TabSnapshot,
@@ -153,7 +153,7 @@ impl WrapMap {
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn set_font_with_size(
         &mut self,
         font: Font,
@@ -171,7 +171,7 @@ impl WrapMap {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         if wrap_width == self.wrap_width {
             return false;
@@ -182,7 +182,7 @@ impl WrapMap {
         true
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();
@@ -254,7 +254,7 @@ impl WrapMap {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn flush_edits(&mut self, cx: &mut Context<Self>) {
         if !self.snapshot.interpolated {
             let mut to_remove_len = 0;
@@ -337,7 +337,7 @@ impl WrapMap {
 }
 
 impl WrapSnapshot {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn new(tab_snapshot: TabSnapshot) -> Self {
         let mut transforms = SumTree::default();
         let extent = tab_snapshot.text_summary();
@@ -351,12 +351,12 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         self.tab_snapshot.buffer_snapshot()
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> WrapPatch {
         let mut new_transforms;
         if tab_edits.is_empty() {
@@ -421,7 +421,7 @@ impl WrapSnapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     async fn update(
         &mut self,
         new_tab_snapshot: TabSnapshot,
@@ -581,7 +581,7 @@ impl WrapSnapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &WrapSnapshot) -> WrapPatch {
         let mut wrap_edits = Vec::with_capacity(tab_edits.len());
         let mut old_cursor = self.transforms.cursor::<TransformSummary>(());
@@ -618,7 +618,7 @@ impl WrapSnapshot {
         Patch::new(wrap_edits)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<WrapRow>,
@@ -653,12 +653,12 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> WrapPoint {
         WrapPoint(self.transforms.summary().output.lines)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn line_len(&self, row: WrapRow) -> u32 {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapPoint, TabPoint>, _>(
             (),
@@ -679,7 +679,7 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all, fields(rows))]
+    #[ztracing::instrument(skip_all, fields(rows))]
     pub fn text_summary_for_range(&self, rows: Range<WrapRow>) -> TextSummary {
         let mut summary = TextSummary::default();
 
@@ -741,7 +741,7 @@ impl WrapSnapshot {
         summary
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn soft_wrap_indent(&self, row: WrapRow) -> Option<u32> {
         let (.., item) = self.transforms.find::<WrapPoint, _>(
             (),
@@ -757,12 +757,12 @@ impl WrapSnapshot {
         })
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn row_infos(&self, start_row: WrapRow) -> WrapRows<'_> {
         let mut transforms = self
             .transforms
@@ -785,7 +785,7 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
         let (start, _, item) =
             self.transforms
@@ -797,18 +797,18 @@ impl WrapSnapshot {
         TabPoint(tab_point)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
         self.tab_snapshot
             .tab_point_to_point(self.to_tab_point(point), bias)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
         self.tab_point_to_wrap_point(self.tab_snapshot.point_to_tab_point(point, bias))
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
         let (start, ..) =
             self.transforms
@@ -816,7 +816,7 @@ impl WrapSnapshot {
         WrapPoint(start.1.0 + (point.0 - start.0.0))
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn wrap_point_cursor(&self) -> WrapPointCursor<'_> {
         WrapPointCursor {
             cursor: self
@@ -825,7 +825,7 @@ impl WrapSnapshot {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
             let (start, _, item) = self
@@ -840,7 +840,7 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[tracing::instrument(skip_all, fields(point, ret))]
+    #[ztracing::instrument(skip_all, fields(point, ret))]
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
@@ -867,7 +867,7 @@ impl WrapSnapshot {
         unreachable!()
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn next_row_boundary(&self, mut point: WrapPoint) -> Option<WrapRow> {
         point.0 += Point::new(1, 0);
 
@@ -887,13 +887,13 @@ impl WrapSnapshot {
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.text_chunks(WrapRow(0)).collect()
     }
 
     #[cfg(test)]
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
@@ -903,7 +903,7 @@ impl WrapSnapshot {
         .map(|h| h.text)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
         #[cfg(test)]
         {
@@ -957,7 +957,7 @@ pub struct WrapPointCursor<'transforms> {
 }
 
 impl WrapPointCursor<'_> {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: TabPoint) -> WrapPoint {
         let cursor = &mut self.cursor;
         if cursor.did_seek() {
@@ -970,7 +970,7 @@ impl WrapPointCursor<'_> {
 }
 
 impl WrapChunks<'_> {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, rows: Range<WrapRow>) {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -993,7 +993,7 @@ impl WrapChunks<'_> {
 impl<'a> Iterator for WrapChunks<'a> {
     type Item = Chunk<'a>;
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position.row() >= self.max_output_row {
             return None;
@@ -1066,7 +1066,7 @@ impl<'a> Iterator for WrapChunks<'a> {
 impl Iterator for WrapRows<'_> {
     type Item = RowInfo;
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
             return None;
@@ -1103,7 +1103,7 @@ impl Iterator for WrapRows<'_> {
 }
 
 impl Transform {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn isomorphic(summary: TextSummary) -> Self {
         #[cfg(test)]
         assert!(!summary.lines.is_zero());
@@ -1117,7 +1117,7 @@ impl Transform {
         }
     }
 
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn wrap(indent: u32) -> Self {
         static WRAP_TEXT: LazyLock<String> = LazyLock::new(|| {
             let mut wrap_text = String::new();
@@ -1170,7 +1170,7 @@ trait SumTreeExt {
 }
 
 impl SumTreeExt for SumTree<Transform> {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn push_or_extend(&mut self, transform: Transform) {
         let mut transform = Some(transform);
         self.update_last(
@@ -1234,7 +1234,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
 }
 
 impl sum_tree::SeekTarget<'_, TransformSummary, TransformSummary> for TabPoint {
-    #[tracing::instrument(skip_all)]
+    #[ztracing::instrument(skip_all)]
     fn cmp(&self, cursor_location: &TransformSummary, _: ()) -> std::cmp::Ordering {
         Ord::cmp(&self.0, &cursor_location.input.lines)
     }

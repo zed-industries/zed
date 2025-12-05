@@ -9,9 +9,6 @@ description = "A sum tree data structure, a concurrency-friendly B-tree"
 [lints]
 workspace = true
 
-[features]
-default = ["tracing/release_max_level_off", "tracing/max_level_off"]
-
 [lib]
 path = "src/sum_tree.rs"
 doctest = false
@@ -20,6 +17,7 @@ doctest = false
 arrayvec = "0.7.1"
 rayon.workspace = true
 log.workspace = true
+ztracing.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

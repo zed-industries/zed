@@ -5421,6 +5421,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -7153,6 +7154,7 @@ dependencies = [
  "zed_actions",
  "zeroize",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -10197,6 +10199,7 @@ dependencies = [
  "tree-sitter",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -13129,6 +13132,7 @@ dependencies = [
  "worktree",
  "zeroize",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -14442,6 +14446,7 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -16444,6 +16449,7 @@ dependencies = [
  "rayon",
  "tracing",
  "zlog",
+ "ztracing",
 ]
 
 [[package]]
@@ -21403,8 +21409,6 @@ dependencies = [
  "title_bar",
  "toolchain_selector",
  "tracing",
- "tracing-subscriber",
- "tracing-tracy",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
@@ -21429,6 +21433,7 @@ dependencies = [
  "zeta2_tools",
  "zlog",
  "zlog_settings",
+ "ztracing",
 ]
 
 [[package]]
@@ -21991,6 +21996,20 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[package]]
+name = "ztracing"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "ztracing_macro",
+]
+
+[[package]]
+name = "ztracing_macro"
+version = "0.1.0"
 
 [[package]]
 name = "zune-core"

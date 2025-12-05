@@ -13,7 +13,6 @@ path = "src/editor.rs"
 doctest = false
 
 [features]
-default = ["tracing/release_max_level_off", "tracing/max_level_off"]
 test-support = [
     "text/test-support",
     "language/test-support",
@@ -85,6 +84,7 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
+ztracing.workspace = true
 tracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true

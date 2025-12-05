@@ -41,7 +41,6 @@ use std::{
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
-use tracing_subscriber::layer::SubscriberExt;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -166,10 +165,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-    )
-    .expect("setup tracy layer");
+    ztracing::init();
 
     STARTUP_TIME.get_or_init(|| Instant::now());
 

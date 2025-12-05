@@ -13,7 +13,6 @@ path = "src/multi_buffer.rs"
 doctest = false
 
 [features]
-default = ["tracing/release_max_level_off", "tracing/max_level_off"]
 test-support = [
     "buffer_diff/test-support",
     "gpui/test-support",
@@ -43,7 +42,8 @@ sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
-tracing.workspace =true
+ztracing.workspace = true
+tracing.workspace = true
 util.workspace = true
 
 [dev-dependencies]
