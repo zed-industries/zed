@@ -10,11 +10,13 @@ back to whatever you were just working on.
 
 When the Tab Switcher is opened using {#kb tab_switcher::Toggle}, instead of
 running the {#action tab_switcher::Toggle} from the command palette, it'll stay
-active as long as the `ctrl` key is held down.
+active as long as the <kbd class="keybinding">ctrl</kbd> key is held down.
 
-While holding down `ctrl`, each subsequent `tab` press cycles to the next
-item (`shift` to cycle backwards) and, when `ctrl` is released, the selected
-item is confirmed and the switcher is closed.
+While holding down <kbd class="keybinding">ctrl</kbd>, each subsequent <kbd
+class="keybinding">tab</kbd> press cycles to the next item (<kbd
+class="keybinding">shift</kbd> to cycle backwards) and, when <kbd
+class="keybinding">ctrl</kbd> is released, the selected item is confirmed and
+the switcher is closed.
 
 ## Opening the Tab Switcher
 
@@ -27,8 +29,8 @@ While the Tab Switcher is open, you can:
 
 - Press {#kb menu::SelectNext} to move to the next tab in the list
 - Press {#kb menu::SelectPrevious} to move to the previous tab
-- Press `enter` to confirm the selected tab and close the switcher
-- Press `escape` to close the switcher and return to the original tab from which
+- Press <kbd class="keybinding">enter</kbd> to confirm the selected tab and close the switcher
+- Press <kbd class="keybinding">escape</kbd> to close the switcher and return to the original tab from which
   the switcher was opened
 - Press {#kb tab_switcher::CloseSelectedItem} to close the currently selected tab
 
