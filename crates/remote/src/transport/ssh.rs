@@ -1056,17 +1056,25 @@ impl SshSocket {
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
         let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
+        // To avoid the junk info before the actual uname output, we split by whitespace and
+        // take the last two parts.
+        let mut iter = uname.split_whitespace().rev();
+        let (os, arch) = match (iter.next(), iter.next()) {
+            (Some(arch), Some(os)) => (os, arch),
+            _ => anyhow::bail!("unknown uname: {uname:?}"),
         };
 
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
+        // The junk info before the uname output may look like "Welcome to Ubuntu 20.04.4 LTS"
+        // and doesn't have a trailing newline, so os may become like "LTSLinux". We just check
+        // the ending here.
+        let os = match os {
+            o if o.ends_with("Darwin") => "macos",
+            o if o.ends_with("Linux") => "linux",
             _ => anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
             ),
         };
+
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
             || arch.starts_with("armv9")
