@@ -95,15 +95,19 @@ impl TeacherModel {
     }
 
     fn parse_response(&self, content: &str) -> String {
-        let codeblock = Self::extract_codeblock(content);
+        let codeblock = Self::extract_last_codeblock(content);
         let editable_region = Self::extract_editable_region(&codeblock);
 
         editable_region
     }
 
-    /// Extract content from code fences if any, or else return content as is
-    fn extract_codeblock(text: &str) -> String {
-        if let Some(start) = text.find("```") {
+    /// Extract content from the last code-fenced block if any, or else return content as is
+    fn extract_last_codeblock(text: &str) -> String {
+        let mut last_block = None;
+        let mut search_start = 0;
+
+        while let Some(start) = text[search_start..].find("```") {
+            let start = start + search_start;
             let bytes = text.as_bytes();
             let mut backtick_end = start;
 
@@ -115,12 +119,15 @@ impl TeacherModel {
             let closing_backticks = "`".repeat(backtick_count);
 
             if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-                let code_block = &text[backtick_end..backtick_end + end_pos];
-                return code_block.to_string();
+                let code_block = &text[backtick_end + 1..backtick_end + end_pos - 1];
+                last_block = Some(code_block.to_string());
+                search_start = backtick_end + end_pos + backtick_count;
+            } else {
+                break;
             }
         }
 
-        text.to_string()
+        last_block.unwrap_or_else(|| text.to_string())
     }
 
     fn extract_editable_region(text: &str) -> String {
@@ -177,6 +184,25 @@ mod tests {
             "};
         let parsed = teacher.parse_response(response);
         assert_eq!(parsed, "actual response");
+    }
+
+    #[test]
+    fn test_extract_last_code_block() {
+        let text = indoc::indoc! {"
+            Some thinking
+
+            ```
+            first block
+            ```
+
+            `````
+            last block
+            `````
+            "};
+        let last_block = TeacherModel::extract_last_codeblock(text);
+        assert_eq!(last_block, "last block");
+
+        // https://on.tty-share.com/s/-pZoHQTn8OTfu6W9KvuyEJgFKwfR1CrCJSRwC1Y2I94SzoVLHekaqmrCcaO1d_lNpGQ/
     }
 
     #[test]
