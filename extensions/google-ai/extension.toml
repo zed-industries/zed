@@ -1,0 +1,13 @@
+id = "google-ai"
+name = "Google AI"
+description = "Google Gemini LLM provider for Zed."
+version = "0.1.0"
+schema_version = 1
+authors = ["Zed Team"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_model_providers.google-ai]
+name = "Google AI"
+
+[language_model_providers.google-ai.auth]
+env_var = "GEMINI_API_KEY"
