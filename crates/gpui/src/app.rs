@@ -1925,7 +1925,12 @@ impl App {
             None
         };
 
-        _ = tray.render_icon(self);
+        match tray.render_icon(self) {
+            Err(err) => {
+                log::warn!("Ignored invalid tray icon: {}", err);
+            }
+            Ok(_) => {}
+        }
         self.platform
             .set_tray(tray, menu_items, &self.keymap.borrow())
     }

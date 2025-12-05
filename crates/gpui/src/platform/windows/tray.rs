@@ -341,7 +341,7 @@ fn show_tray_menu(hwnd: HWND, menu: HMENU, x: i32, y: i32) {
             Some(std::ptr::null_mut()),
         );
         if !result.as_bool() {
-            eprintln!("Failed to show tray menu.");
+            log::error!("Failed to show tray menu.");
         }
     }
 }
