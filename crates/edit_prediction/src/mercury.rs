@@ -113,8 +113,7 @@ impl Mercury {
                 stream: false,
                 max_completion_tokens: None,
                 stop: vec![],
-                // todo! make optional
-                temperature: 1.0,
+                temperature: None,
                 tool_choice: None,
                 parallel_tool_calls: None,
                 tools: vec![],

@@ -200,7 +200,7 @@ pub fn request_prediction_with_zeta2(
                 stream: false,
                 max_completion_tokens: None,
                 stop: generation_params.stop.unwrap_or_default(),
-                temperature: generation_params.temperature.unwrap_or(0.7),
+                temperature: generation_params.temperature.or(Some(0.7)),
                 tool_choice: None,
                 parallel_tool_calls: None,
                 tools: vec![],
