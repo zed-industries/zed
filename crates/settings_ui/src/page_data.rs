@@ -1047,7 +1047,82 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | PROJECT,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Speech",
+            items: vec![
+                SettingsPageItem::SectionHeader("Speech Recognition"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Speech Recognition",
+                    description: "Enable speech-to-text for interacting with Zed.",
+                    field: Box::new(SettingField {
+                        json_path: Some("speech.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .speech
+                                .as_ref()
+                                .map(|s| &s.enabled)
+                        },
+                        write: |settings_content, value| {
+                            if let Some(value) = value {
+                                settings_content
+                                    .speech
+                                    .get_or_insert_default()
+                                    .enabled = value;
+                            }
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Transcription Model",
+                    description: "The Whisper model to use for transcription (e.g., 'tiny.en', 'base.en').",
+                    field: Box::new(SettingField {
+                        json_path: Some("speech.model"),
+                        pick: |settings_content| {
+                            settings_content
+                                .speech
+                                .as_ref()
+                                .map(|s| &s.model)
+                        },
+                        write: |settings_content, value| {
+                            if let Some(value) = value {
+                                settings_content
+                                    .speech
+                                    .get_or_insert_default()
+                                    .model = value;
+                            }
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "AI Provider",
+                    description: "The AI provider to use for codebase conversations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("speech.ai_provider"),
+                        pick: |settings_content| {
+                            settings_content
+                                .speech
+                                .as_ref()
+                                .map(|s| &s.ai_provider)
+                        },
+                        write: |settings_content, value| {
+                            if let Some(value) = value {
+                                settings_content
+                                    .speech
+                                    .get_or_insert_default()
+                                    .ai_provider = value;
+                            }
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
             ],
         },

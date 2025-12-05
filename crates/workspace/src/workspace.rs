@@ -10,6 +10,7 @@ mod path_list;
 mod persistence;
 pub mod searchable;
 pub mod shared_screen;
+pub mod speech_indicator;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
@@ -85,6 +86,7 @@ use serde::Deserialize;
 use session::AppSession;
 use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
+use speech_indicator::SpeechIndicator;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -1398,6 +1400,8 @@ impl Workspace {
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            let speech_indicator = cx.new(|_| SpeechIndicator::new());
+            status_bar.add_right_item(speech_indicator, window, cx);
             status_bar
         });
 
