@@ -217,8 +217,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, task.await) })
+                                sema.semantic_tokens(buffer, for_server, cx).map(
+                                    |task| async move { (buffer_id, query_version, task.await) },
+                                )
                             }
                         })
                         .collect::<Vec<_>>()
