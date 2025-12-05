@@ -77,27 +77,24 @@ impl Global for AppState {}
 
 fn set_app_menus(cx: &mut App) {
     let app_state = cx.global::<AppState>();
-    cx.set_menus(vec![
-        Menu::new("set_menus").items([
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Disabled Item", gpui::NoAction).disabled(true),
-            MenuItem::submenu(Menu::new("Disabled Submenu").disabled(true)),
-            MenuItem::separator(),
-            MenuItem::action("List Mode", ToggleCheck)
-                .checked(app_state.view_mode == ViewMode::List),
-            MenuItem::submenu(
-                Menu::new("Mode").items([
-                    MenuItem::action(ViewMode::List, ToggleCheck)
-                        .checked(app_state.view_mode == ViewMode::List),
-                    MenuItem::action(ViewMode::Grid, ToggleCheck)
-                        .checked(app_state.view_mode == ViewMode::Grid),
-                ]),
-            ),
-            MenuItem::separator(),
-            MenuItem::action("Quit", Quit),
-        ]),
-    ]);
+    cx.set_menus([Menu::new("set_menus").items([
+        MenuItem::os_submenu("Services", SystemMenuType::Services),
+        MenuItem::separator(),
+        MenuItem::action("Disabled Item", gpui::NoAction).disabled(true),
+        MenuItem::submenu(Menu::new("Disabled Submenu").disabled(true)),
+        MenuItem::separator(),
+        MenuItem::action("List Mode", ToggleCheck).checked(app_state.view_mode == ViewMode::List),
+        MenuItem::submenu(
+            Menu::new("Mode").items([
+                MenuItem::action(ViewMode::List, ToggleCheck)
+                    .checked(app_state.view_mode == ViewMode::List),
+                MenuItem::action(ViewMode::Grid, ToggleCheck)
+                    .checked(app_state.view_mode == ViewMode::Grid),
+            ]),
+        ),
+        MenuItem::separator(),
+        MenuItem::action("Quit", Quit),
+    ])]);
 }
 
 // Associate actions using the `actions!` macro (or `Action` derive macro)
