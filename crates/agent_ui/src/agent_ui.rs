@@ -448,6 +448,8 @@ mod tests {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models_as_selections: vec![],
+            favorite_models_as_ids: Arc::new(Default::default()),
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
