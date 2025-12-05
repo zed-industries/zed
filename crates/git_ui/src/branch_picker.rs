@@ -961,7 +961,7 @@ impl PickerDelegate for BranchListDelegate {
     fn render_header(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         matches!(self.state, PickerState::List).then(|| {
             let label = if self.display_remotes {
@@ -970,14 +970,7 @@ impl PickerDelegate for BranchListDelegate {
                 "Local"
             };
 
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                .into_any()
+            ListHeader::new(label).inset(true).into_any_element()
         })
     }
 
