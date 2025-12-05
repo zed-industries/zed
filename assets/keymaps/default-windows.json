@@ -1354,7 +1354,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
-      "ctrl-shift-i": "branch_picker::FilterRemotes"
-    }
-  }
+    },
+  },
 ]
