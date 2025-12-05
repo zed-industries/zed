@@ -6920,7 +6920,11 @@ impl Editor {
         }
     }
 
-    fn hide_blame_popover(&mut self, ignore_timeout: bool, cx: &mut Context<Self>) -> bool {
+    pub fn has_mouse_context_menu(&self) -> bool {
+        self.mouse_context_menu.is_some()
+    }
+
+    pub fn hide_blame_popover(&mut self, ignore_timeout: bool, cx: &mut Context<Self>) -> bool {
         self.inline_blame_popover_show_task.take();
         if let Some(state) = &mut self.inline_blame_popover {
             let hide_task = cx.spawn(async move |editor, cx| {

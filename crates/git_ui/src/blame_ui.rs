@@ -55,6 +55,7 @@ impl BlameRenderer for GitBlameRenderer {
         } else {
             None
         };
+
         Some(
             div()
                 .mr_2()
@@ -80,7 +81,10 @@ impl BlameRenderer for GitBlameRenderer {
                         .on_mouse_down(MouseButton::Right, {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
+                            let editor = editor.clone();
                             move |event, window, cx| {
+                                cx.stop_propagation();
+
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
@@ -107,17 +111,19 @@ impl BlameRenderer for GitBlameRenderer {
                                 )
                             }
                         })
-                        .hoverable_tooltip(move |_window, cx| {
-                            cx.new(|cx| {
-                                CommitTooltip::blame_entry(
-                                    &blame_entry,
-                                    details.clone(),
-                                    repository.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )
+                        .when(!editor.read(cx).has_mouse_context_menu(), |el| {
+                            el.hoverable_tooltip(move |_window, cx| {
+                                cx.new(|cx| {
+                                    CommitTooltip::blame_entry(
+                                        &blame_entry,
+                                        details.clone(),
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                })
+                                .into()
                             })
-                            .into()
                         }),
                 )
                 .into_any(),
@@ -396,6 +402,7 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
+        editor.hide_blame_popover(false, cx);
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });
