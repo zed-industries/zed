@@ -1,5 +1,8 @@
 use ai_onboarding::YoungAccountBanner;
-use anthropic::AnthropicModelMode;
+use anthropic::{
+    AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent, ToolResultPart,
+    Usage,
+};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
@@ -23,8 +26,9 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, LlmApiToken, ModelRequestLimitReachedError,
-    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, LlmApiToken, MessageContent, ModelRequestLimitReachedError,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener, Role, StopReason,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -42,7 +46,6 @@ use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
 
-use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 use crate::provider::x_ai::count_xai_tokens;
@@ -1392,5 +1395,437 @@ mod tests {
                 completion_error
             ),
         }
+    }
+}
+
+fn count_anthropic_tokens(
+    request: LanguageModelRequest,
+    cx: &App,
+) -> BoxFuture<'static, Result<u64>> {
+    use gpui::AppContext as _;
+    cx.background_spawn(async move {
+        let messages = request.messages;
+        let mut tokens_from_images = 0;
+        let mut string_messages = Vec::with_capacity(messages.len());
+
+        for message in messages {
+            let mut string_contents = String::new();
+
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        string_contents.push_str(&text);
+                    }
+                    MessageContent::Thinking { .. } => {}
+                    MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Image(image) => {
+                        tokens_from_images += image.estimate_tokens();
+                    }
+                    MessageContent::ToolUse(_tool_use) => {}
+                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            string_contents.push_str(text);
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    },
+                }
+            }
+
+            if !string_contents.is_empty() {
+                string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(string_contents),
+                    name: None,
+                    function_call: None,
+                });
+            }
+        }
+
+        tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+            .map(|tokens| (tokens + tokens_from_images) as u64)
+    })
+    .boxed()
+}
+
+fn into_anthropic(
+    request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u64,
+    mode: AnthropicModelMode,
+) -> anthropic::Request {
+    let mut new_messages: Vec<anthropic::Message> = Vec::new();
+    let mut system_message = String::new();
+
+    for message in request.messages {
+        if message.contents_empty() {
+            continue;
+        }
+
+        match message.role {
+            Role::User | Role::Assistant => {
+                let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Text(text) => {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
+                                text.trim_end().to_string()
+                            } else {
+                                text
+                            };
+                            if !text.is_empty() {
+                                Some(anthropic::RequestContent::Text {
+                                    text,
+                                    cache_control: None,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Thinking {
+                            text: thinking,
+                            signature,
+                        } => {
+                            if !thinking.is_empty() {
+                                Some(anthropic::RequestContent::Thinking {
+                                    thinking,
+                                    signature: signature.unwrap_or_default(),
+                                    cache_control: None,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::RedactedThinking(data) => {
+                            if !data.is_empty() {
+                                Some(anthropic::RequestContent::RedactedThinking { data })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
+                            source: anthropic::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: "image/png".to_string(),
+                                data: image.source.to_string(),
+                            },
+                            cache_control: None,
+                        }),
+                        MessageContent::ToolUse(tool_use) => {
+                            Some(anthropic::RequestContent::ToolUse {
+                                id: tool_use.id.to_string(),
+                                name: tool_use.name.to_string(),
+                                input: tool_use.input,
+                                cache_control: None,
+                            })
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            Some(anthropic::RequestContent::ToolResult {
+                                tool_use_id: tool_result.tool_use_id.to_string(),
+                                is_error: tool_result.is_error,
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        ToolResultContent::Plain(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
+                                            },
+                                        }])
+                                    }
+                                },
+                                cache_control: None,
+                            })
+                        }
+                    })
+                    .collect();
+                let anthropic_role = match message.role {
+                    Role::User => anthropic::Role::User,
+                    Role::Assistant => anthropic::Role::Assistant,
+                    Role::System => unreachable!("System role should never occur here"),
+                };
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == anthropic_role
+                {
+                    last_message.content.extend(anthropic_message_content);
+                    continue;
+                }
+
+                if message.cache {
+                    let cache_control_value = Some(anthropic::CacheControl {
+                        cache_type: anthropic::CacheControlType::Ephemeral,
+                    });
+                    for message_content in anthropic_message_content.iter_mut().rev() {
+                        match message_content {
+                            anthropic::RequestContent::RedactedThinking { .. } => {}
+                            anthropic::RequestContent::Text { cache_control, .. }
+                            | anthropic::RequestContent::Thinking { cache_control, .. }
+                            | anthropic::RequestContent::Image { cache_control, .. }
+                            | anthropic::RequestContent::ToolUse { cache_control, .. }
+                            | anthropic::RequestContent::ToolResult { cache_control, .. } => {
+                                *cache_control = cache_control_value;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                new_messages.push(anthropic::Message {
+                    role: anthropic_role,
+                    content: anthropic_message_content,
+                });
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.string_contents());
+            }
+        }
+    }
+
+    anthropic::Request {
+        model,
+        messages: new_messages,
+        max_tokens: max_output_tokens,
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| anthropic::Tool {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            })
+            .collect(),
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
+            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
+        }),
+        metadata: None,
+        stop_sequences: Vec::new(),
+        temperature: request.temperature.or(Some(default_temperature)),
+        top_k: None,
+        top_p: None,
+    }
+}
+
+struct AnthropicEventMapper {
+    tool_uses_by_index: collections::HashMap<usize, RawToolUse>,
+    usage: Usage,
+    stop_reason: StopReason,
+}
+
+impl AnthropicEventMapper {
+    fn new() -> Self {
+        Self {
+            tool_uses_by_index: collections::HashMap::default(),
+            usage: Usage::default(),
+            stop_reason: StopReason::EndTurn,
+        }
+    }
+
+    fn map_event(
+        &mut self,
+        event: Event,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            Event::ContentBlockStart {
+                index,
+                content_block,
+            } => match content_block {
+                ResponseContent::Text { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ResponseContent::Thinking { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ResponseContent::RedactedThinking { data } => {
+                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
+                }
+                ResponseContent::ToolUse { id, name, .. } => {
+                    self.tool_uses_by_index.insert(
+                        index,
+                        RawToolUse {
+                            id,
+                            name,
+                            input_json: String::new(),
+                        },
+                    );
+                    Vec::new()
+                }
+            },
+            Event::ContentBlockDelta { index, delta } => match delta {
+                ContentDelta::TextDelta { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ContentDelta::ThinkingDelta { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ContentDelta::SignatureDelta { signature } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: "".to_string(),
+                        signature: Some(signature),
+                    })]
+                }
+                ContentDelta::InputJsonDelta { partial_json } => {
+                    if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
+                        tool_use.input_json.push_str(&partial_json);
+
+                        let event = serde_json::from_str::<serde_json::Value>(&tool_use.input_json)
+                            .ok()
+                            .and_then(|input| {
+                                let input_json_roundtripped =
+                                    serde_json::to_string(&input).ok()?.to_string();
+
+                                if !tool_use.input_json.starts_with(&input_json_roundtripped) {
+                                    return None;
+                                }
+
+                                Some(LanguageModelCompletionEvent::ToolUse(
+                                    LanguageModelToolUse {
+                                        id: LanguageModelToolUseId::from(tool_use.id.clone()),
+                                        name: tool_use.name.clone().into(),
+                                        raw_input: tool_use.input_json.clone(),
+                                        input,
+                                        is_input_complete: false,
+                                        thought_signature: None,
+                                    },
+                                ))
+                            });
+
+                        if let Some(event) = event {
+                            vec![Ok(event)]
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                }
+            },
+            Event::ContentBlockStop { index } => {
+                if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
+                    let event_result = match serde_json::from_str(&tool_use.input_json) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: LanguageModelToolUseId::from(tool_use.id),
+                                name: tool_use.name.into(),
+                                raw_input: tool_use.input_json,
+                                input,
+                                is_input_complete: true,
+                                thought_signature: None,
+                            },
+                        )),
+                        Err(json_parse_err) => {
+                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: LanguageModelToolUseId::from(tool_use.id),
+                                tool_name: tool_use.name.into(),
+                                raw_input: tool_use.input_json.into(),
+                                json_parse_error: json_parse_err.to_string(),
+                            })
+                        }
+                    };
+
+                    vec![event_result]
+                } else {
+                    Vec::new()
+                }
+            }
+            Event::MessageStart { message } => {
+                update_anthropic_usage(&mut self.usage, &message.usage);
+                vec![
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(
+                        convert_anthropic_usage(&self.usage),
+                    )),
+                    Ok(LanguageModelCompletionEvent::StartMessage {
+                        message_id: message.id,
+                    }),
+                ]
+            }
+            Event::MessageDelta { delta, usage } => {
+                update_anthropic_usage(&mut self.usage, &usage);
+                if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                    self.stop_reason = match stop_reason {
+                        "end_turn" => StopReason::EndTurn,
+                        "max_tokens" => StopReason::MaxTokens,
+                        "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
+                        _ => {
+                            log::error!("Unexpected anthropic stop_reason: {stop_reason}");
+                            StopReason::EndTurn
+                        }
+                    };
+                }
+                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_anthropic_usage(&self.usage),
+                ))]
+            }
+            Event::MessageStop => {
+                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+            }
+            Event::Error { error } => {
+                vec![Err(error.into())]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+struct RawToolUse {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
+fn update_anthropic_usage(usage: &mut Usage, new: &Usage) {
+    if let Some(input_tokens) = new.input_tokens {
+        usage.input_tokens = Some(input_tokens);
+    }
+    if let Some(output_tokens) = new.output_tokens {
+        usage.output_tokens = Some(output_tokens);
+    }
+    if let Some(cache_creation_input_tokens) = new.cache_creation_input_tokens {
+        usage.cache_creation_input_tokens = Some(cache_creation_input_tokens);
+    }
+    if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
+        usage.cache_read_input_tokens = Some(cache_read_input_tokens);
+    }
+}
+
+fn convert_anthropic_usage(usage: &Usage) -> language_model::TokenUsage {
+    language_model::TokenUsage {
+        input_tokens: usage.input_tokens.unwrap_or(0),
+        output_tokens: usage.output_tokens.unwrap_or(0),
+        cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+        cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
     }
 }
