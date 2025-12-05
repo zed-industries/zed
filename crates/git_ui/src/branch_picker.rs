@@ -857,7 +857,7 @@ impl PickerDelegate for BranchListDelegate {
                             v_flex()
                                 .id("info_container")
                                 .w_full()
-                                .child(div().max_w_3_4().child(entry_title))
+                                .child(entry_title)
                                 .child(
                                     h_flex()
                                         .w_full()
@@ -988,7 +988,7 @@ impl PickerDelegate for BranchListDelegate {
                             }))
                     });
 
-                let delete_and_filter_buttons = h_flex()
+                let existing_branch_buttons = h_flex()
                     .gap_0p5()
                     .child({
                         let focus_handle = focus_handle.clone();
@@ -1025,22 +1025,47 @@ impl PickerDelegate for BranchListDelegate {
                                 window
                                     .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
                             }),
+                    )
+                    .child(
+                        Button::new("select_branch", "Select")
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delegate.confirm(false, window, cx);
+                            })),
                     );
 
                 Some(
                     footer_container()
                         .map(|this| {
                             if branch_from_default_button.is_some() {
-                                this.justify_end()
-                                    .when_some(branch_from_default_button, |this, button| {
-                                        this.child(button)
-                                    })
+                                this.justify_end().when_some(
+                                    branch_from_default_button,
+                                    |this, button| {
+                                        this.child(button).child(
+                                            Button::new("create", "Create")
+                                                .key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.delegate.confirm(false, window, cx);
+                                                })),
+                                        )
+                                    },
+                                )
                             } else if self.loading {
                                 this.justify_between()
                                     .child(loading_icon)
-                                    .child(delete_and_filter_buttons)
+                                    .child(existing_branch_buttons)
                             } else {
-                                this.justify_end().child(delete_and_filter_buttons)
+                                this.justify_end().child(existing_branch_buttons)
                             }
                         })
                         .into_any_element(),
