@@ -1,4 +1,4 @@
-mod input_excerpt;
+pub mod input_excerpt;
 
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 

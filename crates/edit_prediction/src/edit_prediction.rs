@@ -52,6 +52,7 @@ use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 mod license_detection;
+pub mod mercury;
 mod onboarding_modal;
 mod prediction;
 pub mod sweep_ai;
@@ -65,6 +66,7 @@ pub mod zeta2;
 mod edit_prediction_tests;
 
 use crate::license_detection::LicenseDetectionWatcher;
+use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
@@ -94,6 +96,12 @@ pub struct SweepFeatureFlag;
 
 impl FeatureFlag for SweepFeatureFlag {
     const NAME: &str = "sweep-ai";
+}
+
+pub struct MercuryFeatureFlag;
+
+impl FeatureFlag for MercuryFeatureFlag {
+    const NAME: &str = "mercury";
 }
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
@@ -157,6 +165,7 @@ pub struct EditPredictionStore {
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
+    pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -169,6 +178,7 @@ pub enum EditPredictionModel {
     Zeta1,
     Zeta2,
     Sweep,
+    Mercury,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -474,6 +484,7 @@ impl EditPredictionStore {
             eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2,
             sweep_ai: SweepAi::new(cx),
+            mercury: Mercury::new(cx),
             data_collection_choice,
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
@@ -868,7 +879,7 @@ impl EditPredictionStore {
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
-            EditPredictionModel::Sweep => return,
+            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
@@ -1013,7 +1024,7 @@ impl EditPredictionStore {
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
-            EditPredictionModel::Sweep => return,
+            EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
         self.reject_predictions_tx
@@ -1363,6 +1374,17 @@ impl EditPredictionStore {
                 cx,
             ),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(
+                &project,
+                &active_buffer,
+                snapshot.clone(),
+                position,
+                events,
+                &project_state.recent_paths,
+                related_files,
+                diagnostic_search_range.clone(),
+                cx,
+            ),
+            EditPredictionModel::Mercury => self.mercury.request_prediction(
                 &project,
                 &active_buffer,
                 snapshot.clone(),

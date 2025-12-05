@@ -19,6 +19,44 @@ pub fn excerpt_for_cursor_position(
     editable_region_token_limit: usize,
     context_token_limit: usize,
 ) -> InputExcerpt {
+    let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+        position,
+        snapshot,
+        editable_region_token_limit,
+        context_token_limit,
+    );
+
+    let mut prompt = String::new();
+
+    writeln!(&mut prompt, "```{path}").unwrap();
+    if context_range.start == Point::zero() {
+        writeln!(&mut prompt, "{START_OF_FILE_MARKER}").unwrap();
+    }
+
+    for chunk in snapshot.chunks(context_range.start..editable_range.start, false) {
+        prompt.push_str(chunk.text);
+    }
+
+    push_editable_range(position, snapshot, editable_range.clone(), &mut prompt);
+
+    for chunk in snapshot.chunks(editable_range.end..context_range.end, false) {
+        prompt.push_str(chunk.text);
+    }
+    write!(prompt, "\n```").unwrap();
+
+    InputExcerpt {
+        context_range,
+        editable_range,
+        prompt,
+    }
+}
+
+pub fn editable_and_context_ranges_for_cursor_position(
+    position: Point,
+    snapshot: &BufferSnapshot,
+    editable_region_token_limit: usize,
+    context_token_limit: usize,
+) -> (Range<Point>, Range<Point>) {
     let mut scope_range = position..position;
     let mut remaining_edit_tokens = editable_region_token_limit;
 
@@ -44,30 +82,7 @@ pub fn excerpt_for_cursor_position(
 
     let editable_range = expand_range(snapshot, scope_range, remaining_edit_tokens);
     let context_range = expand_range(snapshot, editable_range.clone(), context_token_limit);
-
-    let mut prompt = String::new();
-
-    writeln!(&mut prompt, "```{path}").unwrap();
-    if context_range.start == Point::zero() {
-        writeln!(&mut prompt, "{START_OF_FILE_MARKER}").unwrap();
-    }
-
-    for chunk in snapshot.chunks(context_range.start..editable_range.start, false) {
-        prompt.push_str(chunk.text);
-    }
-
-    push_editable_range(position, snapshot, editable_range.clone(), &mut prompt);
-
-    for chunk in snapshot.chunks(editable_range.end..context_range.end, false) {
-        prompt.push_str(chunk.text);
-    }
-    write!(prompt, "\n```").unwrap();
-
-    InputExcerpt {
-        context_range,
-        editable_range,
-        prompt,
-    }
+    (editable_range, context_range)
 }
 
 fn push_editable_range(
