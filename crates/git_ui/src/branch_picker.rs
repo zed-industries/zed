@@ -770,7 +770,7 @@ impl PickerDelegate for BranchListDelegate {
                 } else {
                     None
                 };
-                self.create_branch(from_branch, format!("refs/heads/{name}").into(), window, cx);
+                self.create_branch(from_branch, name.into(), window, cx);
             }
         }
 
@@ -812,28 +812,21 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.clone() {
-            let icon = match &entry {
-                Entry::Branch { .. } => Some((
-                    IconName::GitBranchAlt,
-                    format!("Create branch based off default: {default_branch}"),
-                )),
-                Entry::NewUrl { url } => {
-                    Some((IconName::Screen, format!("Create remote based off {url}")))
-                }
-                Entry::NewBranch { .. } => None,
-            };
+        let icon = if let Some(default_branch) = self.default_branch.clone()
+            && matches!(entry, Entry::NewBranch { .. })
+        {
+            let tooltip_text = format!("Create branch based off default: {default_branch}");
 
-            icon.map(|(icon, tooltip_text)| {
-                IconButton::new("branch-from-default", icon)
+            Some(
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     }))
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action(tooltip_text.clone(), &menu::SecondaryConfirm, cx)
-                    })
-            })
+                    }),
+            )
         } else {
             None
         };
@@ -875,7 +868,9 @@ impl PickerDelegate for BranchListDelegate {
                 .max_w_48()
                 .child(h_flex().mr_1().child(icon_element))
                 .child(
-                    HighlightedLabel::new(branch.name().to_string(), positions.clone()).truncate(),
+                    HighlightedLabel::new(branch.name().to_string(), positions.clone())
+                        .single_line()
+                        .truncate(),
                 )
                 .into_any_element(),
         };
@@ -962,18 +957,13 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        if matches!(
-            self.state,
-            PickerState::CreateRemote(_) | PickerState::NewRemote | PickerState::NewBranch
-        ) {
-            return None;
-        }
-        let label = if self.display_remotes {
-            "Remote"
-        } else {
-            "Local"
-        };
-        Some(
+        matches!(self.state, PickerState::List).then(|| {
+            let label = if self.display_remotes {
+                "Remote"
+            } else {
+                "Local"
+            };
+
             h_flex()
                 .w_full()
                 .p_1p5()
@@ -981,8 +971,8 @@ impl PickerDelegate for BranchListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                .into_any(),
-        )
+                .into_any()
+        })
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
@@ -1010,7 +1000,8 @@ impl PickerDelegate for BranchListDelegate {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .justify_between()
-                    .child(
+                    .child({
+                        let focus_handle = focus_handle.clone();
                         Button::new("filter-remotes", "Filter remotes")
                             .key_binding(
                                 KeyBinding::for_action_in(
@@ -1028,8 +1019,26 @@ impl PickerDelegate for BranchListDelegate {
                             })
                             .disabled(self.loading)
                             .style(ButtonStyle::Subtle)
-                            .toggle_state(self.display_remotes),
-                    )
+                            .toggle_state(self.display_remotes)
+                            .tooltip({
+                                let state = self.display_remotes;
+
+                                move |_window, cx| {
+                                    let tooltip_text = if state {
+                                        "Show local branches"
+                                    } else {
+                                        "Show remote branches"
+                                    };
+
+                                    Tooltip::for_action_in(
+                                        tooltip_text,
+                                        &branch_picker::FilterRemotes,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                    })
                     .child(
                         Button::new("delete-branch", "Delete")
                             .key_binding(
@@ -1527,10 +1536,14 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(
-            branches
-                .into_iter()
-                .any(|branch| branch.name() == "new-feature-branch")
+        let new_branch = branches
+            .into_iter()
+            .find(|branch| branch.name() == "new-feature-branch")
+            .expect("new-feature-branch should exist");
+        assert_eq!(
+            new_branch.ref_name.as_ref(),
+            "refs/heads/new-feature-branch",
+            "branch ref_name should not have duplicate refs/heads/ prefix"
         );
     }
 
