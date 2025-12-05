@@ -142,6 +142,13 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     pub show_close_button: Option<ShowCloseButton>,
+    /// Whether to show the path for the active tab.
+    /// When enabled, the active tab will display the path from the worktree root
+    /// (or absolute path for files outside the worktree) instead of just the filename,
+    /// and the description will be hidden.
+    ///
+    /// Default: false
+    pub active_tab_path: Option<bool>,
 }
 
 #[with_fallible_options]
