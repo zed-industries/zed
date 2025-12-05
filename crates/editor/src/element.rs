@@ -668,7 +668,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if window.default_prevented() {
+        if cx.propagation_stopped() {
             return;
         }
 
@@ -884,7 +884,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !position_map.text_hitbox.is_hovered(window) || window.default_prevented() {
+        if !position_map.text_hitbox.is_hovered(window) || cx.propagation_stopped() {
             return;
         }
 

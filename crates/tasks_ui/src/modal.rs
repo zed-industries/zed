@@ -562,7 +562,6 @@ impl PickerDelegate for TasksModalDelegate {
                                 .icon_size(IconSize::XSmall)
                                 .on_click(cx.listener(move |picker, _event, window, cx| {
                                     cx.stop_propagation();
-                                    window.prevent_default();
 
                                     picker.delegate.delete_previously_used(task_index, cx);
                                     picker.delegate.last_used_candidate_index = picker
