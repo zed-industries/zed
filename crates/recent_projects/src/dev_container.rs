@@ -119,7 +119,6 @@ async fn devcontainer_read_configuration(
     command.arg(path.display().to_string());
     match command.output().await {
         Ok(output) => {
-            dbg!(&output);
             if output.status.success() {
                 let raw = String::from_utf8_lossy(&output.stdout);
                 serde_json::from_str::<DevContainerConfigurationOutput>(&raw).map_err(|e| {

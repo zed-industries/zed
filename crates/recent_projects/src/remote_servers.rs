@@ -1588,79 +1588,73 @@ impl RemoteServerProjects {
         cx.notify();
     }
 
+    fn open_dev_container(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(app_state) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.app_state().clone())
+            .log_err()
+        else {
+            return;
+        };
+
+        let replace_window = window.window_handle().downcast::<Workspace>();
+
+        cx.spawn_in(window, async move |entity, cx| {
+            let (connection, starting_dir) =
+                match start_dev_container(cx, app_state.node_runtime.clone()).await {
+                    Ok((c, s)) => (c, s),
+                    Err(e) => {
+                        log::error!("Failed to start dev container: {:?}", e);
+                        entity
+                            .update_in(cx, |remote_server_projects, window, cx| {
+                                remote_server_projects.mode = Mode::CreateRemoteDevContainer(
+                                    CreateRemoteDevContainer::new(window, cx).progress(
+                                        DevContainerCreationProgress::Error(format!("{:?}", e)),
+                                    ),
+                                );
+                            })
+                            .log_err();
+                        return;
+                    }
+                };
+            entity
+                .update(cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .log_err();
+
+            let result = open_remote_project(
+                connection.into(),
+                vec![starting_dir].into_iter().map(PathBuf::from).collect(),
+                app_state,
+                OpenOptions {
+                    replace_window,
+                    ..OpenOptions::default()
+                },
+                cx,
+            )
+            .await;
+            if let Err(e) = result {
+                log::error!("Failed to connect: {e:#}");
+                cx.prompt(
+                    gpui::PromptLevel::Critical,
+                    "Failed to connect",
+                    Some(&e.to_string()),
+                    &["Ok"],
+                )
+                .await
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn render_create_dev_container(
         &self,
         state: &CreateRemoteDevContainer,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let callback = Rc::new({
-            |remote_server_projects: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                let Some(app_state) = remote_server_projects
-                    .workspace
-                    .read_with(cx, |workspace, _| workspace.app_state().clone())
-                    .log_err()
-                else {
-                    return;
-                };
-
-                let replace_window = window.window_handle().downcast::<Workspace>();
-
-                cx.spawn_in(window, async move |entity, cx| {
-                    let (connection, starting_dir) =
-                        match start_dev_container(cx, app_state.node_runtime.clone()).await {
-                            Ok((c, s)) => (c, s),
-                            Err(e) => {
-                                log::error!("Failed to start dev container: {:?}", e);
-                                entity
-                                    .update_in(cx, |remote_server_projects, window, cx| {
-                                        remote_server_projects.mode =
-                                            Mode::CreateRemoteDevContainer(
-                                                CreateRemoteDevContainer::new(window, cx).progress(
-                                                    DevContainerCreationProgress::Error(format!(
-                                                        "{:?}",
-                                                        e
-                                                    )),
-                                                ),
-                                            );
-                                    })
-                                    .log_err();
-                                return;
-                            }
-                        };
-                    entity
-                        .update(cx, |_, cx| {
-                            cx.emit(DismissEvent);
-                        })
-                        .log_err();
-
-                    let result = open_remote_project(
-                        connection.into(),
-                        vec![starting_dir].into_iter().map(PathBuf::from).collect(),
-                        app_state,
-                        OpenOptions {
-                            replace_window,
-                            ..OpenOptions::default()
-                        },
-                        cx,
-                    )
-                    .await;
-                    if let Err(e) = result {
-                        log::error!("Failed to connect: {e:#}");
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to connect",
-                            Some(&e.to_string()),
-                            &["Ok"],
-                        )
-                        .await
-                        .ok();
-                    }
-                })
-                .detach();
-            }
-        });
-
         match &state.progress {
             DevContainerCreationProgress::Error(message) => {
                 self.focus_handle(cx).focus(window);
@@ -1745,9 +1739,8 @@ impl RemoteServerProjects {
                                 .id("confirm-create-from-devcontainer-json")
                                 .track_focus(&state.entries[0].focus_handle)
                                 .on_action(cx.listener({
-                                    let callback = callback.clone();
                                     move |this, _: &menu::Confirm, window, cx| {
-                                        callback(this, window, cx);
+                                        this.open_dev_container(window, cx);
                                         this.view_in_progress_dev_container(window, cx);
                                     }
                                 }))
@@ -1801,9 +1794,8 @@ impl RemoteServerProjects {
                                             )
                                             .on_click(
                                                 cx.listener({
-                                                    let callback = callback.clone();
                                                     move |this, _, window, cx| {
-                                                        callback(this, window, cx);
+                                                        this.open_dev_container(window, cx);
                                                         this.view_in_progress_dev_container(
                                                             window, cx,
                                                         );
