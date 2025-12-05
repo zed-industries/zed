@@ -485,6 +485,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         // todo(linux)
     }
 
+    fn set_tray(&self, mut _tray: Tray, _menu: Option<Vec<MenuItem>>, _keymap: &Keymap) {
+        // todo(linux)
+    }
+
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
