@@ -274,8 +274,9 @@ actions!(
         /// Toggles zoom on the active pane.
         ToggleZoom,
         /// If any worktrees are in restricted mode, shows a modal with possible actions.
+        /// If the modal is shown already, closes it without trusting any worktree.
         /// TODO kb docs
-        ShowWorktreeSecurity,
+        ToggleWorktreeSecurity,
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
         /// TODO kb docs
@@ -1191,6 +1192,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    restricted_paths: Vec<PathBuf>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1239,9 +1241,20 @@ impl Workspace {
                                     workspace.hide_modal(window, cx);
                                 }
                             }
+                            for trusted_path in trusted_paths {
+                                workspace.restricted_paths.retain(|restricted_path| {
+                                    !restricted_path.starts_with(trusted_path)
+                                });
+                            }
                         }
-                        TrustedWorktreesEvent::Restricted(_) => {
-                            workspace.show_worktree_security_modal(window, cx)
+                        TrustedWorktreesEvent::Restricted(restricted_paths) => {
+                            let current_restricted_path_count = workspace.restricted_paths.len();
+                            workspace
+                                .restricted_paths
+                                .extend(restricted_paths.iter().cloned());
+                            if current_restricted_path_count != workspace.restricted_paths.len() {
+                                workspace.show_worktree_security_modal(false, window, cx)
+                            }
                         }
                     })
                     .detach();
@@ -1521,7 +1534,7 @@ impl Workspace {
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.update_window_title(window, cx);
             workspace.show_initial_notifications(cx);
-            workspace.show_worktree_security_modal(window, cx);
+            workspace.show_worktree_security_modal(false, window, cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1575,6 +1588,7 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
+            restricted_paths: Vec::new(),
 
             removing: false,
         }
@@ -5970,8 +5984,8 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ShowWorktreeSecurity, window, cx| {
-                    workspace.show_worktree_security_modal(window, cx);
+                |workspace: &mut Workspace, _: &ToggleWorktreeSecurity, window, cx| {
+                    workspace.show_worktree_security_modal(true, window, cx);
                 },
             ))
             .on_action(
@@ -6434,37 +6448,48 @@ impl Workspace {
         });
     }
 
-    pub fn show_worktree_security_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let restricted_worktrees = if cx.has_global::<TrustedWorktreesStorage>() {
-            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                trusted_worktrees_storage
-                    .restricted_worktrees()
-                    .iter()
-                    .filter(|restricted_path| {
-                        self.project()
-                            .read(cx)
-                            .find_worktree(restricted_path, cx)
-                            .is_some()
-                    })
-                    .cloned()
-                    .collect()
-            })
-        } else {
-            HashSet::default()
+    pub fn show_worktree_security_modal(
+        &mut self,
+        toggle: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let restricted_worktrees = |cx: &mut App| {
+            if cx.has_global::<TrustedWorktreesStorage>() {
+                cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                    trusted_worktrees_storage
+                        .restricted_worktrees()
+                        .iter()
+                        .filter(|restricted_path| {
+                            self.project()
+                                .read(cx)
+                                .find_worktree(restricted_path, cx)
+                                .is_some()
+                        })
+                        .cloned()
+                        .collect()
+                })
+            } else {
+                HashSet::default()
+            }
         };
 
         if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
-            let remove = security_modal.update(cx, |security_modal, cx| {
-                security_modal.paths.extend(restricted_worktrees);
-                let remove = security_modal.paths.is_empty();
-                cx.notify();
-                remove
-            });
-            if remove {
-                self.hide_modal(window, cx);
+            if toggle {
+                security_modal.update(cx, |security_modal, cx| {
+                    security_modal.dismiss(cx);
+                })
+            } else {
+                security_modal.update(cx, |security_modal, cx| {
+                    security_modal.paths.extend(restricted_worktrees(cx));
+                    cx.notify();
+                });
             }
-        } else if !restricted_worktrees.is_empty() {
-            self.toggle_modal(window, cx, |_, _| SecurityModal::new(restricted_worktrees));
+        } else {
+            let restricted_worktrees = restricted_worktrees(cx);
+            if !restricted_worktrees.is_empty() {
+                self.toggle_modal(window, cx, |_, _| SecurityModal::new(restricted_worktrees));
+            }
         }
     }
 }
