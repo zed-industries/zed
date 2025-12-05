@@ -38,6 +38,7 @@ use crate::{
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
+    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
 };
@@ -54,8 +55,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, PromptLevel,
+    SharedString, Subscription, Task, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -96,13 +97,14 @@ use serde::Serialize;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
-use smol::channel::Sender;
+use smol::channel::{Receiver, Sender};
 use snippet::Snippet;
 use std::{
     any::TypeId,
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
+    collections::hash_map,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -296,6 +298,7 @@ pub struct LocalLspStore {
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
+    restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, Receiver<()>)>,
 }
 
 impl LocalLspStore {
@@ -367,7 +370,8 @@ impl LocalLspStore {
     ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
 
-        let root_path = worktree.abs_path();
+        let worktree_id = worktree.id();
+        let worktree_abs_path = worktree.abs_path();
         let toolchain = key.toolchain.clone();
         let override_options = settings.initialization_options.clone();
 
@@ -375,19 +379,50 @@ impl LocalLspStore {
 
         let server_id = self.languages.next_language_server_id();
         log::trace!(
-            "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
+            "attempting to start language server {:?}, path: {worktree_abs_path:?}, id: {server_id}",
             adapter.name.0
         );
 
+        let untrusted_worktree_task = if cx.has_global::<TrustedWorktreesStorage>() {
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                if trusted_worktrees_storage.can_trust_path(&worktree_abs_path, cx) {
+                    self.restricted_worktrees_tasks.remove(&worktree_id);
+                    None
+                } else {
+                    match self.restricted_worktrees_tasks.entry(worktree_id) {
+                        hash_map::Entry::Occupied(o) => Some(o.get().1.clone()),
+                        hash_map::Entry::Vacant(v) => {
+                            let (tx, rx) = smol::channel::bounded::<()>(1);
+                            let root_path = worktree_abs_path.clone();
+                            let subscription =
+                                trusted_worktrees_storage.subscribe_app(cx, move |e, _| {
+                                    if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                                        if trusted_paths.contains(root_path.as_ref()) {
+                                            tx.send_blocking(()).ok();
+                                        }
+                                    }
+                                });
+                            v.insert((subscription, rx.clone()));
+                            Some(rx)
+                        }
+                    }
+                }
+            })
+        } else {
+            None
+        };
+
         let binary = self.get_language_server_binary(
+            worktree_abs_path.clone(),
             adapter.clone(),
             settings,
             toolchain.clone(),
             delegate.clone(),
             true,
+            untrusted_worktree_task,
             cx,
         );
-        let pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
+        let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
@@ -420,7 +455,7 @@ impl LocalLspStore {
                     server_id,
                     server_name,
                     binary,
-                    &root_path,
+                    &worktree_abs_path,
                     code_action_kinds,
                     Some(pending_workspace_folders),
                     cx,
@@ -571,11 +606,13 @@ impl LocalLspStore {
 
     fn get_language_server_binary(
         &self,
+        worktree_abs_path: Arc<Path>,
         adapter: Arc<CachedLspAdapter>,
         settings: Arc<LspSettings>,
         toolchain: Option<Toolchain>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
+        untrusted_worktree_task: Option<Receiver<()>>,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = &settings.binary
@@ -584,6 +621,13 @@ impl LocalLspStore {
             let settings = settings.clone();
 
             return cx.background_spawn(async move {
+                if let Some(untrusted_worktree_task) = untrusted_worktree_task {
+                    log::info!(
+                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                        adapter.name(),
+                    );
+                    untrusted_worktree_task.recv().await.ok();
+                }
                 let mut env = delegate.shell_env().await;
                 env.extend(settings.env.unwrap_or_default());
 
@@ -614,6 +658,14 @@ impl LocalLspStore {
         };
 
         cx.spawn(async move |cx| {
+            if let Some(untrusted_worktree_task) = untrusted_worktree_task {
+                log::info!(
+                    "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                    adapter.name(),
+                );
+                untrusted_worktree_task.recv().await.ok();
+            }
+
             let (existing_binary, maybe_download_binary) = adapter
                 .clone()
                 .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
@@ -3258,6 +3310,7 @@ impl LocalLspStore {
         id_to_remove: WorktreeId,
         cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
+        self.restricted_worktrees_tasks.remove(&id_to_remove);
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.remove_worktree(id_to_remove, cx);
@@ -3974,6 +4027,7 @@ impl LspStore {
                 buffers_opened_in_servers: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
+                restricted_worktrees_tasks: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
