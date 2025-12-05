@@ -15,6 +15,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use crate::{
     Project,
     project_settings::{ContextServerSettings, ProjectSettings},
+    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
     worktree_store::WorktreeStore,
 };
 
@@ -332,6 +333,9 @@ impl ContextServerStore {
 
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
+            if let Some(wait_task) = wait_for_worktree_trust(this.clone(), cx) {
+                wait_task.await;
+            }
             let this = this.upgrade().context("Context server store dropped")?;
             let settings = this
                 .update(cx, |this, _| {
@@ -572,6 +576,9 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+        if let Some(wait_task) = wait_for_worktree_trust(this.clone(), cx) {
+            wait_task.await;
+        }
         let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, _| {
             (
                 this.context_server_settings.clone(),
@@ -656,6 +663,76 @@ impl ContextServerStore {
             anyhow::Ok(())
         })?
     }
+}
+
+fn wait_for_worktree_trust(
+    context_server_store: WeakEntity<ContextServerStore>,
+    cx: &mut AsyncApp,
+) -> Option<Task<()>> {
+    if !cx.has_global::<TrustedWorktreesStorage>().unwrap_or(false) {
+        return None;
+    }
+
+    // TODO kb move this and lsp server checks into the storage?
+    Some(cx.spawn(async move |cx| {
+        loop {
+            let Some((_subscription, restricted_worktrees_task)) = cx
+                .update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                    let Some(mut restricted_worktrees) = context_server_store
+                        .update(cx, |context_server_store, cx| {
+                            context_server_store
+                                .worktree_store
+                                .update(cx, |worktree_store, cx| {
+                                    worktree_store
+                                        // TODO kb handle no worktrees case better
+                                        .worktrees()
+                                        .filter_map(|worktree| {
+                                            let worktree_abs_path = dbg!(worktree.read(cx).root_dir())?;
+                                            if trusted_worktrees_storage
+                                                .can_trust_path(worktree_abs_path.as_ref(), cx)
+                                            {
+                                                Some(worktree_abs_path)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<HashSet<_>>()
+                                })
+                        })
+                        .ok()
+                    else {
+                        return None;
+                    };
+                    // TODO kb this is `true` at the moment of panel initialization, as it is deserialized when no worktrees are added and checked for trust
+                    // yet, we need to allow starting MCP servers for empty projects, only to stop them back?
+                    if !dbg!(restricted_worktrees.is_empty()) {
+                        log::info!("Waiting for restricted worktrees to be trusted before starting context servers");
+                        let (tx, rx) = smol::channel::bounded::<()>(1);
+                        let subscription =
+                            trusted_worktrees_storage.subscribe_app(cx, move |e, _| {
+                                if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                                    for trusted_path in trusted_paths {
+                                        restricted_worktrees.remove(trusted_path.as_path());
+                                    }
+                                    if restricted_worktrees.is_empty() {
+                                        tx.send_blocking(()).ok();
+                                    }
+                                }
+                            });
+                        Some((subscription, rx))
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten()
+            else {
+                return;
+            };
+
+            restricted_worktrees_task.recv().await.ok();
+        }
+    }))
 }
 
 #[cfg(test)]

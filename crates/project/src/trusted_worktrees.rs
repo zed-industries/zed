@@ -1,4 +1,4 @@
-//! TODO kb also block MCP servers from starting
+//! TODO kb check for other vulnerabilities
 use std::path::{Path, PathBuf};
 
 use collections::HashSet;
@@ -33,6 +33,7 @@ pub struct TrustedWorktreesStorage {
     trusted: Entity<TrustedWorktrees>,
     // TODO kb need to swtich over WorktreeId-based API from this level?
     // But worktrees' parent directories may be trusted and not being worktrees.
+    // Do we need to filter out single-filed worktrees? visible worktrees?
     restricted: HashSet<PathBuf>,
 }
 
