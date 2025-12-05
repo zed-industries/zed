@@ -988,28 +988,8 @@ impl PickerDelegate for BranchListDelegate {
                             }))
                     });
 
-                let existing_branch_buttons = h_flex()
+                let delete_and_select_btns = h_flex()
                     .gap_0p5()
-                    .child({
-                        let focus_handle = focus_handle.clone();
-                        Button::new("filter-remotes", "Filter Remotes")
-                            .disabled(self.loading)
-                            .toggle_state(self.display_remotes)
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &branch_picker::FilterRemotes,
-                                    &focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_click, window, cx| {
-                                window.dispatch_action(
-                                    branch_picker::FilterRemotes.boxed_clone(),
-                                    cx,
-                                );
-                            })
-                    })
                     .child(
                         Button::new("delete-branch", "Delete")
                             .disabled(self.loading)
@@ -1063,9 +1043,30 @@ impl PickerDelegate for BranchListDelegate {
                             } else if self.loading {
                                 this.justify_between()
                                     .child(loading_icon)
-                                    .child(existing_branch_buttons)
+                                    .child(delete_and_select_btns)
                             } else {
-                                this.justify_end().child(existing_branch_buttons)
+                                this.justify_between()
+                                    .child({
+                                        let focus_handle = focus_handle.clone();
+                                        Button::new("filter-remotes", "Filter Remotes")
+                                            .disabled(self.loading)
+                                            .toggle_state(self.display_remotes)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &branch_picker::FilterRemotes,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(|_click, window, cx| {
+                                                window.dispatch_action(
+                                                    branch_picker::FilterRemotes.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
+                                    })
+                                    .child(delete_and_select_btns)
                             }
                         })
                         .into_any_element(),
