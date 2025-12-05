@@ -1,0 +1,17 @@
+[package]
+name = "ztracing"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+
+tracing-subscriber = "0.3.22"
+tracing-tracy = { workspace = true, features = ["enable", "ondemand"] }
+
+ztracing_macro.workspace = true

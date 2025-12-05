@@ -13,7 +13,6 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-default = []
 test-support = ["multi_buffer/test-support"]
 
 [dependencies]
@@ -62,7 +61,8 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
-
+ztracing.workspace = true
+tracing.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
@@ -78,3 +78,6 @@ settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
