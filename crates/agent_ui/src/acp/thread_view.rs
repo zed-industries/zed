@@ -344,7 +344,7 @@ impl AcpThreadView {
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
@@ -369,7 +369,7 @@ impl AcpThreadView {
         let entry_view_state = cx.new(|_| {
             EntryViewState::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
