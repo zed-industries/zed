@@ -770,7 +770,7 @@ impl PickerDelegate for BranchListDelegate {
                 } else {
                     None
                 };
-                self.create_branch(from_branch, format!("refs/heads/{name}").into(), window, cx);
+                self.create_branch(from_branch, name.into(), window, cx);
             }
         }
 
@@ -812,28 +812,21 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.clone() {
-            let icon = match &entry {
-                Entry::Branch { .. } => Some((
-                    IconName::GitBranchAlt,
-                    format!("Create branch based off default: {default_branch}"),
-                )),
-                Entry::NewUrl { url } => {
-                    Some((IconName::Screen, format!("Create remote based off {url}")))
-                }
-                Entry::NewBranch { .. } => None,
-            };
+        let icon = if let Some(default_branch) = self.default_branch.clone()
+            && matches!(entry, Entry::NewBranch { .. })
+        {
+            let tooltip_text = format!("Create branch based off default: {default_branch}");
 
-            icon.map(|(icon, tooltip_text)| {
-                IconButton::new("branch-from-default", icon)
+            Some(
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     }))
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action(tooltip_text.clone(), &menu::SecondaryConfirm, cx)
-                    })
-            })
+                    }),
+            )
         } else {
             None
         };
