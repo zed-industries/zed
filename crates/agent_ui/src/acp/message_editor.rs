@@ -933,7 +933,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -1044,7 +1044,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle.clone(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1205,7 +1205,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1427,7 +1427,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1918,7 +1918,7 @@ mod tests {
             cx.new(|cx| {
                 let editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2023,7 +2023,7 @@ mod tests {
             cx.new(|cx| {
                 let mut editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2092,7 +2092,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2155,7 +2155,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2313,7 +2313,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
