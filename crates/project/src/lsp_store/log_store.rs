@@ -553,9 +553,13 @@ impl LogStore {
             rpc_log_lines.pop_front();
         }
 
+        let message = serde_json::from_str::<serde_json::Value>(message)
+            .and_then(|value| serde_json::to_string_pretty(&value))
+            .unwrap_or_else(|_| message.trim().to_owned());
+
         if store_logs {
             rpc_log_lines.push_back(RpcMessage {
-                message: message.trim().to_owned(),
+                message: message.clone(),
             });
         }
 
@@ -563,7 +567,7 @@ impl LogStore {
             Event::NewServerLogEntry {
                 id: language_server_id,
                 kind: LanguageServerLogType::Rpc { received },
-                text: message.to_owned(),
+                text: message,
             },
             cx,
         );
