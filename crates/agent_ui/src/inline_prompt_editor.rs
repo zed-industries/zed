@@ -181,8 +181,8 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::move_down))
-                    .on_action(cx.listener(Self::rate_positive))
-                    .on_action(cx.listener(Self::rate_negative))
+                    .on_action(cx.listener(Self::thumbs_up))
+                    .on_action(cx.listener(Self::thumbs_down))
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
@@ -490,7 +490,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn rate_positive(&mut self, _: &ThumbsUpResult, _window: &mut Window, cx: &mut Context<Self>) {
+    fn thumbs_up(&mut self, _: &ThumbsUpResult, _window: &mut Window, cx: &mut Context<Self>) {
         if self.rated.is_pending() {
             self.toast("Still generating...", None, cx);
             return;
@@ -526,12 +526,7 @@ impl<T: 'static> PromptEditor<T> {
         cx.notify();
     }
 
-    fn rate_negative(
-        &mut self,
-        _: &ThumbsDownResult,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn thumbs_down(&mut self, _: &ThumbsDownResult, _window: &mut Window, cx: &mut Context<Self>) {
         if self.rated.is_pending() {
             self.toast("Still generating...", None, cx);
             return;
@@ -721,7 +716,7 @@ impl<T: 'static> PromptEditor<T> {
                                 .disabled(rated)
                                 .tooltip(Tooltip::text("Bad result"))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.rate_negative(&ThumbsDownResult, window, cx);
+                                    this.thumbs_down(&ThumbsDownResult, window, cx);
                                 }))
                                 .into_any_element(),
                         );
@@ -733,7 +728,7 @@ impl<T: 'static> PromptEditor<T> {
                                 .disabled(rated)
                                 .tooltip(Tooltip::text("Good result"))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.rate_positive(&ThumbsUpResult, window, cx);
+                                    this.thumbs_up(&ThumbsUpResult, window, cx);
                                 }))
                                 .into_any_element(),
                         );
