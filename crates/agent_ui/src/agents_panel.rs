@@ -1,8 +1,7 @@
 use gpui::{EventEmitter, Focusable, actions};
 use ui::{
     App, Context, IconName, IntoElement, Label, LabelCommon as _, LabelSize, ListItem,
-    ListItemSpacing, ParentElement, Render, RenderOnce, Styled, Toggleable as _, Window, div,
-    h_flex, px,
+    ListItemSpacing, ParentElement, Render, RenderOnce, Styled, Window, div, h_flex, px,
 };
 use workspace::{Panel, Workspace, dock::PanelEvent};
 
@@ -19,6 +18,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleAgentsPanel, window, cx| {
+            dbg!("here?");
             workspace.toggle_panel_focus::<AgentsPanel>(window, cx);
         });
     })
@@ -45,7 +45,7 @@ impl Panel for AgentsPanel {
         "AgentsPanel"
     }
 
-    fn position(&self, window: &ui::Window, cx: &ui::App) -> workspace::dock::DockPosition {
+    fn position(&self, _window: &ui::Window, _cx: &ui::App) -> workspace::dock::DockPosition {
         workspace::dock::DockPosition::Left
     }
 
@@ -128,7 +128,7 @@ struct AgentThreadDiff {
 }
 
 impl Render for AgentsPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let agent_threads = vec![
             AgentThreadSummary {
                 title: "Building the agents panel".into(),

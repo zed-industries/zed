@@ -396,7 +396,10 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
-    pub has_utility: bool,
+
+    pub in_center_group: bool,
+    pub is_upper_left: bool,
+    pub is_upper_right: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -541,12 +544,10 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
-            has_utility: false,
+            in_center_group: false,
+            is_upper_left: false,
+            is_upper_right: false,
         }
-    }
-
-    pub fn set_has_utility(&mut self, has_utility: bool) {
-        self.has_utility = has_utility;
     }
 
     fn alternate_file(&mut self, _: &AlternateFile, window: &mut Window, cx: &mut Context<Pane>) {
@@ -3123,7 +3124,7 @@ impl Pane {
         let pinned_tabs = tab_items;
 
         let render_aside_toggle = self
-            .has_utility
+            .is_upper_left
             .then(|| {
                 self.workspace
                     .upgrade()

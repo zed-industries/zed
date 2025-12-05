@@ -26,6 +26,21 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
+pub struct MinimizePane;
+pub struct ClosePane;
+
+pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    /// The element to render in the adjacent pane's tab bar when this utility pane is minimized
+    fn toggle_button(&self, cx: &App) -> AnyElement;
+    fn minimized(&self, cx: &App) -> bool;
+}
+
+pub enum UtilityPanePosition {
+    Left,
+    Right,
+}
+
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;

@@ -185,6 +185,10 @@ impl PaneGroup {
         };
     }
 
+    pub fn mark_positions(&mut self, cx: &mut App) {
+        self.root.mark_positions(self.is_center, true, true, cx);
+    }
+
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
@@ -250,6 +254,43 @@ impl PaneGroup {
 pub enum Member {
     Axis(PaneAxis),
     Pane(Entity<Pane>),
+}
+
+impl Member {
+    pub fn mark_positions(
+        &mut self,
+        in_center_group: bool,
+        is_upper_left: bool,
+        is_upper_right: bool,
+        cx: &mut App,
+    ) {
+        match self {
+            Member::Axis(pane_axis) => {
+                let len = pane_axis.members.len();
+                for (idx, member) in pane_axis.members.iter_mut().enumerate() {
+                    let member_upper_left = match pane_axis.axis {
+                        Axis::Vertical => is_upper_left && idx == 0,
+                        Axis::Horizontal => is_upper_left && idx == 0,
+                    };
+                    let member_upper_right = match pane_axis.axis {
+                        Axis::Vertical => is_upper_right && idx == 0,
+                        Axis::Horizontal => is_upper_right && idx == len - 1,
+                    };
+                    member.mark_positions(
+                        in_center_group,
+                        member_upper_left,
+                        member_upper_right,
+                        cx,
+                    );
+                }
+            }
+            Member::Pane(entity) => entity.update(cx, |pane, _| {
+                pane.in_center_group = in_center_group;
+                pane.is_upper_left = is_upper_left;
+                pane.is_upper_right = is_upper_right;
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
