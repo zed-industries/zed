@@ -25,11 +25,14 @@ mod fake_definition_lsp;
 pub use cloud_llm_client::predict_edits_v3::Line;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
 
+const IDENTIFIER_LINE_COUNT: u32 = 3;
+
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
     related_files: Vec<RelatedFile>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
+    identifier_line_count: u32,
 }
 
 pub enum RelatedExcerptStoreEvent {
@@ -178,7 +181,12 @@ impl RelatedExcerptStore {
             update_tx,
             related_files: Vec::new(),
             cache: Default::default(),
+            identifier_line_count: IDENTIFIER_LINE_COUNT,
         }
+    }
+
+    pub fn set_identifier_line_count(&mut self, count: u32) {
+        self.identifier_line_count = count;
     }
 
     pub fn refresh(&mut self, buffer: Entity<Buffer>, position: Anchor, _: &mut Context<Self>) {
@@ -195,8 +203,12 @@ impl RelatedExcerptStore {
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (project, snapshot) = this.read_with(cx, |this, cx| {
-            (this.project.upgrade(), buffer.read(cx).snapshot())
+        let (project, snapshot, identifier_line_count) = this.read_with(cx, |this, cx| {
+            (
+                this.project.upgrade(),
+                buffer.read(cx).snapshot(),
+                this.identifier_line_count,
+            )
         })?;
         let Some(project) = project else {
             return Ok(());
@@ -212,7 +224,9 @@ impl RelatedExcerptStore {
         })?;
 
         let identifiers = cx
-            .background_spawn(async move { identifiers_for_position(&snapshot, position) })
+            .background_spawn(async move {
+                identifiers_for_position(&snapshot, position, identifier_line_count)
+            })
             .await;
 
         let async_cx = cx.clone();
@@ -393,14 +407,21 @@ fn process_definition(
 
 /// Gets all of the identifiers that are present in the given line, and its containing
 /// outline items.
-fn identifiers_for_position(buffer: &BufferSnapshot, position: Anchor) -> Vec<Identifier> {
+fn identifiers_for_position(
+    buffer: &BufferSnapshot,
+    position: Anchor,
+    identifier_line_count: u32,
+) -> Vec<Identifier> {
     let offset = position.to_offset(buffer);
     let point = buffer.offset_to_point(offset);
 
-    let line_range = Point::new(point.row, 0)..Point::new(point.row + 1, 0).min(buffer.max_point());
+    // Search for identifiers on lines adjacent to the cursor.
+    let start = Point::new(point.row.saturating_sub(identifier_line_count), 0);
+    let end = Point::new(point.row + identifier_line_count + 1, 0).min(buffer.max_point());
+    let line_range = start..end;
     let mut ranges = vec![line_range.to_offset(&buffer)];
 
-    // Include the range of the outline item itself, but not its body.
+    // Search for identifiers mentioned in headers/signatures of containing outline items.
     let outline_items = buffer.outline_items_as_offsets_containing(offset..offset, false, None);
     for item in outline_items {
         if let Some(body_range) = item.body_range(&buffer) {

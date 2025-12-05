@@ -480,16 +480,16 @@ impl EditPredictionStore {
             shown_predictions: Default::default(),
         };
 
-        this.enable_or_disable_context_retrieval(cx);
+        this.configure_context_retrieval(cx);
         let weak_this = cx.weak_entity();
         cx.on_flags_ready(move |_, cx| {
             weak_this
-                .update(cx, |this, cx| this.enable_or_disable_context_retrieval(cx))
+                .update(cx, |this, cx| this.configure_context_retrieval(cx))
                 .ok();
         })
         .detach();
         cx.observe_global::<SettingsStore>(|this, cx| {
-            this.enable_or_disable_context_retrieval(cx);
+            this.configure_context_retrieval(cx);
         })
         .detach();
 
@@ -1770,7 +1770,7 @@ impl EditPredictionStore {
         cx.notify();
     }
 
-    fn enable_or_disable_context_retrieval(&mut self, cx: &mut Context<'_, EditPredictionStore>) {
+    fn configure_context_retrieval(&mut self, cx: &mut Context<'_, EditPredictionStore>) {
         self.use_context = cx.has_flag::<Zeta2FeatureFlag>()
             && all_language_settings(None, cx).edit_predictions.use_context;
     }
