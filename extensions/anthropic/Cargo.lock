@@ -9,6 +9,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "anthropic"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "zed_extension_api",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -63,15 +72,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "fanthropic"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "zed_extension_api",
-]
 
 [[package]]
 name = "flate2"
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
