@@ -683,10 +683,16 @@ impl PickerDelegate for BranchListDelegate {
                         } else {
                             Entry::NewBranch { name: query }
                         };
-                        picker.delegate.state = if is_url {
-                            PickerState::NewRemote
+                        // Only transition to NewBranch/NewRemote states when we only show their list item
+                        // Otherwise, stay in List state so footer buttons remain visible
+                        picker.delegate.state = if matches.is_empty() {
+                            if is_url {
+                                PickerState::NewRemote
+                            } else {
+                                PickerState::NewBranch
+                            }
                         } else {
-                            PickerState::NewBranch
+                            PickerState::List
                         };
                         matches.push(entry);
                     } else {
@@ -1515,7 +1521,8 @@ mod tests {
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_branch());
                 assert_eq!(last_match.name(), "new-feature-branch");
-                assert!(matches!(picker.delegate.state, PickerState::NewBranch));
+                // State remains List because there are other matches besides NewBranch
+                assert!(matches!(picker.delegate.state, PickerState::List));
                 picker.delegate.confirm(false, window, cx);
             })
         });
