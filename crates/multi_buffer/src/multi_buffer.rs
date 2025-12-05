@@ -6457,12 +6457,13 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt for the given id. The returned excerpt is guaranteed
-    /// to have the same excerpt id as the one passed in, with the exception of
-    /// `ExcerptId::max()`.
+    /// to have the latest excerpt id for the one passed in and will also remap
+    /// `ExcerptId::max()` to the corresponding excertp ID.
     ///
     /// Callers of this function should generally use the resulting excerpt's `id` field
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         cursor.seek(&Some(locator), Bias::Left);
