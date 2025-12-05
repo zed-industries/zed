@@ -173,9 +173,9 @@ fn git_panel_context_menu(
             .separator()
             .entry(
                 if state.tree_view {
-                    "Tree View"
-                } else {
                     "Flat View"
+                } else {
+                    "Tree View"
                 },
                 Some(Box::new(ToggleTreeView)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
