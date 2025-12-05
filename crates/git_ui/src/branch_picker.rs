@@ -1000,7 +1000,8 @@ impl PickerDelegate for BranchListDelegate {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .justify_between()
-                    .child(
+                    .child({
+                        let focus_handle = focus_handle.clone();
                         Button::new("filter-remotes", "Filter remotes")
                             .key_binding(
                                 KeyBinding::for_action_in(
@@ -1018,8 +1019,26 @@ impl PickerDelegate for BranchListDelegate {
                             })
                             .disabled(self.loading)
                             .style(ButtonStyle::Subtle)
-                            .toggle_state(self.display_remotes),
-                    )
+                            .toggle_state(self.display_remotes)
+                            .tooltip({
+                                let state = self.display_remotes;
+
+                                move |_window, cx| {
+                                    let tooltip_text = if state {
+                                        "Show local branches"
+                                    } else {
+                                        "Show remote branches"
+                                    };
+
+                                    Tooltip::for_action_in(
+                                        tooltip_text,
+                                        &branch_picker::FilterRemotes,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                    })
                     .child(
                         Button::new("delete-branch", "Delete")
                             .key_binding(
