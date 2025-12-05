@@ -29,15 +29,12 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
         MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
         MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
-        MenuItem::submenu(Menu {
-            name: "Editor Layout".into(),
-            items: vec![
-                MenuItem::action("Split Up", workspace::SplitUp),
-                MenuItem::action("Split Down", workspace::SplitDown),
-                MenuItem::action("Split Left", workspace::SplitLeft),
-                MenuItem::action("Split Right", workspace::SplitRight),
-            ],
-        }),
+        MenuItem::submenu(Menu::new("Editor Layout").items([
+            MenuItem::action("Split Up", workspace::SplitUp),
+            MenuItem::action("Split Down", workspace::SplitDown),
+            MenuItem::action("Split Left", workspace::SplitLeft),
+            MenuItem::action("Split Right", workspace::SplitRight),
+        ])),
         MenuItem::separator(),
         MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
@@ -60,39 +57,31 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     vec![
         Menu {
             name: "Zed".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action("About Zed", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu {
-                    name: "Settings".into(),
-                    items: vec![
-                        MenuItem::action("Open Settings", zed_actions::OpenSettings),
-                        MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                        MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
-                        MenuItem::action(
-                            "Open Project Settings File",
-                            super::OpenProjectSettingsFile,
-                        ),
-                        MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
-                        MenuItem::separator(),
-                        MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
-                        MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
-                        MenuItem::action(
-                            "Open Default Key Bindings",
-                            zed_actions::OpenDefaultKeymap,
-                        ),
-                        MenuItem::separator(),
-                        MenuItem::action(
-                            "Select Theme...",
-                            zed_actions::theme_selector::Toggle::default(),
-                        ),
-                        MenuItem::action(
-                            "Select Icon Theme...",
-                            zed_actions::icon_theme_selector::Toggle::default(),
-                        ),
-                    ],
-                }),
+                MenuItem::submenu(Menu::new("Settings").items([
+                    MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                    MenuItem::action("Open Settings File", super::OpenSettingsFile),
+                    MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
+                    MenuItem::action("Open Project Settings File", super::OpenProjectSettingsFile),
+                    MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                    MenuItem::separator(),
+                    MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                    MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
+                    MenuItem::action("Open Default Key Bindings", zed_actions::OpenDefaultKeymap),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Select Theme...",
+                        zed_actions::theme_selector::Toggle::default(),
+                    ),
+                    MenuItem::action(
+                        "Select Icon Theme...",
+                        zed_actions::icon_theme_selector::Toggle::default(),
+                    ),
+                ])),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
@@ -113,6 +102,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "File".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action("New", workspace::NewFile),
                 MenuItem::action("New Window", workspace::NewWindow),
@@ -159,6 +149,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "Edit".into(),
+            disabled: false,
             items: vec![
                 MenuItem::os_action("Undo", editor::actions::Undo, OsAction::Undo),
                 MenuItem::os_action("Redo", editor::actions::Redo, OsAction::Redo),
@@ -179,6 +170,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "Selection".into(),
+            disabled: false,
             items: vec![
                 MenuItem::os_action(
                     "Select All",
@@ -226,10 +218,12 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "View".into(),
+            disabled: false,
             items: view_items,
         },
         Menu {
             name: "Go".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action("Back", workspace::GoBack),
                 MenuItem::action("Forward", workspace::GoForward),
@@ -258,6 +252,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "Run".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action(
                     "Spawn Task",
@@ -282,6 +277,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "Window".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action("Minimize", super::Minimize),
                 MenuItem::action("Zoom", super::Zoom),
@@ -290,6 +286,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         },
         Menu {
             name: "Help".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action(
                     "View Release Notes Locally",

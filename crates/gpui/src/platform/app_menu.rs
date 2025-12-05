@@ -187,6 +187,7 @@ impl MenuItem {
     /// Returns whether this menu item is checked
     ///
     /// Only for [`MenuItem::Action`], otherwise, returns false
+    #[inline]
     pub fn is_checked(&self) -> bool {
         match self {
             MenuItem::Action { checked, .. } => *checked,
@@ -211,6 +212,7 @@ impl MenuItem {
     /// Returns whether this menu item is disabled
     ///
     /// Only for [`MenuItem::Action`] and [`MenuItem::Submenu`], otherwise, returns false
+    #[inline]
     pub fn is_disabled(&self) -> bool {
         match self {
             MenuItem::Action { disabled, .. } => *disabled,
