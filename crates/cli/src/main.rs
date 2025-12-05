@@ -743,7 +743,11 @@ mod linux {
     }
 
     impl App {
-        fn boot_background(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
+        fn boot_background(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> anyhow::Result<()> {
             let path = &self.0;
 
             match fork::fork() {
@@ -757,13 +761,12 @@ mod linux {
                     if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
-                    let mut args = vec!(path.as_os_str(), &OsString::from(ipc_url));
+                    let mut args = vec![path.as_os_str(), &OsString::from(ipc_url)];
                     if let Some(dir) = user_data_dir {
                         args.push("--user-data-dir");
                         args.push(dir);
                     }
-                    let error =
-                        exec::execvp(path.clone(), &args);
+                    let error = exec::execvp(path.clone(), &args);
                     // if exec succeeded, we never get here.
                     eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)
@@ -1155,10 +1158,9 @@ mod mac_os {
                             format!("Cloning descriptor for file {subprocess_stdout_file:?}")
                         })?;
                     let mut command = std::process::Command::new(executable);
-                    let mut command = command
-                        .env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
                     if let Some(dir) = user_data_dir {
-                        command.arg("--user-data-dir").arg(dir)
+                        command.arg("--user-data-dir").arg(dir);
                     }
                     command
                         .stderr(subprocess_stdout_file)
