@@ -41,8 +41,7 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
     Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Tray, TrayIconData, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    TextSystem, Tray, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1926,13 +1925,7 @@ impl App {
             None
         };
 
-        let render_image = tray
-            .icon
-            .as_ref()
-            .and_then(|icon| icon.to_image_data(self.svg_renderer.clone()).ok());
-        tray.rendered_icon =
-            render_image.map(|image| TrayIconData::from_render_image(image.as_ref()));
-
+        _ = tray.render_icon(self);
         self.platform
             .set_tray(tray, menu_items, &self.keymap.borrow())
     }

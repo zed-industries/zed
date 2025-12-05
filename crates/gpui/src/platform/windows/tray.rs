@@ -58,7 +58,7 @@ impl WindowsTray {
             return;
         }
 
-        let hicon = tray.rendered_icon.as_ref().map(|image| {
+        let hicon = tray.icon_data.as_ref().map(|image| {
             *Icon::new(image.data.as_bytes(), image.width, image.height).as_raw_handle()
         });
 

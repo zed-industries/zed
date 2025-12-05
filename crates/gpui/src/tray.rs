@@ -1,6 +1,6 @@
-use std::rc::Rc;
-
 use crate::{App, MenuItem, SharedString};
+use anyhow::Result;
+use std::rc::Rc;
 
 /// System tray icon.
 #[derive(Clone)]
@@ -11,31 +11,37 @@ pub struct Tray {
     pub title: Option<SharedString>,
     /// Tray icon image.
     pub icon: Option<Rc<gpui::Image>>,
+    pub(crate) icon_data: Option<TrayIconData>,
+
     /// Function to build the context menu.
     pub menu_builder: Option<Rc<dyn Fn(&mut App) -> Vec<MenuItem>>>,
     /// Visibility of the tray icon.
     pub visible: bool,
+}
 
-    pub(crate) rendered_icon: Option<TrayIconData>,
+impl Tray {
+    pub(crate) fn render_icon(&mut self, cx: &App) -> Result<()> {
+        if let Some(icon) = &self.icon {
+            let image = icon.to_image_data(cx.svg_renderer())?;
+            let bytes = image.as_bytes(0).unwrap_or_default();
+            let size = image.size(0);
+
+            self.icon_data = Some(TrayIconData {
+                data: Rc::new(bytes.to_vec()),
+                width: size.width.0 as u32,
+                height: size.height.0 as u32,
+            })
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
+#[allow(unused)]
 pub(crate) struct TrayIconData {
     pub(crate) data: Rc<Vec<u8>>,
     pub(crate) width: u32,
     pub(crate) height: u32,
-}
-
-impl TrayIconData {
-    pub(crate) fn from_render_image(image: &gpui::RenderImage) -> Self {
-        let bytes = image.as_bytes(0).unwrap_or_default();
-        let size = image.size(0);
-        Self {
-            data: Rc::new(bytes.to_vec()),
-            width: size.width.0 as u32,
-            height: size.height.0 as u32,
-        }
-    }
 }
 
 impl Tray {
@@ -45,10 +51,9 @@ impl Tray {
             tooltip: None,
             title: None,
             icon: None,
+            icon_data: None,
             menu_builder: None,
             visible: true,
-
-            rendered_icon: None,
         }
     }
 
