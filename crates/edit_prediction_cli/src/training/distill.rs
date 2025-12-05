@@ -6,6 +6,7 @@ use crate::{
     source_location::SourceLocation,
     training::{
         context::ContextType,
+        llm_client::LlmClient,
         teacher::{TeacherModel, TeacherOutput},
     },
 };
@@ -27,15 +28,42 @@ pub async fn run_distill(arguments: DistillArguments) -> Result<()> {
         .map(|line| serde_json::from_str(line).expect("Failed to parse JSON line"))
         .collect();
 
+    let llm_client = arguments.batch.map_or_else(
+        || Ok(LlmClient::plain()),
+        |cache_path| LlmClient::batch(&cache_path),
+    )?;
+
+    let mut teacher = TeacherModel::new(
+        "claude-sonnet-4-5".to_string(),
+        ContextType::CurrentFile,
+        llm_client,
+    );
+
+    let mut num_marked_for_batching = 0;
+
     for commit in split_commits {
-        let distilled = distill_one(commit).await?;
-        println!("{}", serde_json::to_string(&distilled)?);
+        if let Some(distilled) = distill_one(&mut teacher, commit).await? {
+            println!("{}", serde_json::to_string(&distilled)?);
+        } else {
+            if num_marked_for_batching == 0 {
+                log::warn!("Marked for batching");
+            }
+            num_marked_for_batching += 1;
+        }
     }
+
+    eprintln!(
+        "{} requests are marked for batching",
+        num_marked_for_batching
+    );
 
     Ok(())
 }
 
-pub async fn distill_one(commit: SplitCommit) -> Result<TeacherOutput> {
+pub async fn distill_one(
+    teacher: &mut TeacherModel,
+    commit: SplitCommit,
+) -> Result<Option<TeacherOutput>> {
     let cursor: SourceLocation = commit
         .cursor_position
         .parse()
@@ -52,8 +80,6 @@ pub async fn distill_one(commit: SplitCommit) -> Result<TeacherOutput> {
         edit_history: commit.edit_history, // todo: trim
         expected_patch: commit.expected_patch,
     };
-
-    let teacher = TeacherModel::new("claude-sonnet-4-5".to_string(), ContextType::CurrentFile);
 
     let prediction = teacher.predict(example).await;
 

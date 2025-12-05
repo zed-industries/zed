@@ -119,6 +119,8 @@ pub struct DistillArguments {
     split_commit_dataset: PathBuf,
     #[clap(long, value_enum, default_value_t = ContextType::CurrentFile)]
     context_type: ContextType,
+    #[clap(long)]
+    batch: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]

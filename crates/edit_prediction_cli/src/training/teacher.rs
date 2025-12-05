@@ -1,14 +1,18 @@
 use crate::{
     example::Example,
     source_location::SourceLocation,
-    training::context::{ContextType, collect_context, strip_special_tags},
+    training::{
+        context::{ContextType, collect_context, strip_special_tags},
+        llm_client::LlmClient,
+    },
 };
-use anthropic_sdk::{Anthropic, ContentBlock, MessageCreateBuilder};
+use anthropic_sdk::{ContentBlock, MessageCreateBuilder};
 use anyhow::Result;
 
 pub struct TeacherModel {
     llm_name: String,
     context: ContextType,
+    client: LlmClient,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -35,11 +39,15 @@ impl TeacherModel {
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
 
-    pub fn new(llm_name: String, context: ContextType) -> Self {
-        TeacherModel { llm_name, context }
+    pub fn new(llm_name: String, context: ContextType, client: LlmClient) -> Self {
+        TeacherModel {
+            llm_name,
+            context,
+            client,
+        }
     }
 
-    pub async fn predict(&self, input: Example) -> Result<TeacherOutput> {
+    pub async fn predict(&self, input: Example) -> Result<Option<TeacherOutput>> {
         let name = input.unique_name();
         let worktree_dir = input.setup_worktree(name).await?;
         let cursor: SourceLocation = input
@@ -54,15 +62,17 @@ impl TeacherModel {
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history);
 
-        let client = Anthropic::from_env()?;
-        let response = client
-            .messages()
-            .create(
+        let Some(response) = self
+            .client
+            .generate(
                 MessageCreateBuilder::new(self.llm_name.clone(), 16384)
                     .user(prompt.clone())
                     .build(),
             )
-            .await?;
+            .await?
+        else {
+            return Ok(None);
+        };
 
         let response_text = response
             .content
@@ -85,13 +95,29 @@ impl TeacherModel {
         let context_before_edit = strip_special_tags(&context);
         let diff = language::unified_diff(&context_before_edit, &context_after_edit);
 
-        Ok(TeacherOutput {
+        // zeta distill --batch batch_results.txt
+        // zeta distill
+        // 1. Run `zeta distill <2000 examples <- all examples>` for the first time
+        //  - store LLM requests in a batch, don't actual send the request
+        //  - send the batch (2000 requests) after all inputs are processed
+        // 2. `zeta send-batches`
+        //   - upload the batch to Anthropic
+
+        // https://platform.claude.com/docs/en/build-with-claude/batch-processing
+        // https://crates.io/crates/anthropic-sdk-rust
+
+        //   - poll for results
+        //   - when ready, store results in cache (a database)
+        // 3. `zeta distill` again
+        //    - use the cached results this time
+
+        Ok(Some(TeacherOutput {
             parsed_output,
             prompt,
             raw_llm_response: response_text,
             context,
             diff,
-        })
+        }))
     }
 
     fn parse_response(&self, content: &str) -> String {
@@ -170,7 +196,11 @@ mod tests {
 
     #[test]
     fn test_parse_response() {
-        let teacher = TeacherModel::new("test".to_string(), ContextType::CurrentFile);
+        let teacher = TeacherModel::new(
+            "test".to_string(),
+            ContextType::CurrentFile,
+            LlmClient::plain(),
+        );
         let response = "This is a test response.";
         let parsed = teacher.parse_response(response);
         assert_eq!(parsed, response.to_string());
@@ -207,7 +237,11 @@ mod tests {
 
     #[test]
     fn test_extract_editable_region() {
-        let teacher = TeacherModel::new("test".to_string(), ContextType::CurrentFile);
+        let teacher = TeacherModel::new(
+            "test".to_string(),
+            ContextType::CurrentFile,
+            LlmClient::plain(),
+        );
         let response = indoc::indoc! {"
             some lines
             are
