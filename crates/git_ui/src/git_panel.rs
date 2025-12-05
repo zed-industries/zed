@@ -95,6 +95,8 @@ actions!(
         ToggleFillCoAuthors,
         /// Toggles sorting entries by path vs status.
         ToggleSortByPath,
+        /// Toggles showing entries in tree vs flat view.
+        ToggleTreeView,
     ]
 );
 
@@ -125,6 +127,7 @@ struct GitMenuState {
     has_new_changes: bool,
     sort_by_path: bool,
     has_stash_items: bool,
+    tree_view: bool,
 }
 
 fn git_panel_context_menu(
@@ -169,6 +172,15 @@ fn git_panel_context_menu(
             )
             .separator()
             .entry(
+                if state.tree_view {
+                    "Tree View"
+                } else {
+                    "Flat View"
+                },
+                Some(Box::new(ToggleTreeView)),
+                move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
+            )
+            .entry(
                 if state.sort_by_path {
                     "Sort by Status"
                 } else {
@@ -208,8 +220,6 @@ struct SerializedGitPanel {
     amend_pending: bool,
     #[serde(default)]
     signoff_enabled: bool,
-    #[serde(default)]
-    view_mode: GitPanelViewMode,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -217,15 +227,6 @@ enum Section {
     Conflict,
     Tracked,
     New,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::Display, Default)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-enum GitPanelViewMode {
-    #[default]
-    Flat,
-    Tree,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -427,7 +428,6 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    view_mode: GitPanelViewMode,
     expanded_dirs: HashMap<TreeKey, bool>,
     directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
     optimistic_staging: HashMap<RepoPath, bool>,
@@ -490,13 +490,16 @@ impl GitPanel {
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-                if is_sort_by_path != was_sort_by_path {
+                let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+                let tree_view = GitPanelSettings::get_global(cx).tree_view;
+                if sort_by_path != was_sort_by_path || tree_view != was_tree_view {
                     this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
-                was_sort_by_path = is_sort_by_path
+                was_sort_by_path = sort_by_path;
+                was_tree_view = tree_view;
             })
             .detach();
 
@@ -593,7 +596,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                view_mode: GitPanelViewMode::Flat,
                 expanded_dirs: HashMap::default(),
                 directory_descendants: HashMap::default(),
                 optimistic_staging: HashMap::default(),
@@ -640,7 +642,6 @@ impl GitPanel {
         let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
-        let view_mode = self.view_mode;
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
             cx.background_executor()
@@ -668,7 +669,6 @@ impl GitPanel {
                                 width,
                                 amend_pending,
                                 signoff_enabled,
-                                view_mode,
                             })?,
                         )
                         .await?;
@@ -2861,18 +2861,17 @@ impl GitPanel {
         }
     }
 
-    fn set_view_mode(
-        &mut self,
-        view_mode: GitPanelViewMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.view_mode == view_mode {
-            return;
+    fn toggle_tree_view(&mut self, _: &ToggleTreeView, _: &mut Window, cx: &mut Context<Self>) {
+        let current_setting = GitPanelSettings::get_global(cx).tree_view;
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let fs = workspace.app_state().fs.clone();
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.update_settings_file(fs, move |settings, _cx| {
+                    settings.git_panel.get_or_insert_default().tree_view = Some(!current_setting);
+                });
+            })
         }
-        self.view_mode = view_mode;
-        self.serialize(cx);
-        self.update_visible_entries(window, cx);
     }
 
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
@@ -3008,7 +3007,8 @@ impl GitPanel {
         self.max_width_item_index = None;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-        let group_by_status = self.view_mode == GitPanelViewMode::Tree || !sort_by_path;
+        let tree_view = GitPanelSettings::get_global(cx).tree_view;
+        let group_by_status = tree_view || !sort_by_path;
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -3109,7 +3109,8 @@ impl GitPanel {
             entries.push(entry);
         };
 
-        if self.view_mode == GitPanelViewMode::Tree {
+        // todo! review the logic here. seems we can simplify here
+        if tree_view {
             if !conflict_entries.is_empty() {
                 push_entry(
                     &mut self.entries,
@@ -3125,7 +3126,8 @@ impl GitPanel {
                     &repo,
                     &mut seen_directories,
                 ) {
-                    let estimate = self.width_estimate_for_list_entry(&entry, path_style);
+                    let estimate =
+                        self.width_estimate_for_list_entry(tree_view, &entry, path_style);
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3150,7 +3152,8 @@ impl GitPanel {
                     &repo,
                     &mut seen_directories,
                 ) {
-                    let estimate = self.width_estimate_for_list_entry(&entry, path_style);
+                    let estimate =
+                        self.width_estimate_for_list_entry(tree_view, &entry, path_style);
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3172,7 +3175,8 @@ impl GitPanel {
                 for entry in
                     self.build_tree_entries(Section::New, new_entries, &repo, &mut seen_directories)
                 {
-                    let estimate = self.width_estimate_for_list_entry(&entry, path_style);
+                    let estimate =
+                        self.width_estimate_for_list_entry(tree_view, &entry, path_style);
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3195,7 +3199,8 @@ impl GitPanel {
                     None,
                 );
                 for entry in conflict_entries {
-                    let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
+                    let estimate =
+                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3217,7 +3222,8 @@ impl GitPanel {
                     );
                 }
                 for entry in changed_entries {
-                    let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
+                    let estimate =
+                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3236,7 +3242,8 @@ impl GitPanel {
                     None,
                 );
                 for entry in new_entries {
-                    let estimate = Some(self.status_width_estimate(&entry, path_style, 0));
+                    let estimate =
+                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
                     push_entry(
                         &mut self.entries,
                         &mut self.entries_indices,
@@ -3564,31 +3571,34 @@ impl GitPanel {
 
     fn status_width_estimate(
         &self,
+        tree_view: bool,
         entry: &GitStatusEntry,
         path_style: PathStyle,
         depth: usize,
     ) -> usize {
-        match self.view_mode {
-            GitPanelViewMode::Flat => Self::item_width_estimate(
+        if tree_view {
+            Self::item_width_estimate(0, entry.display_name(path_style).len(), depth)
+        } else {
+            Self::item_width_estimate(
                 entry.parent_dir(path_style).map(|s| s.len()).unwrap_or(0),
                 entry.display_name(path_style).len(),
                 0,
-            ),
-            GitPanelViewMode::Tree => {
-                Self::item_width_estimate(0, entry.display_name(path_style).len(), depth)
-            }
+            )
         }
     }
 
     fn width_estimate_for_list_entry(
         &self,
+        tree_view: bool,
         entry: &GitListEntry,
         path_style: PathStyle,
     ) -> Option<usize> {
         match entry {
-            GitListEntry::Status(status) => Some(self.status_width_estimate(status, path_style, 0)),
+            GitListEntry::Status(status) => {
+                Some(self.status_width_estimate(tree_view, status, path_style, 0))
+            }
             GitListEntry::TreeStatus(status) => {
-                Some(self.status_width_estimate(&status.entry, path_style, status.depth))
+                Some(self.status_width_estimate(tree_view, &status.entry, path_style, status.depth))
             }
             GitListEntry::Directory(dir) => {
                 Some(Self::item_width_estimate(0, dir.name.len(), dir.depth))
@@ -3625,6 +3635,7 @@ impl GitPanel {
                         has_new_changes,
                         sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
                         has_stash_items,
+                        tree_view: GitPanelSettings::get_global(cx).tree_view,
                     },
                     window,
                     cx,
@@ -3845,48 +3856,6 @@ impl GitPanel {
         })
     }
 
-    fn render_view_toggle(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let flat_selected = self.view_mode == GitPanelViewMode::Flat;
-        let tree_selected = self.view_mode == GitPanelViewMode::Tree;
-        let flat_panel = cx.weak_entity();
-        let tree_panel = cx.weak_entity();
-
-        h_flex()
-            .gap_0p5()
-            .child(
-                IconButton::new("git-view-flat", IconName::ListCollapse)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .selected_icon_color(Color::Selected)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(flat_selected)
-                    .tooltip(|_, cx| Tooltip::simple("Flat View", cx))
-                    .on_click(move |_, window, cx| {
-                        flat_panel
-                            .update(cx, |this, cx| {
-                                this.set_view_mode(GitPanelViewMode::Flat, window, cx);
-                            })
-                            .ok();
-                    }),
-            )
-            .child(
-                IconButton::new("git-view-tree", IconName::ListTree)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .selected_icon_color(Color::Selected)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(tree_selected)
-                    .tooltip(|_, cx| Tooltip::simple("Tree View", cx))
-                    .on_click(move |_, window, cx| {
-                        tree_panel
-                            .update(cx, |this, cx| {
-                                this.set_view_mode(GitPanelViewMode::Tree, window, cx);
-                            })
-                            .ok();
-                    }),
-            )
-    }
-
     fn render_panel_header(
         &self,
         window: &mut Window,
@@ -3928,7 +3897,6 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(self.render_view_toggle(window, cx))
                         .child(self.render_overflow_menu("overflow_menu"))
                         .child(
                             panel_filled_button(text)
@@ -4445,7 +4413,7 @@ impl GitPanel {
                                 items
                             }),
                         )
-                        .when(self.view_mode == GitPanelViewMode::Tree, |list| {
+                        .when(GitPanelSettings::get_global(cx).tree_view, |list| {
                             let indent_size = px(TREE_INDENT);
                             list.with_decoration(
                                 ui::indent_guides(indent_size, IndentGuideColors::panel(cx))
@@ -4624,6 +4592,7 @@ impl GitPanel {
                 has_new_changes: self.new_count > 0,
                 sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
                 has_stash_items: self.stash_entries.entries.len() > 0,
+                tree_view: GitPanelSettings::get_global(cx).tree_view,
             },
             window,
             cx,
@@ -4664,6 +4633,7 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let tree_view = GitPanelSettings::get_global(cx).tree_view;
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
@@ -4755,33 +4725,32 @@ impl GitPanel {
             .items_center()
             .gap_1()
             .flex_1()
-            .pl(if self.view_mode == GitPanelViewMode::Tree {
+            .pl(if tree_view {
                 px(depth as f32 * TREE_INDENT)
             } else {
                 px(0.)
             })
             .child(git_status_icon(status));
 
-        name_row = match self.view_mode {
-            GitPanelViewMode::Tree => name_row.child(
+        name_row = if tree_view {
+            name_row.child(
                 self.entry_label(display_name, label_color)
                     .when(status.is_deleted(), Label::strikethrough)
                     .truncate(),
-            ),
-            GitPanelViewMode::Flat => {
-                name_row.child(h_flex().items_center().flex_1().map(|this| {
-                    self.path_formatted(
-                        this,
-                        entry.parent_dir(path_style),
-                        path_color,
-                        display_name,
-                        label_color,
-                        path_style,
-                        git_path_style,
-                        status.is_deleted(),
-                    )
-                }))
-            }
+            )
+        } else {
+            name_row.child(h_flex().items_center().flex_1().map(|this| {
+                self.path_formatted(
+                    this,
+                    entry.parent_dir(path_style),
+                    path_color,
+                    display_name,
+                    label_color,
+                    path_style,
+                    git_path_style,
+                    status.is_deleted(),
+                )
+            }))
         };
 
         h_flex()
@@ -4852,17 +4821,15 @@ impl GitPanel {
                                         if click.modifiers().shift {
                                             this.stage_bulk(ix, cx);
                                         } else {
-                                            let list_entry = match this.view_mode {
-                                                GitPanelViewMode::Flat => {
-                                                    GitListEntry::Status(entry.clone())
-                                                }
-                                                GitPanelViewMode::Tree => {
+                                            let list_entry =
+                                                if GitPanelSettings::get_global(cx).tree_view {
                                                     GitListEntry::TreeStatus(GitTreeStatusEntry {
                                                         entry: entry.clone(),
                                                         depth,
                                                     })
-                                                }
-                                            };
+                                                } else {
+                                                    GitListEntry::Status(entry.clone())
+                                                };
                                             this.toggle_staged_for_entry(&list_entry, window, cx);
                                         }
                                         cx.stop_propagation();
@@ -5146,7 +5113,6 @@ impl GitPanel {
                     panel.width = serialized_panel.width;
                     panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
-                    panel.view_mode = serialized_panel.view_mode;
                     cx.notify();
                 })
             }
@@ -5254,6 +5220,7 @@ impl Render for GitPanel {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
+            .on_action(cx.listener(Self::toggle_tree_view))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)

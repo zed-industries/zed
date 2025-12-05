@@ -870,6 +870,10 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
+    /// Whether to show entries with tree or flat view in the panel
+    ///
+    /// Default: false
+    "tree_view": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
