@@ -3775,7 +3775,7 @@ impl Workspace {
                 let new_pane = self.add_pane(window, cx);
                 if self
                     .center
-                    .split(&split_off_pane, &new_pane, direction)
+                    .split(&split_off_pane, &new_pane, direction, cx)
                     .log_err()
                     .is_none()
                 {
@@ -3960,7 +3960,7 @@ impl Workspace {
                 let new_pane = self.add_pane(window, cx);
                 if self
                     .center
-                    .split(&self.active_pane, &new_pane, action.direction)
+                    .split(&self.active_pane, &new_pane, action.direction, cx)
                     .log_err()
                     .is_none()
                 {
@@ -4014,7 +4014,7 @@ impl Workspace {
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane, &to);
+            self.center.swap(&self.active_pane, &to, cx);
             cx.notify();
         }
     }
@@ -4022,7 +4022,7 @@ impl Workspace {
     pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction)
+            .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
             cx.notify();
@@ -4052,13 +4052,13 @@ impl Workspace {
             }
         } else {
             self.center
-                .resize(&self.active_pane, axis, amount, &self.bounds);
+                .resize(&self.active_pane, axis, amount, &self.bounds, cx);
         }
         cx.notify();
     }
 
     pub fn reset_pane_sizes(&mut self, cx: &mut Context<Self>) {
-        self.center.reset_pane_sizes();
+        self.center.reset_pane_sizes(cx);
         cx.notify();
     }
 
@@ -4244,7 +4244,7 @@ impl Workspace {
     ) -> Entity<Pane> {
         let new_pane = self.add_pane(window, cx);
         self.center
-            .split(&pane_to_split, &new_pane, split_direction)
+            .split(&pane_to_split, &new_pane, split_direction, cx)
             .unwrap();
         cx.notify();
         new_pane
@@ -4264,7 +4264,7 @@ impl Workspace {
         new_pane.update(cx, |pane, cx| {
             pane.add_item(item, true, true, None, window, cx)
         });
-        self.center.split(&pane, &new_pane, direction).unwrap();
+        self.center.split(&pane, &new_pane, direction, cx).unwrap();
         cx.notify();
     }
 
@@ -4289,7 +4289,7 @@ impl Workspace {
                     new_pane.update(cx, |pane, cx| {
                         pane.add_item(clone, true, true, None, window, cx)
                     });
-                    this.center.split(&pane, &new_pane, direction).unwrap();
+                    this.center.split(&pane, &new_pane, direction, cx).unwrap();
                     cx.notify();
                     new_pane
                 })
@@ -4336,7 +4336,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.center.remove(&pane).unwrap() {
+        if self.center.remove(&pane, cx).unwrap() {
             self.force_remove_pane(&pane, &focus_on, window, cx);
             self.unfollow_in_pane(&pane, window, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());

@@ -60,8 +60,9 @@ impl PaneGroup {
         old_pane: &Entity<Pane>,
         new_pane: &Entity<Pane>,
         direction: SplitDirection,
+        cx: &mut App,
     ) -> Result<()> {
-        match &mut self.root {
+        let result = match &mut self.root {
             Member::Pane(pane) => {
                 if pane == old_pane {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
@@ -71,7 +72,11 @@ impl PaneGroup {
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
+        };
+        if result.is_ok() {
+            self.mark_positions(cx);
         }
+        result
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -99,6 +104,7 @@ impl PaneGroup {
         &mut self,
         active_pane: &Entity<Pane>,
         direction: SplitDirection,
+        cx: &mut App,
     ) -> Result<bool> {
         if let Some(pane) = self.find_pane_at_border(direction)
             && pane == active_pane
@@ -106,7 +112,7 @@ impl PaneGroup {
             return Ok(false);
         }
 
-        if !self.remove(active_pane)? {
+        if !self.remove_internal(active_pane)? {
             return Ok(false);
         }
 
@@ -119,6 +125,7 @@ impl PaneGroup {
                 0
             };
             root.insert_pane(idx, active_pane);
+            self.mark_positions(cx);
             return Ok(true);
         }
 
@@ -128,6 +135,7 @@ impl PaneGroup {
             vec![Member::Pane(active_pane.clone()), self.root.clone()]
         };
         self.root = Member::Axis(PaneAxis::new(direction.axis(), members));
+        self.mark_positions(cx);
         Ok(true)
     }
 
@@ -142,7 +150,15 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &Entity<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &Entity<Pane>, cx: &mut App) -> Result<bool> {
+        let result = self.remove_internal(pane);
+        if let Ok(true) = result {
+            self.mark_positions(cx);
+        }
+        result
+    }
+
+    fn remove_internal(&mut self, pane: &Entity<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -160,6 +176,7 @@ impl PaneGroup {
         direction: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
+        cx: &mut App,
     ) {
         match &mut self.root {
             Member::Pane(_) => {}
@@ -167,22 +184,25 @@ impl PaneGroup {
                 let _ = axis.resize(pane, direction, amount, bounds);
             }
         };
+        self.mark_positions(cx);
     }
 
-    pub fn reset_pane_sizes(&mut self) {
+    pub fn reset_pane_sizes(&mut self, cx: &mut App) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => {
                 let _ = axis.reset_pane_sizes();
             }
         };
+        self.mark_positions(cx);
     }
 
-    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>) {
+    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>, cx: &mut App) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
         };
+        self.mark_positions(cx);
     }
 
     pub fn mark_positions(&mut self, cx: &mut App) {
@@ -245,8 +265,9 @@ impl PaneGroup {
         self.pane_at_pixel_position(target)
     }
 
-    pub fn invert_axies(&mut self) {
+    pub fn invert_axies(&mut self, cx: &mut App) {
         self.root.invert_pane_axies();
+        self.mark_positions(cx);
     }
 }
 

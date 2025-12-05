@@ -18,7 +18,6 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleAgentsPanel, window, cx| {
-            dbg!("here?");
             workspace.toggle_panel_focus::<AgentsPanel>(window, cx);
         });
     })
