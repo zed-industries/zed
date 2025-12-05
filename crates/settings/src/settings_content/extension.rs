@@ -26,6 +26,9 @@ pub struct ExtensionSettingsContent {
     ///
     /// Default: []
     pub allowed_env_var_providers: Option<Vec<Arc<str>>>,
+    /// Tracks which legacy LLM providers have been migrated. This is an internal
+    /// setting used to prevent the migration from running multiple times.
+    pub migrated_llm_providers: Option<Vec<Arc<str>>>,
 }
 
 /// A capability for an extension.

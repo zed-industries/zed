@@ -495,6 +495,20 @@ impl ExtensionProviderConfigurationView {
             cx.notify();
         });
 
+        // If env var is being enabled, clear any stored keychain credentials
+        // so there's only one source of truth for the API key
+        if new_allowed {
+            let credential_key = self.credential_key.clone();
+            let credentials_provider = <dyn CredentialsProvider>::global(cx);
+            cx.spawn(async move |_this, cx| {
+                credentials_provider
+                    .delete_credentials(&credential_key, cx)
+                    .await
+                    .log_err();
+            })
+            .detach();
+        }
+
         // If env var is being disabled, reload credentials from keychain
         if !new_allowed {
             self.reload_keychain_credentials(cx);

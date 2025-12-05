@@ -1139,11 +1139,23 @@ impl llm_provider::Host for WasmState {
 
         if let Some(env_var_name) = env_var_name {
             let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
-            // Use cached settings from WasmHost instead of going to main thread
+            // Read settings dynamically to get current allowed_env_var_providers
             let is_allowed = self
-                .host
-                .allowed_env_var_providers
-                .contains(&full_provider_id);
+                .on_main_thread({
+                    let full_provider_id = full_provider_id.clone();
+                    move |cx| {
+                        async move {
+                            cx.update(|cx| {
+                                crate::extension_settings::ExtensionSettings::get_global(cx)
+                                    .allowed_env_var_providers
+                                    .contains(&full_provider_id)
+                            })
+                        }
+                        .boxed_local()
+                    }
+                })
+                .await
+                .unwrap_or(false);
 
             if is_allowed {
                 if let Ok(value) = env::var(&env_var_name) {
@@ -1240,12 +1252,24 @@ impl llm_provider::Host for WasmState {
         };
 
         // Check if the user has allowed this provider to read env vars
-        // Use cached settings from WasmHost instead of going to main thread
+        // Read settings dynamically to get current allowed_env_var_providers
         let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
         let is_allowed = self
-            .host
-            .allowed_env_var_providers
-            .contains(&full_provider_id);
+            .on_main_thread({
+                let full_provider_id = full_provider_id.clone();
+                move |cx| {
+                    async move {
+                        cx.update(|cx| {
+                            crate::extension_settings::ExtensionSettings::get_global(cx)
+                                .allowed_env_var_providers
+                                .contains(&full_provider_id)
+                        })
+                    }
+                    .boxed_local()
+                }
+            })
+            .await
+            .unwrap_or(false);
 
         if !is_allowed {
             log::debug!(

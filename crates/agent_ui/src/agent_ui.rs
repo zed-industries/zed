@@ -371,26 +371,49 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
-    let default = settings.default_model.as_ref().map(to_selected_model);
+    // Filter out models from providers that are not authenticated
+    fn is_provider_authenticated(
+        selection: &LanguageModelSelection,
+        registry: &LanguageModelRegistry,
+        cx: &App,
+    ) -> bool {
+        let provider_id = LanguageModelProviderId::from(selection.provider.0.clone());
+        registry
+            .provider(&provider_id)
+            .map_or(false, |provider| provider.is_authenticated(cx))
+    }
+
+    let registry = LanguageModelRegistry::global(cx);
+    let registry_ref = registry.read(cx);
+
+    let default = settings
+        .default_model
+        .as_ref()
+        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
+        .map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
+        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
         .map(to_selected_model);
     let commit_message = settings
         .commit_message_model
         .as_ref()
+        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
         .map(to_selected_model);
     let thread_summary = settings
         .thread_summary_model
         .as_ref()
+        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
         .map(to_selected_model);
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
+        .filter(|s| is_provider_authenticated(s, registry_ref, cx))
         .map(to_selected_model)
         .collect::<Vec<_>>();
 
-    LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+    registry.update(cx, |registry, cx| {
         registry.select_default_model(default.as_ref(), cx);
         registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
         registry.select_commit_message_model(commit_message.as_ref(), cx);
