@@ -198,13 +198,23 @@ impl SlashCommand for DiagnosticsSlashCommand {
     }
 }
 
-#[derive(Default)]
 struct Options {
+    include_errors: bool,
     include_warnings: bool,
     path_matcher: Option<PathMatcher>,
 }
 
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            include_errors: true,
+            include_warnings: false,
+            path_matcher: None,
+        }
+    }
+}
 
 impl Options {
     fn parse(arguments: &[String], path_style: PathStyle) -> Self {
@@ -218,6 +228,7 @@ impl Options {
             }
         }
         Self {
+            include_errors: true,
             include_warnings,
             path_matcher,
         }
@@ -230,12 +241,14 @@ impl Options {
 
 pub fn collect_default_diagnostics_output(
     project: Entity<Project>,
+    include_errors: bool,
     include_warnings: bool,
     cx: &mut App,
 ) -> Task<Result<Option<SlashCommandOutput>>> {
     collect_diagnostics(
         project,
         Options {
+            include_errors,
             include_warnings,
             path_matcher: None,
         },
@@ -297,11 +310,17 @@ fn collect_diagnostics(
                 continue;
             }
 
-            project_summary.error_count += summary.error_count;
+            let has_errors = options.include_errors && summary.error_count > 0;
+            let has_warnings = options.include_warnings && summary.warning_count > 0;
+            if !has_errors && !has_warnings {
+                continue;
+            }
+
+            if options.include_errors {
+                project_summary.error_count += summary.error_count;
+            }
             if options.include_warnings {
                 project_summary.warning_count += summary.warning_count;
-            } else if summary.error_count == 0 {
-                continue;
             }
 
             let last_end = output.text.len();
@@ -316,7 +335,12 @@ fn collect_diagnostics(
                 .log_err()
             {
                 let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot())?;
-                collect_buffer_diagnostics(&mut output, &snapshot, options.include_warnings);
+                collect_buffer_diagnostics(
+                    &mut output,
+                    &snapshot,
+                    options.include_warnings,
+                    options.include_errors,
+                );
             }
 
             if !glob_is_exact_file_match {
@@ -373,10 +397,11 @@ pub fn collect_buffer_diagnostics(
     output: &mut SlashCommandOutput,
     snapshot: &BufferSnapshot,
     include_warnings: bool,
+    include_errors: bool,
 ) {
     for (_, group) in snapshot.diagnostic_groups(None) {
         let entry = &group.entries[group.primary_ix];
-        collect_diagnostic(output, entry, snapshot, include_warnings)
+        collect_diagnostic(output, entry, snapshot, include_warnings, include_errors)
     }
 }
 
@@ -385,6 +410,7 @@ fn collect_diagnostic(
     entry: &DiagnosticEntryRef<'_, Anchor>,
     snapshot: &BufferSnapshot,
     include_warnings: bool,
+    include_errors: bool,
 ) {
     const EXCERPT_EXPANSION_SIZE: u32 = 2;
     const MAX_MESSAGE_LENGTH: usize = 2000;
@@ -396,7 +422,12 @@ fn collect_diagnostic(
             }
             ("warning", IconName::Warning)
         }
-        DiagnosticSeverity::ERROR => ("error", IconName::XCircle),
+        DiagnosticSeverity::ERROR => {
+            if !include_errors {
+                return;
+            }
+            ("error", IconName::XCircle)
+        }
         _ => return,
     };
     let prev_len = output.text.len();

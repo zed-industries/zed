@@ -85,7 +85,7 @@ You can type `@` to mention files, directories, symbols, previous threads, rules
 
 Copying images and pasting them in the panel's message editor is also supported.
 
-Use `@diagnostics` when you want to inject the latest language-server diagnostics (errors by default) directly into your prompt, giving the model an instant snapshot of current issues.
+Use `@diagnostics` when you want to inject the latest language-server diagnostics directly into your prompt—the completion menu shows how many errors and warnings are available so you can pick errors only, warnings only, or both without leaving the thread.
 
 ### Selection as Context
 

@@ -39,6 +39,8 @@ pub enum MentionUri {
         name: String,
     },
     Diagnostics {
+        #[serde(default = "default_include_errors")]
+        include_errors: bool,
         #[serde(default)]
         include_warnings: bool,
     },
@@ -129,12 +131,19 @@ impl MentionUri {
                         name,
                     })
                 } else if path == "/agent/diagnostics" {
-                    let include_warnings = url
-                        .query_pairs()
-                        .find(|(key, _)| key == "include_warnings")
-                        .map(|(_, value)| value == "true")
-                        .unwrap_or(false);
-                    Ok(Self::Diagnostics { include_warnings })
+                    let mut include_errors = default_include_errors();
+                    let mut include_warnings = false;
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "include_warnings" => include_warnings = value == "true",
+                            "include_errors" => include_errors = value == "true",
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+                    Ok(Self::Diagnostics {
+                        include_errors,
+                        include_warnings,
+                    })
                 } else if path.starts_with("/agent/pasted-image") {
                     Ok(Self::PastedImage)
                 } else if path.starts_with("/agent/untitled-buffer") {
@@ -301,12 +310,18 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
-            MentionUri::Diagnostics { include_warnings } => {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path("/agent/diagnostics");
                 if *include_warnings {
                     url.query_pairs_mut()
                         .append_pair("include_warnings", "true");
+                }
+                if !include_errors {
+                    url.query_pairs_mut().append_pair("include_errors", "false");
                 }
                 url
             }
@@ -321,6 +336,10 @@ impl fmt::Display for MentionLink<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
     }
+}
+
+fn default_include_errors() -> bool {
+    true
 }
 
 fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
@@ -507,7 +526,28 @@ mod tests {
         let uri = "zed:///agent/diagnostics?include_warnings=true";
         let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
         match &parsed {
-            MentionUri::Diagnostics { include_warnings } => {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(include_errors);
+                assert!(include_warnings);
+            }
+            _ => panic!("Expected Diagnostics variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), uri);
+    }
+
+    #[test]
+    fn test_parse_diagnostics_uri_warnings_only() {
+        let uri = "zed:///agent/diagnostics?include_warnings=true&include_errors=false";
+        let parsed = MentionUri::parse(uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => {
+                assert!(!include_errors);
                 assert!(include_warnings);
             }
             _ => panic!("Expected Diagnostics variant"),

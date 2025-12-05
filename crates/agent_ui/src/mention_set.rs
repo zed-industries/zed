@@ -229,9 +229,10 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
-            MentionUri::Diagnostics { include_warnings } => {
-                self.confirm_mention_for_diagnostics(include_warnings, cx)
-            }
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
@@ -524,6 +525,7 @@ impl MentionSet {
 
     fn confirm_mention_for_diagnostics(
         &self,
+        include_errors: bool,
         include_warnings: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
@@ -531,7 +533,8 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
-        let diagnostics_task = collect_default_diagnostics_output(project, include_warnings, cx);
+        let diagnostics_task =
+            collect_default_diagnostics_output(project, include_errors, include_warnings, cx);
         cx.spawn(async move |_, _| {
             let output = diagnostics_task.await?;
             let content = output
