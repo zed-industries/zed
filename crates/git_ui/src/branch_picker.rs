@@ -868,7 +868,9 @@ impl PickerDelegate for BranchListDelegate {
                 .max_w_48()
                 .child(h_flex().mr_1().child(icon_element))
                 .child(
-                    HighlightedLabel::new(branch.name().to_string(), positions.clone()).truncate(),
+                    HighlightedLabel::new(branch.name().to_string(), positions.clone())
+                        .single_line()
+                        .truncate(),
                 )
                 .into_any_element(),
         };
@@ -955,18 +957,13 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        if matches!(
-            self.state,
-            PickerState::CreateRemote(_) | PickerState::NewRemote | PickerState::NewBranch
-        ) {
-            return None;
-        }
-        let label = if self.display_remotes {
-            "Remote"
-        } else {
-            "Local"
-        };
-        Some(
+        matches!(self.state, PickerState::List).then(|| {
+            let label = if self.display_remotes {
+                "Remote"
+            } else {
+                "Local"
+            };
+
             h_flex()
                 .w_full()
                 .p_1p5()
@@ -974,8 +971,8 @@ impl PickerDelegate for BranchListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                .into_any(),
-        )
+                .into_any()
+        })
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
