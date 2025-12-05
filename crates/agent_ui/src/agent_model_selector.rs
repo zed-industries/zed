@@ -63,6 +63,10 @@ impl AgentModelSelector {
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
     }
+
+    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+        self.selector.read(cx).delegate.active_model(cx)
+    }
 }
 
 impl Render for AgentModelSelector {
