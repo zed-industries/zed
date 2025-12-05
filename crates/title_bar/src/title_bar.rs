@@ -461,7 +461,7 @@ impl TitleBar {
                         title_bar
                             .workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_worktree_security_modal(window, cx)
+                                workspace.show_worktree_security_modal(true, window, cx)
                             })
                             .log_err();
                     })

@@ -73,9 +73,10 @@ impl Render for SecurityModal {
                             .child(Headline::new(header_label).size(HeadlineSize::Small)),
                     )
                     .children(self.paths.iter().map(|path| {
-                        h_flex()
-                            .pl(IconSize::default().rems() + rems(0.5))
-                            .child(Label::new(path.display().to_string()).color(Color::Muted))
+                        h_flex().pl(IconSize::default().rems() + rems(0.5)).child(
+                            Label::new(self.shorten_path(path).display().to_string())
+                                .color(Color::Muted),
+                        )
                     })),
             )
             .child(
@@ -142,19 +143,23 @@ impl SecurityModal {
             let Some(single_path) = self.paths.iter().next() else {
                 return Cow::Borrowed("Trust all projects in the parent folders");
             };
-            match single_path.parent().map(|path| match &self.home_dir {
-                Some(home_dir) => path
-                    .strip_prefix(home_dir)
-                    .map(|stripped| Path::new("~").join(stripped))
-                    .map(Cow::Owned)
-                    .unwrap_or(Cow::Borrowed(path)),
-                None => Cow::Borrowed(path),
-            }) {
+            match single_path.parent().map(|path| self.shorten_path(path)) {
                 Some(parent) => Cow::Owned(format!("Trust all projects in the {parent:?} folder")),
                 None => Cow::Borrowed("Trust all projects in the parent folders"),
             }
         } else {
             Cow::Borrowed("Trust all projects in the parent folders")
+        }
+    }
+
+    fn shorten_path<'a>(&self, path: &'a Path) -> Cow<'a, Path> {
+        match &self.home_dir {
+            Some(home_dir) => path
+                .strip_prefix(home_dir)
+                .map(|stripped| Path::new("~").join(stripped))
+                .map(Cow::Owned)
+                .unwrap_or(Cow::Borrowed(path)),
+            None => Cow::Borrowed(path),
         }
     }
 
@@ -177,7 +182,7 @@ impl SecurityModal {
         self.dismiss(cx);
     }
 
-    fn dismiss(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.dismissed = true;
         cx.emit(DismissEvent);
     }
