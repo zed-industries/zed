@@ -1558,8 +1558,8 @@ mod tests {
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_branch());
                 assert_eq!(last_match.name(), "new-feature-branch");
-                // State remains List because there are other matches besides NewBranch
-                assert!(matches!(picker.delegate.state, PickerState::List));
+                // State is NewBranch because no existing branches fuzzy-match the query
+                assert!(matches!(picker.delegate.state, PickerState::NewBranch));
                 picker.delegate.confirm(false, window, cx);
             })
         });
