@@ -272,8 +272,9 @@ impl FileHistoryView {
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
+                                    .w_full()
                                     .gap_1()
-                                    .flex_1()
                                     .child(
                                         Label::new(entry.author_name.clone())
                                             .size(LabelSize::Small)
