@@ -4,13 +4,14 @@ use std::{
 };
 
 use collections::HashSet;
+use gpui::BorrowAppContext;
 use gpui::{DismissEvent, EventEmitter, Focusable};
 use project::trusted_worktrees::TrustedWorktreesStorage;
+use theme::ActiveTheme;
 use ui::{
-    BorrowAppContext, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable as _, Color, Context,
-    Div, Element, ElevationIndex, Icon, IconName, IconSize, InteractiveElement as _, IntoElement,
-    Label, ListSeparator, ParentElement as _, Render, SelectableButton, Styled, StyledExt as _,
-    ToggleState, Window, div, h_flex, rems, v_flex,
+    AlertModal, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color, Context,
+    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, Label, LabelCommon as _,
+    ListBulletItem, ParentElement as _, Render, Styled, ToggleState, Window, h_flex, rems, v_flex,
 };
 
 use crate::{DismissDecision, ModalView};
@@ -48,21 +49,81 @@ impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.paths.is_empty() {
             self.dismiss(cx);
-            return div().into_any();
+            return v_flex().into_any_element();
         }
 
-        v_flex()
-            .id("security-modal")
-            .elevation_3(cx)
-            .w(rems(34.))
-            .size_full()
-            .p_2()
-            .child(self.render_header().size_full())
-            .child(div().child(ListSeparator).size_full())
-            .child(self.render_explanation().size_full())
-            .child(div().child(ListSeparator).size_full())
-            .child(self.render_footer(cx).size_full())
-            .into_any()
+        let header_label = if self.paths.len() == 1 {
+            "Unrecognized Workspace"
+        } else {
+            "Unrecognized Workspaces"
+        };
+
+        let trust_label = self.build_trust_label();
+
+        AlertModal::new("security-modal")
+            .header(
+                v_flex()
+                    .p_3()
+                    .bg(cx.theme().colors().background)
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(Icon::new(IconName::Warning).color(Color::Warning))
+                            .child(Headline::new(header_label).size(HeadlineSize::Small)),
+                    )
+                    .children(self.paths.iter().map(|path| {
+                        h_flex()
+                            .pl(IconSize::default().rems() + rems(0.5))
+                            .child(Label::new(path.display().to_string()).color(Color::Muted))
+                    })),
+            )
+            .child(
+                "Untrusted workspaces are opened in Restricted Mode to protect your system.
+Review .zed/settings.json for any extensions or commands configured by this project.",
+            )
+            .child(
+                v_flex()
+                    .mt_2()
+                    .child(Label::new("Restricted mode prevents:").color(Color::Muted))
+                    .child(ListBulletItem::new("Project settings from being applied"))
+                    .child(ListBulletItem::new("Language servers from running"))
+                    .child(ListBulletItem::new("MCP integrations from installing")),
+            )
+            .footer(
+                h_flex()
+                    .p_3()
+                    .justify_between()
+                    .child(
+                        Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
+                            .label(trust_label)
+                            .on_click(cx.listener(|security_modal, state: &ToggleState, _, cx| {
+                                security_modal.trust_parents = state.selected();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("open-in-restricted-mode", "Restricted Mode")
+                                    .color(Color::Muted)
+                                    .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                        security_modal.dismiss(cx);
+                                        cx.stop_propagation();
+                                    })),
+                            )
+                            .child(
+                                Button::new("trust-and-continue", "Trust and Continue")
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                        security_modal.trust_and_dismiss(cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .width(rems(40.))
+            .into_any_element()
     }
 }
 
@@ -76,47 +137,10 @@ impl SecurityModal {
         }
     }
 
-    fn render_header(&self) -> Div {
-        let header_label = if self.paths.len() == 1 {
-            "Do you trust the authors of this project?"
-        } else {
-            "Do you trust the authors of these projects?"
-        };
-        let mut header = v_flex().child(
-            h_flex()
-                .gap_1()
-                .justify_start()
-                .child(Icon::new(IconName::Warning).color(Color::Warning))
-                .child(div().child(Label::new(header_label))),
-        );
-        for path in &self.paths {
-            header = header.child(
-                h_flex()
-                    .gap_1()
-                    .justify_start()
-                    .child(div().size(IconSize::default().rems()))
-                    .child(div().child(Label::new(path.display().to_string()))),
-            );
-        }
-        header
-    }
-
-    fn render_explanation(&self) -> Div {
-        div().child(Label::new(
-            "Untrusted workspaces are opened in Restricted Mode to protect your system.
-
-Restricted mode prevents:
- — Project settings from being applied
- — Language servers from running
- — MCP integrations from installing
-",
-        ))
-    }
-
-    fn render_footer(&self, cx: &mut Context<Self>) -> Div {
-        let trust_label = if self.paths.len() == 1 {
+    fn build_trust_label(&self) -> Cow<'static, str> {
+        if self.paths.len() == 1 {
             let Some(single_path) = self.paths.iter().next() else {
-                return div();
+                return Cow::Borrowed("Trust all projects in the parent folders");
             };
             match single_path.parent().map(|path| match &self.home_dir {
                 Some(home_dir) => path
@@ -131,55 +155,26 @@ Restricted mode prevents:
             }
         } else {
             Cow::Borrowed("Trust all projects in the parent folders")
-        };
+        }
+    }
 
-        h_flex()
-            .justify_end()
-            .child(
-                Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
-                    .label(trust_label)
-                    .on_click(cx.listener(|security_modal, state: &ToggleState, _, cx| {
-                        security_modal.trust_parents = state.selected();
-                        cx.notify();
-                    })),
-            )
-            .child(
-                h_flex()
-                    .child(
-                        Button::new("open-in-restricted-mode", "Open in Restricted Mode")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                security_modal.dismiss(cx);
-                                cx.stop_propagation();
-                            })),
-                    )
-                    .child(
-                        Button::new("trust-and-continue", "Trust and continue")
-                            .style(ButtonStyle::Filled)
-                            .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .layer(ElevationIndex::ModalSurface)
-                            .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                if cx.has_global::<TrustedWorktreesStorage>() {
-                                    cx.update_global::<TrustedWorktreesStorage, _>(
-                                        |trusted_wortrees_storage, cx| {
-                                            let mut paths_to_trust = security_modal.paths.clone();
-                                            if security_modal.trust_parents {
-                                                paths_to_trust.extend(
-                                                    security_modal.paths.iter().filter_map(
-                                                        |path| Some(path.parent()?.to_owned()),
-                                                    ),
-                                                );
-                                            }
-                                            trusted_wortrees_storage.trust(paths_to_trust, cx);
-                                        },
-                                    );
-                                }
+    fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
+        if cx.has_global::<TrustedWorktreesStorage>() {
+            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
+                let mut paths_to_trust = self.paths.clone();
+                if self.trust_parents {
+                    paths_to_trust.extend(
+                        self.paths
+                            .iter()
+                            .filter_map(|path| Some(path.parent()?.to_owned())),
+                    );
+                }
 
-                                security_modal.dismiss(cx);
-                                cx.stop_propagation();
-                            })),
-                    ),
-            )
+                trusted_worktrees_storage.trust(paths_to_trust, cx);
+            });
+        }
+
+        self.dismiss(cx);
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
