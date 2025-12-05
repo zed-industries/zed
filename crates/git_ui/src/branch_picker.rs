@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem,
+    ListItemSpacing, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -440,13 +440,6 @@ impl BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn loader(&self) -> AnyElement {
-        Icon::new(IconName::LoadCircle)
-            .size(IconSize::Small)
-            .with_rotate_animation(3)
-            .into_any_element()
-    }
-
     fn delete_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
@@ -818,67 +811,35 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.clone()
-            && matches!(entry, Entry::NewBranch { .. })
-        {
-            let tooltip_text = format!("Create branch based off default: {default_branch}");
+        let entry_icon = match entry {
+            Entry::NewUrl { .. } | Entry::NewBranch { .. } => {
+                Icon::new(IconName::Plus).color(Color::Muted)
+            }
 
-            Some(
-                IconButton::new("branch-from-default", IconName::GitBranchAlt)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.delegate.set_selected_index(ix, window, cx);
-                        this.delegate.confirm(true, window, cx);
-                    }))
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action(tooltip_text.clone(), &menu::SecondaryConfirm, cx)
-                    }),
-            )
-        } else {
-            None
+            Entry::Branch { .. } => {
+                if self.display_remotes {
+                    Icon::new(IconName::Screen).color(Color::Muted)
+                } else {
+                    Icon::new(IconName::GitBranchAlt).color(Color::Muted)
+                }
+            }
         };
 
-        let icon_element = if self.display_remotes {
-            Icon::new(IconName::Screen)
-        } else {
-            Icon::new(IconName::GitBranchAlt)
-        };
-
-        let entry_name = match entry {
-            Entry::NewUrl { .. } => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new("Create remote repository".to_string())
-                        .single_line()
-                        .truncate(),
-                )
+        let entry_title = match entry {
+            Entry::NewUrl { .. } => Label::new("Create Remote Repository")
+                .single_line()
+                .truncate()
                 .into_any_element(),
-            Entry::NewBranch { name } => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new(format!("Create branch \"{name}\"…"))
-                        .single_line()
-                        .truncate(),
-                )
+            Entry::NewBranch { name } => Label::new(format!("Create Branch: \"{name}\"…"))
+                .single_line()
+                .truncate()
                 .into_any_element(),
-            Entry::Branch { branch, positions } => h_flex()
-                .max_w_48()
-                .child(h_flex().mr_1().child(icon_element))
-                .child(
-                    HighlightedLabel::new(branch.name().to_string(), positions.clone())
-                        .single_line()
-                        .truncate(),
-                )
-                .into_any_element(),
+            Entry::Branch { branch, positions } => {
+                HighlightedLabel::new(branch.name().to_string(), positions.clone())
+                    .single_line()
+                    .truncate()
+                    .into_any_element()
+            }
         };
 
         Some(
@@ -886,75 +847,89 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .tooltip({
-                    match entry {
-                        Entry::Branch { branch, .. } => Tooltip::text(branch.name().to_string()),
-                        Entry::NewUrl { .. } => {
-                            Tooltip::text("Create remote repository".to_string())
-                        }
-                        Entry::NewBranch { name } => {
-                            Tooltip::text(format!("Create branch \"{name}\""))
-                        }
-                    }
-                })
                 .child(
-                    v_flex()
+                    h_flex()
                         .w_full()
-                        .overflow_hidden()
+                        .gap_3()
+                        .flex_grow()
+                        .child(entry_icon)
                         .child(
-                            h_flex()
-                                .gap_6()
-                                .justify_between()
-                                .overflow_x_hidden()
-                                .child(entry_name)
-                                .when_some(commit_time, |label, commit_time| {
-                                    label.child(
-                                        Label::new(commit_time)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .into_element(),
-                                    )
-                                }),
-                        )
-                        .when(self.style == BranchListStyle::Modal, |el| {
-                            el.child(div().max_w_96().child({
-                                let message = match entry {
-                                    Entry::NewUrl { url } => format!("based off {url}"),
-                                    Entry::NewBranch { .. } => {
-                                        if let Some(current_branch) =
-                                            self.repo.as_ref().and_then(|repo| {
-                                                repo.read(cx).branch.as_ref().map(|b| b.name())
-                                            })
-                                        {
-                                            format!("based off {}", current_branch)
-                                        } else {
-                                            "based off the current branch".to_string()
-                                        }
-                                    }
-                                    Entry::Branch { .. } => {
-                                        let show_author_name = ProjectSettings::get_global(cx)
-                                            .git
-                                            .branch_picker
-                                            .show_author_name;
+                            v_flex()
+                                .id("info_container")
+                                .w_full()
+                                .child(div().max_w_3_4().child(entry_title))
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .gap_1p5()
+                                        .when(self.style == BranchListStyle::Modal, |el| {
+                                            el.child(div().max_w_96().child({
+                                                let message = match entry {
+                                                    Entry::NewUrl { url } => {
+                                                        format!("Based off {url}")
+                                                    }
+                                                    Entry::NewBranch { .. } => {
+                                                        if let Some(current_branch) =
+                                                            self.repo.as_ref().and_then(|repo| {
+                                                                repo.read(cx)
+                                                                    .branch
+                                                                    .as_ref()
+                                                                    .map(|b| b.name())
+                                                            })
+                                                        {
+                                                            format!("Based off {}", current_branch)
+                                                        } else {
+                                                            "Based off the current branch"
+                                                                .to_string()
+                                                        }
+                                                    }
+                                                    Entry::Branch { .. } => {
+                                                        let show_author_name =
+                                                            ProjectSettings::get_global(cx)
+                                                                .git
+                                                                .branch_picker
+                                                                .show_author_name;
 
-                                        subject.map_or("no commits found".into(), |subject| {
-                                            if show_author_name && author_name.is_some() {
-                                                format!("{} • {}", author_name.unwrap(), subject)
-                                            } else {
-                                                subject.to_string()
-                                            }
+                                                        subject.map_or(
+                                                            "No commits found".into(),
+                                                            |subject| {
+                                                                if show_author_name
+                                                                    && author_name.is_some()
+                                                                {
+                                                                    format!(
+                                                                        "{}  •  {}",
+                                                                        author_name.unwrap(),
+                                                                        subject
+                                                                    )
+                                                                } else {
+                                                                    subject.to_string()
+                                                                }
+                                                            },
+                                                        )
+                                                    }
+                                                };
+
+                                                Label::new(message)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                            }))
                                         })
-                                    }
-                                };
-
-                                Label::new(message)
-                                    .size(LabelSize::Small)
-                                    .truncate()
-                                    .color(Color::Muted)
-                            }))
-                        }),
-                )
-                .end_slot::<IconButton>(icon),
+                                        .when_some(commit_time, |label, commit_time| {
+                                            label.child(
+                                                Label::new(commit_time)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .when_some(
+                                    entry.as_branch().map(|b| b.name().to_string()),
+                                    |this, branch_name| this.tooltip(Tooltip::text(branch_name)),
+                                ),
+                        ),
+                ),
         )
     }
 
