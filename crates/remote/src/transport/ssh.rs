@@ -668,6 +668,8 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        const CONNECT_TIMEOUT_SECS: &str = "10";
+
         match self
             .socket
             .run_command(
@@ -676,6 +678,8 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
+                    "--connect-timeout",
+                    CONNECT_TIMEOUT_SECS,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -701,7 +705,15 @@ impl SshRemoteConnection {
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
+                        &[
+                            "--connect-timeout",
+                            CONNECT_TIMEOUT_SECS,
+                            "--tries",
+                            "1",
+                            url,
+                            "-O",
+                            &tmp_path_gz.display(self.path_style()),
+                        ],
                         true,
                     )
                     .await
