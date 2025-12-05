@@ -1335,6 +1335,7 @@ struct OverrideEntry {
 struct InjectionPatternConfig {
     language: Option<Box<str>>,
     combined: bool,
+    indent: bool,
 }
 
 #[derive(Debug)]
@@ -2048,6 +2049,10 @@ impl Language {
 impl LanguageScope {
     pub fn path_suffixes(&self) -> &[String] {
         self.language.path_suffixes()
+    }
+
+    pub fn language(&self) -> &Arc<Language> {
+        &self.language
     }
 
     pub fn language_name(&self) -> LanguageName {
