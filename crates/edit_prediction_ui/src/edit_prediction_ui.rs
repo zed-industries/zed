@@ -17,7 +17,7 @@ use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
 pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
-pub use sweep_api_token_modal::SweepApiKeyModal;
+pub use sweep_api_token_modal::ExternalProviderApiKeyModal;
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 

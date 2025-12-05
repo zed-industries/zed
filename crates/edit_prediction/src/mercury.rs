@@ -82,7 +82,6 @@ impl Mercury {
                 editable_range,
                 context_range.clone(),
             );
-            let prompt2 = prompt.clone();
 
             let inputs = EditPredictionInputs {
                 events: events,
@@ -161,8 +160,6 @@ impl Mercury {
 
             let id = mem::take(&mut response.id);
             let response_str = text_from_response(response).unwrap_or_default();
-            eprintln!("{prompt2}");
-            eprintln!("{response_str}");
 
             let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
             let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);

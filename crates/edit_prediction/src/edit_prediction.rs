@@ -522,6 +522,15 @@ impl EditPredictionStore {
             .is_some()
     }
 
+    pub fn has_mercury_api_token(&self) -> bool {
+        self.mercury
+            .api_token
+            .clone()
+            .now_or_never()
+            .flatten()
+            .is_some()
+    }
+
     #[cfg(feature = "eval-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
