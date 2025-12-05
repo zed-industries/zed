@@ -8,6 +8,7 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
+use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
@@ -41,6 +42,12 @@ use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
+
+pub struct InlineAssistRatingFeatureFlag;
+
+impl FeatureFlag for InlineAssistRatingFeatureFlag {
+    const NAME: &'static str = "inline-assist-rating";
+}
 
 enum RatingState {
     Pending,
@@ -508,7 +515,6 @@ impl<T: 'static> PromptEditor<T> {
 
         let prompt = self.editor.read(cx).text(cx);
 
-        dbg!("SENDING TELEMETRY");
         telemetry::event!(
             "Inline Assistant Rated",
             rating = "positive",
@@ -691,27 +697,8 @@ impl<T: 'static> PromptEditor<T> {
                             .into_any_element(),
                     ]
                 } else {
+                    let show_rating_buttons = cx.has_flag::<InlineAssistRatingFeatureFlag>();
                     let rated = self.rated.rating_id().is_some();
-
-                    let thumbs_down = IconButton::new("thumbs-down", IconName::ThumbsDown)
-                        .icon_color(if rated { Color::Muted } else { Color::Default })
-                        .shape(IconButtonShape::Square)
-                        .disabled(rated)
-                        .tooltip(Tooltip::text("Bad result"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.rate_negative(&ThumbsDownResult, window, cx);
-                        }))
-                        .into_any_element();
-
-                    let thumbs_up = IconButton::new("thumbs-up", IconName::ThumbsUp)
-                        .icon_color(if rated { Color::Muted } else { Color::Default })
-                        .shape(IconButtonShape::Square)
-                        .disabled(rated)
-                        .tooltip(Tooltip::text("Good result"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.rate_positive(&ThumbsUpResult, window, cx);
-                        }))
-                        .into_any_element();
 
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
@@ -724,27 +711,59 @@ impl<T: 'static> PromptEditor<T> {
                         }))
                         .into_any_element();
 
-                    match &self.mode {
-                        PromptEditorMode::Terminal { .. } => vec![
-                            thumbs_down,
-                            thumbs_up,
-                            accept,
-                            IconButton::new("confirm", IconName::PlayFilled)
-                                .icon_color(Color::Info)
+                    let mut buttons = Vec::new();
+
+                    if show_rating_buttons {
+                        buttons.push(
+                            IconButton::new("thumbs-down", IconName::ThumbsDown)
+                                .icon_color(if rated { Color::Muted } else { Color::Default })
                                 .shape(IconButtonShape::Square)
-                                .tooltip(|_window, cx| {
-                                    Tooltip::for_action(
-                                        "Execute Generated Command",
-                                        &menu::SecondaryConfirm,
-                                        cx,
-                                    )
-                                })
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(PromptEditorEvent::ConfirmRequested { execute: true });
+                                .disabled(rated)
+                                .tooltip(Tooltip::text("Bad result"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.rate_negative(&ThumbsDownResult, window, cx);
                                 }))
                                 .into_any_element(),
-                        ],
-                        PromptEditorMode::Buffer { .. } => vec![thumbs_down, thumbs_up, accept],
+                        );
+
+                        buttons.push(
+                            IconButton::new("thumbs-up", IconName::ThumbsUp)
+                                .icon_color(if rated { Color::Muted } else { Color::Default })
+                                .shape(IconButtonShape::Square)
+                                .disabled(rated)
+                                .tooltip(Tooltip::text("Good result"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.rate_positive(&ThumbsUpResult, window, cx);
+                                }))
+                                .into_any_element(),
+                        );
+                    }
+
+                    buttons.push(accept);
+
+                    match &self.mode {
+                        PromptEditorMode::Terminal { .. } => {
+                            buttons.push(
+                                IconButton::new("confirm", IconName::PlayFilled)
+                                    .icon_color(Color::Info)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::for_action(
+                                            "Execute Generated Command",
+                                            &menu::SecondaryConfirm,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(PromptEditorEvent::ConfirmRequested {
+                                            execute: true,
+                                        });
+                                    }))
+                                    .into_any_element(),
+                            );
+                            buttons
+                        }
+                        PromptEditorMode::Buffer { .. } => buttons,
                     }
                 }
             }
