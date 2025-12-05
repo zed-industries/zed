@@ -1,11 +1,6 @@
 mod persistence;
 
-use std::{
-    cmp::{self, Reverse},
-    collections::HashMap,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp, collections::HashMap, sync::Arc, time::Duration};
 
 use client::parse_zed_link;
 use command_palette_hooks::{
@@ -318,23 +313,22 @@ impl PickerDelegate for CommandPaletteDelegate {
         let is_zed_link = parse_zed_link(query_str, cx).is_some();
 
         let task = cx.background_spawn({
-            let mut commands = self.all_commands.clone();
+            let commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
             let query = normalize_action_query(query_str);
             let query_for_link = query_str.to_string();
             async move {
-                commands.sort_by_key(|action| {
-                    (
-                        Reverse(hit_counts.get(&action.name).cloned()),
-                        action.name.clone(),
-                    )
-                });
-
                 let candidates = commands
                     .iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
+                    .map(|(ix, command)| {
+                        let boost = hit_counts
+                            .get(&command.name)
+                            .map(|&count| (count as f64 + 1.0).sqrt())
+                            .unwrap_or(1.0);
+                        StringMatchCandidate::with_boost(ix, &command.name, boost)
+                    })
                     .collect::<Vec<_>>();
 
                 let matches = fuzzy::match_strings(

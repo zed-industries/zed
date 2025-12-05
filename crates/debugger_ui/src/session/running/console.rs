@@ -618,6 +618,7 @@ impl ConsoleQueryBarCompletionProvider {
                         id: 0,
                         string: evaluate_name.clone(),
                         char_bag: evaluate_name.chars().collect(),
+                        boost: 1.0,
                     });
                 }
 
@@ -629,6 +630,7 @@ impl ConsoleQueryBarCompletionProvider {
                         id: 0,
                         string: variable.name.clone(),
                         char_bag: variable.name.chars().collect(),
+                        boost: 1.0,
                     });
                 }
             }
