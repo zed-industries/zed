@@ -706,9 +706,11 @@ impl SshRemoteConnection {
                         self.ssh_shell_kind,
                         "wget",
                         &[
-                            url,
                             "--connect-timeout",
                             CONNECT_TIMEOUT_SECS,
+                            "--tries",
+                            "1",
+                            url,
                             "-O",
                             &tmp_path_gz.display(self.path_style()),
                         ],
