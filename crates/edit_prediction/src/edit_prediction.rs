@@ -51,9 +51,11 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
+mod cursor_excerpt;
 mod license_detection;
 pub mod mercury;
 mod onboarding_modal;
+pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 pub mod udiff;

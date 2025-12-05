@@ -14,13 +14,13 @@ use std::{
 };
 
 use crate::{
-    EditPredictionId, EditPredictionInputs,
+    EditPredictionId, EditPredictionInputs, open_ai_response::text_from_response,
     prediction::EditPredictionResult,
-    zeta1::{MAX_CONTEXT_TOKENS, MAX_REWRITE_TOKENS},
-    zeta2::text_from_response,
 };
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
+const MAX_CONTEXT_TOKENS: usize = 150;
+const MAX_REWRITE_TOKENS: usize = 350;
 
 pub struct Mercury {
     pub api_token: Shared<Task<Option<String>>>,
@@ -65,7 +65,7 @@ impl Mercury {
 
         let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
-                crate::zeta1::input_excerpt::editable_and_context_ranges_for_cursor_position(
+                crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
                     cursor_point,
                     &snapshot,
                     MAX_CONTEXT_TOKENS,
