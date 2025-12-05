@@ -508,6 +508,7 @@ impl<T: 'static> PromptEditor<T> {
 
         let prompt = self.editor.read(cx).text(cx);
 
+        dbg!("SENDING TELEMETRY");
         telemetry::event!(
             "Inline Assistant Rated",
             rating = "positive",
