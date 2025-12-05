@@ -4,6 +4,8 @@ The Tab Switcher provides a quick way to navigate between open tabs in Zed. It
 displays a list of your open tabs sorted by recent usage, making it easy to jump
 back to whatever you were just working on.
 
+![Tab Switcher with multiple panes](https://zed.dev/img/tab-switcher.png)
+
 ## Quick Switching
 
 When the Tab Switcher is opened using {#kb tab_switcher::Toggle}, instead of
