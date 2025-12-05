@@ -53,11 +53,6 @@
 //!
 //! If we trust multiple projects to install and spawn various language server processes, we can also allow global trust requests for MCP servers installation and spawning.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
 use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
@@ -65,6 +60,10 @@ use gpui::{
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::debug_panic;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
@@ -98,9 +97,33 @@ pub fn track_worktree_trust(
     match TrustedWorktrees::try_get_global(cx) {
         Some(trusted_worktrees) => {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                let sync_upstream = trusted_worktrees.upstream_client.as_ref().map(|(_, id)| id)
+                    != upstream_client.as_ref().map(|(_, id)| id);
                 trusted_worktrees.downstream_client = downstream_client;
                 trusted_worktrees.upstream_client = upstream_client;
                 trusted_worktrees.add_worktree_store(worktree_store, remote_host, cx);
+
+                if sync_upstream {
+                    if let Some((upstream_client, upstream_project_id)) =
+                        &trusted_worktrees.upstream_client
+                    {
+                        let trusted_paths = trusted_worktrees
+                            .trusted_paths
+                            .iter()
+                            .flat_map(|(_, paths)| {
+                                paths.iter().map(|trusted_path| trusted_path.to_proto())
+                            })
+                            .collect::<Vec<_>>();
+                        if !trusted_paths.is_empty() {
+                            upstream_client
+                                .send(proto::TrustWorktrees {
+                                    project_id: *upstream_project_id,
+                                    trusted_paths,
+                                })
+                                .ok();
+                        }
+                    }
+                }
             });
         }
         None => {
@@ -413,6 +436,7 @@ impl TrustedWorktreesStore {
         if new_global_trusted {
             new_trusted_single_file_worktrees.clear();
             self.restricted_globals.remove(&remote_host);
+            trusted_paths.insert(PathTrust::Global);
         }
         new_trusted_other_worktrees.retain(|(worktree_abs_path, _)| {
             new_trusted_abs_paths
@@ -422,8 +446,7 @@ impl TrustedWorktreesStore {
         if !new_trusted_other_worktrees.is_empty() {
             new_trusted_single_file_worktrees.clear();
         }
-        let previous_restricted = std::mem::take(&mut self.restricted);
-        self.restricted = previous_restricted
+        self.restricted = std::mem::take(&mut self.restricted)
             .into_iter()
             .filter(|restricted_worktree| {
                 let Some((restricted_worktree_path, is_file, restricted_host)) =
