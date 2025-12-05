@@ -197,6 +197,13 @@ fn generate_test_function(
                         gpui::BackgroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
                         drop(exec);
                         #cx_teardowns
+                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                        // cycles as cancelled tasks will be dropped properly once they runnable gets run again
+                        // We can't do that in tests though, as well running tasks will run logic
+                        // and we might just not exit that way
+                        //
+                        // async-task does not give us the power to do this just yet though
+                        dispatcher.drain_tasks();
                         drop(dispatcher);
                     },
                     #on_failure_fn_name
@@ -283,6 +290,13 @@ fn generate_test_function(
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns
+                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                        // cycles as cancelled tasks will be dropped properly once they runnable gets run again
+                        // We can't do that in tests though, as well running tasks will run logic
+                        // and we might just not exit that way
+                        //
+                        // async-task does not give us the power to do this just yet though
+                        dispatcher.drain_tasks();
                         drop(dispatcher);
                     },
                     #on_failure_fn_name,

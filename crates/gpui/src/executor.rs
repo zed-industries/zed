@@ -883,9 +883,11 @@ where
 
     impl<F> Drop for Checked<F> {
         fn drop(&mut self) {
-            assert!(
-                self.id == thread_id(),
-                "local task dropped by a thread that didn't spawn it. Task spawned at {}",
+            assert_eq!(
+                self.id,
+                thread_id(),
+                "local task dropped by thread {} that didn't spawn it. Task spawned at {}",
+                std::thread::current().name().unwrap_or("unknown"),
                 self.location
             );
             unsafe { ManuallyDrop::drop(&mut self.inner) };
@@ -896,9 +898,11 @@ where
         type Output = F::Output;
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            assert!(
-                self.id == thread_id(),
-                "local task polled by a thread that didn't spawn it. Task spawned at {}",
+            assert_eq!(
+                self.id,
+                thread_id(),
+                "local task polled by thread {} that didn't spawn it. Task spawned at {}",
+                std::thread::current().name().unwrap_or("unknown"),
                 self.location
             );
             unsafe { self.map_unchecked_mut(|c| &mut *c.inner).poll(cx) }
