@@ -7,8 +7,8 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterato
 use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
-use ztracing::instrument;
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
+use ztracing::instrument;
 
 #[cfg(test)]
 pub const TREE_BASE: usize = 2;

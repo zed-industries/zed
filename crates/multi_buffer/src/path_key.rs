@@ -6,8 +6,8 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
-use ztracing::instrument;
 use util::{post_inc, rel_path::RelPath};
+use ztracing::instrument;
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,

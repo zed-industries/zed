@@ -13,8 +13,8 @@ use gpui::{
 
 use language::Buffer;
 use text::BufferId;
-use ztracing::instrument;
 use util::ResultExt;
+use ztracing::instrument;
 
 use crate::{
     Project,
