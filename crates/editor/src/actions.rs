@@ -327,6 +327,51 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Specifies the target for opening excerpts.
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcerptTarget {
+    /// Opens the historical version of the file (the GitBlob itself).
+    #[default]
+    OpenHistorical,
+    /// Opens the current version of the file (from the project/HEAD).
+    OpenCurrent,
+}
+
+/// Opens excerpts from the current file.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct OpenExcerpts {
+    /// Specifies whether to open the current or historical version.
+    #[serde(default)]
+    pub target: ExcerptTarget,
+    /// Force the opened file to be editable (not read-only). sf
+    #[serde(default)]
+    pub force_editable: bool,
+}
+impl From<&OpenExcerptsSplit> for OpenExcerpts {
+    fn from(value: &OpenExcerptsSplit) -> Self {
+        Self {
+            target: value.target,
+            force_editable: value.force_editable,
+        }
+    }
+}
+
+/// Opens excerpts in a split pane.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct OpenExcerptsSplit {
+    /// Specifies whether to open the current or historical version.
+    #[serde(default)]
+    pub target: ExcerptTarget,
+    /// Force the opened file to be editable (not read-only).
+    #[serde(default)]
+    pub force_editable: bool,
+}
+
 actions!(
     debugger,
     [
@@ -616,10 +661,6 @@ actions!(
         NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
-        /// Opens excerpts from the current file.
-        OpenExcerpts,
-        /// Opens excerpts in a split pane.
-        OpenExcerptsSplit,
         /// Opens the proposed changes editor.
         OpenProposedChangesEditor,
         /// Opens documentation for the symbol at cursor.

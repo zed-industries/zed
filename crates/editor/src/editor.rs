@@ -21906,21 +21906,27 @@ impl Editor {
 
     pub fn open_excerpts_in_split(
         &mut self,
-        _: &OpenExcerptsSplit,
+        action: &OpenExcerptsSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_excerpts_common(None, true, window, cx)
+        self.open_excerpts_common(None, true, &action.into(), window, cx)
     }
 
-    pub fn open_excerpts(&mut self, _: &OpenExcerpts, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_excerpts_common(None, false, window, cx)
+    pub fn open_excerpts(
+        &mut self,
+        action: &OpenExcerpts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, false, action, window, cx)
     }
 
     fn open_excerpts_common(
         &mut self,
         jump_data: Option<JumpData>,
         split: bool,
+        action: &OpenExcerpts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -21933,6 +21939,10 @@ impl Editor {
             cx.propagate();
             return;
         }
+
+        // Clone action fields to avoid lifetime issues in async context
+        let target = action.target;
+        let force_editable = action.force_editable;
 
         let mut new_selections_by_buffer = HashMap::default();
         match &jump_data {
@@ -22092,9 +22102,8 @@ impl Editor {
                                 cx,
                             )
                         });
-
                     editor.update(cx, |editor, cx| {
-                        if has_file && !is_project_file {
+                        if has_file && !is_project_file && !force_editable {
                             editor.set_read_only(true);
                         }
                         let autoscroll = match scroll_offset {
@@ -22116,7 +22125,7 @@ impl Editor {
                         editor.nav_history = nav_history;
                     });
                 }
-            })
+            });
         });
     }
 
