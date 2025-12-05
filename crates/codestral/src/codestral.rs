@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
-use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -34,7 +34,7 @@ struct CurrentCompletion {
     snapshot: BufferSnapshot,
     /// The edits that should be applied to transform the original text into the predicted text.
     /// Each edit is a range in the buffer and the text to replace it with.
-    edits: Arc<[(Range<Anchor>, String)]>,
+    edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     /// Preview of how the buffer will look after applying the edits.
     edit_preview: EditPreview,
 }
@@ -42,18 +42,18 @@ struct CurrentCompletion {
 impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
     /// Returns None if the user's edits conflict with the predicted edits.
-    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
+        edit_prediction_types::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
 
-pub struct CodestralCompletionProvider {
+pub struct CodestralEditPredictionDelegate {
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
 }
 
-impl CodestralCompletionProvider {
+impl CodestralEditPredictionDelegate {
     pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             http_client,
@@ -165,7 +165,7 @@ impl CodestralCompletionProvider {
     }
 }
 
-impl EditPredictionProvider for CodestralCompletionProvider {
+impl EditPredictionDelegate for CodestralEditPredictionDelegate {
     fn name() -> &'static str {
         "codestral"
     }
@@ -174,7 +174,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         "Codestral"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 
@@ -182,7 +182,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         Self::api_key(cx).is_some()
     }
 
-    fn is_refreshing(&self) -> bool {
+    fn is_refreshing(&self, _cx: &App) -> bool {
         self.pending_request.is_some()
     }
 
@@ -239,7 +239,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 cursor_point,
                 &snapshot,
                 &EXCERPT_OPTIONS,
-                None,
             )
             .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 
@@ -281,8 +280,8 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 return Ok(());
             }
 
-            let edits: Arc<[(Range<Anchor>, String)]> =
-                vec![(cursor_position..cursor_position, completion_text)].into();
+            let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+                vec![(cursor_position..cursor_position, completion_text.into())].into();
             let edit_preview = buffer
                 .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
                 .await;

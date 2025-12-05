@@ -381,6 +381,10 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
+
+    pub fn did_seek(&self) -> bool {
+        self.did_seek
+    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
@@ -399,6 +403,10 @@ where
     }
 
     /// Returns whether we found the item you were seeking for.
+    ///
+    /// # Panics
+    ///
+    /// If we did not seek before, use seek instead in that case.
     #[track_caller]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
@@ -448,7 +456,7 @@ where
         aggregate: &mut dyn SeekAggregate<'a, T>,
     ) -> bool {
         assert!(
-            target.cmp(&self.position, self.cx) >= Ordering::Equal,
+            target.cmp(&self.position, self.cx).is_ge(),
             "cannot seek backward",
         );
 

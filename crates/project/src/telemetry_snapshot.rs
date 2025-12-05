@@ -5,7 +5,7 @@ use worktree::Worktree;
 
 use crate::{
     Project,
-    git_store::{GitStore, RepositoryState},
+    git_store::{GitStore, LocalRepositoryState, RepositoryState},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,7 +85,9 @@ impl TelemetryWorktreeSnapshot {
                         let current_branch =
                             repo.branch.as_ref().map(|branch| branch.name().to_owned());
                         repo.send_job(None, |state, _| async move {
-                            let RepositoryState::Local { backend, .. } = state else {
+                            let RepositoryState::Local(LocalRepositoryState { backend, .. }) =
+                                state
+                            else {
                                 return GitState {
                                     remote_url: None,
                                     head_sha: None,
@@ -94,7 +96,7 @@ impl TelemetryWorktreeSnapshot {
                                 };
                             };
 
-                            let remote_url = backend.remote_url("origin");
+                            let remote_url = backend.remote_url("origin").await;
                             let head_sha = backend.head_sha().await;
                             let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 

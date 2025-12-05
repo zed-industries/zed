@@ -1,8 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: FileFinderWidth,

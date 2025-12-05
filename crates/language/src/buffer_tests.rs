@@ -784,28 +784,48 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         outline
             .items
             .iter()
-            .map(|item| (item.text.as_str(), item.depth))
+            .map(|item| (
+                item.text.as_str(),
+                item.depth,
+                item.to_point(&snapshot).body_range(&snapshot)
+                    .map(|range| minimize_space(&snapshot.text_for_range(range).collect::<String>()))
+            ))
             .collect::<Vec<_>>(),
         &[
-            ("struct Person", 0),
-            ("name", 1),
-            ("age", 1),
-            ("mod module", 0),
-            ("enum LoginState", 1),
-            ("LoggedOut", 2),
-            ("LoggingOn", 2),
-            ("LoggedIn", 2),
-            ("person", 3),
-            ("time", 3),
-            ("impl Eq for Person", 0),
-            ("impl Drop for Person", 0),
-            ("fn drop", 1),
+            ("struct Person", 0, Some("name: String, age: usize,".to_string())),
+            ("name", 1, None),
+            ("age", 1, None),
+            (
+                "mod module",
+                0,
+                Some(
+                    "enum LoginState { LoggedOut, LoggingOn, LoggedIn { person: Person, time: Instant, } }".to_string()
+                )
+            ),
+            (
+                "enum LoginState",
+                1,
+                Some("LoggedOut, LoggingOn, LoggedIn { person: Person, time: Instant, }".to_string())
+            ),
+            ("LoggedOut", 2, None),
+            ("LoggingOn", 2, None),
+            ("LoggedIn", 2, Some("person: Person, time: Instant,".to_string())),
+            ("person", 3, None),
+            ("time", 3, None),
+            ("impl Eq for Person", 0, None),
+            (
+                "impl Drop for Person",
+                0,
+                Some("fn drop(&mut self) { println!(\"bye\"); }".to_string())
+            ),
+            ("fn drop", 1, Some("println!(\"bye\");".to_string())),
         ]
     );
 
@@ -839,6 +859,11 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
             ("fn drop", vec![]),
         ]
     );
+
+    fn minimize_space(text: &str) -> String {
+        static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new("[\\n\\s]+").unwrap());
+        WHITESPACE.replace_all(text, " ").trim().to_string()
+    }
 
     async fn search<'a>(
         outline: &'a Outline<Anchor>,
@@ -1111,9 +1136,10 @@ fn test_text_objects(cx: &mut App) {
 
 #[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut App) {
-    let mut assert = |selection_text, range_markers| {
+    #[track_caller]
+    fn assert(selection_text: &'static str, range_markers: Vec<&'static str>, cx: &mut App) {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
-    };
+    }
 
     assert(
         indoc! {"
@@ -1130,6 +1156,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1156,6 +1183,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1182,6 +1210,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
                 let foo = 1;"},
         ],
+        cx,
     );
 
     assert(
@@ -1199,6 +1228,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             «}»
             let foo = 1;"}],
+        cx,
     );
 
     assert(
@@ -1209,7 +1239,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let fˇoo = 1;"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 
     // Regression test: avoid crash when querying at the end of the buffer.
@@ -1221,7 +1252,8 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 }
             }
             let foo = 1;ˇ"},
-        vec![],
+        Vec::new(),
+        cx,
     );
 }
 
@@ -2633,7 +2665,7 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
         buffer.set_language_registry(language_registry.clone());
         buffer.set_language(
             language_registry
-                .language_for_name("ERB")
+                .language_for_name("HTML+ERB")
                 .now_or_never()
                 .unwrap()
                 .ok(),
@@ -2748,6 +2780,50 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");
         }
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```html+erb
+            <div>Hello</div>
+            <%= link_to "Some", "https://zed.dev" %>
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("HTML+ERB")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        let html_point = Point::new(1, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(language.name().as_ref(), "HTML");
+
+        let ruby_point = Point::new(2, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(language.name().as_ref(), "Ruby");
 
         buffer
     });
@@ -3076,15 +3152,13 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 .map(|(range, text)| {
                     (
                         buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
-                        text.to_string(),
+                        text.into(),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Arc<[_]>>()
         });
         let edit_preview = buffer
-            .read_with(cx, |buffer, cx| {
-                buffer.preview_edits(edits.clone().into(), cx)
-            })
+            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
             .await;
         let highlighted_edits = cx.read(|cx| {
             edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, include_deletions, cx)
@@ -3378,7 +3452,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
         let actual_remote_selections = buffer
-            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .selections_in_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), false)
             .map(|(replica_id, _, _, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
@@ -3411,6 +3485,25 @@ fn test_contiguous_ranges() {
         .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
     );
+}
+
+#[gpui::test]
+fn test_insertion_after_deletion(cx: &mut gpui::App) {
+    let buffer = cx.new(|cx| Buffer::local("struct Foo {\n    \n}", cx));
+    buffer.update(cx, |buffer, cx| {
+        let mut anchor = buffer.anchor_after(17);
+        buffer.edit([(12..18, "")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {}");
+        if !anchor.is_valid(&snapshot) {
+            anchor = snapshot.anchor_after(snapshot.offset_for_anchor(&anchor));
+        }
+        buffer.edit([(anchor..anchor, "\n")], None, cx);
+        buffer.edit([(anchor..anchor, "field1:")], None, cx);
+        buffer.edit([(anchor..anchor, " i32,")], None, cx);
+        let snapshot = buffer.snapshot();
+        assert_eq!(snapshot.text(), "struct Foo {\nfield1: i32,}");
+    })
 }
 
 #[gpui::test(iterations = 500)]
@@ -3655,7 +3748,7 @@ fn html_lang() -> Language {
 fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: "ERB".into(),
+            name: "HTML+ERB".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
@@ -3673,15 +3766,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @injection.content
-                (#set! injection.language "ruby")
-                (#set! injection.combined)
+                (code) @content
+                (#set! "language" "ruby")
+                (#set! "combined")
             )
 
             (
-                (content) @injection.content
-                (#set! injection.language "html")
-                (#set! injection.combined)
+                (content) @content
+                (#set! "language" "html")
+                (#set! "combined")
             )
         "#,
     )
@@ -3880,7 +3973,6 @@ fn assert_bracket_pairs(
 fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
-    crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });

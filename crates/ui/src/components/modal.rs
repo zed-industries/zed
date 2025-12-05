@@ -77,6 +77,7 @@ impl RenderOnce for Modal {
                     .w_full()
                     .flex_1()
                     .gap(DynamicSpacing::Base08.rems(cx))
+                    .when(self.footer.is_some(), |this| this.pb_4())
                     .when_some(
                         self.container_scroll_handler,
                         |this, container_scroll_handle| {
@@ -276,7 +277,6 @@ impl RenderOnce for ModalFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .w_full()
-            .mt_4()
             .p(DynamicSpacing::Base08.rems(cx))
             .flex_none()
             .justify_between()

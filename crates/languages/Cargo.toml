@@ -42,10 +42,11 @@ async-trait.workspace = true
 chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
+globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-json_schema_store.workspace = true
 itertools.workspace = true
+json_schema_store.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -66,9 +67,11 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 smol.workspace = true
-url.workspace = true
+snippet.workspace = true
 task.workspace = true
+terminal.workspace = true
 theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
@@ -89,6 +92,7 @@ tree-sitter-regex = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
+url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
@@ -97,6 +101,7 @@ text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true

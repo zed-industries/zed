@@ -9,6 +9,7 @@ import "channel.proto";
 import "core.proto";
 import "debugger.proto";
 import "git.proto";
+import "image.proto";
 import "lsp.proto";
 import "notification.proto";
 import "task.proto";
@@ -409,7 +410,6 @@ message Envelope {
         AgentServerCommand agent_server_command = 374;
 
         ExternalAgentsUpdated external_agents_updated = 375;
-
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
@@ -427,10 +427,31 @@ message Envelope {
         GetTreeDiffResponse get_tree_diff_response = 385;
 
         GetBlobContent get_blob_content = 386;
-        GetBlobContentResponse get_blob_content_response = 387; // current max
+        GetBlobContentResponse get_blob_content_response = 387;
+
+        GitWorktreesResponse git_worktrees_response = 388;
+        GitGetWorktrees git_get_worktrees = 389;
+        GitCreateWorktree git_create_worktree = 390;
+
+        OpenImageByPath open_image_by_path = 391;
+        OpenImageResponse open_image_response = 392;
+        CreateImageForPeer create_image_for_peer = 393;
+
+
+        GitFileHistory git_file_history = 397;
+        GitFileHistoryResponse git_file_history_response = 398;
+
+        RunGitHook run_git_hook = 399;
+
+        GitDeleteBranch git_delete_branch = 400;
+
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 401;
+
+        GitCreateRemote git_create_remote = 402;
+        GitRemoveRemote git_remove_remote = 403;// current max
     }
 
-    reserved 87 to 88;
+    reserved 87 to 88, 396;
     reserved 102 to 103;
     reserved 158 to 161;
     reserved 164;
@@ -454,6 +475,7 @@ message Envelope {
     reserved 270;
     reserved 280 to 281;
     reserved 332 to 333;
+    reserved 394 to 395;
 }
 
 message Hello {

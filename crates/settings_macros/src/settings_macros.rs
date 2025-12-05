@@ -1,6 +1,9 @@
 use proc_macro::TokenStream;
+
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, parse_macro_input};
+use syn::{
+    Data, DeriveInput, Field, Fields, ItemEnum, ItemStruct, Type, parse_macro_input, parse_quote,
+};
 
 /// Derives the `MergeFrom` trait for a struct.
 ///
@@ -75,4 +78,75 @@ pub fn derive_merge_from(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Registers the setting type with the SettingsStore. Note that you need to
+/// have `gpui` in your dependencies for this to work.
+#[proc_macro_derive(RegisterSetting)]
+pub fn derive_register_setting(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    let type_name = &input.ident;
+
+    quote! {
+        settings::private::inventory::submit! {
+            settings::private::RegisteredSetting {
+                settings_value: || {
+                    Box::new(settings::private::SettingValue::<#type_name> {
+                        global_value: None,
+                        local_values: Vec::new(),
+                    })
+                },
+                from_settings: |content| Box::new(<#type_name as settings::Settings>::from_settings(content)),
+                id: || std::any::TypeId::of::<#type_name>(),
+            }
+        }
+    }
+    .into()
+}
+
+// Adds serde attributes to each field with type Option<T>:
+// #serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "settings::deserialize_fallible")
+#[proc_macro_attribute]
+pub fn with_fallible_options(_args: TokenStream, input: TokenStream) -> TokenStream {
+    fn apply_on_fields(fields: &mut Fields) {
+        match fields {
+            Fields::Unit => {}
+            Fields::Named(fields) => {
+                for field in &mut fields.named {
+                    add_if_option(field)
+                }
+            }
+            Fields::Unnamed(fields) => {
+                for field in &mut fields.unnamed {
+                    add_if_option(field)
+                }
+            }
+        }
+    }
+
+    fn add_if_option(field: &mut Field) {
+        match &field.ty {
+            Type::Path(syn::TypePath { qself: None, path })
+                if path.leading_colon.is_none()
+                    && path.segments.len() == 1
+                    && path.segments[0].ident == "Option" => {}
+            _ => return,
+        }
+        let attr = parse_quote!(
+            #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with="crate::fallible_options::deserialize")]
+        );
+        field.attrs.push(attr);
+    }
+
+    if let Ok(mut input) = syn::parse::<ItemStruct>(input.clone()) {
+        apply_on_fields(&mut input.fields);
+        quote!(#input).into()
+    } else if let Ok(mut input) = syn::parse::<ItemEnum>(input) {
+        for variant in &mut input.variants {
+            apply_on_fields(&mut variant.fields);
+        }
+        quote!(#input).into()
+    } else {
+        panic!("with_fallible_options can only be applied to struct or enum definitions.");
+    }
 }

@@ -1,0 +1,23 @@
+[package]
+name = "miniprofiler_ui"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/miniprofiler_ui.rs"
+
+[dependencies]
+gpui.workspace = true
+zed_actions.workspace = true
+workspace.workspace = true
+util.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

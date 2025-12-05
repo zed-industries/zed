@@ -25,6 +25,10 @@ pub struct KeyDownEvent {
 
     /// Whether the key is currently held down.
     pub is_held: bool,
+
+    /// Whether to prefer character input over keybindings for this keystroke.
+    /// In some cases, like AltGr on Windows, modifiers are significant for character input.
+    pub prefer_character_input: bool,
 }
 
 impl Sealed for KeyDownEvent {}
@@ -301,9 +305,10 @@ pub enum KeyboardButton {
 }
 
 /// An enum representing the mouse button that was pressed.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {
     /// The left mouse button.
+    #[default]
     Left,
 
     /// The right mouse button.
@@ -329,29 +334,18 @@ impl MouseButton {
     }
 }
 
-impl Default for MouseButton {
-    fn default() -> Self {
-        Self::Left
-    }
-}
-
 /// A navigation direction, such as back or forward.
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(Hash, Default, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum NavigationDirection {
     /// The back button.
+    #[default]
     Back,
 
     /// The forward button.
     Forward,
 }
 
-impl Default for NavigationDirection {
-    fn default() -> Self {
-        Self::Back
-    }
-}
-
-/// A mouse move event from the platform
+/// A mouse move event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
     /// The position of the mouse on the window.
@@ -379,7 +373,7 @@ impl MouseMoveEvent {
     }
 }
 
-/// A mouse wheel event from the platform
+/// A mouse wheel event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     /// The position of the mouse on the window.
@@ -515,7 +509,7 @@ impl Deref for MouseExitEvent {
 }
 
 /// A collection of paths from the platform, such as from a file drop.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
 
 impl ExternalPaths {

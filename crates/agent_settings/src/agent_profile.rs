@@ -6,8 +6,8 @@ use convert_case::{Case, Casing as _};
 use fs::Fs;
 use gpui::{App, SharedString};
 use settings::{
-    AgentProfileContent, ContextServerPresetContent, Settings as _, SettingsContent,
-    update_settings_file,
+    AgentProfileContent, ContextServerPresetContent, LanguageModelSelection, Settings as _,
+    SettingsContent, update_settings_file,
 };
 use util::ResultExt as _;
 
@@ -53,19 +53,30 @@ impl AgentProfile {
         let base_profile =
             base_profile_id.and_then(|id| AgentSettings::get_global(cx).profiles.get(&id).cloned());
 
+        // Copy toggles from the base profile so the new profile starts with familiar defaults.
+        let tools = base_profile
+            .as_ref()
+            .map(|profile| profile.tools.clone())
+            .unwrap_or_default();
+        let enable_all_context_servers = base_profile
+            .as_ref()
+            .map(|profile| profile.enable_all_context_servers)
+            .unwrap_or_default();
+        let context_servers = base_profile
+            .as_ref()
+            .map(|profile| profile.context_servers.clone())
+            .unwrap_or_default();
+        // Preserve the base profile's model preference when cloning into a new profile.
+        let default_model = base_profile
+            .as_ref()
+            .and_then(|profile| profile.default_model.clone());
+
         let profile_settings = AgentProfileSettings {
             name: name.into(),
-            tools: base_profile
-                .as_ref()
-                .map(|profile| profile.tools.clone())
-                .unwrap_or_default(),
-            enable_all_context_servers: base_profile
-                .as_ref()
-                .map(|profile| profile.enable_all_context_servers)
-                .unwrap_or_default(),
-            context_servers: base_profile
-                .map(|profile| profile.context_servers)
-                .unwrap_or_default(),
+            tools,
+            enable_all_context_servers,
+            context_servers,
+            default_model,
         };
 
         update_settings_file(fs, cx, {
@@ -96,6 +107,8 @@ pub struct AgentProfileSettings {
     pub tools: IndexMap<Arc<str>, bool>,
     pub enable_all_context_servers: bool,
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
+    /// Default language model to apply when this profile becomes active.
+    pub default_model: Option<LanguageModelSelection>,
 }
 
 impl AgentProfileSettings {
@@ -144,6 +157,7 @@ impl AgentProfileSettings {
                         )
                     })
                     .collect(),
+                default_model: self.default_model.clone(),
             },
         );
 
@@ -153,15 +167,23 @@ impl AgentProfileSettings {
 
 impl From<AgentProfileContent> for AgentProfileSettings {
     fn from(content: AgentProfileContent) -> Self {
+        let AgentProfileContent {
+            name,
+            tools,
+            enable_all_context_servers,
+            context_servers,
+            default_model,
+        } = content;
+
         Self {
-            name: content.name.into(),
-            tools: content.tools,
-            enable_all_context_servers: content.enable_all_context_servers.unwrap_or_default(),
-            context_servers: content
-                .context_servers
+            name: name.into(),
+            tools,
+            enable_all_context_servers: enable_all_context_servers.unwrap_or_default(),
+            context_servers: context_servers
                 .into_iter()
                 .map(|(server_id, preset)| (server_id, preset.into()))
                 .collect(),
+            default_model,
         }
     }
 }

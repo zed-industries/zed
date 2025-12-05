@@ -1,0 +1,44 @@
+# Generated from xtask::workflows::cherry_pick
+# Rebuild with `cargo xtask workflows`.
+name: cherry_pick
+run-name: 'cherry_pick to ${{ inputs.channel }} #${{ inputs.pr_number }}'
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: commit
+        required: true
+        type: string
+      branch:
+        description: branch
+        required: true
+        type: string
+      channel:
+        description: channel
+        required: true
+        type: string
+      pr_number:
+        description: pr_number
+        required: true
+        type: string
+jobs:
+  run_cherry_pick:
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - id: get-app-token
+      name: cherry_pick::run_cherry_pick::authenticate_as_zippy
+      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: cherry_pick::run_cherry_pick::cherry_pick
+      run: ./script/cherry-pick ${{ inputs.branch }} ${{ inputs.commit }} ${{ inputs.channel }}
+      shell: bash -euxo pipefail {0}
+      env:
+        GIT_COMMITTER_NAME: Zed Zippy
+        GIT_COMMITTER_EMAIL: hi@zed.dev
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}

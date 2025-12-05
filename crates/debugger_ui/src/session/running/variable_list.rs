@@ -1404,6 +1404,7 @@ impl VariableList {
                         div()
                             .text_ui(cx)
                             .w_full()
+                            .truncate()
                             .when(self.disabled, |this| {
                                 this.text_color(Color::Disabled.color(cx))
                             })
@@ -1556,7 +1557,7 @@ impl Render for VariableList {
                         this.render_entries(range, window, cx)
                     }),
                 )
-                .track_scroll(self.list_handle.clone())
+                .track_scroll(&self.list_handle)
                 .with_width_from_item(self.max_width_index)
                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                 .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
@@ -1573,10 +1574,10 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
-            // .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
+            // .vertical_scrollbar_for(&self.list_handle, window, cx)
             .custom_scrollbars(
                 ui::Scrollbars::new(ScrollAxes::Both)
-                    .tracked_scroll_handle(self.list_handle.clone())
+                    .tracked_scroll_handle(&self.list_handle)
                     .with_track_along(ScrollAxes::Both, cx.theme().colors().panel_background)
                     .tracked_entity(cx.entity_id()),
                 window,

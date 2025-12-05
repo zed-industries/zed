@@ -14,7 +14,6 @@ use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
-use time_format::format_local_timestamp;
 use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
 
@@ -190,16 +189,15 @@ impl Render for CommitTooltip {
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
-        let absolute_timestamp = format_local_timestamp(
+        let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+        let absolute_timestamp = time_format::format_localized_timestamp(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),
+            local_offset,
             time_format::TimestampFormat::MediumAbsolute,
         );
         let markdown_style = {
-            let mut style = hover_markdown_style(window, cx);
-            if let Some(code_block) = &style.code_block.text {
-                style.base_text_style.refine(code_block);
-            }
+            let style = hover_markdown_style(window, cx);
             style
         };
 
@@ -322,6 +320,7 @@ impl Render for CommitTooltip {
                                                         repo.downgrade(),
                                                         workspace.clone(),
                                                         None,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
@@ -351,11 +350,11 @@ impl Render for CommitTooltip {
 fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
-            let local = chrono::Local::now().offset().local_minus_utc();
+            let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
             time_format::format_localized_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
-                UtcOffset::from_whole_seconds(local).unwrap(),
+                local_offset,
                 format,
             )
         }
