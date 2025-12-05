@@ -18,6 +18,17 @@ struct DevContainerUp {
     remote_workspace_folder: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DevContainerConfiguration {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DevContainerConfigurationOutput {
+    configuration: DevContainerConfiguration,
+}
+
 async fn check_for_docker() -> Result<(), DevContainerError> {
     let mut command = util::command::new_smol_command("docker");
     command.arg("--version");
@@ -99,6 +110,63 @@ async fn devcontainer_up(path: Arc<Path>) -> Result<DevContainerUp, DevContainer
     }
 }
 
+async fn devcontainer_read_configuration(
+    path: Arc<Path>,
+) -> Result<DevContainerConfigurationOutput, DevContainerError> {
+    let mut command = util::command::new_smol_command("devcontainer");
+    command.arg("read-configuration");
+    command.arg("--workspace-folder");
+    command.arg(path.display().to_string());
+    match command.output().await {
+        Ok(output) => {
+            dbg!(&output);
+            if output.status.success() {
+                let raw = String::from_utf8_lossy(&output.stdout);
+                serde_json::from_str::<DevContainerConfigurationOutput>(&raw).map_err(|e| {
+                    log::error!(
+                        "Unable to parse response from 'devcontainer read-configuration' command, error: {:?}",
+                        e
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })
+            } else {
+                log::error!(
+                    "Non-success status running devcontainer read-configuration for workspace: out: {:?}, err: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Err(DevContainerError::DevContainerUpFailed)
+            }
+        }
+        Err(e) => {
+            log::error!("Error running devcontainer up: {:?}", e);
+            Err(DevContainerError::DevContainerUpFailed)
+        }
+    }
+}
+
+// Name the project with two fallbacks
+async fn get_project_name(
+    path: Arc<Path>,
+    remote_workspace_folder: String,
+    container_id: String,
+) -> Result<String, DevContainerError> {
+    if let Ok(dev_container_configuration) = devcontainer_read_configuration(path).await
+        && let Some(name) = dev_container_configuration.configuration.name
+    {
+        // Ideally, name the project after the name defined in devcontainer.json
+        Ok(name)
+    } else {
+        // Otherwise, name the project after the remote workspace folder name
+        Ok(Path::new(&remote_workspace_folder)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|string| string.into())
+            // Finally, name the project after the container ID as a last resort
+            .unwrap_or_else(|| container_id.clone().into()))
+    }
+}
+
 fn project_directory(cx: &mut AsyncWindowContext) -> Option<Arc<Path>> {
     let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
         return None;
@@ -131,13 +199,14 @@ pub(crate) async fn start_dev_container(
         container_id,
         remote_workspace_folder,
         ..
-    }) = devcontainer_up(directory).await
+    }) = devcontainer_up(directory.clone()).await
     {
-        let project_name: String = Path::new(&remote_workspace_folder)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|string| string.into())
-            .unwrap_or_else(|| container_id.clone().into());
+        let project_name = get_project_name(
+            directory,
+            remote_workspace_folder.clone(),
+            container_id.clone(),
+        )
+        .await?;
 
         let connection = Connection::DevContainer(DevContainerConnection {
             name: project_name.into(),
