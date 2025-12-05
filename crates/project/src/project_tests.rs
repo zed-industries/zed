@@ -7849,9 +7849,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7880,12 +7880,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the first hunk.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7912,12 +7912,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
             diff.hunks(&snapshot, cx),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7961,7 +7961,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         assert_hunks(
             diff.hunks(&snapshot, cx),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -8164,7 +8164,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_diff.hunks(&snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &uncommitted_diff.base_text_string(cx).unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
@@ -10345,7 +10345,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     cx.run_until_parked();
 
     unstaged_diff.update(cx, |unstaged_diff, _cx| {
-        let base_text = unstaged_diff.base_text_string().unwrap();
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
     });
 
@@ -10369,7 +10369,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     // the `BufferChangedFilePath` event being handled.
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
-        let base_text = unstaged_diff.base_text_string().unwrap();
+        let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_staged,
             "Diff bases should be automatically updated to file_2 staged content"
@@ -10389,7 +10389,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     cx.run_until_parked();
 
     uncommitted_diff.update(cx, |uncommitted_diff, _cx| {
-        let base_text = uncommitted_diff.base_text_string().unwrap();
+        let base_text = uncommitted_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_committed,
             "Uncommitted diff should compare against file_2 committed content"

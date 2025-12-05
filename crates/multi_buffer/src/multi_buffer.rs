@@ -506,12 +506,7 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
-fn foo(buffer: Entity<Buffer>, cx: &mut App) {
-    buffer.update(cx, |buffer, cx| {
-        let new_buffer = Buffer::new();
-        std::mem::replace(buffer, new_buffer);
-    })
-}
+
 
 struct DiffState {
     diff: Entity<BufferDiff>,
@@ -2644,7 +2639,7 @@ impl MultiBuffer {
     ) {
         debug_assert!(self.diffs.values().all(|diff| diff.main_buffer.is_some()));
 
-        let diff_change_range = 0..diff.read(cx).base_text().len();
+        let diff_change_range = 0..diff.read(cx).base_text(cx).len();
         self.inverted_buffer_diff_changed(
             diff.clone(),
             diff_change_range,

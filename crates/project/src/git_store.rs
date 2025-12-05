@@ -708,7 +708,7 @@ impl GitStore {
             buffer_diff
                 .update(cx, |buffer_diff, cx| {
                     buffer_diff.set_base_text(
-                        content.map(Arc::new),
+                        content.map(|s| s.as_ref().into()),
                         buffer_snapshot.language().cloned(),
                         Some(languages.clone()),
                         buffer_snapshot.text,
@@ -2611,7 +2611,7 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
         })?;
-        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
+        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string(cx))?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2641,14 +2641,14 @@ impl GitStore {
             let unstaged_diff = diff.secondary_diff();
             let index_snapshot = unstaged_diff.and_then(|diff| {
                 let diff = diff.read(cx);
-                diff.base_text_exists().then(|| diff.base_text())
+                diff.base_text_exists().then(|| diff.base_text(cx))
             });
 
             let mode;
             let staged_text;
             let committed_text;
             if diff.base_text_exists() {
-                let committed_snapshot = diff.base_text();
+                let committed_snapshot = diff.base_text(cx);
                 committed_text = Some(committed_snapshot.text());
                 if let Some(index_text) = index_snapshot {
                     if index_text.remote_id() == committed_snapshot.remote_id() {
