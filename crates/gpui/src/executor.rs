@@ -785,6 +785,11 @@ impl ForegroundExecutor {
         }
     }
 
+    #[doc(hidden)]
+    pub fn get_current_thread_timings(&self) -> Vec<TaskTiming> {
+        self.dispatcher.get_current_thread_timings()
+    }
+
     /// Enqueues the given Task to run on the main thread at some point in the future.
     #[track_caller]
     pub fn spawn<R>(&self, future: impl Future<Output = R> + 'static) -> Task<R>
