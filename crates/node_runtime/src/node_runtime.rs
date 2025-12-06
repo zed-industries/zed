@@ -271,16 +271,19 @@ impl NodeRuntime {
             .map(|(name, version)| format!("{name}@{version}"))
             .collect();
 
-        let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
-        arguments.extend_from_slice(&[
-            "--save-exact",
-            "--fetch-retry-mintimeout",
-            "2000",
-            "--fetch-retry-maxtimeout",
-            "5000",
-            "--fetch-timeout",
-            "5000",
-        ]);
+        let arguments: Vec<_> = packages
+            .iter()
+            .map(|p| p.as_str())
+            .chain([
+                "--save-exact",
+                "--fetch-retry-mintimeout",
+                "2000",
+                "--fetch-retry-maxtimeout",
+                "5000",
+                "--fetch-timeout",
+                "5000",
+            ])
+            .collect();
 
         // This is also wrong because the directory is wrong.
         self.run_npm_subcommand(directory, "install", &arguments)
