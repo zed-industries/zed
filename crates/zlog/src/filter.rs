@@ -10,7 +10,7 @@ use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, ScopeAlloc, ScopeRef, env_con
 use log;
 
 static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
-static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
+static SCOPE_MAP: RwLock<ScopeMap> = RwLock::new(ScopeMap::empty());
 
 pub const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
@@ -78,16 +78,11 @@ pub fn is_scope_enabled(
         err.into_inner()
     });
 
-    let Some(map) = global_scope_map.as_ref() else {
-        // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return is_enabled_by_default;
-    };
-
-    if map.is_empty() {
+    if global_scope_map.is_empty() {
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return is_enabled_by_default;
     }
-    let enabled_status = map.is_enabled(scope, module_path, level);
+    let enabled_status = global_scope_map.is_enabled(scope, module_path, level);
     match enabled_status {
         EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,
@@ -111,7 +106,7 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
             SCOPE_MAP.clear_poison();
             err.into_inner()
         });
-        global_map.replace(map_new);
+        *global_map = map_new;
     }
     log::trace!("Log configuration updated");
 }
@@ -398,6 +393,14 @@ impl ScopeMap {
             return EnabledStatus::Disabled;
         }
         EnabledStatus::NotConfigured
+    }
+
+    const fn empty() -> ScopeMap {
+        ScopeMap {
+            entries: vec![],
+            modules: vec![],
+            root_count: 0,
+        }
     }
 }
 
