@@ -4583,6 +4583,7 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
+ "feature_flags",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
