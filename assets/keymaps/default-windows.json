@@ -1223,6 +1223,30 @@
     },
   },
   {
+    "context": "CsvPreview",
+    "bindings": {
+      "ctrl-c": "csv::CopySelected",
+      "escape": "csv::ClearSelection",
+      "up": "csv::SelectUp",
+      "down": "csv::SelectDown",
+      "left": "csv::SelectLeft",
+      "right": "csv::SelectRight",
+      "shift-up": "csv::ExtendSelectionUp",
+      "shift-down": "csv::ExtendSelectionDown",
+      "shift-left": "csv::ExtendSelectionLeft",
+      "shift-right": "csv::ExtendSelectionRight",
+      "ctrl-a": "csv::SelectAll",
+      "ctrl-up": "csv::SelectAtTopEdge",
+      "ctrl-down": "csv::SelectAtBottomEdge",
+      "ctrl-left": "csv::SelectAtLeftEdge",
+      "ctrl-right": "csv::SelectAtRightEdge",
+      "ctrl-shift-up": "csv::ExtendSelectionToTopEdge",
+      "ctrl-shift-down": "csv::ExtendSelectionToBottomEdge",
+      "ctrl-shift-left": "csv::ExtendSelectionToLeftEdge",
+      "ctrl-shift-right": "csv::ExtendSelectionToRightEdge"
+    }
+  },
+  {
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {

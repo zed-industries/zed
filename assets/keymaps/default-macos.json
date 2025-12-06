@@ -1297,6 +1297,38 @@
     },
   },
   {
+    "context": "CsvPreview",
+    "bindings": {
+      "cmd-c": "csv::CopySelected",
+      "escape": "csv::ClearSelection",
+      "up": "csv::SelectUp",
+      "down": "csv::SelectDown",
+      "left": "csv::SelectLeft",
+      "right": "csv::SelectRight",
+      "shift-up": "csv::ExtendSelectionUp",
+      "shift-down": "csv::ExtendSelectionDown",
+      "shift-left": "csv::ExtendSelectionLeft",
+      "shift-right": "csv::ExtendSelectionRight",
+      "cmd-a": "csv::SelectAll",
+      "cmd-up": "csv::SelectAtTopEdge",
+      "cmd-down": "csv::SelectAtBottomEdge",
+      "cmd-left": "csv::SelectAtLeftEdge",
+      "cmd-right": "csv::SelectAtRightEdge",
+      "cmd-shift-up": "csv::ExtendSelectionToTopEdge",
+      "cmd-shift-down": "csv::ExtendSelectionToBottomEdge",
+      "cmd-shift-left": "csv::ExtendSelectionToLeftEdge",
+      "cmd-shift-right": "csv::ExtendSelectionToRightEdge",
+      "enter": "csv::StartCellEditing",
+    },
+  },
+  {
+    "context": "TableCellEditor",
+    "bindings": {
+      "enter": "csv::FinishCellEditing",
+      "escape": "csv::CancelCellEditing",
+    },
+  },
+  {
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
