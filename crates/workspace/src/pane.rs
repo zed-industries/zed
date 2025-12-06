@@ -196,6 +196,67 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
+// TODO naming
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub enum SplitOperation {
+    /// clone the current pane
+    #[default]
+    Clone,
+    /// create an empty new pane
+    Clear,
+    /// move the item into a new pane
+    Move,
+}
+
+/// Splits the pane to the left.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitLeft {
+    pub operation: SplitOperation,
+}
+
+/// Splits the pane to the right.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitRight {
+    pub operation: SplitOperation,
+}
+
+/// Splits the pane upward.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitUp {
+    pub operation: SplitOperation,
+}
+
+/// Splits the pane downward.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitDown {
+    pub operation: SplitOperation,
+}
+
+/// Splits the pane horizontally.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitHorizontal {
+    pub operation: SplitOperation,
+}
+
+/// Splits the pane vertically.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitVertical {
+    pub operation: SplitOperation,
+}
+
 actions!(
     pane,
     [
@@ -217,14 +278,6 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
-        /// Splits the pane to the left, cloning the current item.
-        SplitLeft,
-        /// Splits the pane upward, cloning the current item.
-        SplitUp,
-        /// Splits the pane to the right, cloning the current item.
-        SplitRight,
-        /// Splits the pane downward, cloning the current item.
-        SplitDown,
         /// Splits the pane to the left, moving the current item.
         SplitAndMoveLeft,
         /// Splits the pane upward, moving the current item.
@@ -233,10 +286,6 @@ actions!(
         SplitAndMoveRight,
         /// Splits the pane downward, moving the current item.
         SplitAndMoveDown,
-        /// Splits the pane horizontally.
-        SplitHorizontal,
-        /// Splits the pane vertically.
-        SplitVertical,
         /// Swaps the current item with the one to the left.
         SwapItemLeft,
         /// Swaps the current item with the one to the right.
@@ -278,7 +327,7 @@ pub enum Event {
     },
     Split {
         direction: SplitDirection,
-        clone_active_item: bool,
+        operation: SplitOperation,
     },
     ItemPinned,
     ItemUnpinned,
@@ -312,11 +361,11 @@ impl fmt::Debug for Event {
                 .finish(),
             Event::Split {
                 direction,
-                clone_active_item,
+                operation,
             } => f
                 .debug_struct("Split")
                 .field("direction", direction)
-                .field("clone_active_item", clone_active_item)
+                .field("operation", operation)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -2321,20 +2370,20 @@ impl Pane {
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+    pub fn split(
+        &mut self,
+        direction: SplitDirection,
+        operation: SplitOperation,
+        cx: &mut Context<Self>,
+    ) {
+        if self.items.len() <= 1 && operation == SplitOperation::Move {
+            return;
+        }
+
         cx.emit(Event::Split {
             direction,
-            clone_active_item: true,
+            operation: operation.to_owned(),
         });
-    }
-
-    pub fn split_and_move(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        if self.items.len() > 1 {
-            cx.emit(Event::Split {
-                direction,
-                clone_active_item: false,
-            });
-        }
     }
 
     pub fn toolbar(&self) -> &Entity<Toolbar> {
@@ -3672,16 +3721,17 @@ fn default_render_tab_bar_buttons(
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
+                        let operation = SplitOperation::Move;
                         if can_split_move {
-                            menu.action("Split Right", SplitAndMoveRight.boxed_clone())
-                                .action("Split Left", SplitAndMoveLeft.boxed_clone())
-                                .action("Split Up", SplitAndMoveUp.boxed_clone())
-                                .action("Split Down", SplitAndMoveDown.boxed_clone())
+                            menu.action("Split Right", SplitRight { operation }.boxed_clone())
+                                .action("Split Left", SplitLeft { operation }.boxed_clone())
+                                .action("Split Up", SplitUp { operation }.boxed_clone())
+                                .action("Split Down", SplitDown { operation }.boxed_clone())
                         } else {
-                            menu.action("Split Right", SplitRight.boxed_clone())
-                                .action("Split Left", SplitLeft.boxed_clone())
-                                .action("Split Up", SplitUp.boxed_clone())
-                                .action("Split Down", SplitDown.boxed_clone())
+                            menu.action("Split Right", SplitRight::default().boxed_clone())
+                                .action("Split Left", SplitLeft::default().boxed_clone())
+                                .action("Split Up", SplitUp::default().boxed_clone())
+                                .action("Split Down", SplitDown::default().boxed_clone())
                         }
                     })
                     .into()
@@ -3740,33 +3790,35 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .on_action(
-                cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitUp, _, cx| pane.split(SplitDirection::Up, cx)))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitLeft, _, cx| {
+                pane.split(SplitDirection::Left, split.operation, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitUp, _, cx| {
+                pane.split(SplitDirection::Up, split.operation, cx)
             }))
-            .on_action(
-                cx.listener(|pane, _: &SplitRight, _, cx| pane.split(SplitDirection::Right, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
-            )
+            .on_action(cx.listener(|pane, split: &SplitHorizontal, _, cx| {
+                pane.split(SplitDirection::horizontal(cx), split.operation, cx)
+            }))
+            .on_action(cx.listener(|pane, split: &SplitVertical, _, cx| {
+                pane.split(SplitDirection::vertical(cx), split.operation, cx)
+            }))
+            .on_action(cx.listener(|pane, split: &SplitRight, _, cx| {
+                pane.split(SplitDirection::Right, split.operation, cx)
+            }))
+            .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
+                pane.split(SplitDirection::Down, split.operation, cx)
+            }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
-                pane.split_and_move(SplitDirection::Up, cx)
+                pane.split(SplitDirection::Up, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
-                pane.split_and_move(SplitDirection::Down, cx)
+                pane.split(SplitDirection::Down, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
-                pane.split_and_move(SplitDirection::Left, cx)
+                pane.split(SplitDirection::Left, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
-                pane.split_and_move(SplitDirection::Right, cx)
+                pane.split(SplitDirection::Right, SplitOperation::Move, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
@@ -4284,11 +4336,14 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZero;
+    use std::{iter::zip, num::NonZero};
 
     use super::*;
-    use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext, size};
+    use crate::{
+        Member,
+        item::test::{TestItem, TestProjectItem},
+    };
+    use gpui::{Axis, TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6912,6 +6967,71 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*", "B"], cx);
     }
 
+    #[gpui::test]
+    async fn test_split_empty_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Clear, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_empty_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Clear, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_empty_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Clear, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_empty_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Clear, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Left, SplitOperation::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Up, SplitOperation::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Down, SplitOperation::Clone, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_right_on_single_pane(cx: &mut TestAppContext) {
+        test_single_pane_split(["A"], SplitDirection::Right, SplitOperation::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_right(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Right, SplitOperation::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_left(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Left, SplitOperation::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_up(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Up, SplitOperation::Move, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_split_move_down(cx: &mut TestAppContext) {
+        test_single_pane_split(["A", "B"], SplitDirection::Down, SplitOperation::Move, cx).await;
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -7006,5 +7126,152 @@ mod tests {
             actual_states, expected_states,
             "pane items do not match expectation"
         );
+    }
+
+    // Assert the item label, with the active item label expected active index
+    // TODO dont like the duplication
+    #[track_caller]
+    fn assert_item_labels_active_index(
+        pane: &Entity<Pane>,
+        expected_states: &[&str],
+        expected_active_idx: usize,
+        cx: &mut VisualTestContext,
+    ) {
+        let actual_states = pane.update(cx, |pane, cx| {
+            pane.items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let mut state = item
+                        .to_any_view()
+                        .downcast::<TestItem>()
+                        .unwrap()
+                        .read(cx)
+                        .label
+                        .clone();
+                    if ix == pane.active_item_index {
+                        assert_eq!(ix, expected_active_idx);
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
+                    }
+                    if pane.is_tab_pinned(ix) {
+                        state.push('!');
+                    }
+                    state
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            actual_states, expected_states,
+            "pane items do not match expectation"
+        );
+    }
+
+    #[track_caller]
+    fn assert_pane_ids_on_axis<const COUNT: usize>(
+        workspace: &Entity<Workspace>,
+        expected_ids: [&EntityId; COUNT],
+        expected_axis: Axis,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+            Member::Axis(axis) => {
+                assert_eq!(axis.axis, expected_axis);
+                assert_eq!(axis.members.len(), expected_ids.len());
+                assert!(
+                    zip(expected_ids, &axis.members).all(|(e, a)| {
+                        if let Member::Pane(p) = a {
+                            p.entity_id() == *e
+                        } else {
+                            false
+                        }
+                    }),
+                    "pane ids do not match expectation"
+                );
+            }
+            Member::Pane(_) => panic!("expected axis"),
+        });
+    }
+
+    async fn test_single_pane_split<const COUNT: usize>(
+        pane_labels: [&str; COUNT],
+        direction: SplitDirection,
+        operation: SplitOperation,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        for label in pane_labels {
+            add_labeled_item(&pane, label, false, cx);
+        }
+        pane.update(cx, |pane, cx| pane.split(direction, operation, cx));
+        cx.executor().run_until_parked();
+        let new_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let num_labels = pane_labels.len();
+        let last_as_active = format!("{}*", String::from(pane_labels[num_labels - 1]));
+
+        // check labels for all split operations
+        match operation {
+            SplitOperation::Clear => {
+                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&new_pane, [], cx);
+            }
+            SplitOperation::Clone => {
+                assert_item_labels_active_index(&pane, &pane_labels, num_labels - 1, cx);
+                assert_item_labels(&new_pane, [&last_as_active], cx);
+            }
+            SplitOperation::Move => {
+                if num_labels == 1 {
+                    // we end up with a single pane/id
+                    assert_item_labels(&pane, [&last_as_active], cx);
+                    assert_item_labels(&new_pane, [&last_as_active], cx);
+                    assert_eq!(pane.entity_id(), new_pane.entity_id());
+                } else {
+                    // let (head, _last) = pane_labels.split_at(num_labels - 1);
+                    let head = &pane_labels[..(num_labels - 1)];
+                    assert_item_labels_active_index(&pane, &head, head.len() - 1, cx);
+                    assert_item_labels(&new_pane, [&last_as_active], cx);
+                }
+            }
+        }
+
+        // expected axis depends on split direction
+        let expected_axis = match direction {
+            SplitDirection::Right | SplitDirection::Left => Axis::Horizontal,
+            SplitDirection::Up | SplitDirection::Down => Axis::Vertical,
+        };
+
+        // expected ids depends on split direction
+        let expected_ids = match direction {
+            SplitDirection::Right | SplitDirection::Down => {
+                [&pane.entity_id(), &new_pane.entity_id()]
+            }
+            SplitDirection::Left | SplitDirection::Up => [&new_pane.entity_id(), &pane.entity_id()],
+        };
+
+        // check pane axes for all operations
+        match operation {
+            SplitOperation::Clear | SplitOperation::Clone => {
+                assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+            SplitOperation::Move => {
+                if num_labels > 1 {
+                    assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+                } else {
+                    // we end up with a single pane/id
+                    workspace.read_with(cx, |workspace, _| match &workspace.center.root {
+                        Member::Axis(_) => panic!("expected a pane"),
+                        Member::Pane(p) => assert_eq!(p.entity_id(), pane.entity_id()),
+                    });
+                }
+            }
+        }
     }
 }
