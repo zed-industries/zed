@@ -12,7 +12,7 @@ world extension {
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
     use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
-    use lsp.{completion, symbol};
+    use lsp.{completion, symbol, virtual-document-config};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
 
@@ -104,6 +104,10 @@ world extension {
 
     /// Returns the workspace configuration options to pass to the other language server.
     export language-server-additional-workspace-configuration: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns virtual document configurations for this language server.
+    /// Virtual documents allow viewing decompiled code, generated sources, etc.
+    export language-server-virtual-document-configs: func(language-server-id: string, worktree: borrow<worktree>) -> result<list<virtual-document-config>, string>;
 
     /// A label containing some code.
     record code-label {
