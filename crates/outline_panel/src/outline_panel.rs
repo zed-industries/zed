@@ -5220,7 +5220,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::rust_lang;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::{
@@ -5243,9 +5243,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5478,9 +5476,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5617,9 +5613,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5816,7 +5810,8 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                "fn_lifetime_fn.rs  <==== selected"
+                "outline: pub(super) fn hints
+outline: fn hints_lifetimes_named  <==== selected"
             );
             assert_eq!(
                 selected_row_text(&new_active_editor, cx),
@@ -6029,24 +6024,7 @@ struct OutlineEntryExcerpt {
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                (struct_item
-                    (visibility_modifier)? @context
-                    "struct" @context
-                    name: (_) @name) @item
-
-                (field_declaration
-                    (visibility_modifier)? @context
-                    name: (_) @name) @item
-"#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6992,35 +6970,6 @@ outline: struct OutlineEntryExcerpt
         .await;
     }
 
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(
-            r#"
-                (field_identifier) @field
-                (struct_expression) @struct
-            "#,
-        )
-        .unwrap()
-        .with_injection_query(
-            r#"
-                (macro_invocation
-                    (token_tree) @injection.content
-                    (#set! injection.language "rust"))
-            "#,
-        )
-        .unwrap()
-    }
-
     fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultiBufferSnapshot {
         outline_panel
             .active_editor()
@@ -7086,44 +7035,7 @@ outline: struct OutlineEntryExcerpt
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7174,15 +7086,15 @@ outline: struct OutlineEntryExcerpt
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7232,7 +7144,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer  <==== selected
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7257,15 +7169,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7321,7 +7233,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7378,44 +7290,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -7462,14 +7337,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7500,14 +7377,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7535,11 +7414,13 @@ outline: fn main()"
                     "
 outline: struct Config  <==== selected
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7566,14 +7447,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7622,44 +7505,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7710,15 +7556,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7759,7 +7605,7 @@ outline: fn main()"
         let expected_collapsed_output = indoc!(
             "
         outline: mod outer  <==== selected
-        outline: fn main()"
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {
@@ -7787,15 +7633,15 @@ outline: fn main()"
             "
         outline: mod outer  <==== selected
           outline: pub struct OuterStruct
-            outline: field: String
+            outline: field
           outline: impl OuterStruct
-            outline: pub fn new()
-            outline: pub fn method(&self)
+            outline: pub fn new
+            outline: pub fn method
           outline: mod inner
-            outline: pub fn inner_function()
+            outline: pub fn inner_function
             outline: pub struct InnerStruct
-              outline: value: i32
-        outline: fn main()"
+              outline: value
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {
