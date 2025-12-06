@@ -82,6 +82,7 @@ dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 unindent.workspace = true

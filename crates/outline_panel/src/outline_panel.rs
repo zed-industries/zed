@@ -5220,7 +5220,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::rust_lang;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::{
@@ -5243,9 +5243,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5478,9 +5476,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -5617,9 +5613,7 @@ mod tests {
         let root = path!("/rust-analyzer");
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(rust_lang()))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6029,24 +6023,7 @@ struct OutlineEntryExcerpt {
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                (struct_item
-                    (visibility_modifier)? @context
-                    "struct" @context
-                    name: (_) @name) @item
-
-                (field_declaration
-                    (visibility_modifier)? @context
-                    name: (_) @name) @item
-"#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6992,35 +6969,6 @@ outline: struct OutlineEntryExcerpt
         .await;
     }
 
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(
-            r#"
-                (field_identifier) @field
-                (struct_expression) @struct
-            "#,
-        )
-        .unwrap()
-        .with_injection_query(
-            r#"
-                (macro_invocation
-                    (token_tree) @injection.content
-                    (#set! injection.language "rust"))
-            "#,
-        )
-        .unwrap()
-    }
-
     fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultiBufferSnapshot {
         outline_panel
             .active_editor()
@@ -7086,44 +7034,7 @@ outline: struct OutlineEntryExcerpt
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7378,44 +7289,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -7622,44 +7496,7 @@ outline: fn main()"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        project.read_with(cx, |project, _| {
-            project.languages().add(Arc::new(
-                rust_lang()
-                    .with_outline_query(
-                        r#"
-                            (struct_item
-                                (visibility_modifier)? @context
-                                "struct" @context
-                                name: (_) @name) @item
-                            (impl_item
-                                "impl" @context
-                                trait: (_)? @context
-                                "for"? @context
-                                type: (_) @context
-                                body: (_)) @item
-                            (function_item
-                                (visibility_modifier)? @context
-                                "fn" @context
-                                name: (_) @name
-                                parameters: (_) @context) @item
-                            (mod_item
-                                (visibility_modifier)? @context
-                                "mod" @context
-                                name: (_) @name) @item
-                            (enum_item
-                                (visibility_modifier)? @context
-                                "enum" @context
-                                name: (_) @name) @item
-                            (field_declaration
-                                (visibility_modifier)? @context
-                                name: (_) @name
-                                ":" @context
-                                type: (_) @context) @item
-                            "#,
-                    )
-                    .unwrap(),
-            ))
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
