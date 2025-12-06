@@ -106,6 +106,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Whether to automatically start a new thread from summary when token usage reaches 90%.
+    /// This allows the agent to continue working indefinitely without manual intervention,
+    /// transitioning smoothly before hitting the hard token limit.
+    ///
+    /// Default: false
+    pub auto_summarize_on_token_limit: Option<bool>,
 }
 
 impl AgentSettingsContent {

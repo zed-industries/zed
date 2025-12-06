@@ -45,6 +45,7 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    pub auto_summarize_on_token_limit: bool,
 }
 
 impl AgentSettings {
@@ -177,6 +178,7 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            auto_summarize_on_token_limit: agent.auto_summarize_on_token_limit.unwrap(),
         }
     }
 }
