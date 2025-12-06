@@ -1117,7 +1117,7 @@ impl WorkspaceDb {
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(options.host);
+                host = Some(options.host.to_string());
                 port = options.port;
                 user = options.username;
             }
@@ -1290,7 +1290,7 @@ impl WorkspaceDb {
                 user: user,
             })),
             RemoteConnectionKind::Ssh => Some(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host?,
+                host: host?.into(),
                 port,
                 username: user,
                 ..Default::default()
@@ -2437,7 +2437,7 @@ mod tests {
 
         let connection_id = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: "my-host".to_string(),
+                host: "my-host".into(),
                 port: Some(1234),
                 ..Default::default()
             }))
@@ -2626,7 +2626,7 @@ mod tests {
         .into_iter()
         .map(|(host, user)| async {
             let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host.to_string(),
+                host: host.into(),
                 username: Some(user.to_string()),
                 ..Default::default()
             });
@@ -2717,7 +2717,7 @@ mod tests {
 
         let connection_id = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host.clone(),
+                host: host.clone().into(),
                 port,
                 username: user.clone(),
                 ..Default::default()
@@ -2728,7 +2728,7 @@ mod tests {
         // Test that calling the function again with the same parameters returns the same project
         let same_connection = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host.clone(),
+                host: host.clone().into(),
                 port,
                 username: user.clone(),
                 ..Default::default()
@@ -2745,7 +2745,7 @@ mod tests {
 
         let different_connection = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host2.clone(),
+                host: host2.clone().into(),
                 port: port2,
                 username: user2.clone(),
                 ..Default::default()
@@ -2764,7 +2764,7 @@ mod tests {
 
         let connection_id = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host.clone(),
+                host: host.clone().into(),
                 port,
                 username: None,
                 ..Default::default()
@@ -2774,7 +2774,7 @@ mod tests {
 
         let same_connection_id = db
             .get_or_create_remote_connection(RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: host.clone(),
+                host: host.clone().into(),
                 port,
                 username: user.clone(),
                 ..Default::default()
@@ -2804,7 +2804,7 @@ mod tests {
             ids.push(
                 db.get_or_create_remote_connection(RemoteConnectionOptions::Ssh(
                     SshConnectionOptions {
-                        host: host.clone(),
+                        host: host.clone().into(),
                         port: *port,
                         username: user.clone(),
                         ..Default::default()
