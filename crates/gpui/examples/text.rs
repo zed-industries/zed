@@ -299,10 +299,7 @@ impl Render for TextExample {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        cx.set_menus(vec![Menu {
-            name: "GPUI Typography".into(),
-            items: vec![],
-        }]);
+        cx.set_menus([Menu::new("GPUI Typography")]);
 
         cx.init_colors();
         cx.set_global(GlobalTextContext(Arc::new(TextContext::default())));
