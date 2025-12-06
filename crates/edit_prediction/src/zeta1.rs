@@ -1,9 +1,8 @@
-mod input_excerpt;
-
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
     EditPredictionId, EditPredictionStore, ZedUpdateRequiredError,
+    cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::{EditPredictionInputs, EditPredictionResult},
 };
 use anyhow::{Context as _, Result};
@@ -12,7 +11,6 @@ use cloud_llm_client::{
     predict_edits_v3::Event,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
-use input_excerpt::excerpt_for_cursor_position;
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _, text_diff,
 };
@@ -495,10 +493,174 @@ pub fn format_event(event: &Event) -> String {
     }
 }
 
-/// Typical number of string bytes per token for the purposes of limiting model input. This is
-/// intentionally low to err on the side of underestimating limits.
-pub(crate) const BYTES_PER_TOKEN_GUESS: usize = 3;
+#[derive(Debug)]
+pub struct InputExcerpt {
+    pub context_range: Range<Point>,
+    pub editable_range: Range<Point>,
+    pub prompt: String,
+}
 
-fn guess_token_count(bytes: usize) -> usize {
-    bytes / BYTES_PER_TOKEN_GUESS
+pub fn excerpt_for_cursor_position(
+    position: Point,
+    path: &str,
+    snapshot: &BufferSnapshot,
+    editable_region_token_limit: usize,
+    context_token_limit: usize,
+) -> InputExcerpt {
+    let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
+        position,
+        snapshot,
+        editable_region_token_limit,
+        context_token_limit,
+    );
+
+    let mut prompt = String::new();
+
+    writeln!(&mut prompt, "```{path}").unwrap();
+    if context_range.start == Point::zero() {
+        writeln!(&mut prompt, "{START_OF_FILE_MARKER}").unwrap();
+    }
+
+    for chunk in snapshot.chunks(context_range.start..editable_range.start, false) {
+        prompt.push_str(chunk.text);
+    }
+
+    push_editable_range(position, snapshot, editable_range.clone(), &mut prompt);
+
+    for chunk in snapshot.chunks(editable_range.end..context_range.end, false) {
+        prompt.push_str(chunk.text);
+    }
+    write!(prompt, "\n```").unwrap();
+
+    InputExcerpt {
+        context_range,
+        editable_range,
+        prompt,
+    }
+}
+
+fn push_editable_range(
+    cursor_position: Point,
+    snapshot: &BufferSnapshot,
+    editable_range: Range<Point>,
+    prompt: &mut String,
+) {
+    writeln!(prompt, "{EDITABLE_REGION_START_MARKER}").unwrap();
+    for chunk in snapshot.chunks(editable_range.start..cursor_position, false) {
+        prompt.push_str(chunk.text);
+    }
+    prompt.push_str(CURSOR_MARKER);
+    for chunk in snapshot.chunks(cursor_position..editable_range.end, false) {
+        prompt.push_str(chunk.text);
+    }
+    write!(prompt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{App, AppContext};
+    use indoc::indoc;
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use std::sync::Arc;
+
+    #[gpui::test]
+    fn test_excerpt_for_cursor_position(cx: &mut App) {
+        let text = indoc! {r#"
+            fn foo() {
+                let x = 42;
+                println!("Hello, world!");
+            }
+
+            fn bar() {
+                let x = 42;
+                let mut sum = 0;
+                for i in 0..x {
+                    sum += i;
+                }
+                println!("Sum: {}", sum);
+                return sum;
+            }
+
+            fn generate_random_numbers() -> Vec<i32> {
+                let mut rng = rand::thread_rng();
+                let mut numbers = Vec::new();
+                for _ in 0..5 {
+                    numbers.push(rng.random_range(1..101));
+                }
+                numbers
+            }
+        "#};
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Ensure we try to fit the largest possible syntax scope, resorting to line-based expansion
+        // when a larger scope doesn't fit the editable region.
+        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 50, 32);
+        assert_eq!(
+            excerpt.prompt,
+            indoc! {r#"
+            ```main.rs
+                let x = 42;
+                println!("Hello, world!");
+            <|editable_region_start|>
+            }
+
+            fn bar() {
+                let x = 42;
+                let mut sum = 0;
+                for i in 0..x {
+                    sum += i;
+                }
+                println!("Sum: {}", sum);
+                r<|user_cursor_is_here|>eturn sum;
+            }
+
+            fn generate_random_numbers() -> Vec<i32> {
+            <|editable_region_end|>
+                let mut rng = rand::thread_rng();
+                let mut numbers = Vec::new();
+            ```"#}
+        );
+
+        // The `bar` function won't fit within the editable region, so we resort to line-based expansion.
+        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 40, 32);
+        assert_eq!(
+            excerpt.prompt,
+            indoc! {r#"
+            ```main.rs
+            fn bar() {
+                let x = 42;
+                let mut sum = 0;
+            <|editable_region_start|>
+                for i in 0..x {
+                    sum += i;
+                }
+                println!("Sum: {}", sum);
+                r<|user_cursor_is_here|>eturn sum;
+            }
+
+            fn generate_random_numbers() -> Vec<i32> {
+                let mut rng = rand::thread_rng();
+            <|editable_region_end|>
+                let mut numbers = Vec::new();
+                for _ in 0..5 {
+                    numbers.push(rng.random_range(1..101));
+            ```"#}
+        );
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+    }
 }
