@@ -805,28 +805,6 @@ impl DebugPanel {
                                                 }
                                             }),
                                     )
-                                    .child(Divider::vertical())
-                                    .child(
-                                        IconButton::new("debug-restart", IconName::RotateCcw)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(window.listener_for(
-                                                running_state,
-                                                |this, _, window, cx| {
-                                                    this.rerun_session(window, cx);
-                                                },
-                                            ))
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Rerun Session",
-                                                        &RerunSession,
-                                                        &focus_handle,
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
-                                    )
                                     .child(
                                         IconButton::new(
                                             "debug-back-in-history",
@@ -852,6 +830,28 @@ impl DebugPanel {
                                                 },
                                             ),
                                         ),
+                                    )
+                                    .child(Divider::vertical())
+                                    .child(
+                                        IconButton::new("debug-restart", IconName::RotateCcw)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(window.listener_for(
+                                                running_state,
+                                                |this, _, window, cx| {
+                                                    this.rerun_session(window, cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Rerun Session",
+                                                        &RerunSession,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
                                     )
                                     .child(
                                         IconButton::new("debug-stop", IconName::Power)
