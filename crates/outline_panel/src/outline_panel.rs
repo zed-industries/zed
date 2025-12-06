@@ -5810,7 +5810,8 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                "fn_lifetime_fn.rs  <==== selected"
+                "outline: pub(super) fn hints
+outline: fn hints_lifetimes_named  <==== selected"
             );
             assert_eq!(
                 selected_row_text(&new_active_editor, cx),
@@ -7085,15 +7086,15 @@ outline: struct OutlineEntryExcerpt
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7143,7 +7144,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer  <==== selected
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7168,15 +7169,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7232,7 +7233,7 @@ outline: fn main()"
                 indoc!(
                     "
 outline: mod outer
-outline: fn main()"
+outline: fn main"
                 )
             );
         });
@@ -7336,14 +7337,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7374,14 +7377,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7409,11 +7414,13 @@ outline: fn main()"
                     "
 outline: struct Config  <==== selected
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7440,14 +7447,16 @@ outline: fn main()"
                 indoc!(
                     "
 outline: struct Config  <==== selected
-  outline: name: String
-  outline: value: i32
+  outline: name
+  outline: value
 outline: impl Config
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
+  outline: fn new
+  outline: fn get_value
 outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
+  outline: Active
+  outline: Inactive
+outline: fn process_config
+outline: fn main"
                 )
             );
         });
@@ -7547,15 +7556,15 @@ outline: fn main()"
                     "
 outline: mod outer  <==== selected
   outline: pub struct OuterStruct
-    outline: field: String
+    outline: field
   outline: impl OuterStruct
-    outline: pub fn new()
-    outline: pub fn method(&self)
+    outline: pub fn new
+    outline: pub fn method
   outline: mod inner
-    outline: pub fn inner_function()
+    outline: pub fn inner_function
     outline: pub struct InnerStruct
-      outline: value: i32
-outline: fn main()"
+      outline: value
+outline: fn main"
                 )
             );
         });
@@ -7596,7 +7605,7 @@ outline: fn main()"
         let expected_collapsed_output = indoc!(
             "
         outline: mod outer  <==== selected
-        outline: fn main()"
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {
@@ -7624,15 +7633,15 @@ outline: fn main()"
             "
         outline: mod outer  <==== selected
           outline: pub struct OuterStruct
-            outline: field: String
+            outline: field
           outline: impl OuterStruct
-            outline: pub fn new()
-            outline: pub fn method(&self)
+            outline: pub fn new
+            outline: pub fn method
           outline: mod inner
-            outline: pub fn inner_function()
+            outline: pub fn inner_function
             outline: pub struct InnerStruct
-              outline: value: i32
-        outline: fn main()"
+              outline: value
+        outline: fn main"
         );
 
         outline_panel.update(cx, |panel, cx| {
