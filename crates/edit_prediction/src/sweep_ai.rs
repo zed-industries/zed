@@ -236,7 +236,6 @@ impl SweepAi {
             };
 
             let response: AutocompleteResponse = serde_json::from_slice(&body)?;
-            dbg!(&response);
 
             let old_text = snapshot
                 .text_for_range(response.start_index..response.end_index)
