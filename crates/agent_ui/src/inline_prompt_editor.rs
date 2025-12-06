@@ -10,8 +10,8 @@ use editor::{
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    TextStyle, TextStyleRefinement, WeakEntity, Window,
+    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
@@ -100,7 +100,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         let bottom_padding = match &self.mode {
             PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
-            PromptEditorMode::Terminal { .. } => rems_from_px(4.0),
+            PromptEditorMode::Terminal { .. } => rems_from_px(8.0),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -138,14 +138,14 @@ impl<T: 'static> Render for PromptEditor<T> {
             .pt_0p5()
             .pb(bottom_padding)
             .pr(right_padding)
-            .justify_center()
+            .bg(cx.theme().colors().editor_background)
             .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .cursor_default()
+                    .items_start()
+                    .cursor(CursorStyle::Arrow)
                     .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
@@ -165,7 +165,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             .flex_shrink_0()
                             .items_center()
                             .justify_center()
-                            .gap_1()
+                            .gap_2()
                             .child(self.render_close_button(cx))
                             .map(|el| {
                                 let CodegenStatus::Error(error) = self.codegen_status(cx) else {
@@ -206,14 +206,13 @@ impl<T: 'static> Render for PromptEditor<T> {
                 this.child(
                     h_flex()
                         .size_full()
-                        .justify_center()
                         .child(div().w(left_gutter_width + px(6.)))
                         .child(
                             div()
                                 .size_full()
                                 .min_w_0()
-                                .pt(rems_from_px(3.))
-                                .pl_0p5()
+                                .pb_px()
+                                .pl_1()
                                 .flex_1()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
