@@ -164,6 +164,29 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `true`
     pub button: Option<bool>,
+    /// Settings for language server notifications
+    pub notifications: Option<LspNotificationSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LspNotificationSettingsContent {
+    /// Whether to automatically dismiss notifications for language servers.
+    /// 
+    /// Default: `Always`
+    pub auto_dismiss: NotificationAutoDismissalSetting
+}
+
+#[with_fallible_options]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub enum NotificationAutoDismissalSetting {
+    /// Automatically dismiss notifications.
+    #[default]
+    Always,
+    /// Never dismiss notifications automatically.
+    Never,
+    /// Dismiss notifications automatically after a certain amount of time.
+    After(u64)
 }
 
 #[with_fallible_options]

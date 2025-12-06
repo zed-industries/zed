@@ -6,6 +6,8 @@ use gpui::{
     ScrollHandle, Task, svg,
 };
 use parking_lot::Mutex;
+use project::project_settings::ProjectSettings;
+use settings::{NotificationAutoDismissalSetting, Settings};
 
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
@@ -102,19 +104,31 @@ impl Workspace {
             if let Ok(prompt) =
                 AnyEntity::from(notification.clone()).downcast::<LanguageServerPrompt>()
             {
-                if prompt
+                let is_prompt_without_actions = prompt
                     .read(cx)
                     .request
                     .as_ref()
-                    .is_some_and(|request| request.actions.is_empty())
-                {
+                    .is_some_and(|request| request.actions.is_empty());
+
+                let auto_dismiss_setting = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .notifications
+                    .auto_dismiss;
+
+                let should_auto_dismiss =
+                    auto_dismiss_setting != NotificationAutoDismissalSetting::Never;
+
+                if is_prompt_without_actions && should_auto_dismiss {
+                    let dismiss_duration_ms = match auto_dismiss_setting {
+                        NotificationAutoDismissalSetting::After(duration_ms) => duration_ms,
+                        _ => NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
+                    };
+
                     let task = cx.spawn({
                         let id = id.clone();
                         async move |this, cx| {
                             cx.background_executor()
-                                .timer(Duration::from_millis(
-                                    NOTIFICATION_AUTO_DISMISS_DURATION_MILLIS,
-                                ))
+                                .timer(Duration::from_millis(dismiss_duration_ms))
                                 .await;
                             let _ = this.update(cx, |workspace, cx| {
                                 workspace.dismiss_notification(&id, cx);
