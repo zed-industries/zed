@@ -26,7 +26,7 @@ pub fn init(cx: &mut App) {
 
 pub struct CsvPreviewView {
     focus_handle: FocusHandle,
-    _editor: Entity<Editor>,
+    active_editor: Entity<Editor>,
     contents: ParsedCsv,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: ColumnWidths,
@@ -80,7 +80,7 @@ impl CsvPreviewView {
 
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
-            _editor: editor.clone(),
+            active_editor: editor.clone(),
             contents,
             table_interaction_state,
             column_widths: ColumnWidths::new(cx),
@@ -99,8 +99,25 @@ impl EventEmitter<()> for CsvPreviewView {}
 impl Item for CsvPreviewView {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "CSV Preview".into()
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::FileDoc))
+    }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.active_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| {
+                let file = b.read(cx).file()?;
+                let local_file = file.as_local()?;
+                local_file
+                    .abs_path(cx)
+                    .file_name()
+                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+            })
+            .unwrap_or_else(|| SharedString::from("CSV Preview"))
     }
 }
 
@@ -113,13 +130,6 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .mb_4()
-                    .child("CSV Preview"),
-            )
             .child({
                 if self.contents.headers.is_empty() {
                     div()
