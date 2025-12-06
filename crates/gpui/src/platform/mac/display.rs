@@ -3,7 +3,7 @@ use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
-    foundation::{NSDictionary, NSString},
+    foundation::{NSDictionary, NSString, NSTimeInterval},
 };
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
@@ -100,6 +100,34 @@ impl PlatformDisplay for MacDisplay {
             bytes.byte14,
             bytes.byte15,
         ]))
+    }
+
+    fn adaptive_refresh_rate(&self) -> bool {
+        // Use NSScreen's minimumRefreshInterval and maximumRefreshInterval
+        // to detect variable refresh rate support.
+        // See: https://developer.apple.com/videos/play/wwdc2021/10147/
+        unsafe {
+            let screens = NSScreen::screens(nil);
+            let count: u64 = cocoa::foundation::NSArray::count(screens);
+
+            for i in 0..count {
+                let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
+                let device_description = NSScreen::deviceDescription(screen);
+                let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+                let screen_number = device_description.objectForKey_(screen_number_key);
+                let screen_number: CGDirectDisplayID =
+                    msg_send![screen_number, unsignedIntegerValue];
+
+                if self.0 == screen_number {
+                    let min: NSTimeInterval = msg_send![screen, minimumRefreshInterval];
+                    let max: NSTimeInterval = msg_send![screen, maximumRefreshInterval];
+
+                    return min != max;
+                }
+            }
+        }
+
+        false
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

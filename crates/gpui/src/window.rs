@@ -877,6 +877,7 @@ pub struct Window {
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     last_input_modality: InputModality,
+    adaptive_display: Rc<Cell<bool>>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1064,6 +1065,12 @@ impl Window {
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
+        let adaptive_display = Rc::new(Cell::new(
+            platform_window
+                .display()
+                .map(|d| d.adaptive_refresh_rate())
+                .unwrap_or(false),
+        ));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
@@ -1094,6 +1101,7 @@ impl Window {
             let invalidator = invalidator.clone();
             let active = active.clone();
             let needs_present = needs_present.clone();
+            let adaptive_display = adaptive_display.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
             move |request_frame_options| {
@@ -1108,11 +1116,12 @@ impl Window {
                         .log_err();
                 }
 
-                // Keep presenting the current scene for 1 extra second since the
-                // last input to prevent the display from underclocking the refresh rate.
+                // On displays with adaptive refresh rates (e.g., macOS ProMotion), keep presenting
+                // for 1 second after input to prevent the display from underclocking during interaction.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get()
+                    || (adaptive_display.get()
+                        && active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
@@ -1318,6 +1327,7 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             active,
             hovered,
+            adaptive_display,
             needs_present,
             last_input_timestamp,
             last_input_modality: InputModality::Mouse,
@@ -1746,9 +1756,16 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
+        let display = self.platform_window.display();
+
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        self.display_id = self.platform_window.display().map(|display| display.id());
+        self.display_id = display.as_ref().map(|display| display.id());
+        self.adaptive_display.set(
+            display
+                .map(|display| display.adaptive_refresh_rate())
+                .unwrap_or(false),
+        );
 
         self.refresh();
 
