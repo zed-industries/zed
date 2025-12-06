@@ -2295,8 +2295,38 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor)
+                let git = GitBinary::new(git_binary_path, working_directory.clone(), executor)
                     .envs(HashMap::clone(&env));
+
+                let output = git.run(&["help", "-a"]).await?;
+                if !output.lines().any(|line| line.trim().starts_with("hook ")) {
+                    log::warn!(
+                        "git hook command not available, running the {} hook manually",
+                        hook.as_str()
+                    );
+
+                    let hook_abs_path = working_directory
+                        .join(".git")
+                        .join("hooks")
+                        .join(hook.as_str());
+                    if hook_abs_path.is_file() {
+                        let output = new_smol_command(&hook_abs_path)
+                            .envs(env.iter())
+                            .current_dir(&working_directory)
+                            .output()
+                            .await?;
+
+                        anyhow::ensure!(
+                            output.status.success(),
+                            "{} hook failed:\n{}",
+                            hook.as_str(),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+
+                    return Ok(());
+                }
+
                 git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
                     .await?;
                 Ok(())
