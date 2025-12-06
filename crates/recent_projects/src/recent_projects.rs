@@ -132,7 +132,8 @@ pub fn init(cx: &mut App) {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
-                RecentProjects::open(workspace, create_new_window, window, cx);
+                let focus_handle = workspace.focus_handle(cx);
+                RecentProjects::open(workspace, create_new_window, window, focus_handle, cx);
                 return;
             };
 
@@ -246,11 +247,12 @@ impl RecentProjects {
         workspace: &mut Workspace,
         create_new_window: bool,
         window: &mut Window,
+        focus_handle: FocusHandle,
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
+            let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
 
             Self::new(delegate, 34., window, cx)
         })
@@ -289,10 +291,16 @@ pub struct RecentProjectsDelegate {
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
     has_any_non_local_projects: bool,
+    focus_handle: FocusHandle,
 }
 
 impl RecentProjectsDelegate {
-    fn new(workspace: WeakEntity<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        create_new_window: bool,
+        render_paths: bool,
+        focus_handle: FocusHandle,
+    ) -> Self {
         Self {
             workspace,
             workspaces: Vec::new(),
@@ -302,6 +310,7 @@ impl RecentProjectsDelegate {
             render_paths,
             reset_selected_match_index: true,
             has_any_non_local_projects: false,
+            focus_handle,
         }
     }
 
@@ -544,12 +553,23 @@ impl PickerDelegate for RecentProjectsDelegate {
             paths,
         };
 
+        let focus_handle = self.focus_handle.clone();
+
         let secondary_actions = h_flex()
             .gap_px()
             .child(
                 IconButton::new("open_new_window", IconName::ArrowUpRight)
                     .icon_size(IconSize::XSmall)
-                    .tooltip(Tooltip::text("Open Project in New Window"))
+                    .tooltip({
+                        move |_, cx| {
+                            Tooltip::for_action_in(
+                                "Open Project in New Window",
+                                &menu::SecondaryConfirm,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
                     .on_click(cx.listener(move |this, _event, window, cx| {
                         cx.stop_propagation();
                         window.prevent_default();
@@ -577,8 +597,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .id("projecy_info_container")
                         .gap_3()
+                        .flex_grow()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(match location {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
@@ -600,6 +621,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 highlighted.paths.clear();
                             }
                             highlighted.render(window, cx)
+                        })
+                        .tooltip(move |_, cx| {
+                            let tooltip_highlighted_location = highlighted_match.clone();
+                            cx.new(|_| MatchTooltip {
+                                highlighted_location: tooltip_highlighted_location,
+                            })
+                            .into()
                         }),
                 )
                 .map(|el| {
@@ -608,13 +636,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     } else {
                         el.end_hover_slot(secondary_actions)
                     }
-                })
-                .tooltip(move |_, cx| {
-                    let tooltip_highlighted_location = highlighted_match.clone();
-                    cx.new(|_| MatchTooltip {
-                        highlighted_location: tooltip_highlighted_location,
-                    })
-                    .into()
                 }),
         )
     }
