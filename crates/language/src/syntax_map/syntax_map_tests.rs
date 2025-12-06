@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher,
-    buffer_tests::{markdown_inline_lang, markdown_lang},
+    LanguageConfig, LanguageMatcher, buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
 use rand::rngs::StdRng;
@@ -84,7 +83,7 @@ fn test_splice_included_ranges() {
 #[gpui::test]
 fn test_syntax_map_layers_for_range(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let language = Arc::new(rust_lang());
+    let language = rust_lang();
     registry.add(language.clone());
 
     let mut buffer = Buffer::new(
@@ -181,11 +180,11 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
 #[gpui::test]
 fn test_dynamic_language_injection(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let markdown = Arc::new(markdown_lang());
+    let markdown = markdown_lang();
     let markdown_inline = Arc::new(markdown_inline_lang());
     registry.add(markdown.clone());
     registry.add(markdown_inline.clone());
-    registry.add(Arc::new(rust_lang()));
+    registry.add(rust_lang());
     registry.add(Arc::new(ruby_lang()));
 
     let mut buffer = Buffer::new(
@@ -900,7 +899,7 @@ fn test_random_syntax_map_edits_rust_macros(rng: StdRng, cx: &mut App) {
     .repeat(2);
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let language = Arc::new(rust_lang());
+    let language = rust_lang();
     registry.add(language.clone());
 
     test_random_edits(text, registry, language, rng);
@@ -1147,11 +1146,11 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(elixir_lang()));
     registry.add(Arc::new(heex_lang()));
-    registry.add(Arc::new(rust_lang()));
+    registry.add(rust_lang());
     registry.add(Arc::new(ruby_lang()));
     registry.add(Arc::new(html_lang()));
     registry.add(Arc::new(erb_lang()));
-    registry.add(Arc::new(markdown_lang()));
+    registry.add(markdown_lang());
     registry.add(Arc::new(markdown_inline_lang()));
 
     let language = registry
@@ -1282,35 +1281,6 @@ fn erb_lang() -> Language {
                 (#set! injection.language "html")
                 (#set! injection.combined)
             )
-        "#,
-    )
-    .unwrap()
-}
-
-fn rust_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    )
-    .with_highlights_query(
-        r#"
-            (field_identifier) @field
-            (struct_expression) @struct
-        "#,
-    )
-    .unwrap()
-    .with_injection_query(
-        r#"
-            (macro_invocation
-                (token_tree) @injection.content
-                (#set! injection.language "rust"))
         "#,
     )
     .unwrap()
