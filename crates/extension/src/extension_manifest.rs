@@ -93,6 +93,8 @@ pub struct ExtensionManifest {
     pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -288,6 +290,68 @@ pub struct DebugAdapterManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugLocatorManifestEntry {}
 
+/// Manifest entry for a language model provider.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelProviderManifestEntry {
+    /// Display name for the provider.
+    pub name: String,
+    /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Default models to show even before API connection.
+    #[serde(default)]
+    pub models: Vec<LanguageModelManifestEntry>,
+    /// Authentication configuration.
+    #[serde(default)]
+    pub auth: Option<LanguageModelAuthConfig>,
+}
+
+/// Manifest entry for a language model.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelManifestEntry {
+    /// Unique identifier for the model.
+    pub id: String,
+    /// Display name for the model.
+    pub name: String,
+    /// Maximum input token count.
+    #[serde(default)]
+    pub max_token_count: u64,
+    /// Maximum output tokens (optional).
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    /// Whether the model supports image inputs.
+    #[serde(default)]
+    pub supports_images: bool,
+    /// Whether the model supports tool/function calling.
+    #[serde(default)]
+    pub supports_tools: bool,
+    /// Whether the model supports extended thinking/reasoning.
+    #[serde(default)]
+    pub supports_thinking: bool,
+}
+
+/// Authentication configuration for a language model provider.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelAuthConfig {
+    /// Environment variable name for the API key.
+    #[serde(default)]
+    pub env_var: Option<String>,
+    /// Human-readable name for the credential shown in the UI input field (e.g., "API Key", "Access Token").
+    #[serde(default)]
+    pub credential_label: Option<String>,
+    /// OAuth configuration for web-based authentication flows.
+    #[serde(default)]
+    pub oauth: Option<OAuthConfig>,
+}
+
+/// OAuth configuration for web-based authentication.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct OAuthConfig {
+    /// The text to display on the sign-in button (e.g., "Sign in with GitHub").
+    #[serde(default)]
+    pub sign_in_button_label: Option<String>,
+}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -358,6 +422,7 @@ fn manifest_from_old_manifest(
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
+        language_model_providers: Default::default(),
     }
 }
 
@@ -391,6 +456,7 @@ mod tests {
             capabilities: vec![],
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
+            language_model_providers: BTreeMap::default(),
         }
     }
 

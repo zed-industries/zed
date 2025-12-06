@@ -18,7 +18,7 @@ pub use templates::*;
 pub use thread::*;
 pub use tools::*;
 
-use acp_thread::{AcpThread, AgentModelSelector};
+use acp_thread::{AcpThread, AgentModelIcon, AgentModelSelector};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -161,11 +161,16 @@ impl LanguageModels {
         model: &Arc<dyn LanguageModel>,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
+        let icon = if let Some(path) = provider.icon_path() {
+            Some(AgentModelIcon::Path(path))
+        } else {
+            Some(AgentModelIcon::Named(provider.icon()))
+        };
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
-            icon: Some(provider.icon()),
+            icon,
         }
     }
 
@@ -1356,7 +1361,7 @@ mod internal_tests {
                     id: acp::ModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(ui::IconName::ZedAssistant),
+                    icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
                 }]
             )])
         );

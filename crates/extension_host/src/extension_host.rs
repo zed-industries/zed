@@ -1,4 +1,5 @@
 mod capability_granter;
+mod copilot_migration;
 pub mod extension_settings;
 pub mod headless_host;
 pub mod wasm_host;
@@ -16,9 +17,9 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageModelProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -32,8 +33,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString, Task,
+    WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -57,10 +58,19 @@ use std::{
 };
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
+use wasm_host::llm_provider::ExtensionLanguageModelProvider;
 use wasm_host::{
     WasmExtension, WasmHost,
-    wit::{is_supported_wasm_api_version, wasm_api_version_range},
+    wit::{LlmModelInfo, LlmProviderInfo, is_supported_wasm_api_version, wasm_api_version_range},
 };
+
+struct LlmProviderWithModels {
+    provider_info: LlmProviderInfo,
+    models: Vec<LlmModelInfo>,
+    is_authenticated: bool,
+    icon_path: Option<SharedString>,
+    auth_config: Option<extension::LanguageModelAuthConfig>,
+}
 
 pub use extension::{
     ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest, SchemaVersion,
@@ -69,6 +79,98 @@ pub use extension_settings::ExtensionSettings;
 
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+/// Extension IDs that are being migrated from hardcoded LLM providers.
+/// For backwards compatibility, if the user has the corresponding env var set,
+/// we automatically enable env var reading for these extensions on first install.
+const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
+    "anthropic",
+    "copilot_chat",
+    "google-ai",
+    "open_router",
+    "openai",
+];
+
+/// Migrates legacy LLM provider extensions by auto-enabling env var reading
+/// if the env var is currently present in the environment.
+///
+/// This migration only runs once per provider - we track which providers have been
+/// migrated in `migrated_llm_providers` to avoid overriding user preferences.
+fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut App) {
+    // Only apply migration to known legacy LLM extensions
+    if !LEGACY_LLM_EXTENSION_IDS.contains(&manifest.id.as_ref()) {
+        return;
+    }
+
+    // Check each provider in the manifest
+    for (provider_id, provider_entry) in &manifest.language_model_providers {
+        let Some(auth_config) = &provider_entry.auth else {
+            continue;
+        };
+        let Some(env_var_name) = &auth_config.env_var else {
+            continue;
+        };
+
+        let full_provider_id: Arc<str> = format!("{}:{}", manifest.id, provider_id).into();
+
+        // Check if we've already run migration for this provider (regardless of outcome)
+        let already_migrated = ExtensionSettings::get_global(cx)
+            .migrated_llm_providers
+            .contains(full_provider_id.as_ref());
+
+        if already_migrated {
+            continue;
+        }
+
+        // Check if the env var is present and non-empty
+        let env_var_is_set = std::env::var(env_var_name)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        // Mark as migrated regardless of whether we enable env var reading
+        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
+            let full_provider_id = full_provider_id.clone();
+            let env_var_is_set = env_var_is_set;
+            move |settings, _| {
+                // Always mark as migrated
+                let migrated = settings
+                    .extension
+                    .migrated_llm_providers
+                    .get_or_insert_with(Vec::new);
+
+                if !migrated
+                    .iter()
+                    .any(|id| id.as_ref() == full_provider_id.as_ref())
+                {
+                    migrated.push(full_provider_id.clone());
+                }
+
+                // Only enable env var reading if the env var is set
+                if env_var_is_set {
+                    let providers = settings
+                        .extension
+                        .allowed_env_var_providers
+                        .get_or_insert_with(Vec::new);
+
+                    if !providers
+                        .iter()
+                        .any(|id| id.as_ref() == full_provider_id.as_ref())
+                    {
+                        providers.push(full_provider_id);
+                    }
+                }
+            }
+        });
+
+        if env_var_is_set {
+            log::info!(
+                "Migrating legacy LLM provider {}: auto-enabling {} env var reading",
+                full_provider_id,
+                env_var_name
+            );
+        }
+    }
+}
 
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
@@ -771,6 +873,11 @@ impl ExtensionStore {
 
             if let ExtensionOperation::Install = operation {
                 this.update(cx, |this, cx| {
+                    // Check for legacy LLM provider migration
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        migrate_legacy_llm_provider_env_var(&manifest, cx);
+                    }
+
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx)
                         && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
@@ -779,6 +886,9 @@ impl ExtensionStore {
                             this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
                         });
                     }
+
+                    // Run extension-specific migrations
+                    copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
                 })
                 .ok();
             }
@@ -1217,6 +1327,11 @@ impl ExtensionStore {
             for command_name in extension.manifest.slash_commands.keys() {
                 self.proxy.unregister_slash_command(command_name.clone());
             }
+            for provider_id in extension.manifest.language_model_providers.keys() {
+                let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
+                self.proxy
+                    .unregister_language_model_provider(full_provider_id, cx);
+            }
         }
 
         self.wasm_extensions
@@ -1355,7 +1470,11 @@ impl ExtensionStore {
             })
             .await;
 
-            let mut wasm_extensions = Vec::new();
+            let mut wasm_extensions: Vec<(
+                Arc<ExtensionManifest>,
+                WasmExtension,
+                Vec<LlmProviderWithModels>,
+            )> = Vec::new();
             for extension in extension_entries {
                 if extension.manifest.lib.kind.is_none() {
                     continue;
@@ -1373,7 +1492,122 @@ impl ExtensionStore {
 
                 match wasm_extension {
                     Ok(wasm_extension) => {
-                        wasm_extensions.push((extension.manifest.clone(), wasm_extension))
+                        // Query for LLM providers if the manifest declares any
+                        let mut llm_providers_with_models = Vec::new();
+                        if !extension.manifest.language_model_providers.is_empty() {
+                            let providers_result = wasm_extension
+                                .call(|ext, store| {
+                                    async move { ext.call_llm_providers(store).await }.boxed()
+                                })
+                                .await;
+
+                            if let Ok(Ok(providers)) = providers_result {
+                                for provider_info in providers {
+                                    let models_result = wasm_extension
+                                        .call({
+                                            let provider_id = provider_info.id.clone();
+                                            |ext, store| {
+                                                async move {
+                                                    ext.call_llm_provider_models(store, &provider_id)
+                                                        .await
+                                                }
+                                                .boxed()
+                                            }
+                                        })
+                                        .await;
+
+                                    let models: Vec<LlmModelInfo> = match models_result {
+                                        Ok(Ok(Ok(models))) => models,
+                                        Ok(Ok(Err(e))) => {
+                                            log::error!(
+                                                "Failed to get models for LLM provider {} in extension {}: {}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                        Ok(Err(e)) => {
+                                            log::error!(
+                                                "Wasm error calling llm_provider_models for {} in extension {}: {:?}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                        Err(e) => {
+                                            log::error!(
+                                                "Extension call failed for llm_provider_models {} in extension {}: {:?}",
+                                                provider_info.id,
+                                                extension.manifest.id,
+                                                e
+                                            );
+                                            Vec::new()
+                                        }
+                                    };
+
+                                    // Query initial authentication state
+                                    let is_authenticated = wasm_extension
+                                        .call({
+                                            let provider_id = provider_info.id.clone();
+                                            |ext, store| {
+                                                async move {
+                                                    ext.call_llm_provider_is_authenticated(
+                                                        store,
+                                                        &provider_id,
+                                                    )
+                                                    .await
+                                                }
+                                                .boxed()
+                                            }
+                                        })
+                                        .await
+                                        .unwrap_or(Ok(false))
+                                        .unwrap_or(false);
+
+                                    // Resolve icon path if provided
+                                    let icon_path = provider_info.icon.as_ref().map(|icon| {
+                                        let icon_file_path = extension_path.join(icon);
+                                        // Canonicalize to resolve symlinks (dev extensions are symlinked)
+                                        let absolute_icon_path = icon_file_path
+                                            .canonicalize()
+                                            .unwrap_or(icon_file_path)
+                                            .to_string_lossy()
+                                            .to_string();
+                                        SharedString::from(absolute_icon_path)
+                                    });
+
+                                    let provider_id_arc: Arc<str> =
+                                        provider_info.id.as_str().into();
+                                    let auth_config = extension
+                                        .manifest
+                                        .language_model_providers
+                                        .get(&provider_id_arc)
+                                        .and_then(|entry| entry.auth.clone());
+
+                                    llm_providers_with_models.push(LlmProviderWithModels {
+                                        provider_info,
+                                        models,
+                                        is_authenticated,
+                                        icon_path,
+                                        auth_config,
+                                    });
+                                }
+                            } else {
+                                log::error!(
+                                    "Failed to get LLM providers from extension {}: {:?}",
+                                    extension.manifest.id,
+                                    providers_result
+                                );
+                            }
+                        }
+
+                        wasm_extensions.push((
+                            extension.manifest.clone(),
+                            wasm_extension,
+                            llm_providers_with_models,
+                        ))
                     }
                     Err(e) => {
                         log::error!(
@@ -1392,7 +1626,7 @@ impl ExtensionStore {
             this.update(cx, |this, cx| {
                 this.reload_complete_senders.clear();
 
-                for (manifest, wasm_extension) in &wasm_extensions {
+                for (manifest, wasm_extension, llm_providers_with_models) in &wasm_extensions {
                     let extension = Arc::new(wasm_extension.clone());
 
                     for (language_server_id, language_server_config) in &manifest.language_servers {
@@ -1446,9 +1680,41 @@ impl ExtensionStore {
                         this.proxy
                             .register_debug_locator(extension.clone(), debug_adapter.clone());
                     }
+
+                    // Register LLM providers
+                    for llm_provider in llm_providers_with_models {
+                        let provider_id: Arc<str> =
+                            format!("{}:{}", manifest.id, llm_provider.provider_info.id).into();
+                        let wasm_ext = extension.as_ref().clone();
+                        let pinfo = llm_provider.provider_info.clone();
+                        let mods = llm_provider.models.clone();
+                        let auth = llm_provider.is_authenticated;
+                        let icon = llm_provider.icon_path.clone();
+                        let auth_config = llm_provider.auth_config.clone();
+
+                        this.proxy.register_language_model_provider(
+                            provider_id.clone(),
+                            Box::new(move |cx: &mut App| {
+                                let provider = Arc::new(ExtensionLanguageModelProvider::new(
+                                    wasm_ext, pinfo, mods, auth, icon, auth_config, cx,
+                                ));
+                                language_model::LanguageModelRegistry::global(cx).update(
+                                    cx,
+                                    |registry, cx| {
+                                        registry.register_provider(provider, cx);
+                                    },
+                                );
+                            }),
+                            cx,
+                        );
+                    }
                 }
 
-                this.wasm_extensions.extend(wasm_extensions);
+                let wasm_extensions_without_llm: Vec<_> = wasm_extensions
+                    .into_iter()
+                    .map(|(manifest, ext, _)| (manifest, ext))
+                    .collect();
+                this.wasm_extensions.extend(wasm_extensions_without_llm);
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);

@@ -1,9 +1,25 @@
 use gpui::{Action, IntoElement, ParentElement, RenderOnce, point};
-use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use language_model::{LanguageModelProvider, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, ListBulletItem, prelude::*};
 
+#[derive(Clone)]
+enum ProviderIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
+impl ProviderIcon {
+    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
+        if let Some(path) = provider.icon_path() {
+            Self::Path(path)
+        } else {
+            Self::Name(provider.icon())
+        }
+    }
+}
+
 pub struct ApiKeysWithProviders {
-    configured_providers: Vec<(IconName, SharedString)>,
+    configured_providers: Vec<(ProviderIcon, SharedString)>,
 }
 
 impl ApiKeysWithProviders {
@@ -26,14 +42,19 @@ impl ApiKeysWithProviders {
         }
     }
 
-    fn compute_configured_providers(cx: &App) -> Vec<(IconName, SharedString)> {
+    fn compute_configured_providers(cx: &App) -> Vec<(ProviderIcon, SharedString)> {
         LanguageModelRegistry::read_global(cx)
             .providers()
             .iter()
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0))
+            .map(|provider| {
+                (
+                    ProviderIcon::from_provider(provider.as_ref()),
+                    provider.name().0,
+                )
+            })
             .collect()
     }
 }
@@ -47,7 +68,14 @@ impl Render for ApiKeysWithProviders {
                 .map(|(icon, name)| {
                     h_flex()
                         .gap_1p5()
-                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+                        .child(match icon {
+                            ProviderIcon::Name(icon_name) => Icon::new(icon_name)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                            ProviderIcon::Path(icon_path) => Icon::from_external_svg(icon_path)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        })
                         .child(Label::new(name))
                 });
         div()

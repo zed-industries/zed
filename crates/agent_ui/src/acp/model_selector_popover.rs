@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use acp_thread::{AgentModelInfo, AgentModelSelector};
+use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use agent_servers::AgentServer;
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
@@ -64,7 +64,7 @@ impl Render for AcpModelSelectorPopover {
             .map(|model| model.name.clone())
             .unwrap_or_else(|| SharedString::from("Select a Model"));
 
-        let model_icon = model.as_ref().and_then(|model| model.icon);
+        let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 
         let focus_handle = self.focus_handle.clone();
 
@@ -78,8 +78,13 @@ impl Render for AcpModelSelectorPopover {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .when_some(model_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                .when_some(model_icon, |this, icon| match icon {
+                    AgentModelIcon::Path(path) => {
+                        this.child(Icon::from_path(path).color(color).size(IconSize::XSmall))
+                    }
+                    AgentModelIcon::Named(icon_name) => {
+                        this.child(Icon::new(icon_name).color(color).size(IconSize::XSmall))
+                    }
                 })
                 .child(
                     Label::new(model_name)

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ::extension::ExtensionHostProxy;
 use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::HashSet;
@@ -8,11 +9,11 @@ use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod api_key;
+mod extension;
 pub mod provider;
 mod settings;
 pub mod ui;
 
-use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
@@ -32,6 +33,12 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     registry.update(cx, |registry, cx| {
         register_language_model_providers(registry, user_store, client.clone(), cx);
     });
+
+    // Register the extension language model provider proxy
+    let extension_proxy = ExtensionHostProxy::default_global(cx);
+    extension_proxy.register_language_model_provider_proxy(
+        extension::ExtensionLanguageModelProxy::new(registry.clone()),
+    );
 
     let mut openai_compatible_providers = AllLanguageModelSettings::get_global(cx)
         .openai_compatible
@@ -107,13 +114,6 @@ fn register_language_model_providers(
         Arc::new(CloudLanguageModelProvider::new(
             user_store,
             client.clone(),
-            cx,
-        )),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(AnthropicLanguageModelProvider::new(
-            client.http_client(),
             cx,
         )),
         cx,
