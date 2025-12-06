@@ -3,6 +3,7 @@
 //! and theme accents to colorize those.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::Editor;
 use collections::HashMap;
@@ -49,6 +50,7 @@ impl Editor {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
+                    buffer_snapshot.modeline().map(Arc::as_ref),
                     buffer_snapshot.file(),
                     cx,
                 )
