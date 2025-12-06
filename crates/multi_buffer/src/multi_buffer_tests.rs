@@ -361,7 +361,8 @@ async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| multibuffer.add_diff(diff, cx));
 
@@ -403,7 +404,8 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
@@ -483,7 +485,8 @@ async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -916,7 +919,8 @@ async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local("", cx));
     let base_text = "a\nb\nc";
 
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts(buffer.clone(), [ExcerptRange::new(0..0)], cx);
         multibuffer.set_all_diff_hunks_expanded(cx);
@@ -1263,7 +1267,8 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1507,7 +1512,8 @@ async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -2042,8 +2048,12 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
-    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_1, &buffer_1, cx));
-    let diff_2 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_2, &buffer_2, cx));
+    let diff_1 = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text_1, &buffer_1.read(cx).text_snapshot(), cx)
+    });
+    let diff_2 = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text_2, &buffer_2.read(cx).text_snapshot(), cx)
+    });
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -2119,8 +2129,8 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().remote_id());
-    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().remote_id());
+    let base_id_1 = diff_1.read_with(cx, |diff, cx| diff.base_text(cx).remote_id());
+    let base_id_2 = diff_2.read_with(cx, |diff, cx| diff.base_text(cx).remote_id());
 
     let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
@@ -2336,7 +2346,11 @@ impl ReferenceMultibuffer {
             return;
         };
         let excerpt_range = excerpt.range.to_offset(&buffer);
-        for hunk in diff.read(cx).hunks_intersecting_range(range, &buffer, cx) {
+        for hunk in diff
+            .read(cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &buffer)
+        {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
             if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
                 continue;
@@ -2374,12 +2388,17 @@ impl ReferenceMultibuffer {
             excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
-            let diff = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
+            let diff = self
+                .diffs
+                .get(&buffer.remote_id())
+                .unwrap()
+                .read(cx)
+                .snapshot(cx);
             let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
             let hunks = diff
-                .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
+                .hunks_intersecting_range(excerpt.range.clone(), buffer)
                 .peekable();
 
             for hunk in hunks {
@@ -2587,8 +2606,8 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx).snapshot();
             let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
-            let diff = self.diffs.get(&buffer_id).unwrap().read(cx);
-            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer, cx).peekable();
+            let diff = self.diffs.get(&buffer_id).unwrap().read(cx).snapshot(cx);
+            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer) {
                     return false;
@@ -2936,8 +2955,13 @@ async fn test_random_multibuffer_impl(
                     let id = buffer_handle.read(cx).remote_id();
                     if multibuffer.diff_for(id).is_none() {
                         let base_text = base_texts.get(&id).unwrap();
-                        let diff = cx
-                            .new(|cx| BufferDiff::new_with_base_text(base_text, buffer_handle, cx));
+                        let diff = cx.new(|cx| {
+                            BufferDiff::new_with_base_text(
+                                base_text,
+                                &buffer_handle.read(cx).text_snapshot(),
+                                cx,
+                            )
+                        });
                         reference.add_diff(diff.clone(), cx);
                         multibuffer.add_diff(diff, cx)
                     }
@@ -3456,8 +3480,12 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
-    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_1, &buffer_1, cx));
-    let diff_2 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_2, &buffer_2, cx));
+    let diff_1 = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text_1, &buffer_1.read(cx).text_snapshot(), cx)
+    });
+    let diff_2 = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text_2, &buffer_2.read(cx).text_snapshot(), cx)
+    });
     cx.run_until_parked();
 
     let mut ids = vec![];
@@ -3514,7 +3542,9 @@ async fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     let text_1 = "one\n".to_owned();
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
-    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(&base_text_1, &buffer_1, cx));
+    let diff_1 = cx.new(|cx| {
+        BufferDiff::new_with_base_text(&base_text_1, &buffer_1.read(cx).text_snapshot(), cx)
+    });
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -3707,7 +3737,8 @@ async fn test_inverted_diff(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
     let base_text_buffer = cx.new(|cx| Buffer::local(base_text, cx));
@@ -3762,6 +3793,22 @@ async fn test_inverted_diff(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
+                buffer.read(cx).text_snapshot(),
+                Some(base_text.into()),
+                false,
+                None,
+                cx,
+            )
+        })
+        .await;
+    diff.update(cx, |diff, cx| {
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), false, cx)
+    });
+    cx.run_until_parked();
+
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -3771,6 +3818,7 @@ async fn test_inverted_diff(cx: &mut TestAppContext) {
             "
               one
             - two
+            - three
             - four
             - five
               six
@@ -4231,8 +4279,13 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
                         }
                     }
 
-                    let diff =
-                        cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_handle, cx));
+                    let diff = cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            &base_text,
+                            &buffer_handle.read(cx).text_snapshot(),
+                            cx,
+                        )
+                    });
                     diffs.push(diff.clone());
                     multibuffer.add_diff(diff, cx);
                 }
@@ -4342,7 +4395,8 @@ fn collect_word_diffs(
     cx: &mut TestAppContext,
 ) -> Vec<String> {
     let buffer = cx.new(|cx| Buffer::local(modified_text, cx));
-    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {

@@ -506,8 +506,6 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
-
-
 struct DiffState {
     diff: Entity<BufferDiff>,
     /// Whether the [`MultiBuffer`] this is associated with is inverted (i.e.
@@ -1123,6 +1121,7 @@ impl MultiBuffer {
             buffer.read(cx).capability(),
             MultiBufferSnapshot {
                 singleton: true,
+                show_deleted_hunks: true,
                 ..MultiBufferSnapshot::default()
             },
         );
@@ -3420,7 +3419,7 @@ impl MultiBuffer {
                             if !hunk.diff_base_byte_range.is_empty()
                                 && hunk_buffer_range.start >= edit_buffer_start
                                 && hunk_buffer_range.start <= excerpt_buffer_end
-                                && snapshot.show_deleted_hunks
+                                && dbg!(snapshot.show_deleted_hunks)
                             {
                                 let base_text = diff.base_text();
                                 let mut text_cursor =
@@ -5036,7 +5035,7 @@ impl MultiBufferSnapshot {
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor
                         && let Some(base_text) =
                             self.diffs.get(buffer_id).map(|diff| diff.base_text())
-                        && base_text.can_resolve(diff_base_anchor)
+                        && diff_base_anchor.is_valid(&base_text)
                     {
                         let base_text_offset = diff_base_anchor.to_offset(base_text);
                         if base_text_offset >= base_text_byte_range.start

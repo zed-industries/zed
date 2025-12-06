@@ -86,17 +86,9 @@ impl Diff {
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         let buffer_text_snapshot = buffer.read(cx).text_snapshot();
-        let base_text_snapshot = buffer.read(cx).snapshot();
-        let base_text = base_text_snapshot.text();
-        debug_assert_eq!(buffer_text_snapshot.text(), base_text);
         let buffer_diff = cx.new(|cx| {
             let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
-            let snapshot = diff.snapshot(cx);
-            let secondary_diff = cx.new(|cx| {
-                let mut diff = BufferDiff::new(&buffer_text_snapshot, cx);
-                diff.set_snapshot(snapshot, &buffer_text_snapshot, cx);
-                diff
-            });
+            let secondary_diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_text_snapshot, cx));
             diff.set_secondary_diff(secondary_diff);
             diff
         });
@@ -109,7 +101,7 @@ impl Diff {
 
         Self::Pending(PendingDiff {
             multibuffer,
-            base_text: Arc::new(base_text),
+            base_text: Arc::from(buffer_text_snapshot.text().as_str()),
             _subscription: cx.observe(&buffer, |this, _, cx| {
                 if let Diff::Pending(diff) = this {
                     diff.update(cx);
