@@ -45,7 +45,7 @@ impl Editor {
 
         let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
+            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -62,7 +62,7 @@ impl Editor {
                     let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
                             buffer_range.start..buffer_range.end,
-                            Some((&buffer_version, fetched_chunks)),
+                            Some(fetched_chunks),
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {

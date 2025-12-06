@@ -19,7 +19,7 @@ use crate::BufferRow;
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
 #[derive(Clone)]
 pub struct RowChunks {
-    pub(crate) snapshot: text::BufferSnapshot,
+    snapshot: text::BufferSnapshot,
     chunks: Arc<[RowChunk]>,
 }
 
