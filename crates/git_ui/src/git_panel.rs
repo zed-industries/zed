@@ -2832,6 +2832,13 @@ impl GitPanel {
         self.stash_entries = repo.cached_stash();
 
         for entry in repo.cached_status() {
+            if repo
+                .repo_path_to_project_path(&entry.repo_path, cx)
+                .is_none()
+            {
+                continue;
+            }
+
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
@@ -5308,11 +5315,6 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
-                GitListEntry::Status(GitStatusEntry {
-                    repo_path: repo_path("crates/util/util.rs"),
-                    status: StatusCode::Modified.worktree(),
-                    staging: StageStatus::Unstaged,
-                },),
             ],
         );
 
@@ -5333,11 +5335,6 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
-                GitListEntry::Status(GitStatusEntry {
-                    repo_path: repo_path("crates/util/util.rs"),
-                    status: StatusCode::Modified.worktree(),
-                    staging: StageStatus::Unstaged,
-                },),
             ],
         );
     }
