@@ -1,26 +1,17 @@
-use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, actions};
-use std::time::Duration;
+use editor::Editor;
+use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
 
-use ui::{
-    DefiniteLength, SharedString, Table, TableColumnWidths, TableInteractionState,
-    TableResizeBehavior, prelude::*,
-};
+use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
-use crate::{nasty_code_duplication::ColumnWidths, parsed_csv::ParsedCsv};
+use crate::{nasty_code_duplication::ColumnWidths, parsed_csv::ParsedCsv, parser::EditorState};
 
 mod nasty_code_duplication;
 mod parsed_csv;
+mod parser;
+mod renderer;
 
 actions!(csv, [OpenPreview]);
-
-const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
-
-struct EditorState {
-    editor: Entity<Editor>,
-    _subscription: Subscription,
-}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -34,11 +25,11 @@ pub fn init(cx: &mut App) {
 
 pub struct CsvPreviewView {
     focus_handle: FocusHandle,
-    active_editor: Option<EditorState>,
-    contents: ParsedCsv,
-    table_interaction_state: Entity<TableInteractionState>,
-    column_widths: ColumnWidths,
-    parsing_task: Option<Task<anyhow::Result<()>>>,
+    pub(crate) active_editor: Option<EditorState>,
+    pub(crate) contents: ParsedCsv,
+    pub(crate) table_interaction_state: Entity<TableInteractionState>,
+    pub(crate) column_widths: ColumnWidths,
+    pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
 }
 
 impl CsvPreviewView {
@@ -93,71 +84,6 @@ impl CsvPreviewView {
             view
         })
     }
-
-    fn set_editor(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
-        if let Some(active) = &self.active_editor
-            && active.editor == editor
-        {
-            return;
-        }
-
-        let subscription = cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-            match event {
-                EditorEvent::Edited { .. }
-                | EditorEvent::DirtyChanged
-                | EditorEvent::ExcerptsEdited { .. } => {
-                    this.parse_csv_from_active_editor(true, cx);
-                }
-                _ => {}
-            };
-        });
-
-        self.active_editor = Some(EditorState {
-            editor,
-            _subscription: subscription,
-        });
-
-        self.parse_csv_from_active_editor(false, cx);
-    }
-
-    fn parse_csv_from_active_editor(&mut self, wait_for_debounce: bool, cx: &mut Context<Self>) {
-        if let Some(state) = &self.active_editor {
-            self.parsing_task =
-                Some(self.parse_csv_in_background(wait_for_debounce, state.editor.clone(), cx));
-        }
-    }
-
-    fn parse_csv_in_background(
-        &mut self,
-        wait_for_debounce: bool,
-        editor: Entity<Editor>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        cx.spawn(async move |view, cx| {
-            if wait_for_debounce {
-                cx.background_executor().timer(REPARSE_DEBOUNCE).await;
-            }
-
-            let contents = view.update(cx, |_, cx| {
-                editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .map(|b| b.read(cx).text())
-                    .unwrap_or_default()
-            })?;
-
-            let parsing_task = cx.background_spawn(async move { ParsedCsv::from_str(contents) });
-
-            let parsed_csv = parsing_task.await;
-
-            view.update(cx, move |view, cx| {
-                view.contents = parsed_csv;
-                cx.notify();
-            })
-        })
-    }
 }
 
 impl Focusable for CsvPreviewView {
@@ -195,105 +121,5 @@ impl Item for CsvPreviewView {
                     })
             })
             .unwrap_or_else(|| SharedString::from("CSV Preview"))
-    }
-}
-
-impl Render for CsvPreviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-
-        v_flex()
-            .w_full()
-            .h_full()
-            .p_4()
-            .bg(theme.colors().editor_background)
-            .child({
-                if self.contents.headers.is_empty() {
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .h_32()
-                        .text_ui(cx)
-                        .text_color(cx.theme().colors().text_muted)
-                        .child("No CSV content to display")
-                        .into_any_element()
-                } else {
-                    let column_count = self.contents.headers.len();
-
-                    self.render_table_with_cols(column_count, cx)
-                }
-            })
-    }
-}
-
-impl CsvPreviewView {
-    fn create_table<const COLS: usize>(
-        &self,
-        current_widths: &Entity<TableColumnWidths<COLS>>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let widths = [DefiniteLength::Fraction(1. / COLS as f32); COLS];
-        let resize_behaviors = [TableResizeBehavior::Resizable; COLS];
-
-        self.create_table_inner(
-            self.contents.rows.len(),
-            widths,
-            resize_behaviors,
-            current_widths,
-            cx,
-        )
-    }
-
-    fn create_table_inner<const COLS: usize>(
-        &self,
-        row_count: usize,
-        widths: [DefiniteLength; COLS],
-        resize_behaviors: [TableResizeBehavior; COLS],
-        current_widths: &Entity<TableColumnWidths<COLS>>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        // Create headers array
-        let mut headers = Vec::with_capacity(COLS);
-        for i in 0..COLS {
-            headers.push(
-                self.contents
-                    .headers
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Col {}", i + 1).into()),
-            );
-        }
-        let headers_array: [SharedString; COLS] = headers.try_into().unwrap();
-
-        Table::new()
-            .interactable(&self.table_interaction_state)
-            .striped()
-            .column_widths(widths)
-            .resizable_columns(resize_behaviors, current_widths, cx)
-            .header(headers_array)
-            .uniform_list(
-                "csv-table",
-                row_count,
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
-                    range
-                        .filter_map(|row_index| {
-                            let row = this.contents.rows.get(row_index)?;
-
-                            let mut elements = Vec::with_capacity(COLS);
-                            for col in 0..COLS {
-                                let cell_content: SharedString =
-                                    row.get(col).cloned().unwrap_or_else(|| "".into());
-                                elements.push(div().child(cell_content).into_any_element());
-                            }
-
-                            let elements_array: [gpui::AnyElement; COLS] =
-                                elements.try_into().ok()?;
-                            Some(elements_array)
-                        })
-                        .collect()
-                }),
-            )
-            .into_any_element()
     }
 }
