@@ -7,9 +7,9 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    MacDisplay, MacTray, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
+    PlatformWindow, Result, SystemMenuType, Task, Tray, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -178,6 +178,8 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
+    tray: Option<MacTray>,
+    tray_menu: Option<id>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -218,6 +220,8 @@ impl MacPlatform {
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
+            tray: None,
+            tray_menu: None,
             on_keyboard_layout_change: None,
             menus: None,
             keyboard_mapper,
@@ -279,18 +283,17 @@ impl MacPlatform {
         }
     }
 
-    unsafe fn create_dock_menu(
-        &self,
+    unsafe fn create_menu(
         menu_items: Vec<MenuItem>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
         unsafe {
-            let dock_menu = NSMenu::new(nil);
-            dock_menu.setDelegate_(delegate);
+            let menu = NSMenu::new(nil);
+            menu.setDelegate_(delegate);
             for item_config in menu_items {
-                dock_menu.addItem_(Self::create_menu_item(
+                menu.addItem_(Self::create_menu_item(
                     &item_config,
                     delegate,
                     actions,
@@ -298,7 +301,7 @@ impl MacPlatform {
                 ));
             }
 
-            dock_menu
+            menu
         }
     }
 
@@ -942,10 +945,34 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let new = self.create_dock_menu(menu, NSWindow::delegate(app), actions, keymap);
+            let new = Self::create_menu(menu, NSWindow::delegate(app), actions, keymap);
             if let Some(old) = state.dock_menu.replace(new) {
                 CFRelease(old as _)
             }
+        }
+    }
+
+    fn set_tray(&self, mut tray: Tray, menu: Option<Vec<MenuItem>>, keymap: &Keymap) {
+        let mut state = self.0.lock();
+
+        if let Some(menu) = menu {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                let actions = &mut state.menu_actions;
+                let new = Self::create_menu(menu, NSWindow::delegate(app), actions, keymap);
+                if let Some(tray_menu) = state.tray_menu {
+                    CFRelease(tray_menu as _);
+                }
+                state.tray_menu = Some(new);
+            }
+        }
+
+        let tray_menu = state.tray_menu;
+        if let Some(mac_tray) = &mut state.tray {
+            mac_tray.update(&tray, tray_menu);
+        } else {
+            let mut new_tray = MacTray::create(&tray, tray_menu);
+            state.tray = Some(new_tray);
         }
     }
 
