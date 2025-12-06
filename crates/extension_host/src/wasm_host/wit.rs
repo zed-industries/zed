@@ -35,6 +35,7 @@ pub use latest::{
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
+        VirtualDocumentConfig,
     },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
 };
@@ -568,6 +569,34 @@ impl Extension {
             | Extension::V0_0_6(_)
             | Extension::V0_0_4(_)
             | Extension::V0_0_1(_) => Ok(Ok(None)),
+        }
+    }
+
+    pub async fn call_language_server_virtual_document_configs(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Result<Vec<VirtualDocumentConfig>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_virtual_document_configs(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            // Virtual document support only available in v0.8.0+
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Ok(Vec::new())),
         }
     }
 
