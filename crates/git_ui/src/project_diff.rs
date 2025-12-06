@@ -34,7 +34,6 @@ use project::{
 use settings::{Settings, SettingsStore};
 use smol::future::yield_now;
 use std::any::{Any, TypeId};
-use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -500,23 +499,30 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
-        let diff_hunk_ranges = diff_read
-            .hunks_intersecting_range(
-                Anchor::min_max_range_for_buffer(diff_read.buffer_id),
-                &snapshot,
-                cx,
-            )
-            .map(|diff_hunk| diff_hunk.buffer_range);
-        let conflicts = conflict_addon
-            .conflict_set(snapshot.remote_id())
-            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
-            .unwrap_or_default();
-        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
-        let excerpt_ranges =
-            merge_anchor_ranges(diff_hunk_ranges.into_iter(), conflicts, &snapshot)
-                .map(|range| range.to_point(&snapshot))
-                .collect::<Vec<_>>();
+        let excerpt_ranges = {
+            let diff_hunk_ranges = diff_read
+                .hunks_intersecting_range(
+                    Anchor::min_max_range_for_buffer(diff_read.buffer_id),
+                    &snapshot,
+                    cx,
+                )
+                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
+            let conflicts = conflict_addon
+                .conflict_set(snapshot.remote_id())
+                .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
+                .unwrap_or_default();
+            let mut conflicts = conflicts
+                .iter()
+                .map(|conflict| conflict.range.to_point(&snapshot))
+                .peekable();
+
+            if conflicts.peek().is_some() {
+                conflicts.collect::<Vec<_>>()
+            } else {
+                diff_hunk_ranges.collect()
+            }
+        };
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -1542,53 +1548,6 @@ mod preview {
             )
         }
     }
-}
-
-fn merge_anchor_ranges<'a>(
-    left: impl 'a + Iterator<Item = Range<Anchor>>,
-    right: impl 'a + Iterator<Item = Range<Anchor>>,
-    snapshot: &'a language::BufferSnapshot,
-) -> impl 'a + Iterator<Item = Range<Anchor>> {
-    let mut left = left.fuse().peekable();
-    let mut right = right.fuse().peekable();
-
-    std::iter::from_fn(move || {
-        let Some(left_range) = left.peek() else {
-            return right.next();
-        };
-        let Some(right_range) = right.peek() else {
-            return left.next();
-        };
-
-        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
-            left.next().unwrap()
-        } else {
-            right.next().unwrap()
-        };
-
-        // Extend the basic range while there's overlap with a range from either stream.
-        loop {
-            if let Some(left_range) = left
-                .peek()
-                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
-                .cloned()
-            {
-                left.next();
-                next_range.end = left_range.end;
-            } else if let Some(right_range) = right
-                .peek()
-                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
-                .cloned()
-            {
-                right.next();
-                next_range.end = right_range.end;
-            } else {
-                break;
-            }
-        }
-
-        Some(next_range)
-    })
 }
 
 struct BranchDiffAddon {
