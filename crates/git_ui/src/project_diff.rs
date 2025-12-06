@@ -449,19 +449,26 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let EditorEvent::SelectionsChanged { local: true } = event {
-            let Some(project_path) = self.active_path(cx) else {
-                return;
-            };
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                        git_panel.update(cx, |git_panel, cx| {
-                            git_panel.select_entry_by_path(project_path, window, cx)
-                        })
-                    }
-                })
-                .ok();
+        match event {
+            EditorEvent::SelectionsChanged { local: true } => {
+                let Some(project_path) = self.active_path(cx) else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                            git_panel.update(cx, |git_panel, cx| {
+                                git_panel.select_entry_by_path(project_path, window, cx)
+                            })
+                        }
+                    })
+                    .ok();
+            }
+            EditorEvent::Saved => {
+                self._task =
+                    cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
+            }
+            _ => {}
         }
         if editor.focus_handle(cx).contains_focused(window, cx)
             && self.multibuffer.read(cx).is_empty()
@@ -576,13 +583,31 @@ impl ProjectDiff {
     }
 
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        let selected_buffers = this.update_in(cx, |this, window, cx| {
+            let primary_editor = this.editor.read(cx).primary_editor().clone();
+            primary_editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                editor
+                    .selections
+                    .all_anchors(&snapshot)
+                    .iter()
+                    .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
+                    .collect::<HashSet<_>>()
+            })
+        })?;
+
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+            let mut previous_paths = this
+                .multibuffer
+                .read(cx)
+                .paths()
+                .cloned()
+                .collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -597,36 +622,17 @@ impl ProjectDiff {
                 }
             }
 
-            // let selected_buffers = self.editor.update(cx, |editor, _| {
-            //     editor
-            //         .selections
-            //         .all_anchors(&snapshot)
-            //         .iter()
-            //         .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
-            //         .collect::<HashSet<_>>()
-            // });
-            // for buffer_id in buffer_ids {
-            //     if retain_selections && selected_buffers.contains(&buffer_id) {
-            //         continue;
-            //     }
-            //     self.multibuffer.update(cx, |b, cx| {
-            //         b.remove_excerpts_for_buffer(buffer_id, cx);
-            //     });
-            // }
-
-            let buffers_with_selections = 
             this.multibuffer.update(cx, |multibuffer, cx| {
-                // FIXME HERE
                 for path in previous_paths {
-                    if multibuffer
-                        .buffer_for_path(&path, cx)
-                        .is_none_or(|buffer| buffer.read(cx).is_dirty())
+                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx)
+                        && (buffer.read(cx).is_dirty()
+                            || selected_buffers.contains(&buffer.read(cx).remote_id()))
                     {
                         continue;
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path, cx);
+                    multibuffer.remove_excerpts_for_path(path.clone(), cx);
                 }
             });
             buffers_to_load
@@ -639,7 +645,24 @@ impl ProjectDiff {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                        if let Some(buffer) = this
+                            .multibuffer
+                            .read(cx)
+                            .buffer(buffer.read(cx).remote_id())
+                            && (buffer.read(cx).is_dirty()
+                                || selected_buffers.contains(&buffer.read(cx).remote_id()))
+                        {
+                            // skip
+                        } else {
+                            this.register_buffer(
+                                path_key,
+                                entry.file_status,
+                                buffer,
+                                diff,
+                                window,
+                                cx,
+                            )
+                        }
                     })
                     .ok();
                 })?;
@@ -657,7 +680,7 @@ impl ProjectDiff {
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
-            .excerpt_paths()
+            .paths()
             .map(|key| key.path.clone())
             .collect()
     }
