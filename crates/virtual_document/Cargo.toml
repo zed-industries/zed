@@ -1,32 +1,26 @@
 [package]
-name = "language_extension"
+name = "virtual_document"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [package.metadata.cargo-machete]
-ignored = ["virtual_document"]
+ignored = ["extension", "futures"]
 
 [lints]
 workspace = true
 
 [lib]
-path = "src/language_extension.rs"
+path = "src/virtual_document.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
 extension.workspace = true
 futures.workspace = true
-fs.workspace = true
 gpui.workspace = true
-language.workspace = true
-log.workspace = true
 lsp.workspace = true
-project.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-util.workspace = true
-virtual_document.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
