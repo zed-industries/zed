@@ -597,8 +597,34 @@ impl ProjectDiff {
                 }
             }
 
+            // let selected_buffers = self.editor.update(cx, |editor, _| {
+            //     editor
+            //         .selections
+            //         .all_anchors(&snapshot)
+            //         .iter()
+            //         .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
+            //         .collect::<HashSet<_>>()
+            // });
+            // for buffer_id in buffer_ids {
+            //     if retain_selections && selected_buffers.contains(&buffer_id) {
+            //         continue;
+            //     }
+            //     self.multibuffer.update(cx, |b, cx| {
+            //         b.remove_excerpts_for_buffer(buffer_id, cx);
+            //     });
+            // }
+
+            let buffers_with_selections = 
             this.multibuffer.update(cx, |multibuffer, cx| {
+                // FIXME HERE
                 for path in previous_paths {
+                    if multibuffer
+                        .buffer_for_path(&path, cx)
+                        .is_none_or(|buffer| buffer.read(cx).is_dirty())
+                    {
+                        continue;
+                    }
+
                     this.buffer_diff_subscriptions.remove(&path.path);
                     multibuffer.remove_excerpts_for_path(path, cx);
                 }
