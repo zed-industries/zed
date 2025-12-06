@@ -182,6 +182,11 @@ impl MetalRenderer {
             output
         }
 
+        let storage_mode = if device.has_unified_memory() {
+            MTLResourceOptions::StorageModeShared
+        } else {
+            MTLResourceOptions::StorageModeManaged
+        };
         let unit_vertices = [
             to_float2_bits(point(0., 0.)),
             to_float2_bits(point(1., 0.)),
@@ -193,7 +198,7 @@ impl MetalRenderer {
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
             mem::size_of_val(&unit_vertices) as u64,
-            MTLResourceOptions::StorageModeManaged,
+            storage_mode,
         );
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
