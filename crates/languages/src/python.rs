@@ -36,6 +36,7 @@ use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
     borrow::Cow,
+    ffi::OsString,
     fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
@@ -562,8 +563,9 @@ impl LspAdapter for PyrightLspAdapter {
 
             // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+                && let Ok(env) = serde_json::from_value::<
+                    pet_core::python_environment::PythonEnvironment,
+                >(toolchain.as_json.clone())
             {
                 if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -571,7 +573,7 @@ impl LspAdapter for PyrightLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.environment.prefix {
+                if let Some(venv_dir) = env.prefix {
                     // Set venvPath and venv at the root level
                     // This matches the format of a pyrightconfig.json file
                     if let Some(parent) = venv_dir.parent() {
@@ -616,6 +618,199 @@ impl LspAdapter for PyrightLspAdapter {
             }
 
             user_settings
+        })
+    }
+}
+
+pub(crate) struct PyreflyLspAdapter {
+    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+}
+
+impl PyreflyLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyrefly");
+
+    pub fn new() -> Self {
+        Self {
+            python_venv_base: OnceCell::new(),
+        }
+    }
+
+    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
+        let python_path = find_base_python(delegate)
+            .await
+            .with_context(|| {
+                let mut message = "Could not find Python installation for Pyrefly".to_owned();
+                if cfg!(windows) {
+                    message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
+                }
+                message
+            })?;
+        let work_dir = delegate
+            .language_server_download_dir(&Self::SERVER_NAME)
+            .await
+            .context("Could not get working directory for Pyrefly")?;
+        let mut path = PathBuf::from(work_dir.as_ref());
+        path.push("pyrefly-venv");
+        if !path.exists() {
+            util::command::new_smol_command(python_path)
+                .arg("-m")
+                .arg("venv")
+                .arg("pyrefly-venv")
+                .current_dir(work_dir)
+                .spawn()?
+                .output()
+                .await?;
+        }
+
+        Ok(path.into())
+    }
+
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+        self.python_venv_base
+            .get_or_init(move || async move {
+                Self::ensure_venv(delegate)
+                    .await
+                    .map_err(|e| format!("{e}"))
+            })
+            .await
+            .clone()
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for PyreflyLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            if let Some(toolchain) = toolchain {
+                if !user_settings.is_object() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+
+                let interpreter_path = toolchain.path.to_string();
+                object
+                    .entry("python-interpreter-path".to_string())
+                    .or_insert_with(|| Value::String(interpreter_path));
+            }
+
+            Value::Object(serde_json::Map::from_iter([(
+                "pyrefly".to_string(),
+                user_settings,
+            )]))
+        })
+    }
+}
+
+impl LspInstaller for PyreflyLspAdapter {
+    type BinaryVersion = ();
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(pyrefly_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            return Some(LanguageServerBinary {
+                path: pyrefly_bin,
+                env: Some(env),
+                arguments: vec![OsString::from("lsp")],
+            });
+        }
+
+        if let Some(toolchain) = toolchain {
+            let pyrefly_path = Path::new(toolchain.path.as_ref()).parent()?.join("pyrefly");
+            if pyrefly_path.exists() {
+                return Some(LanguageServerBinary {
+                    path: pyrefly_path,
+                    arguments: vec![OsString::from("lsp")],
+                    env: None,
+                });
+            }
+        }
+
+        None
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _: (),
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = if cfg!(windows) {
+            venv.join(BINARY_DIR).join("pip3.exe")
+        } else {
+            venv.join(BINARY_DIR).join("pip3")
+        };
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("pyrefly")
+                .arg("--upgrade")
+                .output()
+                .await?
+                .status
+                .success(),
+            "pyrefly installation failed"
+        );
+        let pyrefly = if cfg!(windows) {
+            venv.join(BINARY_DIR).join("pyrefly.exe")
+        } else {
+            venv.join(BINARY_DIR).join("pyrefly")
+        };
+        ensure!(
+            delegate.which(pyrefly.as_os_str()).await.is_some(),
+            "pyrefly installation was incomplete"
+        );
+        Ok(LanguageServerBinary {
+            path: pyrefly,
+            env: None,
+            arguments: vec![OsString::from("lsp")],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let pyrefly = if cfg!(windows) {
+            venv.join(BINARY_DIR).join("pyrefly.exe")
+        } else {
+            venv.join(BINARY_DIR).join("pyrefly")
+        };
+        delegate.which(pyrefly.as_os_str()).await?;
+        Some(LanguageServerBinary {
+            path: pyrefly,
+            env: None,
+            arguments: vec![OsString::from("lsp")],
         })
     }
 }
@@ -1504,6 +1699,31 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 }
 
+// Find "baseline", user python version from which we'll create our own venv.
+async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
+    for path in ["python3", "python"] {
+        let Some(path) = delegate.which(path.as_ref()).await else {
+            continue;
+        };
+        // Try to detect situations where `python3` exists but is not a real Python interpreter.
+        // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
+        // when run with no arguments, and just fails otherwise.
+        let Some(output) = new_smol_command(&path)
+            .args(["-c", "print(1 + 2)"])
+            .output()
+            .await
+            .ok()
+        else {
+            continue;
+        };
+        if output.stdout.trim_ascii() != b"3" {
+            continue;
+        }
+        return Some(path);
+    }
+    None
+}
+
 pub(crate) struct PyLspAdapter {
     python_venv_base: OnceCell<Result<Arc<Path>, String>>,
 }
@@ -1515,7 +1735,7 @@ impl PyLspAdapter {
         }
     }
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
-        let python_path = Self::find_base_python(delegate)
+        let python_path = find_base_python(delegate)
             .await
             .with_context(|| {
                 let mut message = "Could not find Python installation for PyLSP".to_owned();
@@ -1542,30 +1762,6 @@ impl PyLspAdapter {
         }
 
         Ok(path.into())
-    }
-    // Find "baseline", user python version from which we'll create our own venv.
-    async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
-        for path in ["python3", "python"] {
-            let Some(path) = delegate.which(path.as_ref()).await else {
-                continue;
-            };
-            // Try to detect situations where `python3` exists but is not a real Python interpreter.
-            // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
-            // when run with no arguments, and just fails otherwise.
-            let Some(output) = new_smol_command(&path)
-                .args(["-c", "print(1 + 2)"])
-                .output()
-                .await
-                .ok()
-            else {
-                continue;
-            };
-            if output.stdout.trim_ascii() != b"3" {
-                continue;
-            }
-            return Some(path);
-        }
-        None
     }
 
     async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
