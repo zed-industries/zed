@@ -70,6 +70,8 @@ actions!(
         OpenTelemetryLog,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
+        /// Opens the onboarding view.
+        OpenOnboarding,
     ]
 );
 
