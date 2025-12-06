@@ -87,4 +87,16 @@ interface lsp {
         type-parameter,
         other(s32),
     }
+
+    /// Configuration for handling virtual documents (non-file URIs like decompiled code)
+    record virtual-document-config {
+        /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
+        scheme: string,
+        /// The LSP request method to call to get document contents (e.g., "java/classFileContents")
+        content-request-method: string,
+        /// The language name for syntax highlighting (e.g., "Java")
+        language-name: string,
+        /// The LSP language ID to use when registering the document (e.g., "java")
+        language-id: string,
+    }
 }
