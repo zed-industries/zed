@@ -19,6 +19,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use futures::StreamExt as _;
+use futures::channel::oneshot::Canceled;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
@@ -50,6 +51,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -375,6 +377,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -482,7 +485,8 @@ impl GitPanel {
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::GlobalConfigurationUpdated => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -536,6 +540,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -2229,7 +2234,7 @@ impl GitPanel {
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
-            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+            let prompt_answer = match fs.git_clone(path.as_path(), &repo).await {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
@@ -2516,6 +2521,58 @@ impl GitPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    /// Updates git's configuration, adding the directory of the current
+    /// worktree to the `safe.directory` config, ensuring that, even if the user
+    /// that's running the application is not the owner of `.git/`, it can still
+    /// read the repository's contents.
+    pub(crate) fn add_safe_directory(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let worktrees = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+
+        // TODO!: Should we actually allow the user to select the directory to
+        // be added to `safe.directory`? What if the directory for one of the
+        // worktrees is not an unsafe directory?
+        if worktrees.is_empty() || worktrees.len() > 1 {
+            let result = window.prompt(
+                PromptLevel::Warning,
+                "Unable to add safe directory.",
+                Some("No directories, or multiple directories, open."),
+                &["Ok"],
+                cx,
+            );
+
+            // TODO!: Why can't I use `cx.background_spawn` here?
+            return cx
+                .background_executor()
+                .spawn(async move {
+                    result.await.ok();
+                })
+                .detach();
+        }
+
+        if let Some(worktree) = worktrees.first() {
+            let path = worktree.read(cx).abs_path();
+            // TODO!: Remove the `unwrap()` call.
+            let path_arg = String::from(path.to_str().unwrap());
+            let args = vec![
+                String::from("--global"),
+                String::from("--add"),
+                String::from("safe.directory"),
+                path_arg,
+            ];
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                git_panel.update(cx, |git_panel, cx| {
+                    git_panel.project.read(cx).git_config(path, args, cx)
+                })
+            })
+            .detach();
+        }
     }
 
     fn askpass_delegate(
@@ -2811,8 +2868,39 @@ impl GitPanel {
         self.new_staged_count = 0;
         self.tracked_staged_count = 0;
         self.entry_count = 0;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                // When the user does not own the `.git` folder, the
+                // `GitStore.spawn_local_git_worker` will fail to actually
+                // create the receiver for the Git jobs, so the job to try and
+                // determine the `GitAccess` will always be cancelled will
+                // always be cancelled. As such, when that happens, we'll just assume `GitAccess::No`.
+                //
+                // TODO!: I believe there's more ways that the job actually gets
+                // cancelled, for example, when the
+                // `update_visible_entries_task` gets updated before the
+                // previous has not run and we were in the middle of checking
+                // the access? The proper solution might be to move this state
+                // setup to repository or git store itself, as I believe those
+                // will be able to determine whether we're able to read the
+                // `.git `folder or not?
+                let access = match access.await {
+                    Ok(access) => access,
+                    Err(Canceled) => GitAccess::No,
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = dbg!(access);
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -3373,6 +3461,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if matches!(self.git_access, GitAccess::No) {
+            return None;
+        }
+
         self.active_repository.as_ref()?;
 
         let (text, action, stage, tooltip) =
@@ -3461,6 +3553,9 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if matches!(self.git_access, GitAccess::No) {
+            return None;
+        }
         let active_repository = self.active_repository.clone()?;
         let panel_editor_style = panel_editor_style(true, window, cx);
         let enable_coauthors = self.render_co_authors(cx);
@@ -3763,38 +3858,91 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel_text = match (self.git_access, self.active_repository.is_some()) {
+            (GitAccess::No, _) => {
+                // TODO!: What if there's more than one root path? When can that
+                // actually happen? Maybe take a look at `git_init` to see how
+                // that handles the fact that no directory might be open, which
+                // I believe is the case when Zed is open the first time?
+                if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
+                    workspace.root_paths(cx).first().cloned()
+                }) {
+                    format!(
+                        "Detected dubious ownership in repository at {}",
+                        path.display()
+                    )
+                } else {
+                    String::from("Detected dubious ownership in repository")
+                }
+            }
+            (_, false) => String::from("No Git repositories"),
+            (_, true) => String::from("No changes to commit"),
+        };
+
         h_flex().h_full().flex_grow().justify_center().child(
             v_flex()
                 .gap_2()
-                .child(h_flex().w_full().justify_around().child(
-                    if self.active_repository.is_some() {
-                        "No changes to commit"
-                    } else {
-                        "No Git repositories"
-                    },
-                ))
-                .children({
-                    let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-                    (worktree_count > 0 && self.active_repository.is_none()).then(|| {
-                        h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
-                    })
-                })
+                .child(h_flex().w_full().justify_around().child(panel_text))
+                .children(self.render_empty_state_button(cx))
                 .text_ui_sm(cx)
                 .mx_auto()
                 .text_color(Color::Placeholder.color(cx)),
         )
+    }
+
+    fn render_empty_state_button(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let mut button: Option<Button> = None;
+
+        // When working within an unsafe repository, we'll show the user the
+        // button to trust this directory so that they can read the repository's
+        // contents.
+        //
+        // TODO!: What if there's more than one root path? When can that
+        // actually happen? Maybe take a look at `git_init` to see how
+        // that handles the fact that no directory might be open, which
+        // I believe is the case when Zed is open the first time?
+        let directory = if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
+            workspace.root_paths(cx).first().cloned()
+        }) {
+            path.display().to_string()
+        } else {
+            String::new()
+        };
+
+        if matches!(self.git_access, GitAccess::No) {
+            button = Some(
+                panel_filled_button("Trust Directory")
+                    .tooltip(Tooltip::for_action_title_in(
+                        format!("git config --global --add safe.directory {}", directory),
+                        &git::AddSafeDirectory,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::AddSafeDirectory);
+                        })
+                    }),
+            )
+        }
+
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if button.is_none() && worktree_count > 0 && self.active_repository.is_none() {
+            button = Some(
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    }),
+            );
+        }
+
+        button.and_then(|button| Some(h_flex().w_full().justify_around().child(button)))
     }
 
     fn render_buffer_header_controls(
