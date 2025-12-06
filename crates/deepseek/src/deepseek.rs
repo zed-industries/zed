@@ -155,6 +155,8 @@ pub enum RequestMessage {
         content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     User {
         content: String,
@@ -264,13 +266,17 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request_json = serde_json::to_string(&request)?;
+
+    let request = request_builder.body(AsyncBody::from(request_json))?;
+
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
