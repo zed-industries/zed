@@ -252,6 +252,12 @@ actions!(
         ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
+        /// Adds surrounding characters in Helix mode.
+        PushHelixSurroundAdd,
+        /// Replaces surrounding characters in Helix mode.
+        PushHelixSurroundReplace,
+        /// Deletes surrounding characters in Helix mode.
+        PushHelixSurroundDelete,
     ]
 );
 
@@ -1862,12 +1868,12 @@ impl Vim {
             Some(Operator::AddSurrounds { target }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.add_surrounds(text, target, window, cx);
+                        self.add_surrounds(text, target, true, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                    self.add_surrounds(text, SurroundsType::Selection, window, cx);
+                    self.add_surrounds(text, SurroundsType::Selection, true, window, cx);
                     self.clear_operator(window, cx);
                 }
                 _ => self.clear_operator(window, cx),
@@ -1884,6 +1890,56 @@ impl Vim {
             Some(Operator::DeleteSurrounds) => match self.mode {
                 Mode::Normal => {
                     self.delete_surrounds(text, window, cx);
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundAdd) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.move_with(|map, selection| {
+                                if selection.is_empty() {
+                                    selection.end = movement::right(map, selection.start);
+                                }
+                            });
+                        });
+                    });
+                    self.add_surrounds(text, SurroundsType::Selection, false, window, cx);
+                    self.switch_mode(Mode::HelixNormal, false, window, cx);
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace { replaced_char: Some(old) }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(new_char) = text.chars().next() {
+                        self.helix_surround_replace(old, new_char, window, cx);
+                    }
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace { replaced_char: None }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.pop_operator(window, cx);
+                        self.push_operator(
+                            Operator::HelixSurroundReplace {
+                                replaced_char: Some(ch),
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundDelete) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.helix_surround_delete(ch, window, cx);
+                    }
                     self.clear_operator(window, cx);
                 }
                 _ => self.clear_operator(window, cx),
