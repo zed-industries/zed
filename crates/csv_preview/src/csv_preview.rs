@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, actions};
 use log::info;
-use ui::{SharedString, prelude::*};
+use ui::{DefiniteLength, SharedString, Table, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 actions!(csv, [OpenPreview]);
@@ -22,7 +22,9 @@ pub struct CsvPreviewView {
     editor: Entity<Editor>,
     contents: ParsedCsv,
     counter: usize,
+    table_interaction_state: Entity<TableInteractionState>,
 }
+
 impl CsvPreviewView {
     pub fn register(
         workspace: &mut Workspace,
@@ -97,12 +99,28 @@ impl CsvPreviewView {
             .map(|b| b.read(cx).text())
             .unwrap_or_else(|| "".to_string());
 
+        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
             editor: editor.clone(),
             contents: ParsedCsv::from_str(raw_text),
             counter: 0,
+            table_interaction_state,
         })
+    }
+
+    fn calculate_column_widths(&self) -> Vec<DefiniteLength> {
+        if self.contents.headers.is_empty() {
+            return vec![];
+        }
+
+        let num_cols = self.contents.headers.len();
+
+        // For now, use equal fractions for all columns
+        // In the future, we could calculate optimal widths based on content
+        let fraction = 1.0 / num_cols as f32;
+        vec![DefiniteLength::Fraction(fraction); num_cols]
     }
 }
 
@@ -200,38 +218,13 @@ impl Item for CsvPreviewView {
 /// Main trait to render the content of the CSV preview in pane
 impl Render for CsvPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.contents.headers.is_empty() {
-            return v_flex()
-                .size_full()
-                .p_4()
-                .child(div().child("No CSV content"));
-        }
-
-        // Create header row with padding for alignment
-        let max_widths = self.calculate_column_widths();
-        let header_row = self.format_row(&self.contents.headers, &max_widths);
-
-        // Create separator line
-        let separator = max_widths
-            .iter()
-            .map(|&width| "-".repeat(width))
-            .collect::<Vec<_>>()
-            .join("-+-");
-
-        // Create data rows
-        let data_rows: Vec<String> = self
-            .contents
-            .rows
-            .iter()
-            .map(|row| self.format_row(row, &max_widths))
-            .collect();
-
-        let all_content = format!("{}\n{}\n{}", header_row, separator, data_rows.join("\n"));
+        let theme = cx.theme();
 
         v_flex()
             .w_full()
             .h_full()
             .p_4()
+            .bg(theme.colors().editor_background)
             .child(
                 div()
                     .text_xl()
@@ -254,19 +247,145 @@ impl Render for CsvPreviewView {
                     )
                     .child(format!("Count: {}", self.counter)),
             )
-            .child(
-                div()
-                    .font_family("monospace")
-                    .overflow_hidden()
-                    .w_full()
-                    .h_full()
-                    .child(all_content),
-            )
+            .child({
+                if self.contents.headers.is_empty() {
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h_32()
+                        .text_ui(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child("No CSV content to display")
+                        .into_any_element()
+                } else {
+                    let column_count = self.contents.headers.len();
+                    let row_count = self.contents.rows.len();
+                    let column_widths = self.calculate_column_widths();
+
+                    // Create a table that can handle dynamic column counts
+                    // We'll use a generic approach since we don't know column count at compile time
+                    match column_count {
+                        1 => self.render_table_with_cols::<1>(column_widths, row_count, cx),
+                        2 => self.render_table_with_cols::<2>(column_widths, row_count, cx),
+                        3 => self.render_table_with_cols::<3>(column_widths, row_count, cx),
+                        4 => self.render_table_with_cols::<4>(column_widths, row_count, cx),
+                        5 => self.render_table_with_cols::<5>(column_widths, row_count, cx),
+                        6 => self.render_table_with_cols::<6>(column_widths, row_count, cx),
+                        7 => self.render_table_with_cols::<7>(column_widths, row_count, cx),
+                        8 => self.render_table_with_cols::<8>(column_widths, row_count, cx),
+                        _ => {
+                            // For more than 8 columns, fall back to a simpler div-based layout
+                            self.render_fallback_table(cx)
+                        }
+                    }
+                }
+            })
     }
 }
 
 impl CsvPreviewView {
-    fn calculate_column_widths(&self) -> Vec<usize> {
+    fn render_table_with_cols<const COLS: usize>(
+        &self,
+        column_widths: Vec<DefiniteLength>,
+        row_count: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if COLS != self.contents.headers.len() {
+            return self.render_fallback_table(cx);
+        }
+
+        // Convert Vec to array for the table
+        let widths_array: [DefiniteLength; COLS] = column_widths
+            .try_into()
+            .unwrap_or_else(|_| [DefiniteLength::Fraction(1.0 / COLS as f32); COLS]);
+
+        // Convert headers to array
+        let headers_array: [SharedString; COLS] = self
+            .contents
+            .headers
+            .clone()
+            .try_into()
+            .unwrap_or_else(|_| {
+                let mut headers = Vec::with_capacity(COLS);
+                for i in 0..COLS {
+                    headers.push(
+                        self.contents
+                            .headers
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| format!("Col {}", i + 1).into()),
+                    );
+                }
+                headers.try_into().unwrap()
+            });
+
+        Table::new()
+            .interactable(&self.table_interaction_state)
+            .striped()
+            .column_widths(widths_array)
+            .header(headers_array)
+            .uniform_list(
+                "csv-table",
+                row_count,
+                cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
+                    range
+                        .filter_map(|row_index| {
+                            let row = this.contents.rows.get(row_index)?;
+
+                            // Convert row to array of AnyElements
+                            let mut elements = Vec::with_capacity(COLS);
+                            for col in 0..COLS {
+                                let cell_content: SharedString =
+                                    row.get(col).cloned().unwrap_or_else(|| "".into());
+                                elements.push(div().child(cell_content.clone()).into_any_element());
+                            }
+
+                            // Convert Vec to array
+                            let elements_array: [gpui::AnyElement; COLS] =
+                                elements.try_into().ok()?;
+
+                            Some(elements_array)
+                        })
+                        .collect()
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn render_fallback_table(&self, cx: &mut Context<Self>) -> AnyElement {
+        // For tables with many columns, use a simpler scrollable div-based layout
+        let max_widths = self.calculate_column_widths_pixels();
+        let header_row = self.format_row(&self.contents.headers, &max_widths);
+
+        // Create separator line
+        let separator = max_widths
+            .iter()
+            .map(|&width| "-".repeat(width))
+            .collect::<Vec<_>>()
+            .join("-+-");
+
+        // Create data rows
+        let data_rows: Vec<String> = self
+            .contents
+            .rows
+            .iter()
+            .map(|row| self.format_row(row, &max_widths))
+            .collect();
+
+        let all_content = format!("{}\n{}\n{}", header_row, separator, data_rows.join("\n"));
+
+        div()
+            .font_family("monospace")
+            .w_full()
+            .h_full()
+            .p_2()
+            .bg(cx.theme().colors().editor_subheader_background)
+            .child(all_content)
+            .into_any_element()
+    }
+
+    fn calculate_column_widths_pixels(&self) -> Vec<usize> {
         if self.contents.headers.is_empty() {
             return vec![];
         }
