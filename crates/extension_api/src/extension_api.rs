@@ -50,7 +50,7 @@ pub use wit::Guest;
 /// Language Server Protocol (LSP).
 pub mod lsp {
     pub use crate::wit::zed::extension::lsp::{
-        Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind,
+        Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind, VirtualDocumentConfig,
     };
 }
 
@@ -118,6 +118,16 @@ pub trait Extension: Send + Sync {
         _worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
         Ok(None)
+    }
+
+    /// Returns virtual document configurations for this language server.
+    /// Virtual documents allow viewing decompiled code, generated sources, etc.
+    fn language_server_virtual_document_configs(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Vec<lsp::VirtualDocumentConfig>> {
+        Ok(Vec::new())
     }
 
     /// Returns the label for the given completion.
@@ -401,6 +411,25 @@ impl wit::Guest for Component {
                 worktree,
             )?
             .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_virtual_document_configs(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Vec<wit::VirtualDocumentConfig>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let configs =
+            extension().language_server_virtual_document_configs(&language_server_id, worktree)?;
+
+        Ok(configs
+            .into_iter()
+            .map(|config| wit::VirtualDocumentConfig {
+                scheme: config.scheme,
+                content_request_method: config.content_request_method,
+                language_name: config.language_name,
+                language_id: config.language_id,
+            })
+            .collect())
     }
 
     fn labels_for_completions(
