@@ -1905,13 +1905,15 @@ impl Vim {
                             });
                         });
                     });
-                    self.add_surrounds(text, SurroundsType::Selection, false, window, cx);
+                    self.helix_surround_add(&text, window, cx);
                     self.switch_mode(Mode::HelixNormal, false, window, cx);
                     self.clear_operator(window, cx);
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::HelixSurroundReplace { replaced_char: Some(old) }) => match self.mode {
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: Some(old),
+            }) => match self.mode {
                 Mode::HelixNormal | Mode::HelixSelect => {
                     if let Some(new_char) = text.chars().next() {
                         self.helix_surround_replace(old, new_char, window, cx);
@@ -1920,7 +1922,9 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::HelixSurroundReplace { replaced_char: None }) => match self.mode {
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: None,
+            }) => match self.mode {
                 Mode::HelixNormal | Mode::HelixSelect => {
                     if let Some(ch) = text.chars().next() {
                         self.pop_operator(window, cx);
