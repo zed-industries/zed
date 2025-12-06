@@ -881,6 +881,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            OpenRequestKind::NativeBrowser { url } => {
+                cx.spawn(async move |cx| {
+                    cx.update(|cx| {
+                        cx.open_url(&url);
+                    })
+                    .log_err();
+                })
+                .detach();
+            }
         }
 
         return;
