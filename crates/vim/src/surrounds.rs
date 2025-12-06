@@ -22,6 +22,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: SurroundsType,
+        add_spaces: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -44,7 +45,7 @@ impl Vim {
                         newline: false,
                     },
                 };
-                let surround = pair.end != surround_alias((*text).as_ref());
+                let surround = add_spaces && pair.end != surround_alias((*text).as_ref());
                 let display_map = editor.display_snapshot(cx);
                 let display_selections = editor.selections.all_adjusted_display(&display_map);
                 let mut edits = Vec::new();
@@ -568,13 +569,13 @@ impl Vim {
     }
 }
 
-fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a BracketPair> {
+pub fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a BracketPair> {
     pairs
         .iter()
         .find(|pair| pair.start == surround_alias(ch) || pair.end == surround_alias(ch))
 }
 
-fn surround_alias(ch: &str) -> &str {
+pub fn surround_alias(ch: &str) -> &str {
     match ch {
         "b" => ")",
         "B" => "}",
@@ -584,7 +585,7 @@ fn surround_alias(ch: &str) -> &str {
     }
 }
 
-fn all_support_surround_pair() -> Vec<BracketPair> {
+pub fn all_support_surround_pair() -> Vec<BracketPair> {
     vec![
         BracketPair {
             start: "{".into(),
