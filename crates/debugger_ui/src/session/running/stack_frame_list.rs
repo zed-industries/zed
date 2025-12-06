@@ -227,7 +227,6 @@ impl StackFrameList {
             }
             this.update_in(cx, |this, window, cx| {
                 this.build_entries(select_first, window, cx);
-                cx.notify();
             })
             .ok();
         })

@@ -1436,12 +1436,20 @@ impl Session {
             .push_back(std::mem::take(&mut self.active_snapshot));
     }
 
-    pub fn history(&self) -> &VecDeque<SessionSnapshot> {
+    pub fn historic_snapshots(&self) -> &VecDeque<SessionSnapshot> {
         &self.snapshots
     }
 
-    pub fn go_back_to_history(&mut self, ix: Option<usize>, cx: &mut Context<'_, Session>) {
+    pub fn select_historic_snapshot(&mut self, ix: Option<usize>, cx: &mut Context<Session>) {
         if self.selected_snapshot_index == ix {
+            return;
+        }
+
+        if self
+            .selected_snapshot_index
+            .is_some_and(|ix| self.snapshots.len() <= ix)
+        {
+            debug_panic!("Attempted to select a debug session with an out of bounds index");
             return;
         }
 
@@ -1454,7 +1462,7 @@ impl Session {
         cx.notify();
     }
 
-    pub fn active_history(&self) -> Option<usize> {
+    pub fn active_snapshot_index(&self) -> Option<usize> {
         self.selected_snapshot_index
     }
 
@@ -2272,7 +2280,7 @@ impl Session {
     }
 
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
-        self.go_back_to_history(None, cx);
+        self.select_historic_snapshot(None, cx);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2309,7 +2317,7 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
-        self.go_back_to_history(None, cx);
+        self.select_historic_snapshot(None, cx);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2341,7 +2349,7 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
-        self.go_back_to_history(None, cx);
+        self.select_historic_snapshot(None, cx);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2373,7 +2381,7 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
-        self.go_back_to_history(None, cx);
+        self.select_historic_snapshot(None, cx);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
@@ -2405,7 +2413,7 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
-        self.go_back_to_history(None, cx);
+        self.select_historic_snapshot(None, cx);
 
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
