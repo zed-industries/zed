@@ -277,7 +277,6 @@ fn build_prompt(
         },
     );
 
-    // todo! confirm whether to include this if empty
     push_delimited(
         &mut prompt,
         EDIT_DIFF_HISTORY_START..EDIT_DIFF_HISTORY_END,
