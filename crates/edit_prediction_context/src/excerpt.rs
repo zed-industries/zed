@@ -419,28 +419,12 @@ fn node_line_end(node: Node) -> Point {
 mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext};
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::Buffer;
     use util::test::{generate_marked_text, marked_text_offsets_by};
 
     fn create_buffer(text: &str, cx: &mut TestAppContext) -> BufferSnapshot {
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang().into(), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language::rust_lang(), cx));
         buffer.read_with(cx, |buffer, _| buffer.snapshot())
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap()
     }
 
     fn cursor_and_excerpt_range(text: &str) -> (String, usize, Range<usize>) {
