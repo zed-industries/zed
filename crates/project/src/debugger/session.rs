@@ -68,6 +68,7 @@ use util::command::new_smol_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
+const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 const DEBUG_HISTORY_LIMIT: usize = 10;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -672,6 +673,7 @@ impl ThreadStates {
     }
 }
 
+// TODO(debugger): Wrap dap types with reference counting so the UI doesn't have to clone them on refresh
 #[derive(Default)]
 pub struct SessionSnapshot {
     threads: IndexMap<ThreadId, Thread>,
@@ -682,8 +684,6 @@ pub struct SessionSnapshot {
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
 }
-
-const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 
 type IsEnabled = bool;
 
