@@ -23,6 +23,7 @@ pub struct CsvPreviewView {
     contents: ParsedCsv,
     counter: usize,
     table_interaction_state: Entity<TableInteractionState>,
+    column_widths: Vec<f32>, // Store column widths as fractions
 }
 
 impl CsvPreviewView {
@@ -101,12 +102,21 @@ impl CsvPreviewView {
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
 
+        let contents = ParsedCsv::from_str(raw_text);
+        let num_cols = contents.headers.len();
+        let initial_width = if num_cols > 0 {
+            1.0 / num_cols as f32
+        } else {
+            1.0
+        };
+
         cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
             editor: editor.clone(),
-            contents: ParsedCsv::from_str(raw_text),
+            contents,
             counter: 0,
             table_interaction_state,
+            column_widths: vec![initial_width; num_cols],
         })
     }
 
@@ -115,12 +125,36 @@ impl CsvPreviewView {
             return vec![];
         }
 
-        let num_cols = self.contents.headers.len();
+        // Use stored column widths
+        self.column_widths
+            .iter()
+            .map(|&width| DefiniteLength::Fraction(width))
+            .collect()
+    }
 
-        // For now, use equal fractions for all columns
-        // In the future, we could calculate optimal widths based on content
-        let fraction = 1.0 / num_cols as f32;
-        vec![DefiniteLength::Fraction(fraction); num_cols]
+    fn adjust_first_column_width(&mut self, delta: f32) {
+        if self.column_widths.is_empty() {
+            return;
+        }
+
+        let old_width = self.column_widths[0];
+        let new_width = (old_width + delta).max(0.1).min(0.8); // Clamp between 10% and 80%
+        let width_change = new_width - old_width;
+
+        // Adjust other columns proportionally to maintain total width of 1.0
+        if self.column_widths.len() > 1 && width_change != 0.0 {
+            let remaining_width = 1.0 - new_width;
+            let current_remaining: f32 = self.column_widths[1..].iter().sum();
+
+            if current_remaining > 0.0 {
+                let scale_factor = remaining_width / current_remaining;
+                for width in &mut self.column_widths[1..] {
+                    *width *= scale_factor;
+                }
+            }
+        }
+
+        self.column_widths[0] = new_width;
     }
 }
 
@@ -245,7 +279,34 @@ impl Render for CsvPreviewView {
                             }),
                         ),
                     )
-                    .child(format!("Count: {}", self.counter)),
+                    .child(format!("Count: {}", self.counter))
+                    .when(!self.contents.headers.is_empty(), |this| {
+                        this.child(div().w_4()) // Spacer
+                            .child(
+                                Button::new("decrease_column_width", "- Width").on_click(
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.adjust_first_column_width(-0.05);
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                            .child(
+                                Button::new("increase_column_width", "+ Width").on_click(
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.adjust_first_column_width(0.05);
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .ml_2()
+                                    .child(format!(
+                                        "Col 1: {:.0}%",
+                                        self.column_widths.get(0).unwrap_or(&0.0) * 100.0
+                                    ))
+                            )
+                    }),
             )
             .child({
                 if self.contents.headers.is_empty() {
