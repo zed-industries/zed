@@ -327,28 +327,42 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 }
 
+// ---
+
 pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
 ) -> deepseek::Request {
-    let is_reasoner = *model == deepseek::Model::Reasoner;
+    let is_reasoner = model == &deepseek::Model::Reasoner;
 
     let mut messages = Vec::new();
+    let mut current_reasoning: Option<String> = None;
+
     for message in request.messages {
-        for content in message.content {
+        for content in &message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => deepseek::RequestMessage::User { content: text },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content: text },
-                }),
-                MessageContent::Thinking { .. } => {}
+                MessageContent::Text(text) => {
+                    messages.push(match message.role {
+                        Role::User => deepseek::RequestMessage::User {
+                            content: text.clone(),
+                        },
+                        Role::Assistant => deepseek::RequestMessage::Assistant {
+                            content: Some(text.clone()),
+                            tool_calls: Vec::new(),
+                            reasoning_content: current_reasoning.take(),
+                        },
+                        Role::System => deepseek::RequestMessage::System {
+                            content: text.clone(),
+                        },
+                    });
+                }
+                MessageContent::Thinking { text, .. } => {
+                    // Accumulate reasoning content for next assistant message
+                    current_reasoning = Some(text.clone());
+                }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image { .. } => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),
@@ -369,20 +383,19 @@ pub fn into_deepseek(
                         messages.push(deepseek::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }
-                MessageContent::ToolResult(tool_result) => {
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            messages.push(deepseek::RequestMessage::Tool {
-                                content: text.to_string(),
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
-                        }
-                        LanguageModelToolResultContent::Image(_) => {}
-                    };
-                }
+                MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                    LanguageModelToolResultContent::Text(text) => {
+                        messages.push(deepseek::RequestMessage::Tool {
+                            content: text.to_string(),
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                        });
+                    }
+                    LanguageModelToolResultContent::Image { .. } => {}
+                },
             }
         }
     }
@@ -440,7 +453,16 @@ impl DeepSeekEventMapper {
         &mut self,
         event: deepseek::StreamResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // DEBUG: Log raw event
+        if let Ok(event_json) = serde_json::to_string(&event) {
+            eprintln!("[DEEPSEEK-PROVIDER-TRACE] DeepSeek event: {}", event_json);
+        }
+
         let Some(choice) = event.choices.first() else {
+            eprintln!(
+                "[DEEPSEEK-PROVIDER-WARN] DeepSeek response contained no choices: {:?}",
+                event
+            );
             return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
@@ -516,7 +538,9 @@ impl DeepSeekEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some(stop_reason) => {
-                log::error!("Unexpected DeepSeek stop_reason: {stop_reason:?}",);
+                eprintln!(
+                    "[DEEPSEEK-PROVIDER-ERROR] Unexpected DeepSeek stop_reason: {stop_reason:?}",
+                );
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
