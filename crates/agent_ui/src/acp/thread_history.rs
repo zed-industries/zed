@@ -9,11 +9,17 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
+
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
     prelude::*,
+};
+#[cfg(test)]
+use {
+    fs::FakeFs, gpui::TestAppContext, project::Project, prompt_store, release_channel, semver,
+    settings::SettingsStore, theme,
 };
 
 pub struct AcpThreadHistory {
@@ -857,5 +863,118 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
         assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
+    }
+
+    #[gpui::test]
+    async fn test_remove_all_history_action(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (history_view, history_store) = setup_history_view(cx).await;
+        let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
+
+        // Verify initial state - history should be empty
+        assert!(history_store.read_with(cx, |store, cx| store.is_empty(cx)));
+        assert!(!history_view.read_with(cx, |view, _| view.confirming_delete_history));
+
+        // Execute remove history action
+        history_view.update_in(cx, |history_view, window, cx| {
+            history_view.remove_history(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify confirming_delete_history is set to false
+        assert!(!history_view.read_with(cx, |view, _| view.confirming_delete_history));
+        assert!(history_store.read_with(cx, |store, cx| store.is_empty(cx)));
+    }
+
+    #[gpui::test]
+    async fn test_remove_history_resets_confirmation_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (history_view, _history_store) = setup_history_view(cx).await;
+        let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
+
+        // Set confirming_delete_history to true first
+        history_view.update_in(cx, |history_view, window, cx| {
+            history_view.prompt_delete_history(window, cx);
+        });
+
+        // Verify it's now true
+        assert!(history_view.read_with(cx, |view, _| view.confirming_delete_history));
+
+        // Execute remove history action
+        history_view.update_in(cx, |history_view, window, cx| {
+            history_view.remove_history(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify confirming_delete_history is reset to false
+        assert!(!history_view.read_with(cx, |view, _| view.confirming_delete_history));
+    }
+
+    #[gpui::test]
+    async fn test_remove_history_action_handler(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (history_view, history_store) = setup_history_view(cx).await;
+        let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
+
+        // Test the action handler by simulating the RemoveHistory action
+        history_view.update_in(cx, |history_view, window, cx| {
+            // This simulates what happens when the RemoveHistory action is dispatched
+            history_view.remove_history(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the action completed successfully
+        assert!(history_store.read_with(cx, |store, cx| store.is_empty(cx)));
+        assert!(!history_view.read_with(cx, |view, _| view.confirming_delete_history));
+    }
+
+    #[gpui::test]
+    async fn test_remove_history_completes_successfully(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (history_view, history_store) = setup_history_view(cx).await;
+        let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
+
+        // Execute remove history action which should call cx.notify()
+        history_view.update_in(cx, |history_view, window, cx| {
+            history_view.remove_history(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify the action completed successfully
+        assert!(!history_view.read_with(cx, |view, _| view.confirming_delete_history));
+        assert!(history_store.read_with(cx, |store, cx| store.is_empty(cx)));
+    }
+
+    async fn setup_history_view(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThreadHistory>, Entity<HistoryStore>) {
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+        let (history_view, _cx) = cx
+            .add_window_view(|window, cx| AcpThreadHistory::new(history_store.clone(), window, cx));
+
+        (history_view, history_store)
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            prompt_store::init(cx)
+        });
     }
 }
