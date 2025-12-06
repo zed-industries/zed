@@ -808,7 +808,7 @@ pub enum SessionEvent {
     },
     DataBreakpointInfo,
     ConsoleOutput,
-    SnapshotSelectionChanged,
+    HistoricSnapshotSelected,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1448,7 +1448,7 @@ impl Session {
         self.selected_snapshot_index = ix;
 
         if ix.is_some() {
-            cx.emit(SessionEvent::SnapshotSelectionChanged);
+            cx.emit(SessionEvent::HistoricSnapshotSelected);
         }
 
         cx.notify();
@@ -1669,16 +1669,10 @@ impl Session {
             );
         }
 
-        if self.selected_snapshot_index.is_some() {
-            return;
-        }
-
-        if self.is_session_terminated {
-            return;
-        }
-
-        if !self.active_snapshot.thread_states.any_stopped_thread()
-            && request.type_id() != TypeId::of::<ThreadsCommand>()
+        if (!self.active_snapshot.thread_states.any_stopped_thread()
+            && request.type_id() != TypeId::of::<ThreadsCommand>())
+            || self.selected_snapshot_index.is_some()
+            || self.is_session_terminated
         {
             return;
         }

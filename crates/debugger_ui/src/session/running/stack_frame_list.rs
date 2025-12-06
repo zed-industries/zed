@@ -99,7 +99,7 @@ impl StackFrameList {
                 }
                 SessionEvent::Stopped(..)
                 | SessionEvent::StackTrace
-                | SessionEvent::SnapshotSelectionChanged => {
+                | SessionEvent::HistoricSnapshotSelected => {
                     this.schedule_refresh(true, window, cx);
                 }
                 _ => {}

@@ -18,7 +18,7 @@ impl LoadedSourceList {
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::Stopped(_)
-            | SessionEvent::SnapshotSelectionChanged
+            | SessionEvent::HistoricSnapshotSelected
             | SessionEvent::LoadedSources => {
                 this.invalidate = true;
                 cx.notify();

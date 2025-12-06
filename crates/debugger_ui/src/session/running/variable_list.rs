@@ -217,7 +217,7 @@ impl VariableList {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, event, cx| match event {
-                SessionEvent::SnapshotSelectionChanged => {
+                SessionEvent::HistoricSnapshotSelected => {
                     this.selection.take();
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();

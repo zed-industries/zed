@@ -33,7 +33,7 @@ impl ModuleList {
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::Stopped(_)
-            | SessionEvent::SnapshotSelectionChanged
+            | SessionEvent::HistoricSnapshotSelected
             | SessionEvent::Modules => {
                 if this._rebuild_task.is_some() {
                     this.schedule_rebuild(cx);
