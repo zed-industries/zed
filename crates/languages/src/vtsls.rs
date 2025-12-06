@@ -74,8 +74,8 @@ impl VtslsLspAdapter {
 }
 
 pub struct TypeScriptVersions {
-    typescript_version: String,
-    server_version: String,
+    typescript_version: Version,
+    server_version: Version,
 }
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");

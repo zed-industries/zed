@@ -32,9 +32,9 @@ pub struct NodeBinaryOptions {
 
 pub enum VersionStrategy<'a> {
     /// Install if current version doesn't match pinned version
-    Pin(&'a str),
+    Pin(&'a Version),
     /// Install if current version is older than latest version
-    Latest(&'a str),
+    Latest(&'a Version),
 }
 
 #[derive(Clone)]
@@ -228,7 +228,7 @@ impl NodeRuntime {
             .await
     }
 
-    pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
+    pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
         let http = self.0.lock().await.http.clone();
         let output = self
             .instance()
@@ -316,18 +316,8 @@ impl NodeRuntime {
         };
 
         match version_strategy {
-            VersionStrategy::Pin(pinned_version) => {
-                let Some(pinned_version) = Version::parse(pinned_version).log_err() else {
-                    return true;
-                };
-                installed_version != pinned_version
-            }
-            VersionStrategy::Latest(latest_version) => {
-                let Some(latest_version) = Version::parse(latest_version).log_err() else {
-                    return true;
-                };
-                installed_version < latest_version
-            }
+            VersionStrategy::Pin(pinned_version) => &installed_version != pinned_version,
+            VersionStrategy::Latest(latest_version) => &installed_version < latest_version,
         }
     }
 }
@@ -342,12 +332,12 @@ enum ArchiveType {
 pub struct NpmInfo {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
-    versions: Vec<String>,
+    versions: Vec<Version>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NpmInfoDistTags {
-    latest: Option<String>,
+    latest: Option<Version>,
 }
 
 #[async_trait::async_trait]
@@ -367,7 +357,7 @@ trait NodeRuntimeTrait: Send + Sync {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>>;
+    ) -> Result<Option<Version>>;
 }
 
 #[derive(Clone)]
@@ -745,7 +735,7 @@ pub async fn read_package_installed_version(
 
     #[derive(Deserialize)]
     struct PackageJson {
-        version: String,
+        version: Version,
     }
 
     let mut contents = String::new();
