@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -67,6 +67,8 @@ use url::Url;
 use util::command::new_smol_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
+
+const DEBUG_HISTORY_LIMIT: usize = 10;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -691,7 +693,7 @@ pub struct OutputToken(pub usize);
 pub struct Session {
     pub mode: SessionState,
     state: SessionSnapshot,
-    state_history: Vec<SessionSnapshot>,
+    state_history: VecDeque<SessionSnapshot>,
     active_history: Option<usize>,
     id: SessionId,
     label: Option<SharedString>,
@@ -864,7 +866,7 @@ impl Session {
 
             Self {
                 mode: SessionState::Booting(None),
-                state_history: Default::default(),
+                state_history: VecDeque::with_capacity(DEBUG_HISTORY_LIMIT),
                 active_history: None,
                 state: Default::default(),
                 id: session_id,
@@ -1423,10 +1425,15 @@ impl Session {
             return;
         }
 
-        self.state_history.push(std::mem::take(&mut self.state));
+        while self.state_history.len() >= DEBUG_HISTORY_LIMIT {
+            self.state_history.pop_front();
+        }
+
+        self.state_history
+            .push_back(std::mem::take(&mut self.state));
     }
 
-    pub fn history(&self) -> &[SessionSnapshot] {
+    pub fn history(&self) -> &VecDeque<SessionSnapshot> {
         &self.state_history
     }
 
