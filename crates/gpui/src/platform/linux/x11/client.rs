@@ -944,6 +944,8 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 window.set_active(false);
                 let mut state = self.0.borrow_mut();
+                // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
                 state.keyboard_focused_window = None;
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
