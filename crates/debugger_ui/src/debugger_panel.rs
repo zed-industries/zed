@@ -284,7 +284,7 @@ impl DebugPanel {
             }
         });
 
-        session.update(cx, |session, _| match &mut session.mode {
+        session.update(cx, |session, _| match &mut session.state {
             SessionState::Booting(state_task) => {
                 *state_task = Some(boot_task);
             }
@@ -826,6 +826,32 @@ impl DebugPanel {
                                                     )
                                                 }
                                             }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "debug-back-in-history",
+                                            IconName::HistoryRerun,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .on_click(
+                                            window.listener_for(
+                                                running_state,
+                                                |this, _, _window, cx| {
+                                                    this.session().update(cx, |session, cx| {
+                                                        let ix = session
+                                                            .active_history()
+                                                            .unwrap_or_else(|| {
+                                                                session.history().len()
+                                                            });
+
+                                                        session.go_back_to_history(
+                                                            Some(ix.saturating_sub(1)),
+                                                            cx,
+                                                        );
+                                                    })
+                                                },
+                                            ),
+                                        ),
                                     )
                                     .child(
                                         IconButton::new("debug-stop", IconName::Power)
