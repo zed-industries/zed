@@ -9023,6 +9023,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "util",
+ "virtual_document",
  "ztracing",
 ]
 
@@ -12723,6 +12724,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "virtual_document",
  "watch",
  "wax",
  "which 6.0.3",
@@ -18495,6 +18497,18 @@ name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
  "settings",
+]
+
+[[package]]
+name = "virtual_document"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "extension",
+ "futures 0.3.31",
+ "gpui",
+ "lsp",
 ]
 
 [[package]]
