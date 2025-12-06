@@ -76,6 +76,8 @@ pub use keystroke::*;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
+#[cfg(target_os = "macos")]
+pub use mac::{ActivationPolicy, set_activation_policy};
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
