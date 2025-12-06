@@ -1005,6 +1005,12 @@ impl AcpThreadView {
         matches!(self.thread_state, ThreadState::Loading { .. })
     }
 
+    fn has_tool_awaiting_confirmation(&self, cx: &App) -> bool {
+        self.thread()
+            .map(|t| t.read(cx).first_tool_awaiting_confirmation().is_some())
+            .unwrap_or(false)
+    }
+
     fn resume_chat(&mut self, cx: &mut Context<Self>) {
         self.thread_error.take();
         let Some(thread) = self.thread() else {
@@ -1031,6 +1037,13 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else { return };
 
         if self.is_loading_contents {
+            return;
+        }
+
+        // Block sending when a tool is awaiting confirmation to prevent
+        // duplicate tool_use IDs error in Claude Code SDK (fixes #44211).
+        // User must respond to tool confirmation first.
+        if self.has_tool_awaiting_confirmation(cx) {
             return;
         }
 
@@ -4468,6 +4481,7 @@ impl AcpThreadView {
         let is_generating = self
             .thread()
             .is_some_and(|thread| thread.read(cx).status() != ThreadStatus::Idle);
+        let has_tool_awaiting = self.has_tool_awaiting_confirmation(cx);
 
         if self.is_loading_contents {
             div()
@@ -4486,7 +4500,9 @@ impl AcpThreadView {
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
         } else {
-            let send_btn_tooltip = if is_editor_empty && !is_generating {
+            let send_btn_tooltip = if has_tool_awaiting {
+                "Respond to Tool Confirmation First"
+            } else if is_editor_empty && !is_generating {
                 "Type to Send"
             } else if is_generating {
                 "Stop and Send Message"
@@ -4497,7 +4513,10 @@ impl AcpThreadView {
             IconButton::new("send-message", IconName::Send)
                 .style(ButtonStyle::Filled)
                 .map(|this| {
-                    if is_editor_empty && !is_generating {
+                    // Disable send button when:
+                    // - Editor is empty and not generating, OR
+                    // - A tool is awaiting confirmation (prevents duplicate tool_use IDs, #44211)
+                    if (is_editor_empty && !is_generating) || has_tool_awaiting {
                         this.disabled(true).icon_color(Color::Muted)
                     } else {
                         this.icon_color(Color::Accent)
@@ -6875,6 +6894,68 @@ pub(crate) mod tests {
             events.try_next(),
             Err(futures::channel::mpsc::TryRecvError { .. })
         ));
+    }
+
+    #[gpui::test]
+    async fn test_message_doesnt_send_if_tool_awaiting_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "ExitPlanMode")
+            .kind(acp::ToolKind::Edit)
+            .content(vec!["Planning complete".into()]);
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id,
+                vec![acp::PermissionOption::new(
+                    "1".into(),
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )],
+            )]));
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Initial message", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let has_tool_awaiting =
+            thread_view.read_with(cx, |view, cx| view.has_tool_awaiting_confirmation(cx));
+        assert!(
+            has_tool_awaiting,
+            "Expected a tool to be awaiting confirmation after initial send"
+        );
+
+        let mut events = cx.events(&message_editor);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Second message while tool awaits", window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert!(
+            matches!(
+                events.try_next(),
+                Err(futures::channel::mpsc::TryRecvError { .. })
+            ),
+            "Message should not be sent when a tool is awaiting confirmation (fixes #44211)"
+        );
     }
 
     #[gpui::test]
