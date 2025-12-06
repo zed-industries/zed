@@ -5,7 +5,6 @@ use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
 };
-
 use collections::HashMap;
 use core::str;
 use http_client::Url;
