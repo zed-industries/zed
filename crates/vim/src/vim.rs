@@ -630,6 +630,12 @@ impl Vim {
             });
         }
 
+        // Set collapse_matches early so that any selections made before the editor
+        // is focused will use the correct range calculation. This prevents vim from
+        // incorrectly switching to visual mode when project search results are opened.
+        let collapse_matches = !HelixModeSetting::get_global(cx).0;
+        editor.set_collapse_matches(collapse_matches);
+
         editor.register_addon(VimAddon {
             entity: vim.clone(),
         });
