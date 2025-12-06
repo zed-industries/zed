@@ -1436,11 +1436,11 @@ impl Session {
         }
 
         self.active_history = ix;
-        cx.emit(SessionEvent::Threads);
-        cx.emit(SessionEvent::StackTrace);
-        cx.emit(SessionEvent::Variables);
-        cx.emit(SessionEvent::Modules);
-        cx.emit(SessionEvent::LoadedSources);
+
+        if ix.is_some() {
+            cx.emit(SessionEvent::Stopped(None));
+        }
+
         cx.notify();
     }
 
