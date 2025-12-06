@@ -3134,19 +3134,23 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                     .await
                     .context("creating companion installation directory")?;
 
-                let mut children = smol::fs::read_dir(&dir)
+                let children = smol::fs::read_dir(&dir)
                     .await
                     .context("reading companion installation directory")?
                     .try_collect::<Vec<_>>()
                     .await
                     .context("reading companion installation directory entries")?;
-                children
-                    .sort_by_key(|child| semver::Version::parse(child.file_name().to_str()?).ok());
 
-                let latest_installed_version = children.last().and_then(|child| {
-                    let version = child.file_name().into_string().ok()?;
-                    Some((child.path(), version))
-                });
+                let latest_installed_version = children
+                    .iter()
+                    .filter_map(|child| {
+                        Some((
+                            child.path(),
+                            semver::Version::parse(child.file_name().to_str()?).ok()?,
+                        ))
+                    })
+                    .max_by_key(|(_, version)| version.clone());
+
                 let latest_version = node
                     .npm_package_latest_version(PACKAGE_NAME)
                     .await
