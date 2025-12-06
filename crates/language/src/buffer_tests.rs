@@ -6,6 +6,7 @@ use futures::FutureExt as _;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
 use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
+use pretty_assertions::assert_eq;
 use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
@@ -786,7 +787,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     let outline = snapshot.outline(None);
 
-    pretty_assertions::assert_eq!(
+    assert_eq!(
         outline
             .items
             .iter()
@@ -818,7 +819,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
             ("LoggedIn", 2, Some("person: Person, time: Instant,".to_string())),
             ("person", 3, None),
             ("time", 3, None),
-            ("impl Eq for Person", 0, None),
+            ("impl Eq for Person", 0, Some("".to_string())),
             (
                 "impl Drop for Person",
                 0,
@@ -1127,6 +1128,14 @@ fn test_text_objects(cx: &mut App) {
             (
                 "fn say() -> u8 { return /* hi */ 1 }",
                 TextObject::AroundFunction
+            ),
+            (
+                "fn say() -> u8 { return /* hi */ 1 }",
+                TextObject::InsideClass
+            ),
+            (
+                "impl Hello {\n    fn say() -> u8 { return /* hi */ 1 }\n}",
+                TextObject::AroundClass
             ),
         ],
     )
@@ -2055,7 +2064,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
             cx,
         );
 
-        pretty_assertions::assert_eq!(
+        assert_eq!(
             buffer.text(),
             "
             mod numbers {

@@ -3,6 +3,7 @@ use crate::{
     LanguageConfig, LanguageMatcher, buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
+use pretty_assertions::assert_eq;
 use rand::rngs::StdRng;
 use std::{env, ops::Range, sync::Arc};
 use text::{Buffer, BufferId, ReplicaId};
@@ -290,7 +291,7 @@ fn test_typing_multiple_new_injections(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["field"],
+        &["property"],
         "fn a() { test_macro!(b.«c»(vec![d.«e»])) }",
     );
 }
@@ -328,16 +329,16 @@ fn test_pasting_new_injection_line_between_others(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["struct"],
+        &["type"],
         "
         fn a() {
-            b!(«B {}»);
-            c!(«C {}»);
-            d!(«D {}»);
-            h!(«H {}»);
-            e!(«E {}»);
-            f!(«F {}»);
-            g!(«G {}»);
+            b!(«B» {});
+            c!(«C» {});
+            d!(«D» {});
+            h!(«H» {});
+            e!(«E» {});
+            f!(«F» {});
+            g!(«G» {});
         }
         ",
     );
@@ -375,7 +376,7 @@ fn test_joining_injections_with_child_injections(cx: &mut App) {
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["field"],
+        &["property"],
         "
         fn a() {
             b!(
@@ -1395,6 +1396,7 @@ fn assert_capture_ranges(
             actual_ranges.push(capture.node.byte_range());
         }
     }
+    actual_ranges.dedup();
 
     let (text, expected_ranges) = marked_text_ranges(&marked_string.unindent(), false);
     assert_eq!(text, buffer.text());
