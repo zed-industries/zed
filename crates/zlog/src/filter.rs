@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
-use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
+use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, ScopeAlloc, ScopeRef, env_config, private};
 
 use log;
 
@@ -59,7 +59,11 @@ pub fn is_possibly_enabled_level(level: log::Level) -> bool {
     level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Acquire)
 }
 
-pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
+pub fn is_scope_enabled(
+    scope: &ScopeRef<'_>,
+    module_path: Option<&str>,
+    level: log::Level,
+) -> bool {
     // TODO: is_always_allowed_level that checks against LEVEL_ENABLED_MIN_CONFIG
     if !is_possibly_enabled_level(level) {
         // [FAST PATH]
@@ -401,6 +405,7 @@ impl ScopeMap {
 mod tests {
     use log::LevelFilter;
 
+    use crate::Scope;
     use crate::private::scope_new;
 
     use super::*;
