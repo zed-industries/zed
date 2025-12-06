@@ -2291,17 +2291,27 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
-        let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor)
-                    .envs(HashMap::clone(&env));
-                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                    .await?;
-                Ok(())
-            })
-            .boxed()
+        async move {
+            let mut command = new_smol_command(git_binary_path);
+            command
+                .current_dir(&working_directory?)
+                .envs(env.iter())
+                .args(["hook", "run", "--ignore-missing", hook.as_str()])
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
+
+            let git_process = command.spawn()?;
+
+            let output = git_process.output().await?;
+
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to run hook:{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(())
+        }
+        .boxed()
     }
 }
 
