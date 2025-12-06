@@ -634,6 +634,7 @@ pub fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         svg_preview::init(cx);
