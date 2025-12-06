@@ -1,11 +1,12 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, BackgroundExecutor, Task};
-use lsp::{LanguageServer, TextDocumentIdentifier};
+use lsp::{LanguageServer, Position, TextDocumentIdentifier, TextDocumentPositionParams};
+use serde_json::Value;
 use std::sync::Arc;
 
-// Re-export the config type from lsp crate (defined there to avoid circular dependencies)
-pub use lsp::VirtualDocumentConfig;
+// Re-export the config types from lsp crate (defined there to avoid circular dependencies)
+pub use lsp::{VirtualDocumentConfig, VirtualDocumentParamKind};
 
 /// A centralized store for managing virtual document handlers.
 ///
@@ -42,6 +43,7 @@ pub use lsp::VirtualDocumentConfig;
 ///     content_request_method: "java/classFileContents".to_string(),
 ///     language_name: "Java".to_string(),
 ///     language_id: "java".to_string(),
+///     param_kind: VirtualDocumentParamKind::Uri, // Uses TextDocumentIdentifier
 /// }
 /// ```
 ///
@@ -107,11 +109,12 @@ impl VirtualDocumentStore {
     ///
     /// * `uri` - The virtual document URI (e.g., `jdt://contents/...`)
     /// * `language_server` - The language server to send the request to
+    /// * `position` - Optional position in the document (used for `UriWithPosition` param kind)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// if let Some(task) = store.process_uri(&uri, language_server.clone()) {
+    /// if let Some(task) = store.process_uri(&uri, language_server.clone(), None) {
     ///     let content = task.await?;
     ///     // Create buffer with content...
     /// }
@@ -120,13 +123,38 @@ impl VirtualDocumentStore {
         &self,
         uri: &lsp::Uri,
         language_server: Arc<LanguageServer>,
+        position: Option<Position>,
     ) -> Option<Task<Result<String>>> {
         let scheme = uri.scheme();
         let config = self.handlers.get(scheme)?;
 
-        let params = TextDocumentIdentifier { uri: uri.clone() };
         let request_method = config.content_request_method.clone();
         let executor = self.executor.clone();
+
+        // Build parameters based on the configured param_kind
+        let params: Value = match &config.param_kind {
+            VirtualDocumentParamKind::Uri => {
+                // TextDocumentIdentifier: { "uri": "<uri>" }
+                serde_json::to_value(TextDocumentIdentifier { uri: uri.clone() })
+                    .expect("TextDocumentIdentifier should serialize")
+            }
+            VirtualDocumentParamKind::RawUri => {
+                // Raw URI string
+                Value::String(uri.to_string())
+            }
+            VirtualDocumentParamKind::UriWithPosition => {
+                // TextDocumentPositionParams: { "textDocument": { "uri": "<uri>" }, "position": { ... } }
+                let pos = position.unwrap_or(Position {
+                    line: 0,
+                    character: 0,
+                });
+                serde_json::to_value(TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: pos,
+                })
+                .expect("TextDocumentPositionParams should serialize")
+            }
+        };
 
         // Send the custom LSP request to get document contents
         Some(executor.spawn(async move {
@@ -157,6 +185,7 @@ mod tests {
             content_request_method: format!("{}/getContents", scheme),
             language_name: "TestLanguage".to_string(),
             language_id: "test".to_string(),
+            param_kind: VirtualDocumentParamKind::default(),
         }
     }
 
@@ -227,6 +256,7 @@ mod tests {
                 content_request_method: "java/classFileContents".to_string(),
                 language_name: "Java".to_string(),
                 language_id: "java".to_string(),
+                param_kind: VirtualDocumentParamKind::default(),
             };
             store.register_handler(config1);
 
@@ -244,6 +274,7 @@ mod tests {
                 content_request_method: "java/newMethod".to_string(),
                 language_name: "Java".to_string(),
                 language_id: "java".to_string(),
+                param_kind: VirtualDocumentParamKind::default(),
             };
             store.register_handler(config2);
 
@@ -272,6 +303,77 @@ mod tests {
             // We can't easily test with a real LanguageServer here, but we verify
             // the handler lookup path
             assert!(store.handler_for_scheme(uri.scheme()).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_param_kind_variants(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            // Test Uri param kind (JDTLS style)
+            let jdt_config = VirtualDocumentConfig {
+                scheme: "jdt".to_string(),
+                content_request_method: "java/classFileContents".to_string(),
+                language_name: "Java".to_string(),
+                language_id: "java".to_string(),
+                param_kind: VirtualDocumentParamKind::Uri,
+            };
+            store.register_handler(jdt_config);
+            assert_eq!(
+                store.handler_for_scheme("jdt").unwrap().param_kind,
+                VirtualDocumentParamKind::Uri
+            );
+
+            // Test RawUri param kind
+            let raw_config = VirtualDocumentConfig {
+                scheme: "custom".to_string(),
+                content_request_method: "custom/getContents".to_string(),
+                language_name: "Custom".to_string(),
+                language_id: "custom".to_string(),
+                param_kind: VirtualDocumentParamKind::RawUri,
+            };
+            store.register_handler(raw_config);
+            assert_eq!(
+                store.handler_for_scheme("custom").unwrap().param_kind,
+                VirtualDocumentParamKind::RawUri
+            );
+
+            // Test UriWithPosition param kind (rust-analyzer style)
+            let ra_config = VirtualDocumentConfig {
+                scheme: "rust-analyzer".to_string(),
+                content_request_method: "rust-analyzer/expandMacro".to_string(),
+                language_name: "Rust".to_string(),
+                language_id: "rust".to_string(),
+                param_kind: VirtualDocumentParamKind::UriWithPosition,
+            };
+            store.register_handler(ra_config);
+            assert_eq!(
+                store
+                    .handler_for_scheme("rust-analyzer")
+                    .unwrap()
+                    .param_kind,
+                VirtualDocumentParamKind::UriWithPosition
+            );
+
+            // Verify all three are registered
+            assert_eq!(store.handlers().len(), 3);
+        });
+    }
+
+    #[gpui::test]
+    fn test_default_param_kind(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut store = VirtualDocumentStore::new(cx);
+
+            // Test that default param_kind is Uri
+            let config = make_config("test");
+            store.register_handler(config);
+
+            assert_eq!(
+                store.handler_for_scheme("test").unwrap().param_kind,
+                VirtualDocumentParamKind::Uri
+            );
         });
     }
 }

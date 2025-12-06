@@ -477,6 +477,7 @@ impl ExtensionLspAdapter {
                 content_request_method: config.content_request_method,
                 language_name: config.language_name,
                 language_id: config.language_id,
+                param_kind: config.param_kind,
             })
             .collect())
     }
