@@ -4364,6 +4364,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "csv_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "log",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "ctor"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20718,6 +20730,7 @@ dependencies = [
  "component_preview",
  "copilot",
  "crashes",
+ "csv_preview",
  "dap",
  "dap_adapters",
  "db",
