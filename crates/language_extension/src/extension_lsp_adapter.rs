@@ -328,6 +328,13 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
+    async fn virtual_document_configs(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Vec<lsp::VirtualDocumentConfig>> {
+        ExtensionLspAdapter::virtual_document_configs(&self, delegate.clone()).await
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -443,6 +450,35 @@ impl LspAdapter for ExtensionLspAdapter {
 
     fn is_extension(&self) -> bool {
         true
+    }
+}
+
+impl ExtensionLspAdapter {
+    /// Returns virtual document configurations from the extension.
+    /// This calls the extension's WIT export to get handler configs.
+    pub async fn virtual_document_configs(
+        &self,
+        delegate: Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Vec<lsp::VirtualDocumentConfig>> {
+        let worktree_delegate = Arc::new(WorktreeDelegateAdapter(delegate)) as _;
+        let ext_configs = self
+            .extension
+            .language_server_virtual_document_configs(
+                self.language_server_id.clone(),
+                worktree_delegate,
+            )
+            .await?;
+
+        // Convert from extension API types to lsp types
+        Ok(ext_configs
+            .into_iter()
+            .map(|config| lsp::VirtualDocumentConfig {
+                scheme: config.scheme,
+                content_request_method: config.content_request_method,
+                language_name: config.language_name,
+                language_id: config.language_id,
+            })
+            .collect())
     }
 }
 

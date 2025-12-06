@@ -22,6 +22,7 @@ use rpc::{
     proto::{self},
 };
 
+use lsp;
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
@@ -38,6 +39,10 @@ pub struct BufferStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
+    /// Mapping from URIs to buffer IDs for virtual buffers (non-file URIs)
+    uri_to_buffer_id: HashMap<String, BufferId>,
+    /// Mapping from buffer IDs back to their URIs for virtual buffers
+    pub(crate) virtual_buffers: HashMap<BufferId, lsp::Uri>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -749,6 +754,8 @@ impl BufferStore {
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
+            uri_to_buffer_id: Default::default(),
+            virtual_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -774,6 +781,8 @@ impl BufferStore {
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
+            uri_to_buffer_id: Default::default(),
+            virtual_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -1003,6 +1012,48 @@ impl BufferStore {
         self.path_to_buffer_id
             .get(path)
             .and_then(|buffer_id| self.get(*buffer_id))
+    }
+
+    /// Get a buffer by its URI (for virtual buffers with non-file URIs)
+    pub fn get_buffer_by_uri(&self, uri: &str) -> Option<Entity<Buffer>> {
+        self.uri_to_buffer_id
+            .get(uri)
+            .and_then(|buffer_id| self.get(*buffer_id))
+    }
+
+    /// Register a virtual buffer with its URI
+    pub fn register_virtual_buffer(
+        &mut self,
+        uri_string: String,
+        uri: lsp::Uri,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_id = buffer.read(cx).remote_id();
+        self.uri_to_buffer_id.insert(uri_string.clone(), buffer_id);
+        self.virtual_buffers.insert(buffer_id, uri);
+
+        // Also register it in opened_buffers if not already there
+        self.opened_buffers
+            .entry(buffer_id)
+            .or_insert_with(|| OpenBuffer::Complete {
+                buffer: buffer.downgrade(),
+            });
+
+        // Set up cleanup when buffer is dropped
+        let handle = cx.entity().downgrade();
+        buffer.update(cx, move |_, cx| {
+            cx.on_release(move |buffer, cx| {
+                let buffer_id = buffer.remote_id();
+                handle
+                    .update(cx, |this, _cx| {
+                        this.uri_to_buffer_id.remove(&uri_string);
+                        this.virtual_buffers.remove(&buffer_id);
+                    })
+                    .ok();
+            })
+            .detach()
+        });
     }
 
     pub fn get(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {

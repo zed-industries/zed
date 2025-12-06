@@ -10922,3 +10922,174 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
     });
     assert!(active_repo_path.is_none());
 }
+
+// ============================================================================
+// Virtual Document Tests
+// ============================================================================
+
+#[gpui::test]
+async fn test_virtual_buffer_registration_and_lookup(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Create a virtual buffer manually to test registration
+    let uri_string = "jdt://contents/rt.jar/java.util/ArrayList.class".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+    let content = "// Decompiled ArrayList class\npublic class ArrayList {}".to_string();
+
+    project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(content.clone(), cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+            buffer
+        });
+
+        let buffer_id = buffer.read(cx).remote_id();
+
+        // Register the virtual buffer
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        // Verify we can look it up by URI
+        let found_buffer = project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string);
+        assert!(found_buffer.is_some());
+        assert_eq!(found_buffer.unwrap().read(cx).remote_id(), buffer_id);
+
+        // Verify it's tracked as a virtual buffer
+        let virtual_buffers = &project.buffer_store().read(cx).virtual_buffers;
+        assert!(virtual_buffers.contains_key(&buffer_id));
+        assert_eq!(
+            virtual_buffers.get(&buffer_id).unwrap().to_string(),
+            uri_string
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_virtual_buffer_caching(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let uri_string = "jdt://contents/rt.jar/java.util/HashMap.class".to_string();
+    let uri = lsp::Uri::from_str(&uri_string).unwrap();
+
+    // Register a virtual buffer
+    let buffer = project.update(cx, |project, cx| {
+        let buffer = cx.new(|cx| language::Buffer::local("// HashMap".to_string(), cx));
+
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.register_virtual_buffer(
+                uri_string.clone(),
+                uri.clone(),
+                buffer.clone(),
+                cx,
+            );
+        });
+
+        buffer
+    });
+
+    // Looking up the same URI should return the same buffer
+    let found_buffer = project.read_with(cx, |project, cx| {
+        project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri(&uri_string)
+    });
+
+    assert!(found_buffer.is_some());
+    assert_eq!(
+        found_buffer.unwrap().read_with(cx, |b, _| b.remote_id()),
+        buffer.read_with(cx, |b, _| b.remote_id())
+    );
+}
+
+#[gpui::test]
+async fn test_virtual_buffer_not_found_for_unknown_uri(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    // Try to look up a URI that was never registered
+    let found_buffer = project.read_with(cx, |project, cx| {
+        project
+            .buffer_store()
+            .read(cx)
+            .get_buffer_by_uri("jdt://unknown/path")
+    });
+
+    assert!(found_buffer.is_none());
+}
+
+#[gpui::test]
+async fn test_multiple_virtual_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let uris = [
+        "jdt://contents/rt.jar/java.util/ArrayList.class",
+        "jdt://contents/rt.jar/java.util/HashMap.class",
+        "jdt://contents/rt.jar/java.lang/String.class",
+    ];
+
+    // Register multiple virtual buffers
+    let buffers: Vec<_> = project.update(cx, |project, cx| {
+        uris.iter()
+            .map(|uri_str| {
+                let uri_string = uri_str.to_string();
+                let uri = lsp::Uri::from_str(&uri_string).unwrap();
+                let buffer =
+                    cx.new(|cx| language::Buffer::local(format!("// Contents of {}", uri_str), cx));
+
+                project.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.register_virtual_buffer(uri_string, uri, buffer.clone(), cx);
+                });
+
+                buffer
+            })
+            .collect()
+    });
+
+    // Verify all buffers can be found
+    project.read_with(cx, |project, cx| {
+        for (i, uri_str) in uris.iter().enumerate() {
+            let found = project.buffer_store().read(cx).get_buffer_by_uri(uri_str);
+            assert!(found.is_some(), "Buffer for {} should exist", uri_str);
+            assert_eq!(
+                found.unwrap().read(cx).remote_id(),
+                buffers[i].read(cx).remote_id()
+            );
+        }
+
+        // Verify count
+        assert_eq!(project.buffer_store().read(cx).virtual_buffers.len(), 3);
+    });
+}

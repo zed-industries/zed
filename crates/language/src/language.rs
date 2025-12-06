@@ -437,6 +437,15 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         None
     }
 
+    /// Returns virtual document configurations for handling non-file URIs (e.g., decompiled code).
+    /// Extensions can implement this to register handlers for custom URI schemes.
+    async fn virtual_document_configs(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Vec<lsp::VirtualDocumentConfig>> {
+        Ok(Vec::new())
+    }
+
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,

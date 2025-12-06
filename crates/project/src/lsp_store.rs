@@ -60,11 +60,11 @@ use gpui::{
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
-    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
+    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
+    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
@@ -120,6 +120,7 @@ use std::{
 };
 use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
+use virtual_document::VirtualDocumentStore;
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -296,6 +297,8 @@ pub struct LocalLspStore {
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
+    /// Virtual document store for handling non-file URIs (decompiled code, etc.)
+    virtual_docs: Entity<VirtualDocumentStore>,
 }
 
 impl LocalLspStore {
@@ -514,10 +517,20 @@ impl LocalLspStore {
 
                 match result {
                     Ok(server) => {
+                        // Register virtual document handlers before marking server as Running
+                        // This prevents race conditions where "Go to Definition" happens before handlers are ready
+                        let _ = LspStore::register_virtual_document_handlers(
+                            lsp_store.clone(),
+                            adapter.clone(),
+                            key.clone(),
+                            cx,
+                        )
+                        .await;
+
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 lsp_store.insert_newly_running_language_server(
-                                    adapter,
+                                    adapter.clone(),
                                     server.clone(),
                                     server_id,
                                     key,
@@ -526,6 +539,7 @@ impl LocalLspStore {
                                 );
                             })
                             .ok();
+
                         stderr_capture.lock().take();
                         Some(server)
                     }
@@ -1219,7 +1233,13 @@ impl LocalLspStore {
             let worktree_path = ProjectPath { worktree_id, path };
             self.language_server_ids_for_project_path(worktree_path, language, cx)
         } else {
-            Vec::new()
+            // Check if this is a virtual buffer - they're already registered with specific servers
+            let buffer_id = buffer.remote_id();
+            if let Some(server_ids) = self.buffers_opened_in_servers.get(&buffer_id) {
+                server_ids.iter().copied().collect()
+            } else {
+                Vec::new()
+            }
         }
     }
 
@@ -3932,6 +3952,8 @@ impl LspStore {
             .detach();
         subscribe_to_binary_statuses(&languages, cx).detach();
 
+        let virtual_docs = cx.new(|cx| VirtualDocumentStore::new(cx));
+
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
@@ -3976,6 +3998,7 @@ impl LspStore {
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
+                virtual_docs,
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -4678,31 +4701,89 @@ impl LspStore {
 
         let file = File::from_dyn(buffer.read(cx).file()).and_then(File::as_local);
 
-        let Some(file) = file else {
+        // Check if this is a virtual buffer (no file)
+        let buffer_id = buffer.read(cx).remote_id();
+        let virtual_uri = if file.is_none() {
+            self.buffer_store()
+                .read(cx)
+                .virtual_buffers
+                .get(&buffer_id)
+                .cloned()
+        } else {
+            None
+        };
+
+        let lsp_params = if let Some(virtual_uri) = virtual_uri {
+            // For virtual buffers, we have the lsp::Uri directly
+            // Create a temporary PathBuf with a dummy path - we'll override the URI in to_lsp
+            // This is a workaround for the Path-based API
+            let dummy_path = PathBuf::from("/virtual");
+            match request.to_lsp_params_or_response(
+                &dummy_path,
+                buffer.read(cx),
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => {
+                    // Override the URI in the params with the actual virtual URI
+                    // This is hacky but works because most LSP params have a textDocument field
+                    // We'll need to handle this more gracefully in the future
+                    // For now, serialize, modify, and deserialize
+                    if let Ok(mut value) = serde_json::to_value(&lsp_params) {
+                        if let Some(text_doc) = value.get_mut("textDocument") {
+                            if let Some(uri_field) = text_doc.get_mut("uri") {
+                                *uri_field = serde_json::Value::String(virtual_uri.to_string());
+                            }
+                        }
+                        if let Ok(params) = serde_json::from_value(value) {
+                            LspParamsOrResponse::Params(params)
+                        } else {
+                            return Task::ready(Ok(Default::default()));
+                        }
+                    } else {
+                        return Task::ready(Ok(Default::default()));
+                    }
+                }
+                Ok(response @ LspParamsOrResponse::Response(_)) => response,
+                Err(err) => {
+                    log::warn!("Failed to create LSP params for virtual buffer: {}", err);
+                    return Task::ready(Ok(Default::default()));
+                }
+            }
+        } else if let Some(file) = &file {
+            // Regular file buffer
+            match request.to_lsp_params_or_response(
+                &file.abs_path(cx),
+                buffer.read(cx),
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => {
+                    LspParamsOrResponse::Params(lsp_params)
+                }
+                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
+                Err(err) => {
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    // rust-analyzer likes to error with this when its still loading up
+                    if !message.ends_with("content modified") {
+                        log::warn!("{message}");
+                    }
+                    return Task::ready(Err(anyhow!(message)));
+                }
+            }
+        } else {
+            // No file and not virtual - can't handle
             return Task::ready(Ok(Default::default()));
         };
 
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer.read(cx),
-            &language_server,
-            cx,
-        ) {
-            Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
-            Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
-            Err(err) => {
-                let message = format!(
-                    "{} via {} failed: {}",
-                    request.display_name(),
-                    language_server.name(),
-                    err
-                );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
-                    log::warn!("{message}");
-                }
-                return Task::ready(Err(anyhow!(message)));
-            }
+        let lsp_params = match lsp_params {
+            LspParamsOrResponse::Params(params) => params,
+            LspParamsOrResponse::Response(response) => return Task::ready(Ok(response)),
         };
 
         let status = request.status();
@@ -8562,12 +8643,202 @@ impl LspStore {
         }
     }
 
+    pub(crate) fn open_virtual_buffer_via_lsp(
+        &mut self,
+        uri: lsp::Uri,
+        language_server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        let uri_string = uri.to_string();
+        let scheme = uri.scheme().to_owned();
+
+        cx.spawn(async move |lsp_store, cx| {
+            // Check if buffer already exists for this URI
+            if let Some(buffer) = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .buffer_store()
+                    .read(cx)
+                    .get_buffer_by_uri(&uri_string)
+            })? {
+                return Ok(buffer);
+            }
+
+            // Get handler config and language server via VirtualDocumentStore delegation
+            let (config, _language_server, content_task) = lsp_store
+                .update(cx, |lsp_store, cx| {
+                    let local = lsp_store
+                        .as_local()
+                        .context("virtual documents only supported in local mode")?;
+
+                    // Look up handler config for this scheme
+                    let config = local
+                        .virtual_docs
+                        .read(cx)
+                        .handler_for_scheme(&scheme)
+                        .cloned()
+                        .context(format!(
+                            "no virtual document handler registered for scheme: {}",
+                            scheme
+                        ))?;
+
+                    // Get the language server
+                    let language_server = lsp_store
+                        .language_server_for_id(language_server_id)
+                        .context("language server not found")?;
+
+                    // Delegate to VirtualDocumentStore to fetch content
+                    let content_task = local
+                        .virtual_docs
+                        .read(cx)
+                        .process_uri(&uri, language_server.clone())
+                        .context("failed to create content fetch task")?;
+
+                    anyhow::Ok((config, language_server, content_task))
+                })
+                .flatten()?;
+
+            // Fetch the virtual document content
+            let content = content_task.await?;
+
+            // Get language from config
+            let language = if let Some(language_future) =
+                lsp_store.update(cx, |lsp_store, _cx| {
+                    lsp_store
+                        .as_local()
+                        .map(|local| local.languages.language_for_name(&config.language_name))
+                })? {
+                language_future.await.ok()
+            } else {
+                None
+            };
+
+            // Create a new buffer with the content
+            lsp_store.update(cx, |lsp_store, cx| {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(content.clone(), cx);
+                    buffer.set_capability(Capability::ReadOnly, cx);
+
+                    // Set language if determined
+                    if let Some(language) = language.clone() {
+                        buffer.set_language(Some(language), cx);
+                    }
+
+                    buffer
+                });
+
+                let buffer_id = buffer.read(cx).remote_id();
+
+                // Register as virtual buffer
+                lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+                    buffer_store.register_virtual_buffer(
+                        uri_string.clone(),
+                        uri.clone(),
+                        buffer.clone(),
+                        cx,
+                    );
+                });
+
+                // Register the buffer with the language server so LSP features work
+                if let Some(language_server) = lsp_store.language_server_for_id(language_server_id)
+                {
+                    // Notify the language server about this virtual document
+                    language_server.register_buffer(
+                        uri.clone(),
+                        config.language_id.clone(),
+                        0, // Initial version
+                        content,
+                    );
+
+                    // Track that this buffer is opened in this server
+                    if let Some(local) = lsp_store.as_local_mut() {
+                        local
+                            .buffers_opened_in_servers
+                            .entry(buffer_id)
+                            .or_default()
+                            .insert(language_server_id);
+
+                        // Track the initial snapshot
+                        local
+                            .buffer_snapshots
+                            .entry(buffer_id)
+                            .or_default()
+                            .entry(language_server_id)
+                            .or_insert_with(|| {
+                                vec![LspBufferSnapshot {
+                                    version: 0,
+                                    snapshot: buffer.read(cx).text_snapshot(),
+                                }]
+                            });
+                    }
+
+                    // Set up cleanup when the virtual buffer is released
+                    let lsp_store_handle = cx.entity().downgrade();
+                    let uri_for_cleanup = uri.clone();
+                    buffer.update(cx, move |_, cx| {
+                        cx.on_release(move |buffer, cx| {
+                            let buffer_id = buffer.remote_id();
+                            if let Err(e) = lsp_store_handle.update(cx, |lsp_store, _cx| {
+                                // Send textDocument/didClose to the language server
+                                if let Some(language_server) =
+                                    lsp_store.language_server_for_id(language_server_id)
+                                {
+                                    language_server.unregister_buffer(uri_for_cleanup.clone());
+                                }
+
+                                // Clean up tracking maps
+                                if let Some(local) = lsp_store.as_local_mut() {
+                                    if let Some(servers) =
+                                        local.buffers_opened_in_servers.get_mut(&buffer_id)
+                                    {
+                                        servers.remove(&language_server_id);
+                                        if servers.is_empty() {
+                                            local.buffers_opened_in_servers.remove(&buffer_id);
+                                        }
+                                    }
+
+                                    if let Some(snapshots) =
+                                        local.buffer_snapshots.get_mut(&buffer_id)
+                                    {
+                                        snapshots.remove(&language_server_id);
+                                        if snapshots.is_empty() {
+                                            local.buffer_snapshots.remove(&buffer_id);
+                                        }
+                                    }
+                                }
+                            }) {
+                                log::warn!(
+                                    "Failed to clean up virtual buffer {}: {}",
+                                    buffer_id,
+                                    e
+                                );
+                            }
+                        })
+                        .detach()
+                    });
+                }
+
+                // Emit buffer added event
+                lsp_store.buffer_store().update(cx, |_, cx| {
+                    cx.emit(BufferStoreEvent::BufferAdded(buffer.clone()))
+                });
+
+                Ok(buffer)
+            })?
+        })
+    }
+
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        // Check if this is a virtual (non-file) URI
+        let scheme = abs_path.scheme();
+        if scheme != "file" {
+            return self.open_virtual_buffer_via_lsp(abs_path, language_server_id, cx);
+        }
+
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
@@ -11247,6 +11518,50 @@ impl LspStore {
         }
     }
 
+    async fn register_virtual_document_handlers(
+        lsp_store: WeakEntity<LspStore>,
+        adapter: Arc<CachedLspAdapter>,
+        key: LanguageServerSeed,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let (_worktree, delegate, virtual_docs) = lsp_store.update(cx, |lsp_store, cx| {
+            let local = lsp_store.as_local().context("not a local lsp store")?;
+            let worktree = local
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(key.worktree_id, cx)
+                .context("worktree not found")?;
+
+            let delegate: Arc<dyn LspAdapterDelegate> = LocalLspAdapterDelegate::new(
+                local.languages.clone(),
+                &local.environment,
+                local.weak.clone(),
+                &worktree,
+                local.http_client.clone(),
+                local.fs.clone(),
+                cx,
+            );
+
+            let virtual_docs = local.virtual_docs.clone();
+            anyhow::Ok((worktree, delegate, virtual_docs))
+        })??;
+
+        let lsp_adapter = adapter.adapter.clone();
+        if let Ok(configs) = lsp_adapter.virtual_document_configs(&delegate).await {
+            virtual_docs.update(cx, |store, _cx| {
+                for config in configs {
+                    log::info!(
+                        "Registering virtual document handler for scheme '{}' from extension",
+                        config.scheme
+                    );
+                    store.register_handler(config);
+                }
+            })?;
+        }
+
+        anyhow::Ok(())
+    }
+
     fn insert_newly_running_language_server(
         &mut self,
         adapter: Arc<CachedLspAdapter>,
@@ -11305,6 +11620,10 @@ impl LspStore {
         local
             .languages
             .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
+
+        // Note: Virtual document handlers are now registered before this function is called,
+        // in the startup sequence, to prevent race conditions.
+
         if let Some(file_ops_caps) = language_server
             .capabilities()
             .workspace
