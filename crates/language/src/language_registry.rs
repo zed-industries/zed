@@ -745,7 +745,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
@@ -788,7 +788,7 @@ impl LanguageRegistry {
             let path_matches_custom_suffix = || {
                 user_file_types
                     .and_then(|types| types.get(language_name.as_ref()))
-                    .map_or(None, |custom_suffixes| {
+                    .map_or(None, |(custom_suffixes, _)| {
                         path_suffixes
                             .iter()
                             .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))

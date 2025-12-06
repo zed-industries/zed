@@ -1,7 +1,9 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
+use editor::{
+    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, multibuffer_context_lines,
+};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
@@ -10,8 +12,8 @@ use gpui::{
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
-    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
-    TextBuffer,
+    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
+    ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -202,33 +204,22 @@ impl CommitView {
                     this.multibuffer.update(cx, |multibuffer, cx| {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
-
-                        let hunks: Vec<_> = buffer_diff.read(cx).hunks(&snapshot, cx).collect();
-
-                        let excerpt_ranges = if hunks.is_empty() {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        } else {
-                            hunks
-                                .into_iter()
-                                .map(|hunk| {
-                                    let start = hunk.range.start.max(language::Point::new(
-                                        hunk.range.start.row.saturating_sub(3),
-                                        0,
-                                    ));
-                                    let end_row =
-                                        (hunk.range.end.row + 3).min(snapshot.max_point().row);
-                                    let end =
-                                        language::Point::new(end_row, snapshot.line_len(end_row));
-                                    start..end
-                                })
-                                .collect()
+                        let excerpt_ranges = {
+                            let mut hunks = buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                            if hunks.peek().is_none() {
+                                vec![language::Point::zero()..snapshot.max_point()]
+                            } else {
+                                hunks
+                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                    .collect::<Vec<_>>()
+                            }
                         };
 
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
                             PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             excerpt_ranges,
-                            0,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);

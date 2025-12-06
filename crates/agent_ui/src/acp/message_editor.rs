@@ -39,7 +39,6 @@ use zed_actions::agent::Chat;
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
-    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -98,7 +97,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -135,13 +134,8 @@ impl MessageEditor {
             editor.register_addon(MessageEditorAddon::new());
             editor
         });
-        let mention_set = cx.new(|_cx| {
-            MentionSet::new(
-                project.downgrade(),
-                history_store.clone(),
-                prompt_store.clone(),
-            )
-        });
+        let mention_set =
+            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             cx.entity(),
             editor.downgrade(),
@@ -199,7 +193,6 @@ impl MessageEditor {
 
         Self {
             editor,
-            project,
             mention_set,
             workspace,
             prompt_capabilities,
@@ -572,17 +565,18 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let path_style = self.project.read(cx).path_style(cx);
+        let project = workspace.read(cx).project().clone();
+        let path_style = project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
         };
         let mut tasks = Vec::new();
         for path in paths {
-            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+            let Some(entry) = project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
+            let Some(worktree) = project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
             let abs_path = worktree.read(cx).absolutize(&path.path);
@@ -690,9 +684,13 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
         self.clear(window, cx);
 
-        let path_style = self.project.read(cx).path_style(cx);
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -935,7 +933,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -1046,7 +1044,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle.clone(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1207,7 +1205,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1429,7 +1427,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1920,7 +1918,7 @@ mod tests {
             cx.new(|cx| {
                 let editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2025,7 +2023,7 @@ mod tests {
             cx.new(|cx| {
                 let mut editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2094,7 +2092,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2157,7 +2155,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2315,7 +2313,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
