@@ -10,8 +10,8 @@ use editor::{
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, TextStyle, TextStyleRefinement, WeakEntity, Window,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
+    TextStyle, TextStyleRefinement, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
