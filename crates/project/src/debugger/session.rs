@@ -808,6 +808,7 @@ pub enum SessionEvent {
     },
     DataBreakpointInfo,
     ConsoleOutput,
+    SnapshotSelectionChanged,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1447,7 +1448,7 @@ impl Session {
         self.selected_snapshot_index = ix;
 
         if ix.is_some() {
-            cx.emit(SessionEvent::Stopped(None));
+            cx.emit(SessionEvent::SnapshotSelectionChanged);
         }
 
         cx.notify();
@@ -2505,7 +2506,7 @@ impl Session {
             );
         }
 
-        match self.active_snapshot.threads.get(&thread_id) {
+        match self.session_state().threads.get(&thread_id) {
             Some(thread) => {
                 if let Some(error) = &thread.stack_frames_error {
                     Err(anyhow!(error.to_string()))
