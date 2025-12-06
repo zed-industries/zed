@@ -21,15 +21,21 @@ use editor::{
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
+    KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, Language, language_settings::InlayHintKind};
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    fmt::Write,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, debug_panic};
@@ -547,6 +553,143 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let editor_clipboard_selections = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| {
+                if let ClipboardEntry::String(text) = entry {
+                    text.metadata_json::<Vec<editor::ClipboardSelection>>()
+                } else {
+                    None
+                }
+            });
+
+        let has_file_context = editor_clipboard_selections
+            .as_ref()
+            .map(|selections: &Vec<editor::ClipboardSelection>| {
+                selections
+                    .iter()
+                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
+            })
+            .unwrap_or(false);
+
+        if has_file_context {
+            if let Some(selections) = editor_clipboard_selections {
+                cx.stop_propagation();
+
+                for selection in selections {
+                    if let (Some(file_path), Some(line_range)) =
+                        (selection.file_path, selection.line_range)
+                    {
+                        let abs_path = PathBuf::from(&file_path);
+                        let start_line = *line_range.start();
+                        let end_line = *line_range.end();
+                        let range = start_line..=end_line;
+
+                        let path = Path::new(&file_path);
+                        let display_name =
+                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                if let Some(parent) = path
+                                    .parent()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|p| p.to_str())
+                                {
+                                    format!("{}/{}", parent, filename)
+                                } else {
+                                    filename.to_string()
+                                }
+                            } else {
+                                file_path.clone()
+                            };
+
+                        let crease_text = if start_line == end_line {
+                            format!("{} ({})", display_name, start_line)
+                        } else {
+                            format!("{} ({}-{})", display_name, start_line, end_line)
+                        };
+
+                        let mention_uri = MentionUri::Symbol {
+                            abs_path: abs_path.clone(),
+                            name: display_name.clone(),
+                            line_range: range,
+                        };
+
+                        let mention_text = mention_uri.as_link().to_string();
+                        let (excerpt_id, text_anchor, content_len) =
+                            self.editor.update(cx, |editor, cx| {
+                                let buffer = editor.buffer().read(cx);
+                                let snapshot = buffer.snapshot(cx);
+                                let (excerpt_id, _, buffer_snapshot) =
+                                    snapshot.as_singleton().unwrap();
+                                let excerpt_id = *excerpt_id; // Copy the ExcerptId
+                                let start_offset = buffer_snapshot.len();
+                                let text_anchor = buffer_snapshot.anchor_before(start_offset);
+
+                                editor.insert(&mention_text, window, cx);
+                                editor.insert(" ", window, cx);
+
+                                (excerpt_id, text_anchor, mention_text.len())
+                            });
+
+                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                            excerpt_id,
+                            text_anchor,
+                            content_len,
+                            crease_text.into(),
+                            mention_uri.icon_path(cx),
+                            None,
+                            self.editor.clone(),
+                            window,
+                            cx,
+                        ) else {
+                            continue;
+                        };
+                        drop(tx);
+
+                        // Create the mention task for Symbol - load the file content
+                        let project = self.project.clone();
+                        let mention_task = cx
+                            .spawn(async move |_, cx| {
+                                let project_path = project
+                                    .update(cx, |project, cx| {
+                                        project.project_path_for_absolute_path(&abs_path, cx)
+                                    })
+                                    .map_err(|e| e.to_string())?
+                                    .ok_or_else(|| "project path not found".to_string())?;
+
+                                let buffer = project
+                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                                    .map_err(|e| e.to_string())?
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+
+                                buffer
+                                    .update(cx, |buffer, cx| {
+                                        let start =
+                                            Point::new(start_line - 1, 0).min(buffer.max_point());
+                                        let end = Point::new(end_line, 0).min(buffer.max_point());
+                                        let content = buffer.text_for_range(start..end).collect();
+                                        Mention::Text {
+                                            content,
+                                            tracked_buffers: vec![cx.entity()],
+                                        }
+                                    })
+                                    .map_err(|e| e.to_string())
+                            })
+                            .shared();
+
+                        self.mention_set.update(cx, |mention_set, _cx| {
+                            mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                        });
+                    }
+                }
+                return;
+            }
+        }
+
+        if !self.prompt_capabilities.borrow().image {
+            return;
+        }
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
