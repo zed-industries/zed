@@ -4346,7 +4346,48 @@ impl Editor {
                                 let current_line_count = snapshot
                                     .reversed_chars_at(selection.start)
                                     .take_while(|&c| c != '\n')
-                                    .filter(|&c| c == target)
+                                    .enumerate()
+                                    .filter(|(offset, c)| {
+                                        if *c != target {
+                                            return false;
+                                        }
+
+                                        let point = Point::new(
+                                            selection.start.row,
+                                            selection
+                                                .start
+                                                .column
+                                                .saturating_sub(*offset as u32 + 1),
+                                        );
+
+                                        let is_enabled = snapshot
+                                            .language_scope_at(point)
+                                            .and_then(|scope| {
+                                                scope
+                                                    .brackets()
+                                                    .find(|(pair, _)| {
+                                                        pair.start == bracket_pair.start
+                                                    })
+                                                    .map(|(_, enabled)| enabled)
+                                            })
+                                            .unwrap_or(true);
+
+                                        let adjacent_point =
+                                            Point::new(point.row, point.column + 1);
+                                        let is_delimiter = snapshot
+                                            .language_scope_at(adjacent_point)
+                                            .and_then(|scope| {
+                                                scope
+                                                    .brackets()
+                                                    .find(|(pair, _)| {
+                                                        pair.start == bracket_pair.start
+                                                    })
+                                                    .map(|(_, enabled)| !enabled)
+                                            })
+                                            .unwrap_or(false);
+
+                                        is_enabled && !is_delimiter
+                                    })
                                     .count();
                                 current_line_count % 2 == 1
                             } else {
