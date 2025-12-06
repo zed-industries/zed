@@ -147,8 +147,8 @@ impl WindowsPlatform {
 
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let background_executor = BackgroundExecutor::new(Arc::downgrade(&dispatcher) as _);
+        let foreground_executor = ForegroundExecutor::new(Arc::downgrade(&dispatcher) as _);
 
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)

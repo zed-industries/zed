@@ -146,7 +146,8 @@ fn generate_test_function(
                         }
                         Some("BackgroundExecutor") => {
                             inner_fn_args.extend(quote!(gpui::BackgroundExecutor::new(
-                                std::sync::Arc::new(dispatcher.clone()),
+                                std::sync::Arc::downgrade(&std::sync::Arc::new(dispatcher.clone()))
+                                    as _,
                             ),));
                             continue;
                         }
@@ -165,12 +166,13 @@ fn generate_test_function(
                                 dispatcher.clone(),
                                 Some(stringify!(#outer_fn_name)),
                             );
+                            let _entity_refcounts = #cx_varname.app.borrow().ref_counts_drop();
                         ));
                         cx_teardowns.extend(quote!(
-                            dispatcher.run_until_parked();
-                            #cx_varname.executor().forbid_parking();
-                            #cx_varname.quit();
-                            dispatcher.run_until_parked();
+                            #cx_varname.run_until_parked();
+                            #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
+                            #cx_varname.run_until_parked();
+                            drop(#cx_varname);
                         ));
                         inner_fn_args.extend(quote!(&mut #cx_varname,));
                         continue;
@@ -191,10 +193,13 @@ fn generate_test_function(
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+                        let exec = std::sync::Arc::new(dispatcher.clone());
                         #cx_vars
-                        executor.block_test(#inner_fn_name(#inner_fn_args));
+                        gpui::BackgroundExecutor::new(std::sync::Arc::downgrade(&exec) as _).block_test(#inner_fn_name(#inner_fn_args));
+                        drop(exec);
                         #cx_teardowns
+                        dispatcher.drain_tasks();
+                        drop(dispatcher);
                     },
                     #on_failure_fn_name
                 );
@@ -229,13 +234,15 @@ fn generate_test_function(
                                    Some(stringify!(#outer_fn_name))
                                 );
                                 let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
+                                let _entity_refcounts = #cx_varname_lock.ref_counts_drop();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                             cx_teardowns.extend(quote!(
                                     drop(#cx_varname_lock);
-                                    dispatcher.run_until_parked();
+                                    #cx_varname.run_until_parked();
                                     #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
-                                    dispatcher.run_until_parked();
+                                    #cx_varname.run_until_parked();
+                                    drop(#cx_varname);
                                 ));
                             continue;
                         }
@@ -246,12 +253,13 @@ fn generate_test_function(
                                     dispatcher.clone(),
                                     Some(stringify!(#outer_fn_name))
                                 );
+                                let _entity_refcounts = #cx_varname.app.borrow().ref_counts_drop();
                             ));
                             cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.executor().forbid_parking();
-                                #cx_varname.quit();
-                                dispatcher.run_until_parked();
+                                #cx_varname.run_until_parked();
+                                #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
+                                #cx_varname.run_until_parked();
+                                drop(#cx_varname);
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
                             continue;
@@ -277,6 +285,8 @@ fn generate_test_function(
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns
+                        dispatcher.drain_tasks();
+                        drop(dispatcher);
                     },
                     #on_failure_fn_name,
                 );

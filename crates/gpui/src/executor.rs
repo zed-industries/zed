@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
@@ -29,7 +29,8 @@ use rand::rngs::StdRng;
 #[derive(Clone)]
 pub struct BackgroundExecutor {
     #[doc(hidden)]
-    pub dispatcher: Arc<dyn PlatformDispatcher>,
+    // todo(lw) This should not be pub but repl is weird
+    pub dispatcher: Weak<dyn PlatformDispatcher>,
 }
 
 /// A pointer to the executor that is currently running,
@@ -41,8 +42,7 @@ pub struct BackgroundExecutor {
 /// foreground tasks from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    #[doc(hidden)]
-    pub dispatcher: Arc<dyn PlatformDispatcher>,
+    dispatcher: Weak<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -141,7 +141,7 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 /// (but arbitrary) order controlled by the `SEED` environment variable.
 impl BackgroundExecutor {
     #[doc(hidden)]
-    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+    pub fn new(dispatcher: Weak<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
     }
 
@@ -180,7 +180,11 @@ impl BackgroundExecutor {
             .metadata(RunnableMeta { location })
             .spawn(
                 move |_| future,
-                move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), label),
+                move |runnable| {
+                    if let Some(dispatcher) = dispatcher.upgrade() {
+                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label);
+                    }
+                },
             );
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -265,7 +269,11 @@ impl BackgroundExecutor {
         if timeout == Some(Duration::ZERO) {
             return Err(future);
         }
-        let Some(dispatcher) = self.dispatcher.as_test() else {
+
+        let Some(dispatcher) = self.dispatcher.upgrade() else {
+            return Err(future);
+        };
+        let Some(dispatcher) = dispatcher.as_test() else {
             return Err(future);
         };
 
@@ -370,7 +378,7 @@ impl BackgroundExecutor {
     /// Calling this instead of `std::time::Instant::now` allows the use
     /// of fake timers in tests.
     pub fn now(&self) -> Instant {
-        self.dispatcher.now()
+        self.dispatcher.upgrade().unwrap().now()
     }
 
     /// Returns a task that will complete after the given duration.
@@ -385,7 +393,11 @@ impl BackgroundExecutor {
             .metadata(RunnableMeta { location })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                move |runnable| {
+                    if let Some(dispatcher) = dispatcher.upgrade() {
+                        dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                    }
+                }
             });
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -394,44 +406,79 @@ impl BackgroundExecutor {
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
     #[cfg(any(test, feature = "test-support"))]
     pub fn start_waiting(&self) {
-        self.dispatcher.as_test().unwrap().start_waiting();
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .start_waiting();
     }
 
     /// in tests, removes the debugging data added by start_waiting
     #[cfg(any(test, feature = "test-support"))]
     pub fn finish_waiting(&self) {
-        self.dispatcher.as_test().unwrap().finish_waiting();
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .finish_waiting();
     }
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
-        self.dispatcher.as_test().unwrap().simulate_random_delay()
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .simulate_random_delay()
     }
 
     /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
     #[cfg(any(test, feature = "test-support"))]
     pub fn deprioritize(&self, task_label: TaskLabel) {
-        self.dispatcher.as_test().unwrap().deprioritize(task_label)
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .deprioritize(task_label)
     }
 
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.
     #[cfg(any(test, feature = "test-support"))]
     pub fn advance_clock(&self, duration: Duration) {
-        self.dispatcher.as_test().unwrap().advance_clock(duration)
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .advance_clock(duration)
     }
 
     /// in tests, run one task.
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick(&self) -> bool {
-        self.dispatcher.as_test().unwrap().tick(false)
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .tick(false)
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        self.dispatcher.as_test().unwrap().run_until_parked()
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .run_until_parked()
     }
 
     /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -439,25 +486,40 @@ impl BackgroundExecutor {
     /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
-        self.dispatcher.as_test().unwrap().allow_parking();
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .allow_parking();
     }
 
     /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        self.dispatcher.as_test().unwrap().forbid_parking();
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .forbid_parking();
     }
 
     /// adds detail to the "parked with nothing let to run" message.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_waiting_hint(&self, msg: Option<String>) {
-        self.dispatcher.as_test().unwrap().set_waiting_hint(msg);
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .set_waiting_hint(msg);
     }
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> StdRng {
-        self.dispatcher.as_test().unwrap().rng()
+        self.dispatcher.upgrade().unwrap().as_test().unwrap().rng()
     }
 
     /// How many CPUs are available to the dispatcher.
@@ -471,24 +533,37 @@ impl BackgroundExecutor {
 
     /// Whether we're on the main thread.
     pub fn is_main_thread(&self) -> bool {
-        self.dispatcher.is_main_thread()
+        self.dispatcher.upgrade().unwrap().is_main_thread()
     }
 
     #[cfg(any(test, feature = "test-support"))]
     /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
     pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.dispatcher.as_test().unwrap().set_block_on_ticks(range);
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .as_test()
+            .unwrap()
+            .set_block_on_ticks(range);
     }
 }
 
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
-    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+    pub fn new(dispatcher: Weak<dyn PlatformDispatcher>) -> Self {
         Self {
             dispatcher,
             not_send: PhantomData,
         }
+    }
+
+    #[doc(hidden)]
+    pub fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
+        self.dispatcher
+            .upgrade()
+            .unwrap()
+            .get_current_thread_timings()
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future.
@@ -508,13 +583,21 @@ impl ForegroundExecutor {
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
+                // Note: We can never drop the runnable here, as the schedule
+                // function might be running on a different thread than the main
+                // thread.
+                //
+                // FIXME: Moving dispatcher into this closure leaks in tests as the dispatcher itself will contain the task
                 move |runnable| dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable)),
                 RunnableMeta { location },
             );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future), location)
+        match dispatcher.upgrade() {
+            Some(dispatcher) => inner::<R>(dispatcher, Box::pin(future), location),
+            None => unreachable!(),
+        }
     }
 }
 
@@ -551,9 +634,11 @@ where
 
     impl<F> Drop for Checked<F> {
         fn drop(&mut self) {
-            assert!(
-                self.id == thread_id(),
-                "local task dropped by a thread that didn't spawn it. Task spawned at {}",
+            assert_eq!(
+                self.id,
+                thread_id(),
+                "local task dropped by thread {} that didn't spawn it. Task spawned at {}",
+                std::thread::current().name().unwrap_or("unknown"),
                 self.location
             );
             unsafe { ManuallyDrop::drop(&mut self.inner) };
@@ -564,9 +649,11 @@ where
         type Output = F::Output;
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            assert!(
-                self.id == thread_id(),
-                "local task polled by a thread that didn't spawn it. Task spawned at {}",
+            assert_eq!(
+                self.id,
+                thread_id(),
+                "local task polled by thread {} that didn't spawn it. Task spawned at {}",
+                std::thread::current().name().unwrap_or("unknown"),
                 self.location
             );
             unsafe { self.map_unchecked_mut(|c| &mut *c.inner).poll(cx) }

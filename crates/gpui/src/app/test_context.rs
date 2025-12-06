@@ -19,17 +19,16 @@ use std::{
 #[derive(Clone)]
 pub struct TestAppContext {
     #[doc(hidden)]
-    pub app: Rc<AppCell>,
-    #[doc(hidden)]
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
-    #[doc(hidden)]
-    pub dispatcher: TestDispatcher,
+    dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
+    #[doc(hidden)]
+    pub app: Rc<AppCell>,
 }
 
 impl AppContext for TestAppContext {
@@ -125,9 +124,9 @@ impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let background_executor = BackgroundExecutor::new(Arc::downgrade(&arc_dispatcher) as _);
+        let foreground_executor = ForegroundExecutor::new(Arc::downgrade(&arc_dispatcher) as _);
+        let platform = TestPlatform::new(arc_dispatcher.clone(), arc_dispatcher);
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -145,6 +144,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Drops all outstanding tasks from the dispatcher.
+    pub fn drain_tasks(&self) {
+        self.dispatcher.drain_tasks();
     }
 
     /// Skip all drawing operations for the duration of this test.
@@ -411,8 +415,8 @@ impl TestAppContext {
     }
 
     /// Wait until there are no more pending tasks.
-    pub fn run_until_parked(&mut self) {
-        self.background_executor.run_until_parked()
+    pub fn run_until_parked(&self) {
+        self.dispatcher.run_until_parked();
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.

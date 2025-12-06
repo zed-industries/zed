@@ -742,6 +742,11 @@ impl App {
         app
     }
 
+    #[doc(hidden)]
+    pub fn ref_counts_drop(&self) -> impl Sized + use<> {
+        self.entities.ref_counts_drop()
+    }
+
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {
