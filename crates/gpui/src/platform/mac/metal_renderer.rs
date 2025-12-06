@@ -352,14 +352,21 @@ impl MetalRenderer {
         texture_descriptor.set_width(size.width.0 as u64);
         texture_descriptor.set_height(size.height.0 as u64);
         texture_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
         texture_descriptor
             .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
         self.path_intermediate_texture = Some(self.device.new_texture(&texture_descriptor));
 
         if self.path_sample_count > 1 {
+            let storage_mode = if self.unified_memory {
+                metal::MTLStorageMode::Memoryless
+            } else {
+                metal::MTLStorageMode::Private
+            };
+
             let mut msaa_descriptor = texture_descriptor;
             msaa_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-            msaa_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+            msaa_descriptor.set_storage_mode(storage_mode);
             msaa_descriptor.set_sample_count(self.path_sample_count as _);
             self.path_intermediate_msaa_texture = Some(self.device.new_texture(&msaa_descriptor));
         } else {
