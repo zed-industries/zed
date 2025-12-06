@@ -5,6 +5,15 @@ pub struct ParsedCsv {
     pub rows: Vec<Vec<SharedString>>,
 }
 
+impl Default for ParsedCsv {
+    fn default() -> Self {
+        Self {
+            headers: vec![],
+            rows: vec![],
+        }
+    }
+}
+
 impl ParsedCsv {
     pub fn from_str(raw_text: String) -> Self {
         let mut lines = raw_text.lines().collect::<Vec<_>>();

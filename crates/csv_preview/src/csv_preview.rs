@@ -1,5 +1,6 @@
-use editor::Editor;
-use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, actions};
+use editor::{Editor, EditorEvent};
+use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, actions};
+use std::time::Duration;
 
 use ui::{
     DefiniteLength, SharedString, Table, TableColumnWidths, TableInteractionState,
@@ -14,6 +15,13 @@ mod parsed_csv;
 
 actions!(csv, [OpenPreview]);
 
+const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
+
+struct EditorState {
+    editor: Entity<Editor>,
+    _subscription: Subscription,
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -26,10 +34,11 @@ pub fn init(cx: &mut App) {
 
 pub struct CsvPreviewView {
     focus_handle: FocusHandle,
-    active_editor: Entity<Editor>,
+    active_editor: Option<EditorState>,
     contents: ParsedCsv,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: ColumnWidths,
+    parsing_task: Option<Task<anyhow::Result<()>>>,
 }
 
 impl CsvPreviewView {
@@ -67,23 +76,86 @@ impl CsvPreviewView {
     }
 
     fn from_editor(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let raw_text = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .map(|b| b.read(cx).text())
-            .unwrap_or_else(|| "".to_string());
-
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-        let contents = ParsedCsv::from_str(raw_text);
+        let contents = ParsedCsv::default();
 
-        cx.new(|cx| Self {
-            focus_handle: cx.focus_handle(),
-            active_editor: editor.clone(),
-            contents,
-            table_interaction_state,
-            column_widths: ColumnWidths::new(cx),
+        cx.new(|cx| {
+            let mut view = Self {
+                focus_handle: cx.focus_handle(),
+                active_editor: None,
+                contents,
+                table_interaction_state,
+                column_widths: ColumnWidths::new(cx),
+                parsing_task: None,
+            };
+
+            view.set_editor(editor.clone(), cx);
+            view
+        })
+    }
+
+    fn set_editor(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
+        if let Some(active) = &self.active_editor
+            && active.editor == editor
+        {
+            return;
+        }
+
+        let subscription = cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
+            match event {
+                EditorEvent::Edited { .. }
+                | EditorEvent::DirtyChanged
+                | EditorEvent::ExcerptsEdited { .. } => {
+                    this.parse_csv_from_active_editor(true, cx);
+                }
+                _ => {}
+            };
+        });
+
+        self.active_editor = Some(EditorState {
+            editor,
+            _subscription: subscription,
+        });
+
+        self.parse_csv_from_active_editor(false, cx);
+    }
+
+    fn parse_csv_from_active_editor(&mut self, wait_for_debounce: bool, cx: &mut Context<Self>) {
+        if let Some(state) = &self.active_editor {
+            self.parsing_task =
+                Some(self.parse_csv_in_background(wait_for_debounce, state.editor.clone(), cx));
+        }
+    }
+
+    fn parse_csv_in_background(
+        &mut self,
+        wait_for_debounce: bool,
+        editor: Entity<Editor>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        cx.spawn(async move |view, cx| {
+            if wait_for_debounce {
+                cx.background_executor().timer(REPARSE_DEBOUNCE).await;
+            }
+
+            let contents = view.update(cx, |_, cx| {
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .map(|b| b.read(cx).text())
+                    .unwrap_or_default()
+            })?;
+
+            let parsing_task = cx.background_spawn(async move { ParsedCsv::from_str(contents) });
+
+            let parsed_csv = parsing_task.await;
+
+            view.update(cx, move |view, cx| {
+                view.contents = parsed_csv;
+                cx.notify();
+            })
         })
     }
 }
@@ -105,17 +177,22 @@ impl Item for CsvPreviewView {
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.active_editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|b| {
-                let file = b.read(cx).file()?;
-                let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+            .as_ref()
+            .and_then(|state| {
+                state
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|b| {
+                        let file = b.read(cx).file()?;
+                        let local_file = file.as_local()?;
+                        local_file
+                            .abs_path(cx)
+                            .file_name()
+                            .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                    })
             })
             .unwrap_or_else(|| SharedString::from("CSV Preview"))
     }
