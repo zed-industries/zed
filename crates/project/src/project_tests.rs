@@ -1473,6 +1473,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             project.open_local_buffer_via_lsp(
                 lsp::Uri::from_file_path(path!("/the-registry/dep1/src/dep1.rs")).unwrap(),
                 server_id,
+                None, // No position context needed for file:// URIs
                 cx,
             )
         })

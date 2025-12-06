@@ -3828,14 +3828,26 @@ impl Project {
         })
     }
 
+    /// Opens a buffer for a URI returned by an LSP.
+    ///
+    /// For `file://` URIs, opens the file normally.
+    /// For other URIs (virtual documents), fetches content via the language server.
+    ///
+    /// # Arguments
+    ///
+    /// * `abs_path` - The URI to open
+    /// * `language_server_id` - The ID of the language server that returned this URI
+    /// * `position` - Optional position (used for virtual documents that need position context)
+    /// * `cx` - The context
     pub fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
+        position: Option<lsp::Position>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, cx)
+            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, position, cx)
         })
     }
 

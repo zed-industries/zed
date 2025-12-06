@@ -18149,6 +18149,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "lsp",
+ "serde_json",
 ]
 
 [[package]]

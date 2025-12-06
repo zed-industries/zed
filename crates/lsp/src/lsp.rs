@@ -1938,6 +1938,37 @@ impl FakeLanguageServer {
     }
 }
 
+/// Specifies the parameter format for virtual document content requests.
+///
+/// Different language servers expect different parameter formats when requesting
+/// virtual document contents. This enum allows extensions to specify which format
+/// their language server expects.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum VirtualDocumentParamKind {
+    /// Send only the URI as a `TextDocumentIdentifier`.
+    ///
+    /// This is the most common format, used by language servers like JDTLS.
+    /// The request parameters will be: `{ "uri": "<document-uri>" }`
+    #[default]
+    Uri,
+
+    /// Send the URI as a raw string (not wrapped in TextDocumentIdentifier).
+    ///
+    /// Some language servers expect just the URI string directly as the parameter.
+    /// The request parameters will be: `"<document-uri>"`
+    RawUri,
+
+    /// Send URI and position as `TextDocumentPositionParams`.
+    ///
+    /// Used by language servers that need to know where in the document the request
+    /// originated (e.g., for macro expansions in rust-analyzer).
+    /// The request parameters will be:
+    /// `{ "textDocument": { "uri": "<document-uri>" }, "position": { "line": N, "character": M } }`
+    ///
+    /// Note: If position is not available, falls back to position (0, 0).
+    UriWithPosition,
+}
+
 /// Configuration for handling virtual documents (decompiled code, generated sources, etc.)
 #[derive(Debug, Clone)]
 pub struct VirtualDocumentConfig {
@@ -1949,6 +1980,9 @@ pub struct VirtualDocumentConfig {
     pub language_name: String,
     /// The LSP language ID to use when registering the document (e.g., "java")
     pub language_id: String,
+    /// The parameter format expected by the language server.
+    /// Defaults to `Uri` (TextDocumentIdentifier) if not specified.
+    pub param_kind: VirtualDocumentParamKind,
 }
 
 #[cfg(test)]

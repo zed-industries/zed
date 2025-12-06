@@ -17482,9 +17482,16 @@ impl Editor {
         };
 
         cx.spawn_in(window, async move |editor, cx| {
+            // Pass the target position for virtual document handlers that need it
+            let target_position = Some(lsp_location.range.start);
             let location_task = editor.update(cx, |_, cx| {
                 project.update(cx, |project, cx| {
-                    project.open_local_buffer_via_lsp(lsp_location.uri.clone(), server_id, cx)
+                    project.open_local_buffer_via_lsp(
+                        lsp_location.uri.clone(),
+                        server_id,
+                        target_position,
+                        cx,
+                    )
                 })
             })?;
             let location = Some({

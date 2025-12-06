@@ -3122,6 +3122,7 @@ impl LocalLspStore {
                             this.open_local_buffer_via_lsp(
                                 op.text_document.uri.clone(),
                                 language_server.server_id(),
+                                None, // No position context for document edits
                                 cx,
                             )
                         })?
@@ -8637,16 +8638,25 @@ impl LspStore {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
             };
 
-            self.open_local_buffer_via_lsp(symbol_uri, symbol.source_language_server_id, cx)
+            self.open_local_buffer_via_lsp(symbol_uri, symbol.source_language_server_id, None, cx)
         } else {
             Task::ready(Err(anyhow!("no upstream client or local store")))
         }
     }
 
+    /// Opens a virtual buffer for a non-file URI (e.g., `jdt://`, `rust-analyzer://`).
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The virtual document URI
+    /// * `language_server_id` - The ID of the language server to query
+    /// * `position` - Optional position in the document (some LSPs require this)
+    /// * `cx` - The context
     pub(crate) fn open_virtual_buffer_via_lsp(
         &mut self,
         uri: lsp::Uri,
         language_server_id: LanguageServerId,
+        position: Option<lsp::Position>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         let uri_string = uri.to_string();
@@ -8690,7 +8700,7 @@ impl LspStore {
                     let content_task = local
                         .virtual_docs
                         .read(cx)
-                        .process_uri(&uri, language_server.clone())
+                        .process_uri(&uri, language_server.clone(), position)
                         .context("failed to create content fetch task")?;
 
                     anyhow::Ok((config, language_server, content_task))
@@ -8827,16 +8837,28 @@ impl LspStore {
         })
     }
 
+    /// Opens a buffer for a URI returned by an LSP.
+    ///
+    /// For `file://` URIs, opens the file normally.
+    /// For other URIs (virtual documents), delegates to `open_virtual_buffer_via_lsp`.
+    ///
+    /// # Arguments
+    ///
+    /// * `abs_path` - The URI to open
+    /// * `language_server_id` - The ID of the language server that returned this URI
+    /// * `position` - Optional position (used for virtual documents that need position context)
+    /// * `cx` - The context
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
         language_server_id: LanguageServerId,
+        position: Option<lsp::Position>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         // Check if this is a virtual (non-file) URI
         let scheme = abs_path.scheme();
         if scheme != "file" {
-            return self.open_virtual_buffer_via_lsp(abs_path, language_server_id, cx);
+            return self.open_virtual_buffer_via_lsp(abs_path, language_server_id, position, cx);
         }
 
         cx.spawn(async move |lsp_store, cx| {
