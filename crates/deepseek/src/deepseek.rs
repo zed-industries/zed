@@ -267,9 +267,6 @@ pub async fn stream_completion(
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
 
-    // DEBUG: Log the actual request being sent
-    eprintln!("[DEEPSEEK-INFO] DeepSeek API Request to {}", uri);  
-
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -277,15 +274,9 @@ pub async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let request_json = serde_json::to_string(&request)?;
-    
-    // DEBUG: Log the actual request being sent
-    eprintln!("[DEEPSEEK-DEBUG] DeepSeek Request JSON: {}", request_json);
-    if let Ok(pretty) = serde_json::to_string_pretty(&request) {
-        eprintln!("[DEEPSEEK-TRACE] DeepSeek Request (pretty):\n{}", pretty);
-    }
-    
+
     let request = request_builder.body(AsyncBody::from(request_json))?;
-    
+
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
@@ -299,7 +290,6 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            eprintln!("[DEEPSEEK-TRACE] DeepSeek Stream chunk: {}", line);
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(error))),
@@ -313,7 +303,6 @@ pub async fn stream_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        eprintln!("[DEEPSEEK-ERROR] DeepSeek API Error: Status={}, Body={}", response.status(), body);
         anyhow::bail!(
             "Failed to connect to DeepSeek API: {} {}",
             response.status(),

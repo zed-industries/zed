@@ -453,16 +453,7 @@ impl DeepSeekEventMapper {
         &mut self,
         event: deepseek::StreamResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        // DEBUG: Log raw event
-        if let Ok(event_json) = serde_json::to_string(&event) {
-            eprintln!("[DEEPSEEK-PROVIDER-TRACE] DeepSeek event: {}", event_json);
-        }
-
         let Some(choice) = event.choices.first() else {
-            eprintln!(
-                "[DEEPSEEK-PROVIDER-WARN] DeepSeek response contained no choices: {:?}",
-                event
-            );
             return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
@@ -537,10 +528,7 @@ impl DeepSeekEventMapper {
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
-            Some(stop_reason) => {
-                eprintln!(
-                    "[DEEPSEEK-PROVIDER-ERROR] Unexpected DeepSeek stop_reason: {stop_reason:?}",
-                );
+            Some(_stop_reason) => {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
