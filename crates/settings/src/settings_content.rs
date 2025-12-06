@@ -95,6 +95,9 @@ pub struct SettingsContent {
     /// Common language server settings.
     pub global_lsp_settings: Option<GlobalLspSettingsContent>,
 
+    /// The settings for the hex editor.
+    pub hex_editor: Option<HexEditorSettingsContent>,
+
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
@@ -849,6 +852,68 @@ pub enum LineIndicatorFormat {
     Short,
     #[default]
     Long,
+}
+
+/// The settings for the hex editor.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct HexEditorSettingsContent {
+    /// Number of bytes to display per row.
+    ///
+    /// Default: 16
+    pub bytes_per_row: Option<usize>,
+
+    /// Whether to show the data inspector panel by default.
+    ///
+    /// Default: true
+    pub show_data_inspector: Option<bool>,
+
+    /// Whether to show the ASCII column.
+    ///
+    /// Default: true
+    pub show_ascii: Option<bool>,
+
+    /// Whether to show the offset column.
+    ///
+    /// Default: true
+    pub show_offset: Option<bool>,
+
+    /// Offset display format: "hex" or "decimal".
+    ///
+    /// Default: "hex"
+    pub offset_format: Option<HexEditorOffsetFormat>,
+
+    /// Whether to group bytes (adds extra spacing every 8 bytes).
+    ///
+    /// Default: true
+    pub group_bytes: Option<bool>,
+
+    /// Whether to highlight non-printable characters in ASCII view.
+    ///
+    /// Default: true
+    pub highlight_non_printable: Option<bool>,
+
+    /// Whether to highlight modified bytes.
+    ///
+    /// Default: true
+    pub highlight_modified: Option<bool>,
+
+    /// Maximum file size (in bytes) to open without warning.
+    /// Files larger than this will show a confirmation dialog.
+    ///
+    /// Default: 104857600 (100 MB)
+    pub max_file_size_without_warning: Option<usize>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq, Eq,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum HexEditorOffsetFormat {
+    #[default]
+    Hex,
+    Decimal,
 }
 
 /// The settings for the image viewer.

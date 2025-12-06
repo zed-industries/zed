@@ -7,8 +7,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    ContextProvider, LanguageName, LocalFile as _, LspAdapter, LspAdapterDelegate, LspInstaller,
+    Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -129,15 +129,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct JsonLspAdapter {
-    languages: Arc<LanguageRegistry>,
     node: NodeRuntime,
 }
 
 impl JsonLspAdapter {
     const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
-    pub fn new(languages: Arc<LanguageRegistry>, node: NodeRuntime) -> Self {
-        Self { languages, node }
+    pub fn new(node: NodeRuntime) -> Self {
+        Self { node }
     }
 }
 
@@ -256,7 +255,7 @@ impl LspAdapter for JsonLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = cx.update(|cx| {
-            let schemas = json_schema_store::all_schema_file_associations(&self.languages, cx);
+            let schemas = json_schema_store::all_schema_file_associations(cx);
 
             // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
             // `Server Info`

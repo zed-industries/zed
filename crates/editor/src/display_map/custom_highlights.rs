@@ -30,7 +30,6 @@ struct HighlightEndpoint {
 }
 
 impl<'a> CustomHighlightsChunks<'a> {
-    #[ztracing::instrument(skip_all)]
     pub fn new(
         range: Range<MultiBufferOffset>,
         language_aware: bool,
@@ -52,7 +51,6 @@ impl<'a> CustomHighlightsChunks<'a> {
         }
     }
 
-    #[ztracing::instrument(skip_all)]
     pub fn seek(&mut self, new_range: Range<MultiBufferOffset>) {
         self.highlight_endpoints =
             create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
@@ -110,7 +108,6 @@ fn create_highlight_endpoints(
 impl<'a> Iterator for CustomHighlightsChunks<'a> {
     type Item = Chunk<'a>;
 
-    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_highlight_endpoint = MultiBufferOffset(usize::MAX);
         while let Some(endpoint) = self.highlight_endpoints.peek().copied() {

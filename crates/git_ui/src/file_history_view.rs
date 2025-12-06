@@ -267,19 +267,15 @@ impl FileHistoryView {
                     .child(self.render_commit_avatar(&entry.sha, window, cx))
                     .child(
                         h_flex()
-                            .min_w_0()
                             .w_full()
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .min_w_0()
-                                    .w_full()
                                     .gap_1()
                                     .child(
                                         Label::new(entry.author_name.clone())
                                             .size(LabelSize::Small)
-                                            .color(Color::Default)
-                                            .truncate(),
+                                            .color(Color::Default),
                                     )
                                     .child(
                                         Label::new(&entry.subject)
@@ -289,11 +285,9 @@ impl FileHistoryView {
                                     ),
                             )
                             .child(
-                                h_flex().flex_none().child(
-                                    Label::new(relative_timestamp)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
+                                Label::new(relative_timestamp)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             ),
                     ),
             )

@@ -16,6 +16,7 @@ use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
     ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
+
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
@@ -44,7 +45,7 @@ use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
-    item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
+    item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ItemHandle, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
     },
@@ -1403,8 +1404,9 @@ impl ProjectItem for Editor {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidItemView> {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    ) -> Option<Box<dyn ItemHandle>> {
+        let view = InvalidItemView::new(abs_path, is_local, e, window, cx);
+        Some(Box::new(cx.new(|_| view)))
     }
 }
 

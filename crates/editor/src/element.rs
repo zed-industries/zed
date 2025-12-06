@@ -2340,7 +2340,7 @@ impl EditorElement {
                     .opacity(0.05))
                 .text_color(severity_to_color(&diagnostic_to_render.severity).color(cx))
                 .text_sm()
-                .font(style.text.font())
+                .font_family(style.text.font().family)
                 .child(diagnostic_to_render.message.clone())
                 .into_any();
 

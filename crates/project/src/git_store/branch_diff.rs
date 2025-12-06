@@ -14,7 +14,6 @@ use gpui::{
 use language::Buffer;
 use text::BufferId;
 use util::ResultExt;
-use ztracing::instrument;
 
 use crate::{
     Project,
@@ -255,7 +254,6 @@ impl BranchDiff {
         self.repo.as_ref()
     }
 
-    #[instrument(skip_all)]
     pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
         let Some(repo) = self.repo.clone() else {
@@ -320,7 +318,6 @@ impl BranchDiff {
         output
     }
 
-    #[instrument(skip_all)]
     fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,

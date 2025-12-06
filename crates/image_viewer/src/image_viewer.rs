@@ -21,7 +21,7 @@ use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
+    item::{BreadcrumbText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -403,11 +403,12 @@ impl ProjectItem for ImageView {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidItemView>
+    ) -> Option<Box<dyn ItemHandle>>
     where
         Self: Sized,
     {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+        let view = InvalidItemView::new(abs_path, is_local, e, window, cx);
+        Some(Box::new(cx.new(|_| view)))
     }
 }
 

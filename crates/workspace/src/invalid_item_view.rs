@@ -8,7 +8,7 @@ use ui::{
 };
 use zed_actions::workspace::OpenWithSystem;
 
-use crate::Item;
+use crate::{Item, Workspace, open_in_hex_editor};
 
 /// A view to display when a certain buffer/image/other item fails to open.
 pub struct InvalidItemView {
@@ -96,16 +96,40 @@ impl Render for InvalidItemView {
                                 .child(Label::new(self.error.clone()).size(LabelSize::Small)),
                         )
                         .when(self.is_local, |contents| {
-                            contents.child(
-                                h_flex().justify_center().child(
-                                    Button::new("open-with-system", "Open in Default App")
-                                        .on_click(move |_, _, cx| {
-                                            cx.open_with_system(&abs_path);
-                                        })
-                                        .style(ButtonStyle::Outlined)
-                                        .key_binding(KeyBinding::for_action(&OpenWithSystem, cx)),
-                                ),
-                            )
+                            let abs_path_for_system = abs_path.clone();
+                            let abs_path_for_hex = abs_path.clone();
+                            contents
+                                .child(
+                                    h_flex().justify_center().child(
+                                        Button::new("open-with-system", "Open in Default App")
+                                            .on_click(move |_, _, cx| {
+                                                cx.open_with_system(&abs_path_for_system);
+                                            })
+                                            .style(ButtonStyle::Outlined)
+                                            .key_binding(KeyBinding::for_action(
+                                                &OpenWithSystem,
+                                                cx,
+                                            )),
+                                    ),
+                                )
+                                .child(
+                                    h_flex().justify_center().child(
+                                        Button::new("open-in-hex-editor", "Open in Hex Editor")
+                                            .on_click(move |_, window, cx| {
+                                                if let Some(workspace) =
+                                                    window.root::<Workspace>().flatten()
+                                                {
+                                                    open_in_hex_editor(
+                                                        workspace,
+                                                        abs_path_for_hex.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })
+                                            .style(ButtonStyle::Outlined),
+                                    ),
+                                )
                         }),
                 ),
             )

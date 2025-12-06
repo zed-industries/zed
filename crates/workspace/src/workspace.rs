@@ -620,10 +620,21 @@ type BuildProjectItemForPathFn =
         &mut App,
     ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
+/// A fallback handler for files that cannot be opened normally.
+/// Takes the project, absolute path, and returns an ItemHandle if it can handle the file.
+pub type BrokenFileFallbackFn =
+    fn(Entity<Project>, &Path, &mut Window, &mut App) -> Option<Box<dyn ItemHandle>>;
+
+/// A callback for opening a file in the hex editor.
+/// Takes the workspace, absolute path, window and context.
+pub type OpenInHexEditorFn = fn(Entity<Workspace>, Arc<Path>, &mut Window, &mut App);
+
 #[derive(Clone, Default)]
 struct ProjectItemRegistry {
     build_project_item_fns_by_type: HashMap<TypeId, BuildProjectItemFn>,
     build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
+    broken_file_fallback: Option<BrokenFileFallbackFn>,
+    open_in_hex_editor: Option<OpenInHexEditorFn>,
 }
 
 impl ProjectItemRegistry {
@@ -679,7 +690,8 @@ impl ProjectItemRegistry {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
                                 {
-                                    if let Some(broken_project_item_view) =
+                                    // First try the type-specific broken project item handler
+                                    if let Some(broken_project_item_handle) =
                                         cx.update(|window, cx| {
                                             T::for_broken_project_item(
                                                 abs_path, is_local, &e, window, cx,
@@ -687,8 +699,28 @@ impl ProjectItemRegistry {
                                         })?
                                     {
                                         let build_workspace_item = Box::new(
-                                            move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
-                                                cx.new(|_| broken_project_item_view).boxed_clone()
+                                            move |_: &mut Pane, _: &mut Window, _: &mut Context<Pane>| {
+                                                broken_project_item_handle
+                                            },
+                                        )
+                                        as Box<_>;
+                                        return Ok((None, build_workspace_item));
+                                    }
+
+                                    // Then try the global fallback handler (e.g., hex editor)
+                                    if let Some(fallback_handle) =
+                                        cx.update(|window, cx| {
+                                            let registry = cx.default_global::<ProjectItemRegistry>();
+                                            if let Some(fallback) = registry.broken_file_fallback {
+                                                fallback(project.clone(), abs_path, window, cx)
+                                            } else {
+                                                None
+                                            }
+                                        })?
+                                    {
+                                        let build_workspace_item = Box::new(
+                                            move |_: &mut Pane, _: &mut Window, _: &mut Context<Pane>| {
+                                                fallback_handle
                                             },
                                         )
                                         as Box<_>;
@@ -746,6 +778,38 @@ impl Global for ProjectItemRegistry {}
 /// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     cx.default_global::<ProjectItemRegistry>().register::<I>();
+}
+
+/// Registers a fallback handler for files that cannot be opened normally.
+/// This is called when all ProjectItem handlers fail to open a file.
+/// Useful for opening binary files in a hex editor, for example.
+pub fn register_broken_file_fallback(cx: &mut App, fallback: BrokenFileFallbackFn) {
+    cx.default_global::<ProjectItemRegistry>()
+        .broken_file_fallback = Some(fallback);
+}
+
+/// Registers a callback for opening files in the hex editor.
+/// This is used by InvalidItemView to provide an "Open in Hex Editor" button.
+pub fn register_open_in_hex_editor(cx: &mut App, callback: OpenInHexEditorFn) {
+    cx.default_global::<ProjectItemRegistry>()
+        .open_in_hex_editor = Some(callback);
+}
+
+/// Opens a file in the hex editor using the registered callback.
+/// Returns true if a callback was registered and invoked.
+pub fn open_in_hex_editor(
+    workspace: Entity<Workspace>,
+    abs_path: Arc<Path>,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let registry = cx.default_global::<ProjectItemRegistry>();
+    if let Some(callback) = registry.open_in_hex_editor {
+        callback(workspace, abs_path, window, cx);
+        true
+    } else {
+        false
+    }
 }
 
 #[derive(Default)]

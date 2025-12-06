@@ -7,7 +7,6 @@ use language::{Buffer, BufferSnapshot};
 use rope::Point;
 use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
-use ztracing::instrument;
 
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
@@ -70,7 +69,6 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
@@ -305,7 +303,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
 
         let mut next_excerpt_id =
-            // todo(lw): is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
+            // is this right? What if we remove the last excerpt, then we might reallocate with a wrong mapping?
             if let Some(last_entry) = self.snapshot.borrow().excerpt_ids.last() {
                 last_entry.id.0 + 1
             } else {

@@ -162,11 +162,10 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
+
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
-    ztracing::init();
-
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]
@@ -603,6 +602,38 @@ pub fn main() {
 
         editor::init(cx);
         image_viewer::init(cx);
+        hex_editor::init(cx);
+
+        // Register hex editor as fallback for files that can't be opened normally
+        workspace::register_broken_file_fallback(cx, |project, abs_path, _window, cx| {
+            let path = abs_path.to_path_buf();
+            let data = std::fs::read(&path).ok()?;
+            let entity = cx.new(|cx| hex_editor::HexEditorView::new(project, path, data, cx));
+            Some(Box::new(entity))
+        });
+
+        // Register callback for "Open in Hex Editor" button in InvalidItemView
+        workspace::register_open_in_hex_editor(cx, |workspace, abs_path, window, cx| {
+            let project = workspace.read(cx).project().clone();
+            let path = abs_path.to_path_buf();
+            let task = hex_editor::HexEditorView::open(project, path, window, cx);
+            window
+                .spawn(cx, async move |cx| {
+                    let hex_editor = task.await?;
+                    workspace.update_in(&mut cx.clone(), |workspace, window, cx| {
+                        workspace.add_item_to_active_pane(
+                            Box::new(hex_editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        });
+
         repl::notebook::init(cx);
         diagnostics::init(cx);
 

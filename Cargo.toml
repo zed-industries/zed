@@ -82,6 +82,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
+    "crates/hex_editor",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -204,8 +205,6 @@ members = [
     "crates/edit_prediction_cli",
     "crates/zlog",
     "crates/zlog_settings",
-    "crates/ztracing",
-    "crates/ztracing_macro",
 
     #
     # Extensions
@@ -306,6 +305,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
+hex_editor = { path = "crates/hex_editor" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
@@ -436,8 +436,6 @@ zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
-ztracing = { path = "crates/ztracing" }
-ztracing_macro = { path = "crates/ztracing_macro" }
 
 #
 # External crates
@@ -698,8 +696,6 @@ tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
-tracing = "0.1.40"
-tracing-tracy = "0.11.4"
 unicase = "2.6"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"

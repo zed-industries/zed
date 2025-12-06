@@ -105,6 +105,27 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2
   },
+  // Hex editor settings
+  "hex_editor": {
+    // Number of bytes to display per row
+    "bytes_per_row": 16,
+    // Whether to show the data inspector panel by default
+    "show_data_inspector": true,
+    // Whether to show the ASCII column
+    "show_ascii": true,
+    // Whether to show the offset column
+    "show_offset": true,
+    // Offset display format: "hex" or "decimal"
+    "offset_format": "hex",
+    // Whether to group bytes (adds extra spacing every 8 bytes)
+    "group_bytes": true,
+    // Whether to highlight non-printable characters in ASCII view
+    "highlight_non_printable": true,
+    // Whether to highlight modified bytes
+    "highlight_modified": true,
+    // Maximum file size (in bytes) to open without warning (100 MB)
+    "max_file_size_without_warning": 104857600
+  },
   // Image viewer settings
   "image_viewer": {
     // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)

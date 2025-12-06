@@ -684,8 +684,8 @@
       "ctrl-alt-cmd-p": "settings_profile_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
-      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-tab": "tab_switcher::Toggle",
+      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -696,6 +696,7 @@
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
       "cmd-k cmd-m": "toolchain::AddToolchain",
+      "cmd-k h": "hex_editor::OpenHexEditor",
       "escape": "workspace::Unfollow",
       "cmd-k cmd-left": "workspace::ActivatePaneLeft",
       "cmd-k cmd-right": "workspace::ActivatePaneRight",
@@ -1437,8 +1438,7 @@
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-backspace": "branch_picker::DeleteBranch",
-      "cmd-shift-i": "branch_picker::FilterRemotes"
+      "cmd-shift-backspace": "branch_picker::DeleteBranch"
     }
   }
 ]

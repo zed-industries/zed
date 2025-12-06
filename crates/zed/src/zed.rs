@@ -34,6 +34,7 @@ use gpui::{
     Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
     actions, image_cache, point, px, retain_all,
 };
+use hex_editor::HexEditorButton;
 use image_viewer::ImageInfo;
 use language::Capability;
 use language_onboarding::BasedPyrightBanner;
@@ -431,6 +432,8 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+        let hex_editor_button = cx.new(|_cx| HexEditorButton::new());
+        let hex_editor_status = cx.new(|_cx| hex_editor::HexEditorStatus::new());
 
         let lsp_button_menu_handle = PopoverMenuHandle::default();
         let lsp_button =
@@ -457,6 +460,8 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
+            status_bar.add_right_item(hex_editor_status, window, cx);
+            status_bar.add_right_item(hex_editor_button, window, cx);
         });
 
         let handle = cx.entity().downgrade();
