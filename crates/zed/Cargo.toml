@@ -10,6 +10,9 @@ authors = ["Zed Team <hi@zed.dev>"]
 [lints]
 workspace = true
 
+[features]
+tracy = ["ztracing/tracy"]
+
 [[bin]]
 name = "zed"
 path = "src/zed-main.rs"
