@@ -1419,6 +1419,10 @@ impl Session {
     }
 
     fn push_to_history(&mut self) {
+        if !self.has_ever_stopped() {
+            return;
+        }
+
         self.state_history.push(std::mem::take(&mut self.state));
     }
 
@@ -1445,8 +1449,9 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
-        self.mode.stopped();
         self.push_to_history();
+
+        self.mode.stopped();
         // todo(debugger): Find a clean way to get around the clone
         let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_running_mut().and_then(|local| {
