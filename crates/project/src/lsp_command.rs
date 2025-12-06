@@ -1123,9 +1123,16 @@ pub async fn location_links_from_lsp(
     let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
+        // Pass the target position for virtual document handlers that need it
+        let target_position = Some(target_range.start);
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
-                this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
+                this.open_local_buffer_via_lsp(
+                    target_uri,
+                    language_server.server_id(),
+                    target_position,
+                    cx,
+                )
             })?
             .await?;
 
@@ -1178,9 +1185,16 @@ pub async fn location_link_from_lsp(
         link.target_selection_range,
     );
 
+    // Pass the target position for virtual document handlers that need it
+    let target_position = Some(target_range.start);
     let target_buffer_handle = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)
+            lsp_store.open_local_buffer_via_lsp(
+                target_uri,
+                language_server.server_id(),
+                target_position,
+                cx,
+            )
         })?
         .await?;
 
@@ -1323,11 +1337,14 @@ impl LspCommand for GetReferences {
 
         if let Some(locations) = locations {
             for lsp_location in locations {
+                // Pass the target position for virtual document handlers that need it
+                let target_position = Some(lsp_location.range.start);
                 let target_buffer_handle = lsp_store
                     .update(&mut cx, |lsp_store, cx| {
                         lsp_store.open_local_buffer_via_lsp(
                             lsp_location.uri,
                             language_server.server_id(),
+                            target_position,
                             cx,
                         )
                     })?
