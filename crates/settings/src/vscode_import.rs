@@ -188,6 +188,7 @@ impl VsCodeSettings {
             git_panel: self.git_panel_settings_content(),
             global_lsp_settings: None,
             helix_mode: None,
+            helix: None,
             image_viewer: None,
             journal: None,
             language_models: None,
