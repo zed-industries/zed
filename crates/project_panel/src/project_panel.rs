@@ -64,7 +64,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::workspace::OpenWithSystem;
@@ -469,8 +469,14 @@ struct SerializedProjectPanel {
 }
 
 #[derive(Serialize, Deserialize)]
+enum ClipboardOperation {
+    Cut,
+    Copy,
+}
+
+#[derive(Serialize, Deserialize)]
 struct ClipboardMetadata {
-    operation: String,
+    operation: ClipboardOperation,
     file_paths: Vec<String>,
 }
 
@@ -2626,7 +2632,11 @@ impl ProjectPanel {
 
         if !file_paths.is_empty() {
             let metadata = ClipboardMetadata {
-                operation: if is_cut { "CUT" } else { "COPY" }.to_string(),
+                operation: if is_cut {
+                    ClipboardOperation::Cut
+                } else {
+                    ClipboardOperation::Copy
+                },
                 file_paths,
             };
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
@@ -2637,12 +2647,6 @@ impl ProjectPanel {
     }
 
     fn has_clipboard_content(&self, cx: &Context<Self>) -> bool {
-        // Check local clipboard first (for performance)
-        if self.clipboard.is_some() {
-            return true;
-        }
-
-        // Check system clipboard for Zed clipboard data
         if let Some(clipboard_item) = cx.read_from_clipboard() {
             clipboard_item
                 .entries()
@@ -2715,15 +2719,7 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        // Try local clipboard first, then system clipboard
-        let clipboard_clone = self.clipboard.clone();
-
-        if let Some(clipboard_entries) = clipboard_clone
-            .as_ref()
-            .filter(|clipboard| !clipboard.items().is_empty())
-        {
-            self.paste_from_local_clipboard(clipboard_entries, window, cx);
-        } else if let Some((file_paths, _is_cut)) = self.parse_system_clipboard(cx) {
+        if let Some((file_paths, _is_cut)) = self.parse_system_clipboard(cx) {
             if let Some(entry_id) = self.selected_entry_handle(cx).map(|(_, e)| e.id) {
                 self.drop_external_files(
                     &file_paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
@@ -2751,119 +2747,13 @@ impl ProjectPanel {
                 _ => None,
             })?;
 
-        let is_cut = operation == "CUT";
+        let is_cut = matches!(operation, ClipboardOperation::Cut);
 
         if !file_paths.is_empty() {
             Some((file_paths, is_cut))
         } else {
             None
         }
-    }
-
-    fn paste_from_local_clipboard(
-        &mut self,
-        clipboard_entries: &ClipboardEntry,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        maybe!({
-            let (worktree, entry) = self.selected_entry_handle(cx)?;
-            let entry = entry.clone();
-            let worktree_id = worktree.read(cx).id();
-
-            enum PasteTask {
-                Rename(Task<Result<CreatedEntry>>),
-                Copy(Task<Result<Option<Entry>>>),
-            }
-
-            let mut paste_tasks = Vec::new();
-            let mut disambiguation_range = None;
-            let clip_is_cut = clipboard_entries.is_cut();
-            for clipboard_entry in clipboard_entries.items() {
-                let (new_path, new_disambiguation_range) =
-                    self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
-                let clip_entry_id = clipboard_entry.entry_id;
-                let task = if clipboard_entries.is_cut() {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
-                    });
-                    PasteTask::Rename(task)
-                } else {
-                    let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
-                    });
-                    PasteTask::Copy(task)
-                };
-                paste_tasks.push(task);
-                disambiguation_range = new_disambiguation_range.or(disambiguation_range);
-            }
-
-            let item_count = paste_tasks.len();
-
-            cx.spawn_in(window, async move |project_panel, cx| {
-                let mut last_succeed = None;
-                for task in paste_tasks {
-                    match task {
-                        PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) =
-                                task.await.notify_async_err(cx)
-                            {
-                                last_succeed = Some(entry);
-                            }
-                        }
-                        PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
-                                last_succeed = Some(entry);
-                            }
-                        }
-                    }
-                }
-                // update selection
-                if let Some(entry) = last_succeed {
-                    project_panel
-                        .update_in(cx, |project_panel, window, cx| {
-                            project_panel.state.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id: entry.id,
-                            });
-
-                            if item_count == 1 {
-                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
-                                if !entry.is_dir() {
-                                    let settings = ProjectPanelSettings::get_global(cx);
-                                    if settings.auto_open.should_open_on_paste() {
-                                        project_panel.open_entry(
-                                            entry.id,
-                                            disambiguation_range.is_none(),
-                                            false,
-                                            cx,
-                                        );
-                                    }
-                                }
-
-                                // if only one entry was pasted and it was disambiguated, open the rename editor
-                                if disambiguation_range.is_some() {
-                                    cx.defer_in(window, |this, window, cx| {
-                                        this.rename_impl(disambiguation_range, window, cx);
-                                    });
-                                }
-                            }
-                        })
-                        .ok();
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
-            if clip_is_cut {
-                // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
-            }
-
-            self.expand_entry(worktree_id, entry.id, cx);
-            Some(())
-        });
     }
 
     fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
@@ -6193,13 +6083,6 @@ impl ClipboardEntry {
     fn items(&self) -> &BTreeSet<SelectedEntry> {
         match self {
             ClipboardEntry::Copied(entries) | ClipboardEntry::Cut(entries) => entries,
-        }
-    }
-
-    fn into_copy_entry(self) -> Self {
-        match self {
-            ClipboardEntry::Copied(_) => self,
-            ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),
         }
     }
 }

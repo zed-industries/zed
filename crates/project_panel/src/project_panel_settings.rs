@@ -62,11 +62,6 @@ impl AutoOpenSettings {
     }
 
     #[inline]
-    pub fn should_open_on_paste(self) -> bool {
-        self.on_paste
-    }
-
-    #[inline]
     pub fn should_open_on_drop(self) -> bool {
         self.on_drop
     }
