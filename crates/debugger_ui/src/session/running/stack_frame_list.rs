@@ -97,7 +97,9 @@ impl StackFrameList {
                 SessionEvent::Threads => {
                     this.schedule_refresh(false, window, cx);
                 }
-                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                SessionEvent::Stopped(..)
+                | SessionEvent::StackTrace
+                | SessionEvent::HistoricSnapshotSelected => {
                     this.schedule_refresh(true, window, cx);
                 }
                 _ => {}
