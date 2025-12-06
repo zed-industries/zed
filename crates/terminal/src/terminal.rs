@@ -393,6 +393,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
         };
 
@@ -618,6 +619,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
             };
 
@@ -838,6 +840,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
 }
 
@@ -1413,6 +1416,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         self.write_to_pty(input);
     }
 
@@ -2112,13 +2116,36 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
-        if let Some(e) = e {
-            self.child_exited = Some(e);
-        }
+
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // Always record the latest exit status.
+                if let Some(e) = e {
+                    self.child_exited = Some(e);
+                }
+
+                // Determine whether to close the terminal based on exit conditions.
+                //
+                // For interactive shells (no task), we need to differentiate between:
+                // 1. Shell spawn failures (e.g., misconfigured $SHELL) - should NOT close
+                // 2. User-initiated exits (Ctrl+D, typing "exit") - should close
+                //
+                // We use keyboard_input_sent as the differentiator: spawn failures never
+                // receive keyboard input, while user exits always require it.
+                //
+                // For tasks/commands, we close on successful exit (exit code 0).
+                let should_close = if error_code.is_none() {
+                    if self.task.is_none() {
+                        self.keyboard_input_sent
+                    } else {
+                        self.child_exited.map_or(true, |e| e.code() == Some(0))
+                    }
+                } else {
+                    self.child_exited.is_some_and(|e| e.code() == Some(0))
+                };
+
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2386,6 +2413,8 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;
 
     use super::*;
@@ -2456,8 +2485,7 @@ mod tests {
         );
     }
 
-    // TODO should be tested on Linux too, but does not work there well
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2495,26 +2523,51 @@ mod tests {
         })
         .detach();
         cx.background_spawn(async move {
-            assert_eq!(
-                completion_rx.recv().await.unwrap(),
-                Some(ExitStatus::default()),
-                "EOF should result in the tty shell exiting successfully",
+            let status = completion_rx.recv().await.unwrap();
+            assert!(
+                status == Some(ExitStatus::from_raw(0))
+                    || status == Some(ExitStatus::from_raw(130)),
+                "EOF must close shell: expected 0 or 130, got {:?}",
+                status
             );
         })
         .detach();
 
-        let first_event = event_rx.recv().await.expect("No wakeup event received");
+        // Wait for the first Wakeup event which indicates shell is ready
+        // On Linux, we might get other events first, so poll until we get Wakeup
+        let mut got_wakeup = false;
+        while !got_wakeup {
+            match event_rx.recv().await {
+                Ok(Event::Wakeup) => {
+                    got_wakeup = true;
+                }
+                Ok(_) => {
+                    // Continue polling for Wakeup
+                }
+                Err(_) => {
+                    panic!("Channel closed before receiving Wakeup event");
+                }
+            }
+        }
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
             assert!(success, "Should have registered ctrl-c sequence");
         });
+
+        // Give shell time to process SIGINT on Linux
+        // After getting Wakeup, wait for shell to process SIGINT
+        // Collect any events after Ctrl+C
+        while let Ok(Ok(_first_event)) =
+            smol_timeout(Duration::from_millis(100), event_rx.recv()).await
+        {}
+
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
             assert!(success, "Should have registered ctrl-d sequence");
         });
 
-        let mut all_events = vec![first_event];
+        let mut all_events = Vec::new();
         while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
             all_events.push(new_event.clone());
             if new_event == Event::CloseTerminal {
