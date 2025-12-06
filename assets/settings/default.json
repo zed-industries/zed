@@ -641,7 +641,9 @@
     // Whether to interpret the search query as a regular expression.
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
-    "center_on_match": false
+    "center_on_match": false,
+    // Whether to use modal-based global search instead of tab-based.
+    "use_modal": false
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
