@@ -4372,10 +4372,11 @@ impl Editor {
                                             })
                                             .unwrap_or(true);
 
-                                        let adjacent_point =
-                                            Point::new(point.row, point.column + 1);
                                         let is_delimiter = snapshot
-                                            .language_scope_at(adjacent_point)
+                                            .language_scope_at(Point::new(
+                                                point.row,
+                                                point.column + 1,
+                                            ))
                                             .and_then(|scope| {
                                                 scope
                                                     .brackets()
