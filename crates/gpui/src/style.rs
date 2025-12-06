@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
+    AbsoluteLength, App, Background, BorderStyle, Bounds, ContentMask, Corners, CornersRefinement,
+    CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font, FontFallbacks,
+    FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, quad, rems, size,
 };
@@ -626,25 +626,17 @@ impl Style {
 
         window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
-        let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.is_some_and(|color| !color.is_transparent()) {
-            let mut border_color = match background_color {
-                Some(color) => match color.tag {
-                    BackgroundTag::Solid => color.solid,
-                    BackgroundTag::LinearGradient => color
-                        .colors
-                        .first()
-                        .map(|stop| stop.color)
-                        .unwrap_or_default(),
-                    BackgroundTag::PatternSlash => color.solid,
-                },
+        let background = self.background.as_ref().and_then(Fill::color);
+        if background.is_some_and(|background| !background.is_transparent()) {
+            let mut border_color = match background {
+                Some(color) => color.fill(),
                 None => Hsla::default(),
             };
             border_color.a = 0.;
             window.paint_quad(quad(
                 bounds,
                 corner_radii,
-                background_color.unwrap_or_default(),
+                background.unwrap_or_default(),
                 Edges::default(),
                 border_color,
                 self.border_style,
