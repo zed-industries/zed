@@ -725,6 +725,10 @@ pub struct JournalSettingsContent {
     ///
     /// Default: `~`
     pub path: Option<String>,
+    /// Date format for journal entries.
+    ///
+    /// Default: `%Y/%m/%d.md`
+    pub date_format: Option<String>,
     /// What format to display the hours in.
     ///
     /// Default: hour12
