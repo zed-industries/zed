@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Env, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
 };
 use indexmap::IndexMap;
 
@@ -14,6 +14,12 @@ use super::{
     runners::{self, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
+
+// Ubuntu 22.04's gcc is too old to compile libwebrtc's C++ headers
+fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
 
 pub(crate) fn run_tests() -> Workflow {
     // Specify anything which should potentially skip full test suite in this regex:
@@ -230,7 +236,7 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
             .add_step(steps::checkout_repo())
@@ -241,7 +247,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
             .add_step(steps::cargo_fmt()),
-    )
+    ))
 }
 
 fn check_dependencies() -> NamedJob {
@@ -278,7 +284,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -287,11 +293,11 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
-    )
+    ))
 }
 
 fn check_workspace_binaries() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -301,7 +307,7 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
@@ -317,7 +323,7 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
             })
             .when(
                 platform == Platform::Linux,
@@ -384,7 +390,7 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
@@ -393,7 +399,7 @@ fn doctests() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(run_doctests())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -435,7 +441,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -451,7 +457,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {
@@ -482,7 +488,7 @@ pub(crate) fn check_scripts() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -490,5 +496,5 @@ pub(crate) fn check_scripts() -> NamedJob {
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
             .add_step(check_xtask_workflows()),
-    )
+    ))
 }
