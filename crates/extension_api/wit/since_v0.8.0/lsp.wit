@@ -88,6 +88,21 @@ interface lsp {
         other(s32),
     }
 
+    /// Specifies the parameter format for virtual document content requests.
+    ///
+    /// Different language servers expect different parameter formats when requesting
+    /// virtual document contents.
+    variant virtual-document-param-kind {
+        /// Send only the URI as a TextDocumentIdentifier: { "uri": "<uri>" }
+        /// This is the most common format, used by servers like JDTLS.
+        uri,
+        /// Send the URI as a raw string directly (not wrapped).
+        raw-uri,
+        /// Send URI and position as TextDocumentPositionParams.
+        /// Used by servers that need position context (e.g., rust-analyzer macro expansion).
+        uri-with-position,
+    }
+
     /// Configuration for handling virtual documents (non-file URIs like decompiled code)
     record virtual-document-config {
         /// The URI scheme to handle (e.g., "jdt" for jdt:// URIs)
@@ -98,5 +113,8 @@ interface lsp {
         language-name: string,
         /// The LSP language ID to use when registering the document (e.g., "java")
         language-id: string,
+        /// The parameter format expected by the language server.
+        /// Defaults to "uri" (TextDocumentIdentifier) if not specified.
+        param-kind: option<virtual-document-param-kind>,
     }
 }

@@ -237,6 +237,20 @@ impl extension::Extension for WasmExtension {
                         content_request_method: wit_config.content_request_method,
                         language_name: wit_config.language_name,
                         language_id: wit_config.language_id,
+                        param_kind: wit_config
+                            .param_kind
+                            .map(|kind| match kind {
+                                wit::VirtualDocumentParamKind::Uri => {
+                                    lsp::VirtualDocumentParamKind::Uri
+                                }
+                                wit::VirtualDocumentParamKind::RawUri => {
+                                    lsp::VirtualDocumentParamKind::RawUri
+                                }
+                                wit::VirtualDocumentParamKind::UriWithPosition => {
+                                    lsp::VirtualDocumentParamKind::UriWithPosition
+                                }
+                            })
+                            .unwrap_or_default(),
                     })
                     .collect();
                 anyhow::Ok(converted)

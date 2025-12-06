@@ -35,7 +35,7 @@ pub use latest::{
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
-        VirtualDocumentConfig,
+        VirtualDocumentConfig, VirtualDocumentParamKind,
     },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
 };
