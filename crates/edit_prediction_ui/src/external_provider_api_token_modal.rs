@@ -6,18 +6,24 @@ use ui::{Button, ButtonStyle, Clickable, Headline, HeadlineSize, prelude::*};
 use ui_input::InputField;
 use workspace::ModalView;
 
-pub struct SweepApiKeyModal {
+pub struct ExternalProviderApiKeyModal {
     api_key_input: Entity<InputField>,
     focus_handle: FocusHandle,
+    on_confirm: Box<dyn Fn(Option<String>, &mut EditPredictionStore, &mut App)>,
 }
 
-impl SweepApiKeyModal {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_input = cx.new(|cx| InputField::new(window, cx, "Enter your Sweep API token"));
+impl ExternalProviderApiKeyModal {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        on_confirm: impl Fn(Option<String>, &mut EditPredictionStore, &mut App) + 'static,
+    ) -> Self {
+        let api_key_input = cx.new(|cx| InputField::new(window, cx, "Enter your API key"));
 
         Self {
             api_key_input,
             focus_handle: cx.focus_handle(),
+            on_confirm: Box::new(on_confirm),
         }
     }
 
@@ -30,39 +36,34 @@ impl SweepApiKeyModal {
         let api_key = (!api_key.trim().is_empty()).then_some(api_key);
 
         if let Some(ep_store) = EditPredictionStore::try_global(cx) {
-            ep_store.update(cx, |ep_store, cx| {
-                ep_store
-                    .sweep_ai
-                    .set_api_token(api_key, cx)
-                    .detach_and_log_err(cx);
-            });
+            ep_store.update(cx, |ep_store, cx| (self.on_confirm)(api_key, ep_store, cx))
         }
 
         cx.emit(DismissEvent);
     }
 }
 
-impl EventEmitter<DismissEvent> for SweepApiKeyModal {}
+impl EventEmitter<DismissEvent> for ExternalProviderApiKeyModal {}
 
-impl ModalView for SweepApiKeyModal {}
+impl ModalView for ExternalProviderApiKeyModal {}
 
-impl Focusable for SweepApiKeyModal {
+impl Focusable for ExternalProviderApiKeyModal {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for SweepApiKeyModal {
+impl Render for ExternalProviderApiKeyModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("SweepApiKeyModal")
+            .key_context("ExternalApiKeyModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .elevation_2(cx)
             .w(px(400.))
             .p_4()
             .gap_3()
-            .child(Headline::new("Sweep API Token").size(HeadlineSize::Small))
+            .child(Headline::new("API Token").size(HeadlineSize::Small))
             .child(self.api_key_input.clone())
             .child(
                 h_flex()
