@@ -6529,6 +6529,7 @@ pub(crate) mod tests {
                             .audio(true)
                             .embedded_context(true),
                     ),
+                    Vec::new(),
                     cx,
                 )
             })))
@@ -6593,6 +6594,7 @@ pub(crate) mod tests {
                             .audio(true)
                             .embedded_context(true),
                     ),
+                    Vec::new(),
                     cx,
                 )
             })))
