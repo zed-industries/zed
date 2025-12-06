@@ -1170,6 +1170,8 @@ fn initialize_pane(
             toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
             toolbar.add_item(basedpyright_banner, window, cx);
+            let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
+            toolbar.add_item(image_view_toolbar, window, cx);
         })
     });
 }
@@ -4745,6 +4747,7 @@ mod tests {
                 "git_panel",
                 "go_to_line",
                 "icon_theme_selector",
+                "image_viewer",
                 "journal",
                 "keymap_editor",
                 "keystroke_input",
