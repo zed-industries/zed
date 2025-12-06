@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, actions};
 use log::info;
-use ui::{App, Context, ParentElement, Render, SharedString, Styled, Window, div, v_flex};
+use ui::{SharedString, prelude::*};
 use workspace::{Item, Workspace};
 
 actions!(csv, [OpenPreview]);
@@ -21,6 +21,7 @@ pub struct CsvPreviewView {
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
     contents: ParsedCsv,
+    counter: usize,
 }
 impl CsvPreviewView {
     pub fn register(
@@ -100,6 +101,7 @@ impl CsvPreviewView {
             focus_handle: cx.focus_handle(),
             editor: editor.clone(),
             contents: ParsedCsv::from_str(raw_text),
+            counter: 0,
         })
     }
 }
@@ -197,7 +199,7 @@ impl Item for CsvPreviewView {
 
 /// Main trait to render the content of the CSV preview in pane
 impl Render for CsvPreviewView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.contents.headers.is_empty() {
             return v_flex()
                 .size_full()
@@ -236,6 +238,21 @@ impl Render for CsvPreviewView {
                     .font_weight(gpui::FontWeight::BOLD)
                     .mb_4()
                     .child("CSV Preview"),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_3()
+                    .mb_4()
+                    .child(
+                        Button::new("increment_counter", "Increment Counter").on_click(
+                            cx.listener(|this, _event, _window, cx| {
+                                this.counter += 1;
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(format!("Count: {}", self.counter)),
             )
             .child(
                 div()
