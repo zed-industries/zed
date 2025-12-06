@@ -149,7 +149,7 @@ pub struct DataBreakpointState {
     pub context: Arc<DataBreakpointContext>,
 }
 
-pub enum SessionMode {
+pub enum SessionState {
     /// Represents a session that is building/initializing
     /// even if a session doesn't have a pre build task this state
     /// is used to run all the async tasks that are required to start the session
@@ -577,15 +577,15 @@ impl RunningMode {
     }
 }
 
-impl SessionMode {
+impl SessionState {
     pub(super) fn request_dap<R: LocalDapCommand>(&self, request: R) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
         match self {
-            SessionMode::Running(debug_adapter_client) => debug_adapter_client.request(request),
-            SessionMode::Booting(_) => Task::ready(Err(anyhow!(
+            SessionState::Running(debug_adapter_client) => debug_adapter_client.request(request),
+            SessionState::Booting(_) => Task::ready(Err(anyhow!(
                 "no adapter running to send request: {request:?}"
             ))),
         }
@@ -594,13 +594,13 @@ impl SessionMode {
     /// Did this debug session stop at least once?
     pub(crate) fn has_ever_stopped(&self) -> bool {
         match self {
-            SessionMode::Booting(_) => false,
-            SessionMode::Running(running_mode) => running_mode.has_ever_stopped,
+            SessionState::Booting(_) => false,
+            SessionState::Running(running_mode) => running_mode.has_ever_stopped,
         }
     }
 
     fn stopped(&mut self) {
-        if let SessionMode::Running(running) = self {
+        if let SessionState::Running(running) = self {
             running.has_ever_stopped = true;
         }
     }
@@ -671,7 +671,7 @@ impl ThreadStates {
 }
 
 #[derive(Default)]
-pub struct SessionState {
+pub struct SessionSnapshot {
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
@@ -689,9 +689,9 @@ type IsEnabled = bool;
 pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
-    pub mode: SessionMode,
-    state: SessionState,
-    state_history: Vec<SessionState>,
+    pub mode: SessionState,
+    state: SessionSnapshot,
+    state_history: Vec<SessionSnapshot>,
     active_history: Option<usize>,
     id: SessionId,
     label: Option<SharedString>,
@@ -863,7 +863,7 @@ impl Session {
             .detach();
 
             Self {
-                mode: SessionMode::Booting(None),
+                mode: SessionState::Booting(None),
                 state_history: Default::default(),
                 active_history: None,
                 state: Default::default(),
@@ -901,8 +901,8 @@ impl Session {
 
     pub fn worktree(&self) -> Option<Entity<Worktree>> {
         match &self.mode {
-            SessionMode::Booting(_) => None,
-            SessionMode::Running(local_mode) => local_mode.worktree.upgrade(),
+            SessionState::Booting(_) => None,
+            SessionState::Running(local_mode) => local_mode.worktree.upgrade(),
         }
     }
 
@@ -962,15 +962,15 @@ impl Session {
             .await?;
             this.update(cx, |this, cx| {
                 match &mut this.mode {
-                    SessionMode::Booting(task) if task.is_some() => {
+                    SessionState::Booting(task) if task.is_some() => {
                         task.take().unwrap().detach_and_log_err(cx);
                     }
-                    SessionMode::Booting(_) => {}
-                    SessionMode::Running(_) => {
+                    SessionState::Booting(_) => {}
+                    SessionState::Running(_) => {
                         debug_panic!("Attempting to boot a session that is already running");
                     }
                 };
-                this.mode = SessionMode::Running(mode);
+                this.mode = SessionState::Running(mode);
                 cx.emit(SessionStateEvent::Running);
             })?;
 
@@ -1063,8 +1063,8 @@ impl Session {
 
     pub fn binary(&self) -> Option<&DebugAdapterBinary> {
         match &self.mode {
-            SessionMode::Booting(_) => None,
-            SessionMode::Running(running_mode) => Some(&running_mode.binary),
+            SessionState::Booting(_) => None,
+            SessionState::Running(running_mode) => Some(&running_mode.binary),
         }
     }
 
@@ -1109,26 +1109,26 @@ impl Session {
 
     pub fn is_started(&self) -> bool {
         match &self.mode {
-            SessionMode::Booting(_) => false,
-            SessionMode::Running(running) => running.is_started,
+            SessionState::Booting(_) => false,
+            SessionState::Running(running) => running.is_started,
         }
     }
 
     pub fn is_building(&self) -> bool {
-        matches!(self.mode, SessionMode::Booting(_))
+        matches!(self.mode, SessionState::Booting(_))
     }
 
     pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
         match &mut self.mode {
-            SessionMode::Running(local_mode) => Some(local_mode),
-            SessionMode::Booting(_) => None,
+            SessionState::Running(local_mode) => Some(local_mode),
+            SessionState::Booting(_) => None,
         }
     }
 
     pub fn as_running(&self) -> Option<&RunningMode> {
         match &self.mode {
-            SessionMode::Running(local_mode) => Some(local_mode),
-            SessionMode::Booting(_) => None,
+            SessionState::Running(local_mode) => Some(local_mode),
+            SessionState::Booting(_) => None,
         }
     }
 
@@ -1270,7 +1270,7 @@ impl Session {
         let adapter_id = self.adapter().to_string();
         let request = Initialize { adapter_id };
 
-        let SessionMode::Running(running) = &self.mode else {
+        let SessionState::Running(running) = &self.mode else {
             return Task::ready(Err(anyhow!(
                 "Cannot send initialize request, task still building"
             )));
@@ -1319,10 +1319,10 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         match &self.mode {
-            SessionMode::Running(local_mode) => {
+            SessionState::Running(local_mode) => {
                 local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
             }
-            SessionMode::Booting(_) => {
+            SessionState::Booting(_) => {
                 Task::ready(Err(anyhow!("cannot initialize, still building")))
             }
         }
@@ -1335,7 +1335,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         match &mut self.mode {
-            SessionMode::Running(local_mode) => {
+            SessionState::Running(local_mode) => {
                 if !matches!(
                     self.state.thread_states.thread_state(active_thread_id),
                     Some(ThreadStatus::Stopped)
@@ -1359,7 +1359,7 @@ impl Session {
                 })
                 .detach();
             }
-            SessionMode::Booting(_) => {}
+            SessionState::Booting(_) => {}
         }
     }
 
@@ -1412,7 +1412,7 @@ impl Session {
         })
     }
 
-    fn session_state(&self) -> &SessionState {
+    fn session_state(&self) -> &SessionSnapshot {
         self.active_history
             .and_then(|ix| self.state_history.get(ix))
             .unwrap_or_else(|| &self.state)
@@ -1426,7 +1426,7 @@ impl Session {
         self.state_history.push(std::mem::take(&mut self.state));
     }
 
-    pub fn history(&self) -> &[SessionState] {
+    pub fn history(&self) -> &[SessionSnapshot] {
         &self.state_history
     }
 
@@ -1702,7 +1702,7 @@ impl Session {
 
     fn request_inner<T: LocalDapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
-        mode: &SessionMode,
+        mode: &SessionState,
         request: T,
         process_result: impl FnOnce(
             &mut Self,
@@ -2204,7 +2204,7 @@ impl Session {
         cx.notify();
 
         let task = match &mut self.mode {
-            SessionMode::Running(_) => {
+            SessionState::Running(_) => {
                 if self
                     .capabilities
                     .supports_terminate_request
@@ -2229,7 +2229,7 @@ impl Session {
                     )
                 }
             }
-            SessionMode::Booting(build_task) => {
+            SessionState::Booting(build_task) => {
                 build_task.take();
                 Task::ready(Some(()))
             }
@@ -2284,8 +2284,8 @@ impl Session {
 
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
-            SessionMode::Running(ref local) => Some(local.client.clone()),
-            SessionMode::Booting(_) => None,
+            SessionState::Running(ref local) => Some(local.client.clone()),
+            SessionState::Booting(_) => None,
         }
     }
 
@@ -2779,7 +2779,7 @@ impl Session {
     }
 
     pub fn is_attached(&self) -> bool {
-        let SessionMode::Running(local_mode) = &self.mode else {
+        let SessionState::Running(local_mode) = &self.mode else {
             return false;
         };
         local_mode.binary.request_args.request == StartDebuggingRequestArgumentsRequest::Attach

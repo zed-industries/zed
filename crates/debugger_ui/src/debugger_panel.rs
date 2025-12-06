@@ -23,7 +23,7 @@ use gpui::{
 
 use itertools::Itertools as _;
 use language::Buffer;
-use project::debugger::session::{Session, SessionMode, SessionQuirks, SessionStateEvent};
+use project::debugger::session::{Session, SessionQuirks, SessionState, SessionStateEvent};
 use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
@@ -285,10 +285,10 @@ impl DebugPanel {
         });
 
         session.update(cx, |session, _| match &mut session.mode {
-            SessionMode::Booting(state_task) => {
+            SessionState::Booting(state_task) => {
                 *state_task = Some(boot_task);
             }
-            SessionMode::Running(_) => {
+            SessionState::Running(_) => {
                 debug_panic!("Session state should be in building because we are just starting it");
             }
         });
