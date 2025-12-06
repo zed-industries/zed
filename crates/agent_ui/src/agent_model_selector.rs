@@ -86,7 +86,7 @@ impl Render for AgentModelSelector {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(provider_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::Small))
                 })
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
