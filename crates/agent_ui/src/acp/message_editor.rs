@@ -71,6 +71,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
                 PromptContextType::Thread,
                 PromptContextType::Fetch,
                 PromptContextType::Rules,
+                PromptContextType::Diagnostics,
             ]);
         }
         supported
@@ -1506,7 +1507,8 @@ mod tests {
                     "Files & Directories".into(),
                     "Symbols".into(),
                     "Threads".into(),
-                    "Fetch".into()
+                    "Fetch".into(),
+                    "Diagnostics".into()
                 ]
             );
         });
