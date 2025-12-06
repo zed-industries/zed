@@ -15,6 +15,7 @@ use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
@@ -41,6 +42,12 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
+
+pub struct DebuggerHistoryFeatureFlag;
+
+impl FeatureFlag for DebuggerHistoryFeatureFlag {
+    const NAME: &'static str = "debugger-history";
+}
 
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
@@ -805,32 +812,34 @@ impl DebugPanel {
                                                 }
                                             }),
                                     )
-                                    .child(
-                                        IconButton::new(
-                                            "debug-back-in-history",
-                                            IconName::HistoryRerun,
-                                        )
-                                        .icon_size(IconSize::Small)
-                                        .on_click(
-                                            window.listener_for(
-                                                running_state,
-                                                |this, _, _window, cx| {
-                                                    this.session().update(cx, |session, cx| {
-                                                        let ix = session
-                                                            .active_history()
-                                                            .unwrap_or_else(|| {
-                                                                session.history().len()
-                                                            });
+                                    .when(cx.has_flag::<DebuggerHistoryFeatureFlag>(), |this| {
+                                        this.child(
+                                            IconButton::new(
+                                                "debug-back-in-history",
+                                                IconName::HistoryRerun,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .on_click(
+                                                window.listener_for(
+                                                    running_state,
+                                                    |this, _, _window, cx| {
+                                                        this.session().update(cx, |session, cx| {
+                                                            let ix = session
+                                                                .active_history()
+                                                                .unwrap_or_else(|| {
+                                                                    session.history().len()
+                                                                });
 
-                                                        session.go_back_to_history(
-                                                            Some(ix.saturating_sub(1)),
-                                                            cx,
-                                                        );
-                                                    })
-                                                },
+                                                            session.go_back_to_history(
+                                                                Some(ix.saturating_sub(1)),
+                                                                cx,
+                                                            );
+                                                        })
+                                                    },
+                                                ),
                                             ),
-                                        ),
-                                    )
+                                        )
+                                    })
                                     .child(Divider::vertical())
                                     .child(
                                         IconButton::new("debug-restart", IconName::RotateCcw)
