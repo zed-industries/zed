@@ -156,3 +156,15 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
   }
 ]
 ```
+
+## Extensions
+
+Zed implements several clangd [extensions](https://clangd.llvm.org/extensions) to enhance the support for C/C++ development.
+
+### Switch Between Source and Header File
+
+You can instantly jump between a source file and its corresponding header file using a dedicated command.
+
+### Inactive Code Highlighting
+
+Zed visually dims code that is inactive due to preprocessor directives (such as code within an `#if 0` block). This makes it easy to distinguish between active and compiled-out code, helping you better understand the current compilation state of your files.
