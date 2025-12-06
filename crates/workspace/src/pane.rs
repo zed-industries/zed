@@ -396,6 +396,10 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
+
+    pub in_center_group: bool,
+    pub is_upper_left: bool,
+    pub is_upper_right: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -540,6 +544,9 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
+            in_center_group: false,
+            is_upper_left: false,
+            is_upper_right: false,
         }
     }
 
@@ -3057,6 +3064,19 @@ impl Pane {
                 }
             });
 
+        let open_aside = IconButton::new("open_aside", IconName::Thread)
+            .icon_size(IconSize::Small)
+            .on_click({
+                let workspace = self.workspace.clone();
+                move |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_utility_pane(window, cx)
+                        })
+                        .ok();
+                }
+            });
+
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
@@ -3103,13 +3123,26 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
+        let render_aside_toggle = self
+            .is_upper_left
+            .then(|| {
+                self.workspace
+                    .upgrade()
+                    .map(|entity| !entity.read(cx).utility_pane)
+            })
+            .flatten()
+            .unwrap_or(false);
+
         TabBar::new("tab_bar")
+            .when(render_aside_toggle, |tab_bar| {
+                tab_bar.start_child(open_aside)
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
                     tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
+                        .pre_end_child(navigate_backward)
+                        .pre_end_child(navigate_forward)
                 },
             )
             .map(|tab_bar| {

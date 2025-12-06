@@ -13,6 +13,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
+use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
@@ -24,6 +25,21 @@ pub enum PanelEvent {
 }
 
 pub use proto::PanelId;
+
+pub struct MinimizePane;
+pub struct ClosePane;
+
+pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    /// The element to render in the adjacent pane's tab bar when this utility pane is minimized
+    fn toggle_button(&self, cx: &App) -> AnyElement;
+    fn minimized(&self, cx: &App) -> bool;
+}
+
+pub enum UtilityPanePosition {
+    Left,
+    Right,
+}
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -891,7 +907,13 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry.panel.icon_tooltip(window, cx)?;
+                let icon_tooltip = entry
+                    .panel
+                    .icon_tooltip(window, cx)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
+                    })
+                    .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 
