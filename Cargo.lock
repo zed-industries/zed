@@ -7273,6 +7273,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
+ "unicode-bidi",
  "unicode-segmentation",
  "usvg",
  "util",

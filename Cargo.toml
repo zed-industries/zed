@@ -701,6 +701,7 @@ tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml",
 tracing = "0.1.40"
 tracing-tracy = "0.11.4"
 unicase = "2.6"
+unicode-bidi = "0.3"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
 unindent = "0.2.0"
