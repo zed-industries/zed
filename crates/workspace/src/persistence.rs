@@ -1360,8 +1360,8 @@ impl WorkspaceDb {
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
             if !has_wsl_path && paths.paths().iter().all(|path| path.exists()) {
-                // Only show directories in recent projects
-                if paths.paths().iter().any(|path| path.is_dir()) {
+                // Include workspaces with directories, or empty workspaces (for hot-exit support)
+                if paths.is_empty() || paths.paths().iter().any(|path| path.is_dir()) {
                     result.push((id, SerializedWorkspaceLocation::Local, paths));
                 }
             } else {
@@ -1405,8 +1405,9 @@ impl WorkspaceDb {
                     window_id.map(WindowId::from),
                 ));
             } else if paths.paths().iter().all(|path| path.exists())
-                && paths.paths().iter().any(|path| path.is_dir())
+                && (paths.is_empty() || paths.paths().iter().any(|path| path.is_dir()))
             {
+                // Include workspaces with directories, or empty workspaces (for hot-exit support)
                 workspaces.push((
                     SerializedWorkspaceLocation::Local,
                     paths,
