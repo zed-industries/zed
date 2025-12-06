@@ -61,6 +61,26 @@ impl BladeAtlas {
         self.0.lock().destroy();
     }
 
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn handle_device_lost(&self) {
+        let mut lock = self.0.lock();
+        lock.storage.clear_without_destroy();
+        lock.tiles_by_key.clear();
+        lock.initializations.clear();
+        lock.uploads.clear();
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn update_gpu_context(&self, new_gpu: &Arc<gpu::Context>) {
+        let mut lock = self.0.lock();
+        lock.gpu = Arc::clone(new_gpu);
+        lock.upload_belt = BufferBelt::new(BufferBeltDescriptor {
+            memory: gpu::Memory::Upload,
+            min_chunk_size: 0x10000,
+            alignment: 64,
+        });
+    }
+
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
         let mut lock = self.0.lock();
         lock.flush(gpu_encoder);
@@ -71,12 +91,13 @@ impl BladeAtlas {
         lock.upload_belt.flush(sync_point);
     }
 
-    pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
+    pub fn get_texture_info(&self, id: AtlasTextureId) -> Option<BladeTextureInfo> {
         let lock = self.0.lock();
-        let texture = &lock.storage[id];
-        BladeTextureInfo {
+        let textures = &lock.storage[id.kind];
+        let texture = textures.textures.get(id.index as usize)?.as_ref()?;
+        Some(BladeTextureInfo {
             raw_view: texture.raw_view,
-        }
+        })
     }
 }
 
@@ -304,6 +325,14 @@ impl BladeAtlasStorage {
         for mut texture in self.polychrome_textures.drain().flatten() {
             texture.destroy(gpu);
         }
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn clear_without_destroy(&mut self) {
+        self.monochrome_textures.textures.clear();
+        self.polychrome_textures.textures.clear();
+        self.monochrome_textures.free_list.clear();
+        self.polychrome_textures.free_list.clear();
     }
 }
 
