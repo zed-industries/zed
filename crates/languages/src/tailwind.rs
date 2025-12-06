@@ -140,7 +140,7 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-            "userLanguages": {
+            "includeLanguages": {
                 "html": "html",
                 "css": "css",
                 "javascript": "javascript",
