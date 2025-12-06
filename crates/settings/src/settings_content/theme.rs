@@ -443,6 +443,9 @@ pub struct ThemeColorsContent {
 
     /// Background Color. Used for the disabled state of an element that should have a different background than the surface it's on.
     ///
+    /// Enabled states are shown when a user can interact with an element, like a toggled on element.
+    #[serde(rename = "element.enabled")]
+    pub element_enabled: Option<String>,
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
     #[serde(rename = "element.disabled")]
     pub element_disabled: Option<String>,

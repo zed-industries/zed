@@ -53,6 +53,8 @@ pub struct ThemeColors {
     pub element_selected: Hsla,
     /// Background Color. Used for the background of selections in a UI element.
     pub element_selection_background: Hsla,
+    /// Enabled states are shown when a user can interact with an element, like a toggled on element.
+    pub element_enabled: Hsla,
     /// Background Color. Used for the disabled state of an element that should have a different background than the surface it's on.
     ///
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.

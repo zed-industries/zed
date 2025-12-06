@@ -297,32 +297,10 @@ impl SwitchColor {
                 cx.theme().colors().border,
             );
         }
-
-        match self {
-            SwitchColor::Default => {
-                let colors = cx.theme().colors();
-                let base_color = colors.text;
-                let bg_color = colors.element_background.blend(base_color.opacity(0.08));
-                (bg_color, colors.border_variant)
-            }
-            SwitchColor::Accent => {
-                let status = cx.theme().status();
-                (status.info.opacity(0.4), status.info.opacity(0.2))
-            }
-            SwitchColor::Error => {
-                let status = cx.theme().status();
-                (status.error.opacity(0.4), status.error.opacity(0.2))
-            }
-            SwitchColor::Warning => {
-                let status = cx.theme().status();
-                (status.warning.opacity(0.4), status.warning.opacity(0.2))
-            }
-            SwitchColor::Success => {
-                let status = cx.theme().status();
-                (status.success.opacity(0.4), status.success.opacity(0.2))
-            }
-            SwitchColor::Custom(color) => (*color, color.opacity(0.6)),
-        }
+        return (
+            cx.theme().colors().element_enabled,
+            cx.theme().colors().border,
+        );
     }
 }
 

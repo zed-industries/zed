@@ -343,6 +343,10 @@ pub fn theme_colors_refinement(
             .element_selected
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        element_enabled: this
+            .element_enabled
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         element_disabled: this
             .element_disabled
             .as_ref()
