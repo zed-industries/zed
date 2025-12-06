@@ -1587,6 +1587,7 @@ pub(crate) fn search_rules(
                 } else {
                     match metadata.id {
                         PromptId::EditWorkflow => None,
+                        PromptId::CommitMessage => None,
                         PromptId::User { uuid } => Some(RulesContextEntry {
                             prompt_id: uuid,
                             title: metadata.title?,

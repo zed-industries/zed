@@ -31,3 +31,7 @@ serde.workspace = true
 text.workspace = true
 util.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
