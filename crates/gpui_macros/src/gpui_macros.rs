@@ -2,6 +2,7 @@ mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
+mod derive_shader_uniform;
 mod derive_visual_context;
 mod register_action;
 mod styles;
@@ -38,6 +39,12 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
+}
+
+/// #[derive(ShaderUniform)] is used to make a struct which can be sent to custom shaders as instance-data.
+#[proc_macro_derive(ShaderUniform)]
+pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
+    derive_shader_uniform::derive_shader_uniform(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`
@@ -120,6 +127,12 @@ pub fn padding_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn position_style_methods(input: TokenStream) -> TokenStream {
     styles::position_style_methods(input)
+}
+
+/// Generates methods for size styles.
+#[proc_macro]
+pub fn size_style_methods(input: TokenStream) -> TokenStream {
+    styles::size_style_methods(input)
 }
 
 /// Generates methods for overflow styles.

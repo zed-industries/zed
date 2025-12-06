@@ -26,8 +26,8 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::{
-    AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    AnyWindowHandle, Bounds, CustomShaderId, Decorations, Globals, GpuSpecs, Modifiers, Output,
+    Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams,
     layer_shell::LayerShellNotSupportedError, px, size,
@@ -1214,6 +1214,22 @@ impl PlatformWindow for WaylandWindow {
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         state.renderer.draw(scene);
+    }
+
+    fn register_shader(
+        &self,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId> {
+        let mut state = self.borrow_mut();
+        state.renderer.register_custom_shader(
+            source,
+            instance_data_name,
+            instance_data_size,
+            instance_data_align,
+        )
     }
 
     fn completed_frame(&self) {

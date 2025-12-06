@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod shader;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
@@ -502,6 +503,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn register_shader(
+        &self,
+        source: &str,
+        instance_data_name: Option<&str>,
+        instance_data_size: usize,
+        instance_data_align: usize,
+    ) -> anyhow::Result<CustomShaderId>;
 
     // macOS specific methods
     fn get_title(&self) -> String {
@@ -904,6 +912,9 @@ impl From<TileId> for etagere::AllocId {
         Self::deserialize(id.0)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CustomShaderId(pub(crate) u32);
 
 pub(crate) struct PlatformInputHandler {
     cx: AsyncWindowContext,
