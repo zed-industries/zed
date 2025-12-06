@@ -671,7 +671,7 @@ impl ThreadStates {
 }
 
 #[derive(Default)]
-struct SessionState {
+pub struct SessionState {
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
@@ -691,7 +691,8 @@ pub struct OutputToken(pub usize);
 pub struct Session {
     pub mode: SessionMode,
     state: SessionState,
-    state_history: Vec<Entity<SessionState>>,
+    state_history: Vec<SessionState>,
+    active_history: Option<usize>,
     id: SessionId,
     label: Option<SharedString>,
     adapter: DebugAdapterName,
@@ -864,6 +865,7 @@ impl Session {
             Self {
                 mode: SessionMode::Booting(None),
                 state_history: Default::default(),
+                active_history: None,
                 state: Default::default(),
                 id: session_id,
                 child_session_ids: HashSet::default(),
@@ -1410,14 +1412,41 @@ impl Session {
         })
     }
 
-    fn push_to_history(&mut self, cx: &mut Context<'_, Session>) {
-        self.state_history
-            .push(cx.new(|_| std::mem::take(&mut self.state)));
+    fn session_state(&self) -> &SessionState {
+        self.active_history
+            .and_then(|ix| self.state_history.get(ix))
+            .unwrap_or_else(|| &self.state)
+    }
+
+    fn push_to_history(&mut self) {
+        self.state_history.push(std::mem::take(&mut self.state));
+    }
+
+    pub fn history(&self) -> &[SessionState] {
+        &self.state_history
+    }
+
+    pub fn go_back_to_history(&mut self, ix: Option<usize>, cx: &mut Context<'_, Session>) {
+        if self.active_history == ix {
+            return;
+        }
+
+        self.active_history = ix;
+        cx.emit(SessionEvent::Threads);
+        cx.emit(SessionEvent::StackTrace);
+        cx.emit(SessionEvent::Variables);
+        cx.emit(SessionEvent::Modules);
+        cx.emit(SessionEvent::LoadedSources);
+        cx.notify();
+    }
+
+    pub fn active_history(&self) -> Option<usize> {
+        self.active_history
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         self.mode.stopped();
-        self.push_to_history(cx);
+        self.push_to_history();
         // todo(debugger): Find a clean way to get around the clone
         let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_running_mut().and_then(|local| {
@@ -1621,9 +1650,16 @@ impl Session {
             );
         }
 
+        if self.active_history.is_some() {
+            return;
+        }
+
+        if self.is_session_terminated {
+            return;
+        }
+
         if !self.state.thread_states.any_stopped_thread()
             && request.type_id() != TypeId::of::<ThreadsCommand>()
-            || self.is_session_terminated
         {
             return;
         }
@@ -1766,15 +1802,14 @@ impl Session {
             cx,
         );
 
-        self.state
+        let state = self.session_state();
+        state
             .threads
             .values()
             .map(|thread| {
                 (
                     thread.dap.clone(),
-                    self.state
-                        .thread_states
-                        .thread_status(ThreadId(thread.dap.id)),
+                    state.thread_states.thread_status(ThreadId(thread.dap.id)),
                 )
             })
             .collect()
@@ -1795,7 +1830,7 @@ impl Session {
             cx,
         );
 
-        &self.state.modules
+        &self.session_state().modules
     }
 
     // CodeLLDB returns the size of a pointed-to-memory, which we can use to make the experience of go-to-memory better.
@@ -2052,7 +2087,7 @@ impl Session {
             },
             cx,
         );
-        &self.state.loaded_sources
+        &self.session_state().loaded_sources
     }
 
     fn fallback_to_manual_restart(
@@ -2224,6 +2259,8 @@ impl Session {
     }
 
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.go_back_to_history(None, cx);
+
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
         self.state.thread_states.continue_thread(thread_id);
@@ -2250,12 +2287,15 @@ impl Session {
     pub fn has_ever_stopped(&self) -> bool {
         self.mode.has_ever_stopped()
     }
+
     pub fn step_over(
         &mut self,
         thread_id: ThreadId,
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
+        self.go_back_to_history(None, cx);
+
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
@@ -2286,6 +2326,8 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
+        self.go_back_to_history(None, cx);
+
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
@@ -2316,6 +2358,8 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
+        self.go_back_to_history(None, cx);
+
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
@@ -2346,6 +2390,8 @@ impl Session {
         granularity: SteppingGranularity,
         cx: &mut Context<Self>,
     ) {
+        self.go_back_to_history(None, cx);
+
         let supports_single_thread_execution_requests =
             self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
@@ -2486,7 +2532,7 @@ impl Session {
             );
         }
 
-        self.state
+        self.session_state()
             .stack_frames
             .get(&stack_frame_id)
             .map(|frame| frame.scopes.as_slice())
@@ -2499,7 +2545,8 @@ impl Session {
         globals: bool,
         locals: bool,
     ) -> Vec<dap::Variable> {
-        let Some(stack_frame) = self.state.stack_frames.get(&stack_frame_id) else {
+        let state = self.session_state();
+        let Some(stack_frame) = state.stack_frames.get(&stack_frame_id) else {
             return Vec::new();
         };
 
@@ -2510,7 +2557,7 @@ impl Session {
                 (scope.name.to_lowercase().contains("local") && locals)
                     || (scope.name.to_lowercase().contains("global") && globals)
             })
-            .filter_map(|scope| self.state.variables.get(&scope.variables_reference))
+            .filter_map(|scope| state.variables.get(&scope.variables_reference))
             .flatten()
             .cloned()
             .collect()
@@ -2591,7 +2638,7 @@ impl Session {
             cx,
         );
 
-        self.state
+        self.session_state()
             .variables
             .get(&variables_reference)
             .cloned()
@@ -2723,7 +2770,7 @@ impl Session {
             },
             cx,
         );
-        self.state.locations.get(&reference).cloned()
+        self.session_state().locations.get(&reference).cloned()
     }
 
     pub fn is_attached(&self) -> bool {
@@ -2763,7 +2810,7 @@ impl Session {
     }
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
-        self.state.thread_states.thread_state(thread_id)
+        self.session_state().thread_states.thread_state(thread_id)
     }
 
     pub fn quirks(&self) -> SessionQuirks {
