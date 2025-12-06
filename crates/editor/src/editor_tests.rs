@@ -10758,7 +10758,7 @@ async fn test_autoclose_with_overrides(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_autoclose_quotes_same_line_with_scope_awareness(cx: &mut TestAppContext) {
+async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -10829,6 +10829,19 @@ async fn test_autoclose_quotes_same_line_with_scope_awareness(cx: &mut TestAppCo
     cx.assert_editor_state(indoc! {r#"
         def main():
             items = ['"""', "'''''", "ˇ"]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(", ", window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("'", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ['"""', "'''''", "", 'ˇ']
     "#});
 }
 
