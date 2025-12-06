@@ -7,6 +7,7 @@ use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use regex::Regex;
+use semver::Version;
 use serde_json::Value;
 use std::{
     ffi::OsString,
@@ -88,7 +89,7 @@ impl LspInstaller for VtslsLspAdapter {
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<TypeScriptVersions> {
+    ) -> Result<Self::BinaryVersion> {
         Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
@@ -115,11 +116,14 @@ impl LspInstaller for VtslsLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: TypeScriptVersions,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(Self::SERVER_PATH);
+
+        let typescript_version = latest_version.typescript_version.to_string();
+        let server_version = latest_version.server_version.to_string();
 
         let mut packages_to_install = Vec::new();
 
@@ -133,7 +137,7 @@ impl LspInstaller for VtslsLspAdapter {
             )
             .await
         {
-            packages_to_install.push((Self::PACKAGE_NAME, latest_version.server_version.as_str()));
+            packages_to_install.push((Self::PACKAGE_NAME, server_version.as_str()));
         }
 
         if self
@@ -146,10 +150,7 @@ impl LspInstaller for VtslsLspAdapter {
             )
             .await
         {
-            packages_to_install.push((
-                Self::TYPESCRIPT_PACKAGE_NAME,
-                latest_version.typescript_version.as_str(),
-            ));
+            packages_to_install.push((Self::TYPESCRIPT_PACKAGE_NAME, typescript_version.as_str()));
         }
 
         self.node

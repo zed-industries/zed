@@ -92,6 +92,7 @@ use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _,
     proto::{LspRequestId, LspRequestMessage as _},
 };
+use semver::Version;
 use serde::Serialize;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -13893,7 +13894,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     async fn npm_package_installed_version(
         &self,
         package_name: &str,
-    ) -> Result<Option<(PathBuf, String)>> {
+    ) -> Result<Option<(PathBuf, Version)>> {
         let local_package_directory = self.worktree_root_path();
         let node_modules_directory = local_package_directory.join("node_modules");
 

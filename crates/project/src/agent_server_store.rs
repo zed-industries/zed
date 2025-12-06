@@ -952,11 +952,10 @@ fn get_or_npm_install_builtin_agent(
         }
 
         versions.sort();
-        let newest_version = if let Some((version, file_name)) = versions.last().cloned()
+        let newest_version = if let Some((version, _)) = versions.last().cloned()
             && minimum_version.is_none_or(|minimum_version| version >= minimum_version)
         {
-            versions.pop();
-            Some(file_name)
+            versions.pop()
         } else {
             None
         };
@@ -982,9 +981,8 @@ fn get_or_npm_install_builtin_agent(
         })
         .detach();
 
-        let version = if let Some(file_name) = newest_version {
+        let version = if let Some((version, file_name)) = newest_version {
             cx.background_spawn({
-                let file_name = file_name.clone();
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
@@ -993,7 +991,7 @@ fn get_or_npm_install_builtin_agent(
                         .await
                         .ok();
                     if let Some(latest_version) = latest_version
-                        && &latest_version != &file_name.to_string_lossy()
+                        && latest_version != version
                     {
                         let download_result = download_latest_version(
                             fs,
@@ -1006,7 +1004,9 @@ fn get_or_npm_install_builtin_agent(
                         if let Some(mut new_version_available) = new_version_available
                             && download_result.is_some()
                         {
-                            new_version_available.send(Some(latest_version)).ok();
+                            new_version_available
+                                .send(Some(latest_version.to_string()))
+                                .ok();
                         }
                     }
                 }

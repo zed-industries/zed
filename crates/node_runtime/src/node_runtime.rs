@@ -226,6 +226,7 @@ impl NodeRuntime {
             .await
             .npm_package_installed_version(local_package_directory, name)
             .await
+            .map(|option| option.map(|version| version.to_string()))
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
@@ -591,7 +592,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         read_package_installed_version(local_package_directory.join("node_modules"), name).await
     }
 }
@@ -713,7 +714,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         read_package_installed_version(local_package_directory.join("node_modules"), name).await
         // todo: allow returning a globally installed version (requires callers not to hard-code the path)
     }
@@ -722,7 +723,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
 pub async fn read_package_installed_version(
     node_module_directory: PathBuf,
     name: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<Version>> {
     let package_json_path = node_module_directory.join(name).join("package.json");
 
     let mut file = match fs::File::open(package_json_path).await {
@@ -775,7 +776,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         &self,
         _local_package_directory: &Path,
         _: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         bail!("{}", self.error_message)
     }
 }

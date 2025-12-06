@@ -736,6 +736,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .npm_package_latest_version(&package_name)
             .await
+            .map(|v| v.to_string())
             .to_wasmtime_result()
     }
 
