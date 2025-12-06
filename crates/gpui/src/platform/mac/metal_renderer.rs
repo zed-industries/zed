@@ -78,10 +78,13 @@ impl InstanceBufferPool {
 
     pub(crate) fn acquire(&mut self, device: &metal::Device) -> InstanceBuffer {
         let buffer = self.buffers.pop().unwrap_or_else(|| {
-            device.new_buffer(
-                self.buffer_size as u64,
-                MTLResourceOptions::StorageModeManaged,
-            )
+            let storage_mode = if device.has_unified_memory() {
+                MTLResourceOptions::StorageModeShared
+            } else {
+                MTLResourceOptions::StorageModeManaged
+            };
+
+            device.new_buffer(self.buffer_size as u64, storage_mode)
         });
         InstanceBuffer {
             metal_buffer: buffer,
