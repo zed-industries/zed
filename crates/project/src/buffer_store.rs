@@ -17,11 +17,11 @@ use language::{
         split_operations,
     },
 };
+use lsp;
 use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
     proto::{self, PeerId},
 };
-use lsp;
 use settings::Settings;
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
