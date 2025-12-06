@@ -3,7 +3,7 @@ use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
-use client::parse_zed_link;
+use client::{ZED_CHANNEL_REGEX, parse_zed_link};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -56,6 +56,9 @@ pub enum OpenRequestKind {
     Setting {
         /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
+    },
+    NativeBrowser {
+        url: String,
     },
 }
 
@@ -111,10 +114,18 @@ impl OpenRequest {
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
-            } else if let Some(request_path) = parse_zed_link(&url, cx) {
-                this.parse_request_path(request_path).log_err();
             } else {
-                log::error!("unhandled url: {}", url);
+                let request_path = parse_zed_link(&url, cx);
+
+                match request_path {
+                    Some(request_path) if ZED_CHANNEL_REGEX.is_match(&request_path) => {
+                        this.parse_channel_path(request_path)?;
+                    }
+                    Some(_) | None if url.starts_with("http://") || url.starts_with("https://") => {
+                        this.kind = Some(OpenRequestKind::NativeBrowser { url });
+                    }
+                    _ => log::error!("unhandled url: {}", url),
+                }
             }
         }
 
@@ -157,7 +168,7 @@ impl OpenRequest {
         Ok(())
     }
 
-    fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
+    fn parse_channel_path(&mut self, request_path: &str) -> Result<()> {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel")
             && let Some(slug) = parts.next()
@@ -174,12 +185,14 @@ impl OpenRequest {
                     .push((channel_id, Some(heading.to_string())));
                 return Ok(());
             }
+
             if next == "notes" {
                 self.open_channel_notes.push((channel_id, None));
                 return Ok(());
             }
         }
-        anyhow::bail!("invalid zed url: {request_path}")
+
+        Ok(())
     }
 }
 

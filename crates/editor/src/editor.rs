@@ -82,7 +82,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, ParticipantIndex, parse_zed_link};
+use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -16960,11 +16960,7 @@ impl Editor {
 
             if let Some(url) = url {
                 cx.update(|window, cx| {
-                    if parse_zed_link(&url, cx).is_some() {
-                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
-                    } else {
-                        cx.open_url(&url);
-                    }
+                    window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
                 })?;
             }
 
