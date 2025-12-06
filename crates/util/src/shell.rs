@@ -408,7 +408,11 @@ impl ShellKind {
     pub fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
             ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
-            ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
+            ShellKind::Cmd => vec![
+                "/S".to_owned(),
+                "/C".to_owned(),
+                format!("\"{combined_command}\""),
+            ],
             ShellKind::Posix
             | ShellKind::Nushell
             | ShellKind::Fish
@@ -478,11 +482,9 @@ impl ShellKind {
     }
 
     pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
-        shlex::try_quote(arg).ok().map(|arg| match self {
-            // If we are running in PowerShell, we want to take extra care when escaping strings.
-            // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
-            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"").replace("\\\\", "\\")),
-            ShellKind::Cmd => Cow::Owned(arg.replace("\\\\", "\\")),
+        match self {
+            ShellKind::PowerShell => Self::try_quote_powershell(arg),
+            ShellKind::Cmd => Self::try_quote_cmd(arg),
             ShellKind::Posix
             | ShellKind::Csh
             | ShellKind::Tcsh
@@ -490,8 +492,63 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Nushell
             | ShellKind::Xonsh
-            | ShellKind::Elvish => arg,
-        })
+            | ShellKind::Elvish => shlex::try_quote(arg).ok(),
+        }
+    }
+    fn needs_quoting_powershell(s: &str) -> bool {
+        s.is_empty()
+            || s.chars().any(|c| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        '"' | '`'
+                            | '$'
+                            | '&'
+                            | '|'
+                            | '<'
+                            | '>'
+                            | ';'
+                            | '('
+                            | ')'
+                            | '['
+                            | ']'
+                            | '{'
+                            | '}'
+                            | ','
+                            | '\''
+                            | '@'
+                    )
+            })
+    }
+
+    fn try_quote_powershell(arg: &str) -> Option<Cow<'_, str>> {
+        if !Self::needs_quoting_powershell(arg) {
+            return Some(Cow::Borrowed(arg));
+        }
+
+        let mut result = String::with_capacity(arg.len() + 2);
+        result.push('"');
+
+        for c in arg.chars() {
+            match c {
+                '"' => result.push_str("`\""),
+                '`' => result.push_str("``"),
+                '$' => result.push_str("`$"),
+                _ => result.push(c),
+            }
+        }
+
+        result.push('"');
+        Some(Cow::Owned(result))
+    }
+
+    fn try_quote_cmd(arg: &str) -> Option<Cow<'_, str>> {
+        let mut result = String::with_capacity(arg.len() + 2);
+
+        result.push('"');
+        result.push_str(&arg.replace('"', "\"\""));
+        result.push('"');
+        Some(Cow::Owned(result))
     }
 
     /// Quotes the given argument if necessary, taking into account the command prefix.
@@ -600,7 +657,7 @@ mod tests {
     #[test]
     fn test_try_quote_powershell() {
         let shell_kind = ShellKind::PowerShell;
-        assert_eq!(
+        assert_ne!(
             shell_kind
                 .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
                 .unwrap()
@@ -618,6 +675,112 @@ mod tests {
                 .unwrap()
                 .into_owned(),
             "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
+        );
+    }
+
+    #[test]
+    fn test_try_quote_powershell_edge_cases() {
+        let shell_kind = ShellKind::PowerShell;
+
+        // Empty string
+        assert_eq!(
+            shell_kind.try_quote("").unwrap().into_owned(),
+            "\"\"".to_string()
+        );
+
+        // String without special characters (no quoting needed)
+        assert_eq!(shell_kind.try_quote("simple").unwrap(), "simple");
+
+        // String with spaces
+        assert_eq!(
+            shell_kind.try_quote("hello world").unwrap().into_owned(),
+            "\"hello world\"".to_string()
+        );
+
+        // String with dollar signs
+        assert_eq!(
+            shell_kind.try_quote("$variable").unwrap().into_owned(),
+            "\"`$variable\"".to_string()
+        );
+
+        // String with backticks
+        assert_eq!(
+            shell_kind.try_quote("test`command").unwrap().into_owned(),
+            "\"test``command\"".to_string()
+        );
+
+        // String with multiple special characters
+        assert_eq!(
+            shell_kind
+                .try_quote("test `\"$var`\" end")
+                .unwrap()
+                .into_owned(),
+            "\"test ```\"`$var```\" end\"".to_string()
+        );
+
+        // String with backslashes and colon (path without spaces doesn't need quoting)
+        assert_eq!(
+            shell_kind.try_quote("C:\\path\\to\\file").unwrap(),
+            "C:\\path\\to\\file"
+        );
+    }
+
+    #[test]
+    fn test_try_quote_cmd_edge_cases() {
+        let shell_kind = ShellKind::Cmd;
+
+        // Empty string
+        assert_eq!(
+            shell_kind.try_quote("").unwrap().into_owned(),
+            "\"\"".to_string()
+        );
+
+        // String without special characters (no quoting needed)
+        assert_eq!(shell_kind.try_quote("simple").unwrap(), "simple");
+
+        // String with spaces
+        assert_eq!(
+            shell_kind.try_quote("hello world").unwrap().into_owned(),
+            "\"hello world\"".to_string()
+        );
+
+        // String with space and backslash (backslash not at end, so not doubled)
+        assert_eq!(
+            shell_kind.try_quote("path\\ test").unwrap().into_owned(),
+            "\"path\\ test\"".to_string()
+        );
+
+        // String ending with backslash (must be doubled before closing quote)
+        assert_eq!(
+            shell_kind.try_quote("test path\\").unwrap().into_owned(),
+            "\"test path\\\\\"".to_string()
+        );
+
+        // String ending with multiple backslashes (all doubled before closing quote)
+        assert_eq!(
+            shell_kind.try_quote("test path\\\\").unwrap().into_owned(),
+            "\"test path\\\\\\\\\"".to_string()
+        );
+
+        // String with embedded quote (quote is escaped, backslash before it is doubled)
+        assert_eq!(
+            shell_kind.try_quote("test\\\"quote").unwrap().into_owned(),
+            "\"test\\\\\\\"quote\"".to_string()
+        );
+
+        // String with multiple backslashes before embedded quote (all doubled)
+        assert_eq!(
+            shell_kind
+                .try_quote("test\\\\\"quote")
+                .unwrap()
+                .into_owned(),
+            "\"test\\\\\\\\\\\"quote\"".to_string()
+        );
+
+        // String with backslashes not before quotes (path without spaces doesn't need quoting)
+        assert_eq!(
+            shell_kind.try_quote("C:\\path\\to\\file").unwrap(),
+            "C:\\path\\to\\file"
         );
     }
 

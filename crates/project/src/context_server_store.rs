@@ -411,11 +411,11 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
-
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
+
             async move |this, cx| {
                 match server.clone().start(cx).await {
                     Ok(_) => {
