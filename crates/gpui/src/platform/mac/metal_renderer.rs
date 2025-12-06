@@ -76,9 +76,13 @@ impl InstanceBufferPool {
         self.buffers.clear();
     }
 
-    pub(crate) fn acquire(&mut self, device: &metal::Device) -> InstanceBuffer {
+    pub(crate) fn acquire(
+        &mut self,
+        device: &metal::Device,
+        unified_memory: bool,
+    ) -> InstanceBuffer {
         let buffer = self.buffers.pop().unwrap_or_else(|| {
-            let storage_mode = if device.has_unified_memory() {
+            let storage_mode = if unified_memory {
                 MTLResourceOptions::StorageModeShared
             } else {
                 MTLResourceOptions::StorageModeManaged
@@ -102,6 +106,7 @@ impl InstanceBufferPool {
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
+    unified_memory: bool,
     presents_with_transaction: bool,
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
@@ -182,11 +187,8 @@ impl MetalRenderer {
             output
         }
 
-        let storage_mode = if device.has_unified_memory() {
-            MTLResourceOptions::StorageModeShared
-        } else {
-            MTLResourceOptions::StorageModeManaged
-        };
+        let unified_memory = device.has_unified_memory();
+
         let unit_vertices = [
             to_float2_bits(point(0., 0.)),
             to_float2_bits(point(1., 0.)),
@@ -198,7 +200,11 @@ impl MetalRenderer {
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
             mem::size_of_val(&unit_vertices) as u64,
-            storage_mode,
+            if unified_memory {
+                MTLResourceOptions::StorageModeShared
+            } else {
+                MTLResourceOptions::StorageModeManaged
+            },
         );
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
@@ -276,6 +282,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            unified_memory,
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
@@ -386,7 +393,10 @@ impl MetalRenderer {
         };
 
         loop {
-            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+            let mut instance_buffer = self
+                .instance_buffer_pool
+                .lock()
+                .acquire(&self.device, self.unified_memory);
 
             let command_buffer =
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
@@ -558,10 +568,14 @@ impl MetalRenderer {
 
         command_encoder.end_encoding();
 
-        instance_buffer.metal_buffer.did_modify_range(NSRange {
-            location: 0,
-            length: instance_offset as NSUInteger,
-        });
+        if !self.unified_memory {
+            // Sync the instance buffer to the GPU
+            instance_buffer.metal_buffer.did_modify_range(NSRange {
+                location: 0,
+                length: instance_offset as NSUInteger,
+            });
+        }
+
         Ok(command_buffer.to_owned())
     }
 
