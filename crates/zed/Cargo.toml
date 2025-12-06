@@ -145,6 +145,7 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
+file_explorer.workspace = true
 time.workspace = true
 title_bar.workspace = true
 ztracing.workspace = true
