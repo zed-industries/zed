@@ -97,9 +97,7 @@ impl FileExplorer {
             cx,
         );
 
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(40.).into()))
-        });
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
