@@ -34,44 +34,6 @@ impl Render for CsvPreviewView {
 }
 
 impl CsvPreviewView {
-    /// Generate ordered row indices based on current ordering settings.
-    /// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
-    /// (display columns include the line number column at index 0)
-    fn generate_ordered_indices(&self) -> Vec<usize> {
-        let mut indices: Vec<usize> = (0..self.contents.rows.len()).collect();
-
-        if let Some(ordering) = self.ordering {
-            indices.sort_by(|&a, &b| {
-                let row_a = &self.contents.rows[a];
-                let row_b = &self.contents.rows[b];
-
-                let val_a = row_a
-                    .get(ordering.col_idx)
-                    .map(|s| s.as_ref())
-                    .unwrap_or("");
-                let val_b = row_b
-                    .get(ordering.col_idx)
-                    .map(|s| s.as_ref())
-                    .unwrap_or("");
-
-                // Try numeric comparison first, fall back to string comparison
-                let cmp = match (val_a.parse::<f64>(), val_b.parse::<f64>()) {
-                    (Ok(num_a), Ok(num_b)) => num_a
-                        .partial_cmp(&num_b)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                    _ => val_a.cmp(val_b),
-                };
-
-                match ordering.direction {
-                    OrderingDirection::Asc => cmp,
-                    OrderingDirection::Desc => cmp.reverse(),
-                }
-            });
-        }
-
-        indices
-    }
-
     /// Create a header element with text on the left and clickable sort button on the right
     fn create_header_element(
         &self,
@@ -232,7 +194,7 @@ impl CsvPreviewView {
             .resizable_columns(resize_behaviors, current_widths, cx)
             .header(headers_array)
             .uniform_list("csv-table", row_count, {
-                let muted_color = cx.theme().colors().text_muted;
+                let line_num_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                     let ordered_indices = this.generate_ordered_indices();
@@ -250,7 +212,7 @@ impl CsvPreviewView {
                             elements.push(
                                 div()
                                     .child(line_number)
-                                    .text_color(muted_color)
+                                    .text_color(line_num_text_color)
                                     .into_any_element(),
                             );
 
@@ -259,12 +221,14 @@ impl CsvPreviewView {
                                 let cell_content: SharedString =
                                     row.get(col).cloned().unwrap_or_else(|| "".into());
 
-                                let is_selected = this.is_cell_selected(row_index, col);
+                                // Use display_index for selection instead of row_index
+                                let is_selected = this.is_cell_selected(display_index, col);
 
                                 elements.push(
                                     div()
                                         .id(ElementId::NamedInteger(
-                                            format!("csv-cell-{}-{}", row_index, col).into(),
+                                            format!("csv-display-cell-{}-{}", display_index, col)
+                                                .into(),
                                             0,
                                         ))
                                         .child(cell_content)
@@ -274,7 +238,7 @@ impl CsvPreviewView {
                                             let view = cx.entity();
                                             move |_event, _window, cx| {
                                                 view.update(cx, |this, cx| {
-                                                    this.start_selection(row_index, col, cx);
+                                                    this.start_selection(display_index, col, cx);
                                                 });
                                             }
                                         })
@@ -284,7 +248,9 @@ impl CsvPreviewView {
                                                 view.update(cx, |this, cx| {
                                                     if this.is_selecting {
                                                         this.extend_selection_to(
-                                                            row_index, col, cx,
+                                                            display_index,
+                                                            col,
+                                                            cx,
                                                         );
                                                     }
                                                 });
