@@ -2,6 +2,7 @@
 mod file_explorer_tests;
 
 use file_icons::FileIcons;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, ParentElement, Render, Styled, Task, WeakEntity, Window, actions, px,
@@ -12,8 +13,9 @@ use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{path::Path, sync::Arc};
 use ui::{
-    Button, ContextMenu, Icon, IconButton, IconName, IconSize, Indicator, KeyBinding, Label,
-    ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    Button, ContextMenu, HighlightedLabel, Icon, IconButton, IconName, IconSize, Indicator,
+    KeyBinding, Label, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{ModalView, SplitDirection, Workspace, item::PreviewTabsSettings, pane};
@@ -273,13 +275,10 @@ impl FileExplorer {
     ) {
         let result = self.picker.update(cx, |picker, cx| {
             let delegate = &picker.delegate;
-            let Some(entry) = delegate
-                .filtered_entries
-                .get(delegate.selected_index)
-                .cloned()
-            else {
+            let Some(string_match) = delegate.matches.get(delegate.selected_index) else {
                 return None;
             };
+            let entry = delegate.all_entries[string_match.candidate_id].clone();
 
             let allow_preview =
                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_explorer;
@@ -381,7 +380,7 @@ pub struct FileExplorerDelegate {
     worktree_id: Option<WorktreeId>,
     current_path: Arc<RelPath>,
     all_entries: Vec<FileExplorerEntry>,
-    filtered_entries: Vec<FileExplorerEntry>,
+    matches: Vec<StringMatch>,
     selected_index: usize,
     include_ignored: Option<bool>,
     filter_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -408,7 +407,7 @@ impl FileExplorerDelegate {
             worktree_id,
             current_path,
             all_entries: Vec::new(),
-            filtered_entries: Vec::new(),
+            matches: Vec::new(),
             selected_index: 0,
             include_ignored: None,
             filter_popover_menu_handle: PopoverMenuHandle::default(),
@@ -434,7 +433,7 @@ impl FileExplorerDelegate {
                 .collect();
             worktrees.sort_by_key(|a| a.display_name());
             self.all_entries = worktrees;
-            self.filtered_entries = self.all_entries.clone();
+            self.matches = self.create_matches_from_entries();
             self.selected_index = 0;
             return;
         };
@@ -484,22 +483,38 @@ impl FileExplorerDelegate {
             self.all_entries.push(FileExplorerEntry::Entry(file));
         }
 
-        self.filtered_entries = self.all_entries.clone();
+        self.matches = self.create_matches_from_entries();
 
         self.selected_index = self
             .initial_selected_path
             .take()
             .and_then(|target_path| {
-                self.filtered_entries.iter().position(|entry| match entry {
-                    FileExplorerEntry::ParentDirectory
-                    | FileExplorerEntry::AllWorktrees
-                    | FileExplorerEntry::Worktree(..) => false,
-                    FileExplorerEntry::Entry(e) => {
-                        e.path.file_name().map(|s| s.to_string()).as_deref() == Some(&target_path)
+                self.matches.iter().position(|m| {
+                    match &self.all_entries[m.candidate_id] {
+                        FileExplorerEntry::ParentDirectory
+                        | FileExplorerEntry::AllWorktrees
+                        | FileExplorerEntry::Worktree(..) => false,
+                        FileExplorerEntry::Entry(e) => {
+                            e.path.file_name().map(|s| s.to_string()).as_deref()
+                                == Some(&target_path)
+                        }
                     }
                 })
             })
             .unwrap_or(0);
+    }
+
+    fn create_matches_from_entries(&self) -> Vec<StringMatch> {
+        self.all_entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| StringMatch {
+                candidate_id: index,
+                string: entry.display_name(),
+                positions: Vec::new(),
+                score: 0.0,
+            })
+            .collect()
     }
 
     fn navigate_to_parent(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -615,7 +630,7 @@ impl PickerDelegate for FileExplorerDelegate {
     }
 
     fn match_count(&self) -> usize {
-        self.filtered_entries.len()
+        self.matches.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -624,9 +639,9 @@ impl PickerDelegate for FileExplorerDelegate {
 
     fn separators_after_indices(&self) -> Vec<usize> {
         if self
-            .filtered_entries
+            .matches
             .first()
-            .is_some_and(|e| matches!(e, FileExplorerEntry::ParentDirectory))
+            .is_some_and(|m| matches!(self.all_entries[m.candidate_id], FileExplorerEntry::ParentDirectory))
         {
             vec![0]
         } else {
@@ -642,37 +657,56 @@ impl PickerDelegate for FileExplorerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query = query.to_lowercase();
-
         if query.is_empty() {
-            self.filtered_entries = self.all_entries.clone();
+            self.matches = self.create_matches_from_entries();
+            if self.selected_index >= self.matches.len() {
+                self.selected_index = self.matches.len().saturating_sub(1);
+            }
+            cx.notify();
+            Task::ready(())
         } else {
-            self.filtered_entries = self
+            let candidates: Vec<StringMatchCandidate> = self
                 .all_entries
                 .iter()
-                .filter(|entry| {
-                    let name = entry.display_name().to_lowercase();
-                    name.contains(&query)
-                })
-                .cloned()
+                .enumerate()
+                .map(|(id, entry)| StringMatchCandidate::new(id, &entry.display_name()))
                 .collect();
-        }
 
-        if self.selected_index >= self.filtered_entries.len() {
-            self.selected_index = self.filtered_entries.len().saturating_sub(1);
-        }
+            let executor = cx.background_executor().clone();
+            cx.spawn_in(window, async move |picker, cx| {
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    true,
+                    10000,
+                    &Default::default(),
+                    executor,
+                )
+                .await;
 
-        cx.notify();
-        Task::ready(())
+                picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.matches = matches;
+                        if picker.delegate.selected_index >= picker.delegate.matches.len() {
+                            picker.delegate.selected_index =
+                                picker.delegate.matches.len().saturating_sub(1);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            })
+        }
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(entry) = self.filtered_entries.get(self.selected_index).cloned() else {
+        let Some(string_match) = self.matches.get(self.selected_index) else {
             return;
         };
+        let entry = self.all_entries[string_match.candidate_id].clone();
 
         match entry {
             FileExplorerEntry::ParentDirectory | FileExplorerEntry::AllWorktrees => {
@@ -743,7 +777,8 @@ impl PickerDelegate for FileExplorerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = self.filtered_entries.get(ix)?;
+        let string_match = self.matches.get(ix)?;
+        let entry = &self.all_entries[string_match.candidate_id];
 
         let (icon_name, file_icon) = match entry {
             FileExplorerEntry::ParentDirectory => (Some(IconName::Folder), None),
@@ -761,19 +796,11 @@ impl PickerDelegate for FileExplorerDelegate {
             }
         };
 
-        let (display_name, suffix) = match entry {
-            FileExplorerEntry::ParentDirectory => ("..".to_string(), ""),
-            FileExplorerEntry::AllWorktrees => ("All Worktrees".to_string(), ""),
-            FileExplorerEntry::Worktree(_, name) => (name.as_ref().as_unix_str().to_string(), ""),
-            FileExplorerEntry::Entry(e) => {
-                let name = e
-                    .path
-                    .file_name()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| ".".to_string());
-                let suffix = if e.is_dir() { "/" } else { "" };
-                (name, suffix)
-            }
+        let is_dir = match entry {
+            FileExplorerEntry::ParentDirectory => true,
+            FileExplorerEntry::AllWorktrees => false,
+            FileExplorerEntry::Worktree(..) => false,
+            FileExplorerEntry::Entry(e) => e.is_dir(),
         };
 
         let start_icon = file_icon.or_else(|| icon_name.map(|n| Icon::new(n).color(Color::Muted)));
@@ -784,7 +811,14 @@ impl PickerDelegate for FileExplorerDelegate {
                 .start_slot::<Icon>(start_icon)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(format!("{}{}", display_name, suffix))),
+                .child(
+                    h_flex()
+                        .child(HighlightedLabel::new(
+                            entry.display_name(),
+                            string_match.positions.clone(),
+                        ))
+                        .when(is_dir, |this| this.child(Label::new("/"))),
+                ),
         )
     }
 

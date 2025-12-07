@@ -73,9 +73,9 @@ async fn test_directory_listing(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // No parent directory at worktree root
         assert_eq!(entries, vec!["src", "README.md"]);
@@ -112,9 +112,9 @@ async fn test_navigate_into_directory(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // Now in subdirectory, parent directory entry appears
         assert_eq!(entries, vec!["..", "lib.rs", "main.rs"]);
@@ -153,9 +153,9 @@ async fn test_navigate_to_parent(cx: &mut TestAppContext) {
         assert!(
             picker
                 .delegate
-                .filtered_entries
+                .matches
                 .iter()
-                .any(|e| e.display_name() == "..")
+                .any(|m| picker.delegate.all_entries[m.candidate_id].display_name() == "..")
         );
     });
 
@@ -165,9 +165,9 @@ async fn test_navigate_to_parent(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         assert_eq!(entries, vec!["src", "README.md"]);
     });
@@ -195,9 +195,9 @@ async fn test_ignored_files_toggle(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // No parent directory at worktree root
         // .gitignore is shown but ignored.txt is not
@@ -210,9 +210,9 @@ async fn test_ignored_files_toggle(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // Now ignored files are shown
         assert_eq!(entries, vec![".gitignore", "ignored.txt", "visible.txt"]);
@@ -224,9 +224,9 @@ async fn test_ignored_files_toggle(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // Back to not showing ignored files
         assert_eq!(entries, vec![".gitignore", "visible.txt"]);
@@ -255,7 +255,7 @@ async fn test_search_filtering(cx: &mut TestAppContext) {
 
     picker.update(cx, |picker, _| {
         // 3 entries: just the 3 files (no parent directory at worktree root)
-        assert_eq!(picker.delegate.filtered_entries.len(), 3);
+        assert_eq!(picker.delegate.matches.len(), 3);
     });
 
     cx.simulate_input("ban");
@@ -263,9 +263,9 @@ async fn test_search_filtering(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         assert_eq!(entries, vec!["banana.txt"]);
     });
@@ -275,7 +275,7 @@ async fn test_search_filtering(cx: &mut TestAppContext) {
     });
 
     picker.update(cx, |picker, _| {
-        assert_eq!(picker.delegate.filtered_entries.len(), 3);
+        assert_eq!(picker.delegate.matches.len(), 3);
     });
 }
 
@@ -303,9 +303,9 @@ async fn test_directories_sorted_before_files(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // No parent directory at worktree root
         assert_eq!(entries, vec!["zzz_dir", "aaa_file.txt", "bbb_file.txt"]);
@@ -339,9 +339,9 @@ async fn test_empty_directory(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         // Now in subdirectory, parent directory entry appears
         assert_eq!(entries, vec![".."]);
@@ -371,9 +371,9 @@ async fn test_case_insensitive_search(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         let entries: Vec<_> = picker
             .delegate
-            .filtered_entries
+            .matches
             .iter()
-            .map(|e| e.display_name())
+            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
         assert_eq!(entries, vec!["MyFile.txt"]);
     });
