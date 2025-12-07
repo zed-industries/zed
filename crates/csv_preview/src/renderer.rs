@@ -27,10 +27,7 @@ impl Render for CsvPreviewView {
                         .child("No CSV content to display")
                         .into_any_element()
                 } else {
-                    // Add 1 for the line number column
-                    let column_count = self.contents.headers.len() + 1;
-
-                    self.render_table_with_cols(column_count, cx)
+                    self.render_table_with_cols(cx)
                 }
             })
     }
@@ -149,8 +146,20 @@ impl CsvPreviewView {
         current_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let widths = [DefiniteLength::Fraction(1. / COLS as f32); COLS];
-        let resize_behaviors = [TableResizeBehavior::Resizable; COLS];
+        assert!(COLS > 0, "Expected to have at least 1 column");
+
+        let remaining_col_number = COLS - 1;
+        let fraction = if remaining_col_number > 0 {
+            1. / remaining_col_number as f32
+        } else {
+            1. // only columns with line numbers is present. Put 100%, but it will be overwritten anyways :D
+        };
+        let mut widths = [DefiniteLength::Fraction(fraction); COLS];
+        let line_number_width = self.calculate_line_number_column_width();
+        widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
+
+        let mut resize_behaviors = [TableResizeBehavior::Resizable; COLS];
+        resize_behaviors[0] = TableResizeBehavior::None;
 
         self.create_table_inner(
             self.contents.rows.len(),
@@ -159,6 +168,28 @@ impl CsvPreviewView {
             current_widths,
             cx,
         )
+    }
+
+    /// Calculate the optimal width for the line number column based on the total number of rows.
+    ///
+    /// This ensures the column is wide enough to display the largest line number comfortably,
+    /// but not wastefully wide for small files.
+    fn calculate_line_number_column_width(&self) -> f32 {
+        let max_line_number = self.contents.rows.len() + 1;
+
+        // Count digits in the maximum line number
+        let digit_count = if max_line_number == 0 {
+            1
+        } else {
+            (max_line_number as f32).log10().floor() as usize + 1
+        };
+
+        let char_width_px = 9.0; // TODO: get real width of the characters
+
+        let base_width = (digit_count as f32) * char_width_px;
+        let padding = 20.0;
+        let min_width = 50.;
+        (base_width + padding).max(min_width)
     }
 
     fn create_table_inner<const COLS: usize>(
