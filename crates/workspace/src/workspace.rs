@@ -3777,7 +3777,7 @@ impl Workspace {
         &mut self,
         pane: WeakEntity<Pane>,
         project_entry_id: Option<ProjectEntryId>,
-        project_path: ProjectPath,
+        _project_path: ProjectPath,
         build_item: WorkspaceItemBuilder,
         focus_item: bool,
         allow_preview: bool,
