@@ -3859,9 +3859,9 @@ impl Workspace {
             pane.open_item(
                 project_entry_id,
                 project_path,
-                false,
+                focus_item,
                 allow_preview,
-                false,
+                activate,
                 None,
                 window,
                 cx,
@@ -3889,9 +3889,6 @@ impl Workspace {
             if let Some(item) = pane.active_item() {
                 let index = pane.index_for_item(item.as_ref()).unwrap();
                 pane.activate_item(index, activate, focus_item, window, cx);
-                if focus_item {
-                    pane.focus_active_item(window, cx)
-                };
             }
         });
 
