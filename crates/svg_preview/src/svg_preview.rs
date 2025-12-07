@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use gpui::{App, Context, Window, actions};
-use language::LanguageRegistry;
-use workspace::{ItemHandle, PreviewFactory, Workspace, register_preview_factory};
+
+use workspace::{
+    ItemHandle, PreviewFactory, PreviewSourceExtractor, Workspace, register_preview_factory,
+    register_preview_source_extractor,
+};
 
 pub mod svg_preview_view;
 
@@ -21,6 +24,9 @@ actions!(
 pub fn init(cx: &mut App) {
     // Register the preview factory
     register_preview_factory(Arc::new(SvgPreviewFactory), cx);
+
+    // Register the source extractor for OpenEditor action
+    register_preview_source_extractor(Arc::new(SvgSourceExtractor), cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -71,5 +77,29 @@ impl PreviewFactory for SvgPreviewFactory {
         let preview = SvgPreviewView::new(SvgPreviewMode::Default, buffer, workspace, window, cx);
 
         Box::new(preview)
+    }
+}
+
+struct SvgSourceExtractor;
+
+impl PreviewSourceExtractor for SvgSourceExtractor {
+    fn extract_source(
+        &self,
+        item: &dyn ItemHandle,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::App,
+    ) -> Option<Box<dyn ItemHandle>> {
+        // Try to downcast to SvgPreviewView
+        let preview = item
+            .to_any_view()
+            .downcast::<svg_preview_view::SvgPreviewView>()
+            .ok()?;
+
+        // SVG preview doesn't maintain a reference to the editor/MultiBuffer
+        // in a way we can easily extract. For now, return None and let the
+        // user open the file through other means.
+        // TODO: Enhance SVG preview to store the source MultiBuffer for extraction
+        let _ = preview;
+        None
     }
 }

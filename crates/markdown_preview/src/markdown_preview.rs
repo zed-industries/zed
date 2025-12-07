@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use gpui::{App, Context, Window, actions};
-use workspace::{ItemHandle, PreviewFactory, Workspace, register_preview_factory};
+use workspace::{
+    ItemHandle, PreviewFactory, PreviewSourceExtractor, Workspace, register_preview_factory,
+    register_preview_source_extractor,
+};
 
 pub mod markdown_elements;
 mod markdown_minifier;
@@ -28,6 +31,9 @@ actions!(
 pub fn init(cx: &mut App) {
     // Register the preview factory
     register_preview_factory(Arc::new(MarkdownPreviewFactory), cx);
+
+    // Register the source extractor for OpenEditor action
+    register_preview_source_extractor(Arc::new(MarkdownSourceExtractor), cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -82,5 +88,27 @@ impl PreviewFactory for MarkdownPreviewFactory {
         );
 
         Box::new(preview)
+    }
+}
+
+struct MarkdownSourceExtractor;
+
+impl PreviewSourceExtractor for MarkdownSourceExtractor {
+    fn extract_source(
+        &self,
+        item: &dyn ItemHandle,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> Option<Box<dyn ItemHandle>> {
+        // Try to downcast to MarkdownPreviewView
+        let preview = item
+            .to_any_view()
+            .downcast::<markdown_preview_view::MarkdownPreviewView>()
+            .ok()?;
+
+        // Get the active editor from the preview
+        let editor = preview.read(cx).active_editor()?;
+
+        Some(Box::new(editor))
     }
 }

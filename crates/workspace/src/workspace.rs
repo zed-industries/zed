@@ -4,6 +4,7 @@ pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
+mod open_editor;
 pub mod pane;
 pub mod pane_group;
 mod path_list;
@@ -58,6 +59,9 @@ use node_runtime::NodeRuntime;
 use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
+};
+pub use open_editor::{
+    PreviewSourceExtractor, PreviewSourceRegistry, register_preview_source_extractor,
 };
 pub use pane::*;
 pub use pane_group::{
@@ -231,6 +235,8 @@ actions!(
         NewWindow,
         /// Opens a file or directory.
         Open,
+        /// Opens the source editor for the current preview.
+        OpenEditor,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -568,6 +574,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);
+    open_editor::init(cx);
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
     cx.on_action(|_: &Reload, cx| reload(cx));

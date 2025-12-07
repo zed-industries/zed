@@ -250,6 +250,12 @@ impl MarkdownPreviewView {
         }
     }
 
+    pub fn active_editor(&self) -> Option<Entity<Editor>> {
+        self.active_editor
+            .as_ref()
+            .map(|state| state.editor.clone())
+    }
+
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
         let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton()
