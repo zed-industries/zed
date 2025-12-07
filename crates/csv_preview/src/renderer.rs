@@ -1,4 +1,4 @@
-use gpui::{AnyElement, ElementId, Entity};
+use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use ui::{
     Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
     TableResizeBehavior, div, h_flex, prelude::*,
@@ -194,7 +194,7 @@ impl CsvPreviewView {
             std::array::from_fn(|_| iter.next().unwrap())
         };
 
-        Table::new()
+        let table = Table::new()
             .interactable(&self.table_interaction_state)
             .striped()
             .column_widths(widths)
@@ -202,7 +202,8 @@ impl CsvPreviewView {
             .header(headers_array)
             .uniform_list("csv-table", row_count, {
                 let muted_color = cx.theme().colors().text_muted;
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
+                let selected_bg = cx.theme().colors().element_selected;
+                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                     let ordered_indices = this.generate_ordered_indices();
 
                     range
@@ -226,7 +227,48 @@ impl CsvPreviewView {
                             for col in 0..(COLS - 1) {
                                 let cell_content: SharedString =
                                     row.get(col).cloned().unwrap_or_else(|| "".into());
-                                elements.push(div().child(cell_content).into_any_element());
+
+                                let is_selected = this.is_cell_selected(row_index, col);
+
+                                elements.push(
+                                    div()
+                                        .id(ElementId::NamedInteger(
+                                            format!("csv-cell-{}-{}", row_index, col).into(),
+                                            0,
+                                        ))
+                                        .child(cell_content)
+                                        .cursor_pointer()
+                                        .when(is_selected, |div| div.bg(selected_bg))
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let view = cx.entity();
+                                            move |_event, _window, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.start_selection(row_index, col, cx);
+                                                });
+                                            }
+                                        })
+                                        .on_mouse_move({
+                                            let view = cx.entity();
+                                            move |_event, _window, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    if this.is_selecting {
+                                                        this.extend_selection_to(
+                                                            row_index, col, cx,
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        })
+                                        .on_mouse_up(MouseButton::Left, {
+                                            let view = cx.entity();
+                                            move |_event, _window, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.end_selection(cx);
+                                                });
+                                            }
+                                        })
+                                        .into_any_element(),
+                                );
                             }
 
                             let elements_array: [gpui::AnyElement; COLS] =
@@ -235,6 +277,20 @@ impl CsvPreviewView {
                         })
                         .collect()
                 })
+            });
+
+        div()
+            .w_full()
+            .h_full()
+            .child(table)
+            // Workaround for selection to end_selection, when cursor is not over selectable cell
+            .on_mouse_up(MouseButton::Left, {
+                let view = cx.entity();
+                move |_event, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.end_selection(cx);
+                    });
+                }
             })
             .into_any_element()
     }
