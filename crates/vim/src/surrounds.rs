@@ -80,7 +80,6 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: SurroundsType,
-        add_spaces: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -93,8 +92,8 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let pair = bracket_pair_for_str(&text);
-                let surround = add_spaces && pair.end != surround_alias((*text).as_ref());
+                let pair = bracket_pair_for_str_vim(&text);
+                let surround = pair.end != surround_alias((*text).as_ref());
                 let display_map = editor.display_snapshot(cx);
                 let display_selections = editor.selections.all_adjusted_display(&display_map);
                 let mut edits = Vec::new();
@@ -184,7 +183,7 @@ impl Vim {
         let Some(first_char) = text.chars().next() else {
             return;
         };
-        let Some(surround_pair) = surround_pair_for_char(first_char) else {
+        let Some(surround_pair) = surround_pair_for_char_vim(first_char) else {
             return;
         };
         let Some(pair_object) = surround_pair.to_object() else {
@@ -285,7 +284,7 @@ impl Vim {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
-                    let pair = bracket_pair_for_str(&text);
+                    let pair = bracket_pair_for_str_vim(&text);
 
                     // A single space should be added if the new surround is a
                     // bracket and not a quote (pair.start != pair.end) and if
@@ -561,7 +560,7 @@ fn object_to_surround_pair(object: Object) -> Option<SurroundPair> {
         Object::AngleBrackets => '<',
         _ => return None,
     };
-    surround_pair_for_char(open)
+    surround_pair_for_char_vim(open)
 }
 
 pub fn surround_alias(ch: &str) -> &str {
@@ -574,10 +573,16 @@ pub fn surround_alias(ch: &str) -> &str {
     }
 }
 
+fn literal_surround_pair(ch: char) -> Option<SurroundPair> {
+    SURROUND_PAIRS
+        .iter()
+        .find(|p| p.open == ch || p.close == ch)
+        .copied()
+}
+
 /// Resolve a character (including Vim aliases) to its surround pair.
 /// Returns None for 'm' (match nearest) or unknown chars.
-/// Used by Vim surround operations.
-pub fn surround_pair_for_char(ch: char) -> Option<SurroundPair> {
+pub fn surround_pair_for_char_vim(ch: char) -> Option<SurroundPair> {
     let resolved = match ch {
         'b' => ')',
         'B' => '}',
@@ -586,18 +591,39 @@ pub fn surround_pair_for_char(ch: char) -> Option<SurroundPair> {
         'm' => return None,
         _ => ch,
     };
-    SURROUND_PAIRS
-        .iter()
-        .find(|p| p.open == resolved || p.close == resolved)
-        .copied()
+    literal_surround_pair(resolved)
 }
 
 /// Get a BracketPair for the given string, with fallback for unknown chars.
 /// For vim surround operations that accept any character as a surround.
-pub fn bracket_pair_for_str(text: &str) -> BracketPair {
+pub fn bracket_pair_for_str_vim(text: &str) -> BracketPair {
     text.chars()
         .next()
-        .and_then(surround_pair_for_char)
+        .and_then(surround_pair_for_char_vim)
+        .map(|p| p.to_bracket_pair())
+        .unwrap_or_else(|| BracketPair {
+            start: text.to_string(),
+            end: text.to_string(),
+            close: true,
+            surround: true,
+            newline: false,
+        })
+}
+
+/// Resolve a character to its surround pair using Helix semantics (no Vim aliases).
+/// Returns None only for 'm' (match nearest). Unknown chars map to symmetric pairs.
+pub fn surround_pair_for_char_helix(ch: char) -> Option<SurroundPair> {
+    if ch == 'm' {
+        return None;
+    }
+    literal_surround_pair(ch).or_else(|| Some(SurroundPair::new(ch, ch)))
+}
+
+/// Get a BracketPair for the given string in Helix mode (literal, symmetric fallback).
+pub fn bracket_pair_for_str_helix(text: &str) -> BracketPair {
+    text.chars()
+        .next()
+        .and_then(surround_pair_for_char_helix)
         .map(|p| p.to_bracket_pair())
         .unwrap_or_else(|| BracketPair {
             start: text.to_string(),
@@ -1654,31 +1680,38 @@ mod test {
 
     #[test]
     fn test_surround_pair_for_char() {
-        use super::{SURROUND_PAIRS, surround_pair_for_char};
+        use super::{SURROUND_PAIRS, surround_pair_for_char_helix, surround_pair_for_char_vim};
 
         fn as_tuple(pair: Option<super::SurroundPair>) -> Option<(char, char)> {
             pair.map(|p| (p.open, p.close))
         }
 
-        assert_eq!(as_tuple(surround_pair_for_char('b')), Some(('(', ')')));
-        assert_eq!(as_tuple(surround_pair_for_char('B')), Some(('{', '}')));
-        assert_eq!(as_tuple(surround_pair_for_char('r')), Some(('[', ']')));
-        assert_eq!(as_tuple(surround_pair_for_char('a')), Some(('<', '>')));
+        assert_eq!(as_tuple(surround_pair_for_char_vim('b')), Some(('(', ')')));
+        assert_eq!(as_tuple(surround_pair_for_char_vim('B')), Some(('{', '}')));
+        assert_eq!(as_tuple(surround_pair_for_char_vim('r')), Some(('[', ']')));
+        assert_eq!(as_tuple(surround_pair_for_char_vim('a')), Some(('<', '>')));
 
-        assert_eq!(surround_pair_for_char('m'), None);
+        assert_eq!(surround_pair_for_char_vim('m'), None);
 
         for pair in SURROUND_PAIRS {
             assert_eq!(
-                as_tuple(surround_pair_for_char(pair.open)),
+                as_tuple(surround_pair_for_char_vim(pair.open)),
                 Some((pair.open, pair.close))
             );
             assert_eq!(
-                as_tuple(surround_pair_for_char(pair.close)),
+                as_tuple(surround_pair_for_char_vim(pair.close)),
                 Some((pair.open, pair.close))
             );
         }
 
         // Test unknown char returns None
-        assert_eq!(surround_pair_for_char('x'), None);
+        assert_eq!(surround_pair_for_char_vim('x'), None);
+
+        // Helix resolves literal chars and falls back to symmetric pairs.
+        assert_eq!(
+            as_tuple(surround_pair_for_char_helix('*')),
+            Some(('*', '*'))
+        );
+        assert_eq!(surround_pair_for_char_helix('m'), None);
     }
 }
