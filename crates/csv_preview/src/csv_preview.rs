@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
+use std::collections::HashSet;
 
 use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
@@ -45,6 +46,9 @@ pub struct CsvPreviewView {
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) ordering: Option<Ordering>,
+    pub(crate) selected_cells: HashSet<(usize, usize)>, // (row, col) - using CSV data indices
+    pub(crate) selection_start: Option<(usize, usize)>,
+    pub(crate) is_selecting: bool,
 }
 
 impl CsvPreviewView {
@@ -94,11 +98,62 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
                 ordering: None,
+                selected_cells: HashSet::new(),
+                selection_start: None,
+                is_selecting: false,
             };
 
             view.set_editor(editor.clone(), cx);
             view
         })
+    }
+
+    /// Start cell selection at the given position
+    pub(crate) fn start_selection(&mut self, row: usize, col: usize, cx: &mut Context<Self>) {
+        self.selected_cells.clear();
+        self.selected_cells.insert((row, col));
+        self.selection_start = Some((row, col));
+        self.is_selecting = true;
+        cx.notify();
+    }
+
+    /// Extend selection to include cells from start position to current position
+    pub(crate) fn extend_selection_to(&mut self, row: usize, col: usize, cx: &mut Context<Self>) {
+        if let Some((start_row, start_col)) = self.selection_start {
+            self.selected_cells.clear();
+
+            // Select rectangle from start to current position
+            let min_row = start_row.min(row);
+            let max_row = start_row.max(row);
+            let min_col = start_col.min(col);
+            let max_col = start_col.max(col);
+
+            for r in min_row..=max_row {
+                for c in min_col..=max_col {
+                    self.selected_cells.insert((r, c));
+                }
+            }
+            cx.notify();
+        }
+    }
+
+    /// End cell selection
+    pub(crate) fn end_selection(&mut self, cx: &mut Context<Self>) {
+        self.is_selecting = false;
+        cx.notify();
+    }
+
+    /// Clear all cell selection
+    pub(crate) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.selected_cells.clear();
+        self.selection_start = None;
+        self.is_selecting = false;
+        cx.notify();
+    }
+
+    /// Check if a cell is currently selected
+    pub(crate) fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+        self.selected_cells.contains(&(row, col))
     }
 }
 
