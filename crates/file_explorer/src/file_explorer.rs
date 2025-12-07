@@ -9,13 +9,11 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
-use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{path::Path, sync::Arc};
 use ui::{
-    Button, ContextMenu, HighlightedLabel, Icon, IconButton, IconName, IconSize, Indicator,
-    KeyBinding, Label, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor,
-    Tooltip, prelude::*,
+    Button, ContextMenu, HighlightedLabel, Icon, IconName, KeyBinding, Label, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, prelude::*,
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{
@@ -31,8 +29,6 @@ actions!(
         Toggle,
         /// Navigates to the parent directory.
         NavigateToParent,
-        /// Toggles the filter options menu.
-        ToggleFilterMenu,
         /// Toggles the split direction menu.
         ToggleSplitMenu,
     ]
@@ -47,12 +43,8 @@ impl ModalView for FileExplorer {
         let submenu_focused = self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .filter_popover_menu_handle
+                .split_popover_menu_handle
                 .is_focused(window, cx)
-                || picker
-                    .delegate
-                    .split_popover_menu_handle
-                    .is_focused(window, cx)
         });
         workspace::DismissDecision::Dismiss(!submenu_focused)
     }
@@ -203,37 +195,6 @@ impl FileExplorer {
         });
     }
 
-    fn handle_filter_toggle_menu(
-        &mut self,
-        _: &ToggleFilterMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            picker
-                .delegate
-                .filter_popover_menu_handle
-                .toggle(window, cx);
-        });
-    }
-
-    fn handle_toggle_ignored(
-        &mut self,
-        _: &ToggleIncludeIgnored,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            picker.delegate.include_ignored = match picker.delegate.include_ignored {
-                Some(true) => None,
-                Some(false) => Some(true),
-                None => Some(true),
-            };
-            picker.delegate.load_entries(cx);
-            picker.refresh(window, cx);
-        });
-    }
-
     fn go_to_file_split_left(
         &mut self,
         _: &pane::SplitLeft,
@@ -342,8 +303,6 @@ impl Render for FileExplorer {
             .key_context(key_context)
             .w(rems(34.))
             .on_action(cx.listener(Self::handle_navigate_to_parent))
-            .on_action(cx.listener(Self::handle_filter_toggle_menu))
-            .on_action(cx.listener(Self::handle_toggle_ignored))
             .on_action(cx.listener(Self::handle_split_toggle_menu))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
@@ -385,8 +344,6 @@ pub struct FileExplorerDelegate {
     all_entries: Vec<FileExplorerEntry>,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    include_ignored: Option<bool>,
-    filter_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     /// The path of the file to initially select (if any)
@@ -412,8 +369,6 @@ impl FileExplorerDelegate {
             all_entries: Vec::new(),
             matches: Vec::new(),
             selected_index: 0,
-            include_ignored: None,
-            filter_popover_menu_handle: PopoverMenuHandle::default(),
             split_popover_menu_handle: PopoverMenuHandle::default(),
             focus_handle: cx.focus_handle(),
             initial_selected_path,
@@ -460,15 +415,7 @@ impl FileExplorerDelegate {
         let mut dirs: Vec<Entry> = Vec::new();
         let mut files: Vec<Entry> = Vec::new();
 
-        let include_ignored = self
-            .include_ignored
-            .unwrap_or_else(|| worktree.root_entry().is_some_and(|entry| entry.is_ignored));
-
         for entry in worktree.child_entries(&self.current_path) {
-            if !include_ignored && entry.is_ignored {
-                continue;
-            }
-
             if entry.is_dir() {
                 dirs.push(entry.clone());
             } else {
@@ -612,10 +559,6 @@ impl FileExplorerDelegate {
     fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileExplorer");
-
-        if self.filter_popover_menu_handle.is_focused(window, cx) {
-            key_context.add("filter_menu_open");
-        }
 
         if self.split_popover_menu_handle.is_focused(window, cx) {
             key_context.add("split_menu_open");
@@ -827,70 +770,14 @@ impl PickerDelegate for FileExplorerDelegate {
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
-        let include_ignored = self.include_ignored;
 
         Some(
             h_flex()
                 .w_full()
                 .p_1p5()
-                .justify_between()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(
-                    PopoverMenu::new("filter-menu-popover")
-                        .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
-                        .offset(gpui::Point {
-                            x: px(1.0),
-                            y: px(1.0),
-                        })
-                        .trigger_with_tooltip(
-                            IconButton::new("filter-trigger", IconName::Sliders)
-                                .icon_size(IconSize::Small)
-                                .toggle_state(include_ignored.unwrap_or(false))
-                                .when(include_ignored.is_some(), |this| {
-                                    this.indicator(Indicator::dot().color(Color::Info))
-                                }),
-                            {
-                                let focus_handle = focus_handle.clone();
-                                move |_window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Filter Options",
-                                        &ToggleFilterMenu,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            },
-                        )
-                        .menu({
-                            let focus_handle = focus_handle.clone();
-
-                            move |window, cx| {
-                                Some(ContextMenu::build(window, cx, {
-                                    let focus_handle = focus_handle.clone();
-                                    move |menu, _, _| {
-                                        menu.context(focus_handle.clone())
-                                            .header("Filter Options")
-                                            .toggleable_entry(
-                                                "Include Ignored Files",
-                                                include_ignored.unwrap_or(false),
-                                                ui::IconPosition::End,
-                                                Some(ToggleIncludeIgnored.boxed_clone()),
-                                                move |window, cx| {
-                                                    window.focus(&focus_handle);
-                                                    window.dispatch_action(
-                                                        ToggleIncludeIgnored.boxed_clone(),
-                                                        cx,
-                                                    );
-                                                },
-                                            )
-                                    }
-                                }))
-                            }
-                        }),
-                )
                 .child(
                     h_flex()
                         .gap_0p5()

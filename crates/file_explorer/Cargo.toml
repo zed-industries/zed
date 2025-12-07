@@ -19,7 +19,6 @@ gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
-search.workspace = true
 settings.workspace = true
 ui.workspace = true
 util.workspace = true

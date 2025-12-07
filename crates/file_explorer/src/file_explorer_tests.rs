@@ -174,7 +174,7 @@ async fn test_navigate_to_parent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_ignored_files_toggle(cx: &mut TestAppContext) {
+async fn test_ignored_files_shown(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
         .fs
@@ -199,38 +199,8 @@ async fn test_ignored_files_toggle(cx: &mut TestAppContext) {
             .iter()
             .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
             .collect();
-        // No parent directory at worktree root
-        // .gitignore is shown but ignored.txt is not
-        assert_eq!(entries, vec![".gitignore", "visible.txt"]);
-        assert_eq!(picker.delegate.include_ignored, None);
-    });
-
-    cx.dispatch_action(ToggleIncludeIgnored);
-
-    picker.update(cx, |picker, _| {
-        let entries: Vec<_> = picker
-            .delegate
-            .matches
-            .iter()
-            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
-            .collect();
-        // Now ignored files are shown
+        // All files shown including ignored ones
         assert_eq!(entries, vec![".gitignore", "ignored.txt", "visible.txt"]);
-        assert_eq!(picker.delegate.include_ignored, Some(true));
-    });
-
-    cx.dispatch_action(ToggleIncludeIgnored);
-
-    picker.update(cx, |picker, _| {
-        let entries: Vec<_> = picker
-            .delegate
-            .matches
-            .iter()
-            .map(|m| picker.delegate.all_entries[m.candidate_id].display_name())
-            .collect();
-        // Back to not showing ignored files
-        assert_eq!(entries, vec![".gitignore", "visible.txt"]);
-        assert_eq!(picker.delegate.include_ignored, None);
     });
 }
 

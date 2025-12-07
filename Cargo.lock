@@ -6112,7 +6112,6 @@ dependencies = [
  "menu",
  "picker",
  "project",
- "search",
  "serde_json",
  "settings",
  "theme",
