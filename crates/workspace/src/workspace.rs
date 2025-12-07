@@ -3857,9 +3857,9 @@ impl Workspace {
             pane.open_item(
                 project_entry_id,
                 project_path,
-                focus_item,
+                false,
                 allow_preview,
-                activate,
+                false,
                 None,
                 window,
                 cx,
@@ -3868,33 +3868,30 @@ impl Workspace {
         });
 
         // Create preview from editor
-        let preview = match self.create_preview_for_item(editor.clone(), window, cx) {
-            Some(preview) => preview,
-            None => {
-                return Ok(editor);
+        let _ = match self.create_preview_for_item(editor.clone(), window, cx) {
+            Some(preview) => {
+                let preview_pane = self.adjacent_pane(window, cx);
+                let _ = preview_pane.update(cx, |preview_pane, cx| {
+                    preview_pane.add_item(
+                        preview, false, // Don't activate preview pane
+                        false, // Don't focus preview
+                        None, window, cx,
+                    );
+                });
             }
+            None => {}
         };
 
-        // Split pane and add preview
-        let preview_pane = self.adjacent_pane(window, cx);
-
-        preview_pane.update(cx, |preview_pane, cx| {
-            preview_pane.add_item(
-                preview, false, // Don't activate preview pane
-                false, // Don't focus preview
-                None, window, cx,
-            );
+        // Now activate and focus the editor in the original pane
+        pane.update(cx, |pane, cx| {
+            if let Some(item) = pane.active_item() {
+                let index = pane.index_for_item(item.as_ref()).unwrap();
+                pane.activate_item(index, activate, focus_item, window, cx);
+                if focus_item {
+                    pane.focus_active_item(window, cx)
+                };
+            }
         });
-
-        // Keep focus on editor if requested
-        if focus_item {
-            pane.update(cx, |pane, cx| {
-                if let Some(item) = pane.active_item() {
-                    let index = pane.index_for_item(item.as_ref()).unwrap();
-                    pane.activate_item(index, true, true, window, cx);
-                }
-            });
-        }
 
         Ok(editor)
     }
