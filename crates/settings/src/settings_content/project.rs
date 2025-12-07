@@ -370,6 +370,22 @@ pub struct BlameSettings {
     ///
     /// Default: true
     pub show_avatar: Option<bool>,
+    /// Whether to detect code movement within a file in git blame.
+    /// This enables the -M flag for git blame.
+    ///
+    /// Note: Enabling this setting may make git blame operations slower
+    /// for large repositories as it requires additional analysis.
+    ///
+    /// Default: false
+    pub detect_code_movement: Option<bool>,
+    /// Whether to detect code movement between files in git blame.
+    /// This enables the -C flag for git blame.
+    ///
+    /// Note: Enabling this setting may make git blame operations slower
+    /// for large repositories as it requires additional analysis.
+    ///
+    /// Default: false
+    pub detect_code_movement_between_files: Option<bool>,
 }
 
 #[with_fallible_options]

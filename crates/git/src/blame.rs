@@ -35,8 +35,10 @@ impl Blame {
         working_directory: &Path,
         path: &RepoPath,
         content: &Rope,
+        extra_args: &[String],
     ) -> Result<Self> {
-        let output = run_git_blame(git_binary, working_directory, path, content).await?;
+        let output =
+            run_git_blame(git_binary, working_directory, path, content, extra_args).await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -63,12 +65,14 @@ async fn run_git_blame(
     working_directory: &Path,
     path: &RepoPath,
     contents: &Rope,
+    extra_args: &[String],
 ) -> Result<String> {
     let mut child = util::command::new_smol_command(git_binary)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
         .arg("-w")
+        .args(extra_args)
         .arg("--contents")
         .arg("-")
         .arg(path.as_unix_str())

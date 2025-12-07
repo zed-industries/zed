@@ -487,7 +487,12 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        extra_args: &[String],
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
     fn file_history_paginated(
         &self,
@@ -1489,10 +1494,16 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        extra_args: &[String],
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
+        let extra_args = extra_args.to_vec();
 
         executor
             .spawn(async move {
@@ -1501,6 +1512,7 @@ impl GitRepository for RealGitRepository {
                     &working_directory?,
                     &path,
                     &content,
+                    &extra_args,
                 )
                 .await
             })
