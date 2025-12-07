@@ -248,8 +248,7 @@ impl FileHistoryView {
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_entry = ix;
         if let Some(ix) = ix {
-            self.scroll_handle
-                .scroll_to_item(ix, ScrollStrategy::Top);
+            self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Top);
         }
         cx.notify();
     }
