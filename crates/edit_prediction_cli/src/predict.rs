@@ -198,8 +198,9 @@ pub async fn perform_predict(
 
                             let response =
                                 request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                            let response = edit_prediction::zeta2::text_from_response(response)
-                                .unwrap_or_default();
+                            let response =
+                                edit_prediction::open_ai_response::text_from_response(response)
+                                    .unwrap_or_default();
                             let prediction_finished_at = Instant::now();
                             fs::write(example_run_dir.join("prediction_response.md"), &response)?;
 

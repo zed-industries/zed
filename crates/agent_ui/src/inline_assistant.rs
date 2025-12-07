@@ -387,17 +387,9 @@ impl InlineAssistant {
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
         for mut selection in initial_selections {
-            if selection.end > selection.start {
-                selection.start.column = 0;
-                // If the selection ends at the start of the line, we don't want to include it.
-                if selection.end.column == 0 {
-                    selection.end.row -= 1;
-                }
-                selection.end.column = snapshot
-                    .buffer_snapshot()
-                    .line_len(MultiBufferRow(selection.end.row));
-            } else if let Some(fold) =
-                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            if selection.end == selection.start
+                && let Some(fold) =
+                    snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
             {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
@@ -424,6 +416,15 @@ impl InlineAssistant {
                         }
                     }
                 }
+            } else {
+                selection.start.column = 0;
+                // If the selection ends at the start of the line, we don't want to include it.
+                if selection.end.column == 0 && selection.start.row != selection.end.row {
+                    selection.end.row -= 1;
+                }
+                selection.end.column = snapshot
+                    .buffer_snapshot()
+                    .line_len(MultiBufferRow(selection.end.row));
             }
 
             if let Some(prev_selection) = selections.last_mut()
@@ -544,14 +545,15 @@ impl InlineAssistant {
                 }
             }
 
-            let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+            let [prompt_block_id, tool_description_block_id, end_block_id] =
+                self.insert_assist_blocks(&editor, &range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
                 range.clone(),
                 prompt_editor,
                 prompt_block_id,
+                tool_description_block_id,
                 end_block_id,
             ));
         }
@@ -570,7 +572,15 @@ impl InlineAssistant {
         };
 
         let mut assist_group = InlineAssistGroup::new();
-        for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
+        for (
+            assist_id,
+            range,
+            prompt_editor,
+            prompt_block_id,
+            tool_description_block_id,
+            end_block_id,
+        ) in assists
+        {
             let codegen = prompt_editor.read(cx).codegen().clone();
 
             self.assists.insert(
@@ -581,6 +591,7 @@ impl InlineAssistant {
                     editor,
                     &prompt_editor,
                     prompt_block_id,
+                    tool_description_block_id,
                     end_block_id,
                     range,
                     codegen,
@@ -689,7 +700,7 @@ impl InlineAssistant {
         range: &Range<Anchor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         cx: &mut App,
-    ) -> [CustomBlockId; 2] {
+    ) -> [CustomBlockId; 3] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
             prompt_editor
                 .editor
@@ -701,6 +712,14 @@ impl InlineAssistant {
                 placement: BlockPlacement::Above(range.start),
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
+                priority: 0,
+            },
+            // Placeholder for tool description - will be updated dynamically
+            BlockProperties {
+                style: BlockStyle::Flex,
+                placement: BlockPlacement::Below(range.end),
+                height: Some(0),
+                render: Arc::new(|_cx| div().into_any_element()),
                 priority: 0,
             },
             BlockProperties {
@@ -721,7 +740,7 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let block_ids = editor.insert_blocks(assist_blocks, None, cx);
-            [block_ids[0], block_ids[1]]
+            [block_ids[0], block_ids[1], block_ids[2]]
         })
     }
 
@@ -1113,6 +1132,9 @@ impl InlineAssistant {
             let mut to_remove = decorations.removed_line_block_ids;
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
+            if let Some(tool_description_block_id) = decorations.model_explanation {
+                to_remove.insert(tool_description_block_id);
+            }
             editor.remove_blocks(to_remove, None, cx);
         });
 
@@ -1433,8 +1455,60 @@ impl InlineAssistant {
         let old_snapshot = codegen.snapshot(cx);
         let old_buffer = codegen.old_buffer(cx);
         let deleted_row_ranges = codegen.diff(cx).deleted_row_ranges.clone();
+        // let model_explanation = codegen.model_explanation(cx);
 
         editor.update(cx, |editor, cx| {
+            // Update tool description block
+            // if let Some(description) = model_explanation {
+            //     if let Some(block_id) = decorations.model_explanation {
+            //         editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+            //         let new_block_id = editor.insert_blocks(
+            //             [BlockProperties {
+            //                 style: BlockStyle::Flex,
+            //                 placement: BlockPlacement::Below(assist.range.end),
+            //                 height: Some(1),
+            //                 render: Arc::new({
+            //                     let description = description.clone();
+            //                     move |cx| {
+            //                         div()
+            //                             .w_full()
+            //                             .py_1()
+            //                             .px_2()
+            //                             .bg(cx.theme().colors().editor_background)
+            //                             .border_y_1()
+            //                             .border_color(cx.theme().status().info_border)
+            //                             .child(
+            //                                 Label::new(description.clone())
+            //                                     .color(Color::Muted)
+            //                                     .size(LabelSize::Small),
+            //                             )
+            //                             .into_any_element()
+            //                     }
+            //                 }),
+            //                 priority: 0,
+            //             }],
+            //             None,
+            //             cx,
+            //         );
+            //         decorations.model_explanation = new_block_id.into_iter().next();
+            //     }
+            // } else if let Some(block_id) = decorations.model_explanation {
+            //     // Hide the block if there's no description
+            //     editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+            //     let new_block_id = editor.insert_blocks(
+            //         [BlockProperties {
+            //             style: BlockStyle::Flex,
+            //             placement: BlockPlacement::Below(assist.range.end),
+            //             height: Some(0),
+            //             render: Arc::new(|_cx| div().into_any_element()),
+            //             priority: 0,
+            //         }],
+            //         None,
+            //         cx,
+            //     );
+            //     decorations.model_explanation = new_block_id.into_iter().next();
+            // }
+
             let old_blocks = mem::take(&mut decorations.removed_line_block_ids);
             editor.remove_blocks(old_blocks, None, cx);
 
@@ -1686,6 +1760,7 @@ impl InlineAssist {
         editor: &Entity<Editor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         prompt_block_id: CustomBlockId,
+        tool_description_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Entity<BufferCodegen>,
@@ -1700,7 +1775,8 @@ impl InlineAssist {
             decorations: Some(InlineAssistDecorations {
                 prompt_block_id,
                 prompt_editor: prompt_editor.clone(),
-                removed_line_block_ids: HashSet::default(),
+                removed_line_block_ids: Default::default(),
+                model_explanation: Some(tool_description_block_id),
                 end_block_id,
             }),
             range,
@@ -1804,6 +1880,7 @@ struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
     prompt_editor: Entity<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
+    model_explanation: Option<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
 

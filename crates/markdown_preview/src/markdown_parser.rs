@@ -1467,9 +1467,7 @@ mod tests {
     use ParsedMarkdownListItemType::*;
     use core::panic;
     use gpui::{AbsoluteLength, BackgroundExecutor, DefiniteLength};
-    use language::{
-        HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
-    };
+    use language::{HighlightId, LanguageRegistry};
     use pretty_assertions::assert_eq;
 
     async fn parse(input: &str) -> ParsedMarkdown {
@@ -3053,7 +3051,7 @@ fn main() {
     #[gpui::test]
     async fn test_code_block_with_language(executor: BackgroundExecutor) {
         let language_registry = Arc::new(LanguageRegistry::test(executor.clone()));
-        language_registry.add(rust_lang());
+        language_registry.add(language::rust_lang());
 
         let parsed = parse_markdown(
             "\
@@ -3077,21 +3075,6 @@ fn main() {
                 Some(vec![])
             )]
         );
-    }
-
-    fn rust_lang() -> Arc<Language> {
-        Arc::new(Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".into()],
-                    ..Default::default()
-                },
-                collapsed_placeholder: " /* ... */ ".to_string(),
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
     }
 
     fn h1(contents: MarkdownParagraph, source_range: Range<usize>) -> ParsedMarkdownElement {

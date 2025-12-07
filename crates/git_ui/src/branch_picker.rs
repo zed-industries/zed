@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem,
+    ListItemSpacing, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -440,13 +440,6 @@ impl BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn loader(&self) -> AnyElement {
-        Icon::new(IconName::LoadCircle)
-            .size(IconSize::Small)
-            .with_rotate_animation(3)
-            .into_any_element()
-    }
-
     fn delete_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
@@ -683,10 +676,16 @@ impl PickerDelegate for BranchListDelegate {
                         } else {
                             Entry::NewBranch { name: query }
                         };
-                        picker.delegate.state = if is_url {
-                            PickerState::NewRemote
+                        // Only transition to NewBranch/NewRemote states when we only show their list item
+                        // Otherwise, stay in List state so footer buttons remain visible
+                        picker.delegate.state = if matches.is_empty() {
+                            if is_url {
+                                PickerState::NewRemote
+                            } else {
+                                PickerState::NewBranch
+                            }
                         } else {
-                            PickerState::NewBranch
+                            PickerState::List
                         };
                         matches.push(entry);
                     } else {
@@ -812,67 +811,35 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.clone()
-            && matches!(entry, Entry::NewBranch { .. })
-        {
-            let tooltip_text = format!("Create branch based off default: {default_branch}");
+        let entry_icon = match entry {
+            Entry::NewUrl { .. } | Entry::NewBranch { .. } => {
+                Icon::new(IconName::Plus).color(Color::Muted)
+            }
 
-            Some(
-                IconButton::new("branch-from-default", IconName::GitBranchAlt)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.delegate.set_selected_index(ix, window, cx);
-                        this.delegate.confirm(true, window, cx);
-                    }))
-                    .tooltip(move |_window, cx| {
-                        Tooltip::for_action(tooltip_text.clone(), &menu::SecondaryConfirm, cx)
-                    }),
-            )
-        } else {
-            None
+            Entry::Branch { .. } => {
+                if self.display_remotes {
+                    Icon::new(IconName::Screen).color(Color::Muted)
+                } else {
+                    Icon::new(IconName::GitBranchAlt).color(Color::Muted)
+                }
+            }
         };
 
-        let icon_element = if self.display_remotes {
-            Icon::new(IconName::Screen)
-        } else {
-            Icon::new(IconName::GitBranchAlt)
-        };
-
-        let entry_name = match entry {
-            Entry::NewUrl { .. } => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new("Create remote repository".to_string())
-                        .single_line()
-                        .truncate(),
-                )
+        let entry_title = match entry {
+            Entry::NewUrl { .. } => Label::new("Create Remote Repository")
+                .single_line()
+                .truncate()
                 .into_any_element(),
-            Entry::NewBranch { name } => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    Label::new(format!("Create branch \"{name}\"…"))
-                        .single_line()
-                        .truncate(),
-                )
+            Entry::NewBranch { name } => Label::new(format!("Create Branch: \"{name}\"…"))
+                .single_line()
+                .truncate()
                 .into_any_element(),
-            Entry::Branch { branch, positions } => h_flex()
-                .max_w_48()
-                .child(h_flex().mr_1().child(icon_element))
-                .child(
-                    HighlightedLabel::new(branch.name().to_string(), positions.clone())
-                        .single_line()
-                        .truncate(),
-                )
-                .into_any_element(),
+            Entry::Branch { branch, positions } => {
+                HighlightedLabel::new(branch.name().to_string(), positions.clone())
+                    .single_line()
+                    .truncate()
+                    .into_any_element()
+            }
         };
 
         Some(
@@ -880,82 +847,96 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .tooltip({
-                    match entry {
-                        Entry::Branch { branch, .. } => Tooltip::text(branch.name().to_string()),
-                        Entry::NewUrl { .. } => {
-                            Tooltip::text("Create remote repository".to_string())
-                        }
-                        Entry::NewBranch { name } => {
-                            Tooltip::text(format!("Create branch \"{name}\""))
-                        }
-                    }
-                })
                 .child(
-                    v_flex()
+                    h_flex()
                         .w_full()
-                        .overflow_hidden()
+                        .gap_3()
+                        .flex_grow()
+                        .child(entry_icon)
                         .child(
-                            h_flex()
-                                .gap_6()
-                                .justify_between()
-                                .overflow_x_hidden()
-                                .child(entry_name)
-                                .when_some(commit_time, |label, commit_time| {
-                                    label.child(
-                                        Label::new(commit_time)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .into_element(),
-                                    )
-                                }),
-                        )
-                        .when(self.style == BranchListStyle::Modal, |el| {
-                            el.child(div().max_w_96().child({
-                                let message = match entry {
-                                    Entry::NewUrl { url } => format!("based off {url}"),
-                                    Entry::NewBranch { .. } => {
-                                        if let Some(current_branch) =
-                                            self.repo.as_ref().and_then(|repo| {
-                                                repo.read(cx).branch.as_ref().map(|b| b.name())
-                                            })
-                                        {
-                                            format!("based off {}", current_branch)
-                                        } else {
-                                            "based off the current branch".to_string()
-                                        }
-                                    }
-                                    Entry::Branch { .. } => {
-                                        let show_author_name = ProjectSettings::get_global(cx)
-                                            .git
-                                            .branch_picker
-                                            .show_author_name;
+                            v_flex()
+                                .id("info_container")
+                                .w_full()
+                                .child(entry_title)
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .gap_1p5()
+                                        .when(self.style == BranchListStyle::Modal, |el| {
+                                            el.child(div().max_w_96().child({
+                                                let message = match entry {
+                                                    Entry::NewUrl { url } => {
+                                                        format!("Based off {url}")
+                                                    }
+                                                    Entry::NewBranch { .. } => {
+                                                        if let Some(current_branch) =
+                                                            self.repo.as_ref().and_then(|repo| {
+                                                                repo.read(cx)
+                                                                    .branch
+                                                                    .as_ref()
+                                                                    .map(|b| b.name())
+                                                            })
+                                                        {
+                                                            format!("Based off {}", current_branch)
+                                                        } else {
+                                                            "Based off the current branch"
+                                                                .to_string()
+                                                        }
+                                                    }
+                                                    Entry::Branch { .. } => {
+                                                        let show_author_name =
+                                                            ProjectSettings::get_global(cx)
+                                                                .git
+                                                                .branch_picker
+                                                                .show_author_name;
 
-                                        subject.map_or("no commits found".into(), |subject| {
-                                            if show_author_name && author_name.is_some() {
-                                                format!("{} • {}", author_name.unwrap(), subject)
-                                            } else {
-                                                subject.to_string()
-                                            }
+                                                        subject.map_or(
+                                                            "No commits found".into(),
+                                                            |subject| {
+                                                                if show_author_name
+                                                                    && author_name.is_some()
+                                                                {
+                                                                    format!(
+                                                                        "{}  •  {}",
+                                                                        author_name.unwrap(),
+                                                                        subject
+                                                                    )
+                                                                } else {
+                                                                    subject.to_string()
+                                                                }
+                                                            },
+                                                        )
+                                                    }
+                                                };
+
+                                                Label::new(message)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                            }))
                                         })
-                                    }
-                                };
-
-                                Label::new(message)
-                                    .size(LabelSize::Small)
-                                    .truncate()
-                                    .color(Color::Muted)
-                            }))
-                        }),
-                )
-                .end_slot::<IconButton>(icon),
+                                        .when_some(commit_time, |label, commit_time| {
+                                            label.child(
+                                                Label::new(commit_time)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .when_some(
+                                    entry.as_branch().map(|b| b.name().to_string()),
+                                    |this, branch_name| this.tooltip(Tooltip::text(branch_name)),
+                                ),
+                        ),
+                ),
         )
     }
 
     fn render_header(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         matches!(self.state, PickerState::List).then(|| {
             let label = if self.display_remotes {
@@ -964,83 +945,54 @@ impl PickerDelegate for BranchListDelegate {
                 "Local"
             };
 
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .gap_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-                .into_any()
+            ListHeader::new(label).inset(true).into_any_element()
         })
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let loading_icon = Icon::new(IconName::LoadCircle)
+            .size(IconSize::Small)
+            .with_rotate_animation(3);
 
-        if self.loading {
-            return Some(
-                h_flex()
-                    .w_full()
-                    .p_1p5()
-                    .gap_1()
-                    .justify_end()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.loader())
-                    .into_any(),
-            );
-        }
+        let footer_container = || {
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+        };
+
         match self.state {
-            PickerState::List => Some(
-                h_flex()
-                    .w_full()
-                    .p_1p5()
-                    .gap_0p5()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .justify_between()
-                    .child({
-                        let focus_handle = focus_handle.clone();
-                        Button::new("filter-remotes", "Filter remotes")
+            PickerState::List => {
+                let selected_entry = self.matches.get(self.selected_index);
+
+                let branch_from_default_button = self
+                    .default_branch
+                    .as_ref()
+                    .filter(|_| matches!(selected_entry, Some(Entry::NewBranch { .. })))
+                    .map(|default_branch| {
+                        let button_label = format!("Create New From: {default_branch}");
+
+                        Button::new("branch-from-default", button_label)
                             .key_binding(
                                 KeyBinding::for_action_in(
-                                    &branch_picker::FilterRemotes,
+                                    &menu::SecondaryConfirm,
                                     &focus_handle,
                                     cx,
                                 )
                                 .map(|kb| kb.size(rems_from_px(12.))),
                             )
-                            .on_click(|_click, window, cx| {
-                                window.dispatch_action(
-                                    branch_picker::FilterRemotes.boxed_clone(),
-                                    cx,
-                                );
-                            })
-                            .disabled(self.loading)
-                            .style(ButtonStyle::Subtle)
-                            .toggle_state(self.display_remotes)
-                            .tooltip({
-                                let state = self.display_remotes;
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delegate.confirm(true, window, cx);
+                            }))
+                    });
 
-                                move |_window, cx| {
-                                    let tooltip_text = if state {
-                                        "Show local branches"
-                                    } else {
-                                        "Show remote branches"
-                                    };
-
-                                    Tooltip::for_action_in(
-                                        tooltip_text,
-                                        &branch_picker::FilterRemotes,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                    })
+                let delete_and_select_btns = h_flex()
+                    .gap_0p5()
                     .child(
                         Button::new("delete-branch", "Delete")
+                            .disabled(self.loading)
                             .key_binding(
                                 KeyBinding::for_action_in(
                                     &branch_picker::DeleteBranch,
@@ -1049,42 +1001,133 @@ impl PickerDelegate for BranchListDelegate {
                                 )
                                 .map(|kb| kb.size(rems_from_px(12.))),
                             )
-                            .disabled(self.loading)
                             .on_click(|_, window, cx| {
                                 window
                                     .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
                             }),
                     )
-                    .when(self.loading, |this| this.child(self.loader()))
-                    .into_any(),
-            ),
+                    .child(
+                        Button::new("select_branch", "Select")
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delegate.confirm(false, window, cx);
+                            })),
+                    );
+
+                Some(
+                    footer_container()
+                        .map(|this| {
+                            if branch_from_default_button.is_some() {
+                                this.justify_end().when_some(
+                                    branch_from_default_button,
+                                    |this, button| {
+                                        this.child(button).child(
+                                            Button::new("create", "Create")
+                                                .key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.delegate.confirm(false, window, cx);
+                                                })),
+                                        )
+                                    },
+                                )
+                            } else if self.loading {
+                                this.justify_between()
+                                    .child(loading_icon)
+                                    .child(delete_and_select_btns)
+                            } else {
+                                this.justify_between()
+                                    .child({
+                                        let focus_handle = focus_handle.clone();
+                                        Button::new("filter-remotes", "Filter Remotes")
+                                            .disabled(self.loading)
+                                            .toggle_state(self.display_remotes)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &branch_picker::FilterRemotes,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(|_click, window, cx| {
+                                                window.dispatch_action(
+                                                    branch_picker::FilterRemotes.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
+                                    })
+                                    .child(delete_and_select_btns)
+                            }
+                        })
+                        .into_any_element(),
+                )
+            }
+            PickerState::NewBranch => {
+                let branch_from_default_button =
+                    self.default_branch.as_ref().map(|default_branch| {
+                        let button_label = format!("Create New From: {default_branch}");
+
+                        Button::new("branch-from-default", button_label)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delegate.confirm(true, window, cx);
+                            }))
+                    });
+
+                Some(
+                    footer_container()
+                        .gap_0p5()
+                        .justify_end()
+                        .when_some(branch_from_default_button, |this, button| {
+                            this.child(button)
+                        })
+                        .child(
+                            Button::new("branch-from-default", "Create")
+                                .key_binding(
+                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.delegate.confirm(false, window, cx);
+                                })),
+                        )
+                        .into_any_element(),
+                )
+            }
             PickerState::CreateRemote(_) => Some(
-                h_flex()
-                    .w_full()
-                    .p_1p5()
-                    .gap_1()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
+                footer_container()
+                    .justify_end()
                     .child(
                         Label::new("Choose a name for this remote repository")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
                     .child(
-                        h_flex().w_full().justify_end().child(
-                            Label::new("Save")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        Label::new("Save")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
-                    .into_any(),
+                    .into_any_element(),
             ),
-            PickerState::NewRemote | PickerState::NewBranch => None,
+            PickerState::NewRemote => None,
         }
-    }
-
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        None
     }
 }
 
@@ -1515,6 +1558,7 @@ mod tests {
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_branch());
                 assert_eq!(last_match.name(), "new-feature-branch");
+                // State is NewBranch because no existing branches fuzzy-match the query
                 assert!(matches!(picker.delegate.state, PickerState::NewBranch));
                 picker.delegate.confirm(false, window, cx);
             })

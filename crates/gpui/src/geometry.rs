@@ -3567,7 +3567,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
-pub fn phi() -> DefiniteLength {
+pub const fn phi() -> DefiniteLength {
     relative(1.618_034)
 }
 
@@ -3580,7 +3580,7 @@ pub fn phi() -> DefiniteLength {
 /// # Returns
 ///
 /// A `Rems` representing the specified number of rems.
-pub fn rems(rems: f32) -> Rems {
+pub const fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
@@ -3608,7 +3608,7 @@ pub const fn px(pixels: f32) -> Pixels {
 /// # Returns
 ///
 /// A `Length` variant set to `Auto`.
-pub fn auto() -> Length {
+pub const fn auto() -> Length {
     Length::Auto
 }
 

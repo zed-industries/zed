@@ -2533,34 +2533,20 @@ mod tests {
         })
         .detach();
 
-        // Wait for the first Wakeup event which indicates shell is ready
-        // On Linux, we might get other events first, so poll until we get Wakeup
-        let mut got_wakeup = false;
-        while !got_wakeup {
-            match event_rx.recv().await {
-                Ok(Event::Wakeup) => {
-                    got_wakeup = true;
-                }
-                Ok(_) => {
-                    // Continue polling for Wakeup
-                }
-                Err(_) => {
-                    panic!("Channel closed before receiving Wakeup event");
-                }
-            }
-        }
-
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
             assert!(success, "Should have registered ctrl-c sequence");
         });
 
-        // Give shell time to process SIGINT on Linux
-        // After getting Wakeup, wait for shell to process SIGINT
-        // Collect any events after Ctrl+C
-        while let Ok(Ok(_first_event)) =
-            smol_timeout(Duration::from_millis(100), event_rx.recv()).await
-        {}
+        // Wait for Wakeup event after Ctrl+C to ensure shell has processed SIGINT
+        // On Linux, other events like BreadcrumbsChanged might come first
+        loop {
+            match event_rx.recv().await {
+                Ok(Event::Wakeup) => break,
+                Ok(_) => continue,
+                Err(_) => panic!("Channel closed before Wakeup event"),
+            }
+        }
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
