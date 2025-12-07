@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use ui::{
     Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
@@ -34,77 +36,82 @@ impl Render for CsvPreviewView {
                     self.render_table_with_cols(cx)
                 }
             })
+            // Workaround to be able to `end_selection`, when cursor is not over selectable cell, but within the table
+            .on_mouse_up(MouseButton::Left, {
+                let view = cx.entity();
+                move |_event, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.selection.end_selection();
+                        cx.notify();
+                    });
+                }
+            })
     }
 }
 
 impl CsvPreviewView {
-    /// Create a header element with text on the left and clickable sort button on the right
-    fn create_header_element(
+    /// Create header for data, which is orderable with text on the left and order button on the right
+    fn create_header_element_for_orderables(
         &self,
-        col_idx: Option<usize>, // None for line number column
         header_text: String,
-        cx: &mut Context<Self>,
+        cx: &mut Context<'_, CsvPreviewView>,
+        col_idx: usize,
     ) -> AnyElement {
-        if let Some(col_idx) = col_idx {
-            // CSV data columns: text + sort button
-            let sort_symbol = match self.ordering {
-                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
-                    OrderingDirection::Asc => "↑",
-                    OrderingDirection::Desc => "↓",
-                },
-                _ => "↕", // Unsorted/available for sorting
-            };
+        // CSV data columns: text + sort button
+        let sort_symbol = match self.ordering {
+            Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                OrderingDirection::Asc => "↑",
+                OrderingDirection::Desc => "↓",
+            },
+            _ => "↕", // Unsorted/available for sorting
+        };
 
-            h_flex()
-                .justify_between()
-                .items_center()
-                .w_full()
-                .child(
-                    // Header text on the left
-                    div().child(header_text),
+        h_flex()
+            .justify_between()
+            .items_center()
+            .w_full()
+            .child(
+                // Header text on the left
+                div().child(header_text),
+            )
+            .child(
+                // Clickable sort button on the right
+                Button::new(
+                    ElementId::NamedInteger("sort-button".into(), col_idx as u64),
+                    sort_symbol,
                 )
-                .child(
-                    // Clickable sort button on the right
-                    Button::new(
-                        ElementId::NamedInteger("sort-button".into(), col_idx as u64),
-                        sort_symbol,
-                    )
-                    .size(ButtonSize::Compact)
-                    .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
-                        ButtonStyle::Filled
-                    } else {
-                        ButtonStyle::Subtle
-                    })
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        let new_ordering = match this.ordering {
-                            Some(ordering) if ordering.col_idx == col_idx => {
-                                // Same column clicked - cycle through states
-                                match ordering.direction {
-                                    OrderingDirection::Asc => Some(Ordering {
-                                        col_idx,
-                                        direction: OrderingDirection::Desc,
-                                    }),
-                                    OrderingDirection::Desc => None, // Clear sorting
-                                }
-                            }
-                            _ => {
-                                // Different column or no sorting - start with ascending
-                                Some(Ordering {
+                .size(ButtonSize::Compact)
+                .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
+                    ButtonStyle::Filled
+                } else {
+                    ButtonStyle::Subtle
+                })
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    let new_ordering = match this.ordering {
+                        Some(ordering) if ordering.col_idx == col_idx => {
+                            // Same column clicked - cycle through states
+                            match ordering.direction {
+                                OrderingDirection::Asc => Some(Ordering {
                                     col_idx,
-                                    direction: OrderingDirection::Asc,
-                                })
+                                    direction: OrderingDirection::Desc,
+                                }),
+                                OrderingDirection::Desc => None, // Clear sorting
                             }
-                        };
+                        }
+                        _ => {
+                            // Different column or no sorting - start with ascending
+                            Some(Ordering {
+                                col_idx,
+                                direction: OrderingDirection::Asc,
+                            })
+                        }
+                    };
 
-                        this.ordering = new_ordering;
-                        cx.notify();
-                    })),
-                )
-                .into_any_element()
-        } else {
-            // Line number column: just text, no sort button
-            div().child(header_text).into_any_element()
-        }
+                    this.ordering = new_ordering;
+                    cx.notify();
+                })),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn create_table<const COLS: usize>(
@@ -136,28 +143,6 @@ impl CsvPreviewView {
         )
     }
 
-    /// Calculate the optimal width for the line number column based on the total number of rows.
-    ///
-    /// This ensures the column is wide enough to display the largest line number comfortably,
-    /// but not wastefully wide for small files.
-    fn calculate_line_number_column_width(&self) -> f32 {
-        let max_line_number = self.contents.rows.len() + 1;
-
-        // Count digits in the maximum line number
-        let digit_count = if max_line_number == 0 {
-            1
-        } else {
-            (max_line_number as f32).log10().floor() as usize + 1
-        };
-
-        let char_width_px = 9.0; // TODO: get real width of the characters
-
-        let base_width = (digit_count as f32) * char_width_px;
-        let padding = 20.0;
-        let min_width = 50.;
-        (base_width + padding).max(min_width)
-    }
-
     fn create_table_inner<const COLS: usize>(
         &self,
         row_count: usize,
@@ -170,7 +155,7 @@ impl CsvPreviewView {
         let mut headers = Vec::with_capacity(COLS);
 
         // First column: line numbers (not sortable)
-        headers.push(self.create_header_element(None, "Line #".to_string(), cx));
+        headers.push(div().child("Line #".to_string()).into_any_element());
 
         // Add the actual CSV headers with ordering buttons
         for i in 0..(COLS - 1) {
@@ -181,7 +166,7 @@ impl CsvPreviewView {
                 .map(|h| h.as_ref().to_string())
                 .unwrap_or_else(|| format!("Col {}", i + 1));
 
-            headers.push(self.create_header_element(Some(i), header_text, cx));
+            headers.push(self.create_header_element_for_orderables(header_text, cx, i));
         }
 
         // Manually construct array to avoid Debug trait requirement
@@ -191,7 +176,7 @@ impl CsvPreviewView {
             std::array::from_fn(|_| iter.next().unwrap())
         };
 
-        let table = Table::new()
+        Table::new()
             .interactable(&self.table_interaction_state)
             .striped()
             .column_widths(widths)
@@ -200,7 +185,7 @@ impl CsvPreviewView {
             .uniform_list("csv-table", row_count, {
                 let line_num_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                cx.processor(move |this, range: Range<usize>, _window, cx| {
                     let ordered_indices = generate_ordered_indecies(this.ordering, &this.contents);
 
                     range
@@ -252,21 +237,6 @@ impl CsvPreviewView {
                         })
                         .collect()
                 })
-            });
-
-        div()
-            .w_full()
-            .h_full()
-            .child(table)
-            // Workaround for selection to end_selection, when cursor is not over selectable cell
-            .on_mouse_up(MouseButton::Left, {
-                let view = cx.entity();
-                move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.selection.end_selection();
-                        cx.notify();
-                    });
-                }
             })
             .into_any_element()
     }
