@@ -159,7 +159,7 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
 
 ## Extensions
 
-Zed implements several clangd [extensions](https://clangd.llvm.org/extensions) to enhance the support for C/C++ development.
+Zed implements several `clangd` [extensions](https://clangd.llvm.org/extensions) to enhance the support for C/C++ development.
 
 ### Switch Between Source and Header File
 
