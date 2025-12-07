@@ -1868,12 +1868,12 @@ impl Vim {
             Some(Operator::AddSurrounds { target }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.add_surrounds(text, target, true, window, cx);
+                        self.add_surrounds(text, target, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                    self.add_surrounds(text, SurroundsType::Selection, true, window, cx);
+                    self.add_surrounds(text, SurroundsType::Selection, window, cx);
                     self.clear_operator(window, cx);
                 }
                 _ => self.clear_operator(window, cx),

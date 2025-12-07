@@ -1,43 +1,12 @@
 use editor::display_map::DisplaySnapshot;
 use editor::{Bias, DisplayPoint, MultiBufferOffset};
 use gpui::{Context, Window};
-
-use language::BracketPair;
+use multi_buffer::Anchor;
+use text::Selection;
 
 use crate::Vim;
 use crate::object::surrounding_markers;
-use crate::surrounds::{SURROUND_PAIRS, SurroundPair};
-
-/// Resolve a character to its surround pair for Helix mode.
-/// Does NOT support Vim aliases (b, B, r, a) - uses literal characters only.
-/// Returns None only for 'm' (match nearest).
-/// For unknown chars, returns a symmetric pair (ch, ch) to match Helix behavior.
-fn surround_pair_for_char(ch: char) -> Option<SurroundPair> {
-    if ch == 'm' {
-        return None;
-    }
-    SURROUND_PAIRS
-        .iter()
-        .find(|p| p.open == ch || p.close == ch)
-        .copied()
-        .or_else(|| Some(SurroundPair::new(ch, ch)))
-}
-
-/// Get a BracketPair for the given string in Helix mode.
-/// Does NOT support Vim aliases - uses literal characters only.
-pub fn bracket_pair_for_str(text: &str) -> BracketPair {
-    text.chars()
-        .next()
-        .and_then(surround_pair_for_char)
-        .map(|p| p.to_bracket_pair())
-        .unwrap_or_else(|| BracketPair {
-            start: text.to_string(),
-            end: text.to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        })
-}
+use crate::surrounds::{SURROUND_PAIRS, bracket_pair_for_str_helix, surround_pair_for_char_helix};
 
 /// Find the nearest surrounding bracket pair around the cursor.
 fn find_nearest_surrounding_pair(
@@ -68,41 +37,67 @@ fn find_nearest_surrounding_pair(
     best_pair
 }
 
+fn selection_cursor(map: &DisplaySnapshot, selection: &Selection<DisplayPoint>) -> DisplayPoint {
+    if selection.reversed || selection.is_empty() {
+        selection.head()
+    } else {
+        editor::movement::left(map, selection.head())
+    }
+}
+
+type SurroundEdits = Vec<(std::ops::Range<MultiBufferOffset>, String)>;
+type SurroundAnchors = Vec<std::ops::Range<Anchor>>;
+
+fn apply_helix_surround_edits<F>(
+    vim: &mut Vim,
+    window: &mut Window,
+    cx: &mut Context<Vim>,
+    mut build: F,
+) where
+    F: FnMut(&DisplaySnapshot, Vec<Selection<DisplayPoint>>) -> (SurroundEdits, SurroundAnchors),
+{
+    vim.update_editor(cx, |_, editor, cx| {
+        editor.transact(window, cx, |editor, window, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+
+            let display_map = editor.display_snapshot(cx);
+            let selections = editor.selections.all_display(&display_map);
+            let (mut edits, anchors) = build(&display_map, selections);
+
+            edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+            editor.edit(edits, cx);
+
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_anchor_ranges(anchors);
+            });
+            editor.set_clip_at_line_ends(true, cx);
+        });
+    });
+}
+
 impl Vim {
     /// ms - Add surrounding characters around selection.
     pub fn helix_surround_add(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
 
-        let pair = bracket_pair_for_str(text);
+        let pair = bracket_pair_for_str_helix(text);
 
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        apply_helix_surround_edits(self, window, cx, |display_map, selections| {
+            let mut edits = Vec::new();
+            let mut anchors = Vec::new();
 
-                let display_map = editor.display_snapshot(cx);
-                let selections = editor.selections.all_display(&display_map);
-                let mut edits = Vec::new();
-                let mut anchors = Vec::new();
+            for selection in selections {
+                let range = selection.range();
+                let start = range.start.to_offset(display_map, Bias::Right);
+                let end = range.end.to_offset(display_map, Bias::Left);
 
-                for selection in &selections {
-                    let range = selection.range();
-                    let start = range.start.to_offset(&display_map, Bias::Right);
-                    let end = range.end.to_offset(&display_map, Bias::Left);
+                let start_anchor = display_map.buffer_snapshot().anchor_before(start);
+                edits.push((end..end, pair.end.clone()));
+                edits.push((start..start, pair.start.clone()));
+                anchors.push(start_anchor..start_anchor);
+            }
 
-                    let start_anchor = display_map.buffer_snapshot().anchor_before(start);
-                    edits.push((end..end, pair.end.clone()));
-                    edits.push((start..start, pair.start.clone()));
-                    anchors.push(start_anchor..start_anchor);
-                }
-
-                edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
-                editor.edit(edits, cx);
-
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchor_ranges(anchors);
-                });
-                editor.set_clip_at_line_ends(true, cx);
-            });
+            (edits, anchors)
         });
     }
 
@@ -117,70 +112,49 @@ impl Vim {
         self.stop_recording(cx);
 
         let new_char_str = new_char.to_string();
-        let new_pair = bracket_pair_for_str(&new_char_str);
+        let new_pair = bracket_pair_for_str_helix(&new_char_str);
 
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        apply_helix_surround_edits(self, window, cx, |display_map, selections| {
+            let mut edits: Vec<(std::ops::Range<MultiBufferOffset>, String)> = Vec::new();
+            let mut anchors = Vec::new();
 
-                let display_map = editor.display_snapshot(cx);
-                let selections = editor.selections.all_display(&display_map);
-                let mut edits: Vec<(std::ops::Range<MultiBufferOffset>, String)> = Vec::new();
-                let mut anchors = Vec::new();
+            for selection in selections {
+                let cursor = selection_cursor(display_map, &selection);
 
-                for selection in &selections {
-                    let cursor = if selection.reversed || selection.is_empty() {
-                        selection.head()
-                    } else {
-                        editor::movement::left(&display_map, selection.head())
-                    };
+                // For 'm', find the nearest surrounding pair
+                let markers = match surround_pair_for_char_helix(old_char) {
+                    Some(pair) => Some((pair.open, pair.close)),
+                    None => find_nearest_surrounding_pair(display_map, cursor),
+                };
 
-                    // For 'm', find the nearest surrounding pair
-                    let markers = match surround_pair_for_char(old_char) {
-                        Some(pair) => Some((pair.open, pair.close)),
-                        None => find_nearest_surrounding_pair(&display_map, cursor),
-                    };
+                let Some((open_marker, close_marker)) = markers else {
+                    let offset = selection.head().to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                    anchors.push(anchor..anchor);
+                    continue;
+                };
 
-                    let Some((open_marker, close_marker)) = markers else {
-                        let offset = selection.head().to_offset(&display_map, Bias::Left);
-                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
-                        anchors.push(anchor..anchor);
-                        continue;
-                    };
+                if let Some(range) =
+                    surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
+                {
+                    let open_start = range.start.to_offset(display_map, Bias::Left);
+                    let open_end = open_start + open_marker.len_utf8();
+                    let close_end = range.end.to_offset(display_map, Bias::Left);
+                    let close_start = close_end - close_marker.len_utf8();
 
-                    if let Some(range) = surrounding_markers(
-                        &display_map,
-                        cursor,
-                        true,
-                        true,
-                        open_marker,
-                        close_marker,
-                    ) {
-                        let open_start = range.start.to_offset(&display_map, Bias::Left);
-                        let open_end = open_start + open_marker.len_utf8();
-                        let close_end = range.end.to_offset(&display_map, Bias::Left);
-                        let close_start = close_end - close_marker.len_utf8();
+                    edits.push((close_start..close_end, new_pair.end.clone()));
+                    edits.push((open_start..open_end, new_pair.start.clone()));
 
-                        edits.push((close_start..close_end, new_pair.end.clone()));
-                        edits.push((open_start..open_end, new_pair.start.clone()));
-
-                        let anchor = display_map.buffer_snapshot().anchor_before(open_start);
-                        anchors.push(anchor..anchor);
-                    } else {
-                        let offset = selection.head().to_offset(&display_map, Bias::Left);
-                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
-                        anchors.push(anchor..anchor);
-                    }
+                    let anchor = display_map.buffer_snapshot().anchor_before(open_start);
+                    anchors.push(anchor..anchor);
+                } else {
+                    let offset = selection.head().to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                    anchors.push(anchor..anchor);
                 }
+            }
 
-                edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
-                editor.edit(edits, cx);
-
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchor_ranges(anchors);
-                });
-                editor.set_clip_at_line_ends(true, cx);
-            });
+            (edits, anchors)
         });
     }
 
@@ -193,68 +167,47 @@ impl Vim {
     ) {
         self.stop_recording(cx);
 
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        apply_helix_surround_edits(self, window, cx, |display_map, selections| {
+            let mut edits: Vec<(std::ops::Range<MultiBufferOffset>, String)> = Vec::new();
+            let mut anchors = Vec::new();
 
-                let display_map = editor.display_snapshot(cx);
-                let selections = editor.selections.all_display(&display_map);
-                let mut edits: Vec<(std::ops::Range<MultiBufferOffset>, String)> = Vec::new();
-                let mut anchors = Vec::new();
+            for selection in selections {
+                let cursor = selection_cursor(display_map, &selection);
 
-                for selection in &selections {
-                    let cursor = if selection.reversed || selection.is_empty() {
-                        selection.head()
-                    } else {
-                        editor::movement::left(&display_map, selection.head())
-                    };
+                // For 'm', find the nearest surrounding pair
+                let markers = match surround_pair_for_char_helix(target_char) {
+                    Some(pair) => Some((pair.open, pair.close)),
+                    None => find_nearest_surrounding_pair(display_map, cursor),
+                };
 
-                    // For 'm', find the nearest surrounding pair
-                    let markers = match surround_pair_for_char(target_char) {
-                        Some(pair) => Some((pair.open, pair.close)),
-                        None => find_nearest_surrounding_pair(&display_map, cursor),
-                    };
+                let Some((open_marker, close_marker)) = markers else {
+                    let offset = selection.head().to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                    anchors.push(anchor..anchor);
+                    continue;
+                };
 
-                    let Some((open_marker, close_marker)) = markers else {
-                        let offset = selection.head().to_offset(&display_map, Bias::Left);
-                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
-                        anchors.push(anchor..anchor);
-                        continue;
-                    };
+                if let Some(range) =
+                    surrounding_markers(display_map, cursor, true, true, open_marker, close_marker)
+                {
+                    let open_start = range.start.to_offset(display_map, Bias::Left);
+                    let open_end = open_start + open_marker.len_utf8();
+                    let close_end = range.end.to_offset(display_map, Bias::Left);
+                    let close_start = close_end - close_marker.len_utf8();
 
-                    if let Some(range) = surrounding_markers(
-                        &display_map,
-                        cursor,
-                        true,
-                        true,
-                        open_marker,
-                        close_marker,
-                    ) {
-                        let open_start = range.start.to_offset(&display_map, Bias::Left);
-                        let open_end = open_start + open_marker.len_utf8();
-                        let close_end = range.end.to_offset(&display_map, Bias::Left);
-                        let close_start = close_end - close_marker.len_utf8();
+                    edits.push((close_start..close_end, String::new()));
+                    edits.push((open_start..open_end, String::new()));
 
-                        edits.push((close_start..close_end, String::new()));
-                        edits.push((open_start..open_end, String::new()));
-
-                        let anchor = display_map.buffer_snapshot().anchor_before(open_start);
-                        anchors.push(anchor..anchor);
-                    } else {
-                        let offset = selection.head().to_offset(&display_map, Bias::Left);
-                        let anchor = display_map.buffer_snapshot().anchor_before(offset);
-                        anchors.push(anchor..anchor);
-                    }
+                    let anchor = display_map.buffer_snapshot().anchor_before(open_start);
+                    anchors.push(anchor..anchor);
+                } else {
+                    let offset = selection.head().to_offset(display_map, Bias::Left);
+                    let anchor = display_map.buffer_snapshot().anchor_before(offset);
+                    anchors.push(anchor..anchor);
                 }
+            }
 
-                edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
-                editor.edit(edits, cx);
-
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchor_ranges(anchors);
-                });
-                editor.set_clip_at_line_ends(true, cx);
-            });
+            (edits, anchors)
         });
     }
 }
