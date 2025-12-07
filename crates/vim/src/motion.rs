@@ -3335,6 +3335,7 @@ mod test {
         );
     }
 
+    #[gpui::test]
     async fn test_unmatched_forward(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
