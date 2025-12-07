@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+use smallvec::SmallVec;
+
 use crate::{
     App, Bounds, CursorStyle, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Window,
@@ -8,29 +10,24 @@ use crate::{
 /// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
 #[derive(Clone)]
 pub struct FragmentShader<T: ShaderUniform> {
-    main_body: String,
-    extra_items: Option<String>,
+    main_body: &'static str,
+    extra_items: SmallVec<[&'static str; 4]>,
     _marker: PhantomData<T>,
 }
 
 impl<T: ShaderUniform> FragmentShader<T> {
     /// Create a new fragment shader
-    pub fn new(main_body: &str) -> Self {
+    pub fn new(main_body: &'static str) -> Self {
         Self {
-            main_body: main_body.to_string(),
-            extra_items: None,
+            main_body,
+            extra_items: SmallVec::new(),
             _marker: PhantomData,
         }
     }
 
     /// Adds an extra item (struct, function, etc.) to the WGSL source code
-    pub fn with_item(mut self, item: &str) -> Self {
-        if let Some(defs) = &mut self.extra_items {
-            defs.push_str(item);
-        } else {
-            self.extra_items = Some(item.to_string());
-        }
-
+    pub fn with_item(mut self, item: &'static str) -> Self {
+        self.extra_items.push(item);
         self
     }
 }
@@ -162,115 +159,6 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (instance_data_field, instance_data_param, instance_data_arg) = if size_of::<T>() != 0 {
-            (
-                format!("instance_data: {},", T::NAME),
-                format!(", data: {}", T::NAME),
-                ", b_instances.instances[input.instance_id].instance_data",
-            )
-        } else {
-            (String::new(), String::new(), "")
-        };
-        let instance_data_definition = T::DEFINITION.unwrap_or("");
-
-        let source = format!(
-            r#"
-            struct GlobalParams {{
-                viewport_size: vec2<f32>,
-                premultiplied_alpha: u32,
-                opacity: f32,
-            }}
-
-            var<uniform> globals: GlobalParams;
-
-            fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {{
-                let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-                return vec4<f32>(device_position, 0.0, 1.0);
-            }}
-
-            fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {{
-                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-                return to_device_position_impl(position);
-            }}
-
-            fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {{
-                let tl = position - clip_bounds.origin;
-                let br = clip_bounds.origin + clip_bounds.size - position;
-                return vec4<f32>(tl.x, br.x, tl.y, br.y);
-            }}
-
-            fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {{
-                let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-                return distance_from_clip_rect_impl(position, clip_bounds);
-            }}
-
-            struct Bounds {{
-                origin: vec2<f32>,
-                size: vec2<f32>,
-            }}
-
-            {instance_data_definition}
-
-            struct Instance {{
-                bounds: Bounds,
-                content_mask: Bounds,
-                opacity: f32,
-                {instance_data_field}
-            }}
-
-            struct Instances {{
-                instances: array<Instance>,
-            }}
-
-            var<storage, read> b_instances: Instances;
-
-            struct VertexOut {{
-                @builtin(position) position: vec4<f32>,
-                @location(0) clip_distances: vec4<f32>,
-                @location(1) origin: vec2<f32>,
-                @location(2) size: vec2<f32>,
-                @location(3) opacity: f32,
-                @location(4) instance_id: u32,
-            }}
-
-            @vertex
-            fn vs(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> VertexOut {{
-                let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-                let instance = b_instances.instances[instance_id];
-
-                var out = VertexOut();
-                out.position = to_device_position(unit_vertex, instance.bounds);
-                out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
-                out.origin = instance.bounds.origin;
-                out.size = instance.bounds.size;
-                out.opacity = instance.opacity;
-                out.instance_id = instance_id;
-                return out;
-            }}
-
-            {}
-
-            fn user_fs(input: VertexOut{instance_data_param}) -> vec4<f32> {{
-                {}
-            }}
-
-            @fragment
-            fn fs(input: VertexOut) -> @location(0) vec4<f32> {{
-                if (any(input.clip_distances < vec4<f32>(0.0))) {{
-                    return vec4<f32>(0.0);
-                }}
-
-                let color = user_fs(input{instance_data_arg});
-
-                let alpha = color.a * input.opacity;
-                let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
-                return vec4<f32>(color.rgb * multiplier, alpha);
-            }}
-            "#,
-            self.shader.extra_items.as_deref().unwrap_or(""),
-            self.shader.main_body
-        );
-
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -280,7 +168,12 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
             cx,
             |_style, window, _cx| {
                 window
-                    .paint_shader(bounds, &source, &self.instance_data)
+                    .paint_shader(
+                        bounds,
+                        self.shader.main_body,
+                        self.shader.extra_items.clone(),
+                        &self.instance_data,
+                    )
                     .unwrap();
             },
         );

@@ -3,6 +3,7 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::platform::shader::CustomShaderGlobalParams;
+use crate::shader::CustomShaderInfo;
 use crate::{
     Background, Bounds, CustomShaderId, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, ShaderInstance, Shadow, Size,
@@ -142,7 +143,7 @@ struct BladePipelines {
     surfaces: gpu::RenderPipeline,
 
     custom: Vec<(gpu::RenderPipeline, usize, usize)>,
-    custom_ids: HashMap<String, CustomShaderId>,
+    custom_ids: HashMap<CustomShaderInfo, CustomShaderId>,
 }
 
 impl BladePipelines {
@@ -321,29 +322,27 @@ impl BladePipelines {
         &mut self,
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
+        info: CustomShaderInfo,
     ) -> anyhow::Result<CustomShaderId> {
-        if let Some(id) = self.custom_ids.get(source).cloned() {
+        if let Some(id) = self.custom_ids.get(&info).cloned() {
             return Ok(id);
         }
 
         let id = CustomShaderId(self.custom.len() as u32);
+        let source = info.to_string();
         let shader = gpu
-            .try_create_shader(gpu::ShaderDesc { source })
+            .try_create_shader(gpu::ShaderDesc { source: &source })
             .map_err(|err| anyhow::anyhow!(err))?;
         shader.check_struct_size::<GlobalParams>();
 
-        if let Some(data_struct_name) = instance_data_name {
+        if info.data_definition.is_some() {
             assert_eq!(
-                shader.get_struct_size(data_struct_name) as usize,
-                instance_data_size.next_multiple_of(instance_data_align)
+                shader.get_struct_size(info.data_name) as usize,
+                info.data_size.next_multiple_of(info.data_align)
             );
         }
 
-        let (_, instance_size) = ShaderInstance::size_info(instance_data_size, instance_data_align);
+        let (_, instance_size) = ShaderInstance::size_info(info.data_size, info.data_align);
         assert_eq!(shader.get_struct_size("Instance") as usize, instance_size);
 
         let blend_mode = match surface_info.alpha {
@@ -372,10 +371,10 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
-            instance_data_size,
-            instance_data_align,
+            info.data_size,
+            info.data_align,
         ));
-        self.custom_ids.insert(source.to_string(), id);
+        self.custom_ids.insert(info, id);
         Ok(id)
     }
 
@@ -1038,19 +1037,10 @@ impl BladeRenderer {
 
     pub fn register_custom_shader(
         &mut self,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
+        info: CustomShaderInfo,
     ) -> anyhow::Result<CustomShaderId> {
-        self.pipelines.register_custom_shader(
-            &self.gpu,
-            self.surface.info(),
-            source,
-            instance_data_name,
-            instance_data_size,
-            instance_data_align,
-        )
+        self.pipelines
+            .register_custom_shader(&self.gpu, self.surface.info(), info)
     }
 }
 

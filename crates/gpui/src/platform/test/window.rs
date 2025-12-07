@@ -3,6 +3,7 @@ use crate::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, RequestFrameOptions, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
+    shader::CustomShaderInfo,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -268,13 +269,7 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, _scene: &crate::Scene) {}
 
-    fn register_shader(
-        &self,
-        _source: &str,
-        _instance_data_name: Option<&str>,
-        _instance_data_size: usize,
-        _instance_data_align: usize,
-    ) -> anyhow::Result<crate::CustomShaderId> {
+    fn register_shader(&self, _info: CustomShaderInfo) -> anyhow::Result<crate::CustomShaderId> {
         unimplemented!()
     }
 

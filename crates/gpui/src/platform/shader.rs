@@ -1,4 +1,132 @@
+use std::{fmt::Display, hash::Hash};
+
 use bytemuck::{Pod, Zeroable};
+use smallvec::SmallVec;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CustomShaderInfo {
+    pub main_body: &'static str,
+    pub extra_items: SmallVec<[&'static str; 4]>,
+    pub data_name: &'static str,
+    pub data_definition: Option<&'static str>,
+    pub data_size: usize,
+    pub data_align: usize,
+}
+
+impl Display for CustomShaderInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let instance_data_definition = self.data_definition.unwrap_or("");
+        let main_body = self.main_body;
+        let extra_items = self.extra_items.join("");
+
+        let (instance_data_field, instance_data_param, instance_data_arg) = if self.data_size != 0 {
+            (
+                format!("instance_data: {}", self.data_name),
+                format!(", data: {}", self.data_name),
+                ", b_instances.instances[input.instance_id].instance_data",
+            )
+        } else {
+            (String::new(), String::new(), "")
+        };
+
+        write!(
+            f,
+            r#"
+        struct GlobalParams {{
+            viewport_size: vec2<f32>,
+            premultiplied_alpha: u32,
+            opacity: f32,
+        }}
+
+        var<uniform> globals: GlobalParams;
+
+        fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {{
+            let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
+            return vec4<f32>(device_position, 0.0, 1.0);
+        }}
+
+        fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {{
+            let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+            return to_device_position_impl(position);
+        }}
+
+        fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {{
+            let tl = position - clip_bounds.origin;
+            let br = clip_bounds.origin + clip_bounds.size - position;
+            return vec4<f32>(tl.x, br.x, tl.y, br.y);
+        }}
+
+        fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {{
+            let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+            return distance_from_clip_rect_impl(position, clip_bounds);
+        }}
+
+        struct Bounds {{
+            origin: vec2<f32>,
+            size: vec2<f32>,
+        }}
+
+        {instance_data_definition}
+
+        struct Instance {{
+            bounds: Bounds,
+            content_mask: Bounds,
+            opacity: f32,
+            {instance_data_field}
+        }}
+
+        struct Instances {{
+            instances: array<Instance>,
+        }}
+
+        var<storage, read> b_instances: Instances;
+
+        struct VertexOut {{
+            @builtin(position) position: vec4<f32>,
+            @location(0) clip_distances: vec4<f32>,
+            @location(1) origin: vec2<f32>,
+            @location(2) size: vec2<f32>,
+            @location(3) opacity: f32,
+            @location(4) instance_id: u32,
+        }}
+
+        @vertex
+        fn vs(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> VertexOut {{
+            let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+            let instance = b_instances.instances[instance_id];
+
+            var out = VertexOut();
+            out.position = to_device_position(unit_vertex, instance.bounds);
+            out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
+            out.origin = instance.bounds.origin;
+            out.size = instance.bounds.size;
+            out.opacity = instance.opacity;
+            out.instance_id = instance_id;
+            return out;
+        }}
+
+        {extra_items}
+
+        fn user_fs(input: VertexOut{instance_data_param}) -> vec4<f32> {{
+            {main_body}
+        }}
+
+        @fragment
+        fn fs(input: VertexOut) -> @location(0) vec4<f32> {{
+            if (any(input.clip_distances < vec4<f32>(0.0))) {{
+                return vec4<f32>(0.0);
+            }}
+
+            let color = user_fs(input{instance_data_arg});
+
+            let alpha = color.a * input.opacity;
+            let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
+            return vec4<f32>(color.rgb * multiplier, alpha);
+        }}
+        "#
+        )
+    }
+}
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
 use {
@@ -13,14 +141,14 @@ use {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct CustomShaderGlobalParams {
+pub(super) struct CustomShaderGlobalParams {
     pub viewport_size: [f32; 2],
     pub premultiplied_alpha: u32,
     pub pad: u32,
 }
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
-pub fn naga_validate_custom_shader(
+pub(super) fn naga_validate_custom_shader(
     source: &str,
     data_struct_name: Option<&str>,
     data_size: usize,

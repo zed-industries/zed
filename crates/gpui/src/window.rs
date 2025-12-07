@@ -1,5 +1,6 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+use crate::shader::CustomShaderInfo;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
@@ -3273,7 +3274,8 @@ impl Window {
     pub fn paint_shader<T: ShaderUniform>(
         &mut self,
         bounds: Bounds<Pixels>,
-        shader: &str,
+        main_body: &'static str,
+        extra_items: SmallVec<[&'static str; 4]>,
         instance_data: &T,
     ) -> anyhow::Result<()> {
         self.invalidator.debug_assert_paint();
@@ -3281,16 +3283,14 @@ impl Window {
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
-        let shader_id = self.platform_window.register_shader(
-            shader,
-            if T::DEFINITION.is_some() {
-                Some(T::NAME)
-            } else {
-                None
-            },
-            size_of::<T>(),
-            T::ALIGN,
-        )?;
+        let shader_id = self.platform_window.register_shader(CustomShaderInfo {
+            main_body,
+            extra_items,
+            data_name: T::NAME,
+            data_definition: T::DEFINITION,
+            data_size: size_of::<T>(),
+            data_align: T::ALIGN,
+        })?;
 
         let instance_data = unsafe {
             std::slice::from_raw_parts((instance_data as *const T) as *const u8, size_of::<T>())

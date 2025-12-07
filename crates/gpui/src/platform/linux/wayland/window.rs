@@ -30,7 +30,7 @@ use crate::{
     Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams,
-    layer_shell::LayerShellNotSupportedError, px, size,
+    layer_shell::LayerShellNotSupportedError, px, shader::CustomShaderInfo, size,
 };
 use crate::{
     Capslock,
@@ -1216,20 +1216,9 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.draw(scene);
     }
 
-    fn register_shader(
-        &self,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
-    ) -> anyhow::Result<CustomShaderId> {
+    fn register_shader(&self, info: CustomShaderInfo) -> anyhow::Result<CustomShaderId> {
         let mut state = self.borrow_mut();
-        state.renderer.register_custom_shader(
-            source,
-            instance_data_name,
-            instance_data_size,
-            instance_data_align,
-        )
+        state.renderer.register_custom_shader(info)
     }
 
     fn completed_frame(&self) {
