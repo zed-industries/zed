@@ -3118,10 +3118,11 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
             .await
             .context("getting installed companion version")?
             .context("companion was not installed")?;
-        smol::fs::rename(temp_dir.path(), dir.join(&version))
+        let version_folder = dir.join(version.to_string());
+        smol::fs::rename(temp_dir.path(), &version_folder)
             .await
             .context("moving companion package into place")?;
-        Ok(dir.join(version))
+        Ok(version_folder)
     }
 
     let dir = paths::debug_adapters_dir().join("js-debug-companion");

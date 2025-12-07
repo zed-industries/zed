@@ -221,12 +221,11 @@ impl NodeRuntime {
         &self,
         local_package_directory: &Path,
         name: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Version>> {
         self.instance()
             .await
             .npm_package_installed_version(local_package_directory, name)
             .await
-            .map(|option| option.map(|version| version.to_string()))
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
@@ -312,10 +311,6 @@ impl NodeRuntime {
             .log_err()
             .flatten()
         else {
-            return true;
-        };
-
-        let Some(installed_version) = Version::parse(&installed_version).log_err() else {
             return true;
         };
 

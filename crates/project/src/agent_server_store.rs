@@ -22,6 +22,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use task::{Shell, SpawnInTerminal};
@@ -1025,6 +1026,7 @@ fn get_or_npm_install_builtin_agent(
                 package_name.clone(),
             ))
             .await?
+            .to_string()
             .into()
         };
 
@@ -1071,7 +1073,7 @@ async fn download_latest_version(
     dir: PathBuf,
     node_runtime: NodeRuntime,
     package_name: SharedString,
-) -> Result<String> {
+) -> Result<Version> {
     log::debug!("downloading latest version of {package_name}");
 
     let tmp_dir = tempfile::tempdir_in(&dir)?;
@@ -1087,7 +1089,7 @@ async fn download_latest_version(
 
     fs.rename(
         &tmp_dir.keep(),
-        &dir.join(&version),
+        &dir.join(version.to_string()),
         RenameOptions {
             ignore_if_exists: true,
             overwrite: true,
