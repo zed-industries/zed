@@ -1,5 +1,7 @@
-use gpui::{App, actions};
-use workspace::Workspace;
+use std::sync::Arc;
+
+use gpui::{App, Context, Window, actions};
+use workspace::{ItemHandle, PreviewFactory, Workspace, register_preview_factory};
 
 pub mod markdown_elements;
 mod markdown_minifier;
@@ -24,6 +26,9 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    // Register the preview factory
+    register_preview_factory(Arc::new(MarkdownPreviewFactory), cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -31,4 +36,51 @@ pub fn init(cx: &mut App) {
         markdown_preview_view::MarkdownPreviewView::register(workspace, window, cx);
     })
     .detach();
+}
+
+struct MarkdownPreviewFactory;
+
+impl PreviewFactory for MarkdownPreviewFactory {
+    fn can_preview_extension(&self, extension: &str) -> bool {
+        matches!(extension.to_lowercase().as_str(), "md" | "markdown")
+    }
+
+    fn can_preview(&self, item: &dyn ItemHandle, cx: &App) -> bool {
+        // Check if the item has a markdown file extension
+        let mut can_preview = false;
+        item.for_each_project_item(cx, &mut |_, project_item| {
+            if let Some(path) = project_item.project_path(cx) {
+                if let Some(extension) = path.path.extension() {
+                    can_preview = matches!(extension.to_lowercase().as_str(), "md" | "markdown");
+                }
+            }
+        });
+        can_preview
+    }
+
+    fn create_preview(
+        &self,
+        item: Box<dyn ItemHandle>,
+        language_registry: Arc<language::LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Box<dyn ItemHandle> {
+        use markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+
+        // Downcast to Editor to get the entity
+        let editor = item.to_any_view().downcast::<editor::Editor>().unwrap();
+
+        let workspace = cx.entity().downgrade();
+
+        let preview = MarkdownPreviewView::new(
+            MarkdownPreviewMode::Default,
+            editor,
+            workspace,
+            language_registry,
+            window,
+            cx,
+        );
+
+        Box::new(preview)
+    }
 }
