@@ -18,7 +18,10 @@ use ui::{
     Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
-use workspace::{ModalView, SplitDirection, Workspace, item::PreviewTabsSettings, pane};
+use workspace::{
+    ModalView, SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt,
+    pane,
+};
 use worktree::Entry;
 
 actions!(
@@ -754,8 +757,8 @@ impl PickerDelegate for FileExplorerDelegate {
                     });
 
                     let file_explorer = self.file_explorer.clone();
-                    cx.spawn_in(window, async move |_, cx| {
-                        let _ = open_task.await;
+                    cx.spawn_in(window, async move |_, mut cx| {
+                        open_task.await.notify_async_err(&mut cx);
                         file_explorer.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                     })
                     .detach();
