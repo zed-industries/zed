@@ -3129,6 +3129,7 @@ mod test {
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3249,6 +3250,91 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_quotes_disabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_match_quotes = Some(false);
+            });
+        });
+
+        cx.set_shared_state("one {two 'thˇree' four}").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("one ˇ{two 'three' four}");
+
+        cx.set_shared_state("'hello wˇorld'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'hello wˇorld'");
+
+        cx.set_shared_state(r#"func ("teˇst") {}"#).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(r#"func ˇ("test") {}"#);
+
+        cx.set_shared_state("ˇ'hello'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("ˇ'hello'");
+
+        cx.set_shared_state("'helloˇ'").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("'helloˇ'");
+
+        cx.set_shared_state(indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"func (a string) {
+                doˇ('something'))
+            }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_quotes_enabled(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_markdown_with_rust(cx).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_match_quotes = Some(true);
+            });
+        });
+
+        cx.set_state("one {two 'thˇree' four}", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("one {two ˇ'three' four}", Mode::Normal);
+
+        cx.set_state("'hello wˇorld'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello world'", Mode::Normal);
+
+        cx.set_state(r#"func ('teˇst') {}"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"func (ˇ'test') {}"#, Mode::Normal);
+
+        cx.set_state("ˇ'hello'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("'helloˇ'", Mode::Normal);
+
+        cx.set_state("'helloˇ'", Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state("ˇ'hello'", Mode::Normal);
+
+        cx.set_state(
+            indoc! {r"func (a string) {
+                do('somethiˇng'))
+            }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("%");
+        cx.assert_state(
+            indoc! {r"func (a string) {
+                do(ˇ'something'))
+            }"},
+            Mode::Normal,
+        );
+    }
+
     async fn test_unmatched_forward(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -3502,6 +3588,44 @@ mod test {
         </html>"#});
     }
 
+    #[gpui::test]
+    async fn test_matching_tag_with_quotes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_match_quotes = Some(false);
+            });
+        });
+
+        cx.neovim.exec("set filetype=html").await;
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_match_quotes = Some(true);
+            });
+        });
+
+        cx.set_shared_state(indoc! {r"<div class='teˇst' id='main'>
+            </div>
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+    }
     #[gpui::test]
     async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
