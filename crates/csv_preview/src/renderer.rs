@@ -3,7 +3,7 @@ use ui::{
     DefiniteLength, SharedString, Table, TableColumnWidths, TableResizeBehavior, div, prelude::*,
 };
 
-use crate::CsvPreviewView;
+use crate::{CsvPreviewView, Ordering, OrderingDirection};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -14,6 +14,47 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
+            .child(
+                Button::new(
+                    "order-first-column",
+                    if let Some(order) = self.ordering {
+                        let col_name = self
+                            .contents
+                            .headers
+                            .get(0)
+                            .map(|h| h.as_ref())
+                            .unwrap_or("Column 1");
+                        if order.direction == OrderingDirection::Asc {
+                            format!("Sort {} desc", col_name)
+                        } else {
+                            "Clear sorting".to_string()
+                        }
+                    } else {
+                        let col_name = self
+                            .contents
+                            .headers
+                            .get(0)
+                            .map(|h| h.as_ref())
+                            .unwrap_or("Column 1");
+                        format!("Sort {} asc", col_name)
+                    },
+                )
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    let new_dir = match this.ordering {
+                        Some(ordering) => match ordering.direction {
+                            OrderingDirection::Asc => Some(OrderingDirection::Desc),
+                            OrderingDirection::Desc => None,
+                        },
+                        None => Some(OrderingDirection::Asc),
+                    };
+
+                    this.ordering = new_dir.map(|d| Ordering {
+                        col_idx: 0, // For poc purposes always sorting 0th column
+                        direction: d,
+                    });
+                    cx.notify();
+                })),
+            )
             .child({
                 if self.contents.headers.is_empty() {
                     div()
@@ -35,6 +76,42 @@ impl Render for CsvPreviewView {
 }
 
 impl CsvPreviewView {
+    /// Generate ordered row indices based on current ordering settings
+    fn generate_ordered_indices(&self) -> Vec<usize> {
+        let mut indices: Vec<usize> = (0..self.contents.rows.len()).collect();
+
+        if let Some(ordering) = self.ordering {
+            indices.sort_by(|&a, &b| {
+                let row_a = &self.contents.rows[a];
+                let row_b = &self.contents.rows[b];
+
+                let val_a = row_a
+                    .get(ordering.col_idx)
+                    .map(|s| s.as_ref())
+                    .unwrap_or("");
+                let val_b = row_b
+                    .get(ordering.col_idx)
+                    .map(|s| s.as_ref())
+                    .unwrap_or("");
+
+                // Try numeric comparison first, fall back to string comparison
+                let cmp = match (val_a.parse::<f64>(), val_b.parse::<f64>()) {
+                    (Ok(num_a), Ok(num_b)) => num_a
+                        .partial_cmp(&num_b)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    _ => val_a.cmp(val_b),
+                };
+
+                match ordering.direction {
+                    OrderingDirection::Asc => cmp,
+                    OrderingDirection::Desc => cmp.reverse(),
+                }
+            });
+        }
+
+        indices
+    }
+
     pub(crate) fn create_table<const COLS: usize>(
         &self,
         current_widths: &Entity<TableColumnWidths<COLS>>,
@@ -83,8 +160,12 @@ impl CsvPreviewView {
                 "csv-table",
                 row_count,
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
+                    let ordered_indices = this.generate_ordered_indices();
+
                     range
-                        .filter_map(|row_index| {
+                        .filter_map(|display_index| {
+                            // Get the actual row index from our ordered indices
+                            let row_index = *ordered_indices.get(display_index)?;
                             let row = this.contents.rows.get(row_index)?;
 
                             let mut elements = Vec::with_capacity(COLS);

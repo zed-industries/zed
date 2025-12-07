@@ -1,17 +1,9 @@
 use ui::SharedString;
 
+#[derive(Default)]
 pub struct ParsedCsv {
     pub headers: Vec<SharedString>,
     pub rows: Vec<Vec<SharedString>>,
-}
-
-impl Default for ParsedCsv {
-    fn default() -> Self {
-        Self {
-            headers: vec![],
-            rows: vec![],
-        }
-    }
 }
 
 impl ParsedCsv {
