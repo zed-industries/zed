@@ -17,8 +17,8 @@ use ui::{
 };
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    ModalView, SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt,
-    pane,
+    ModalView, SplitDirection, Workspace, item::PreviewTabsSettings,
+    notifications::NotifyResultExt, pane,
 };
 use worktree::Entry;
 
@@ -439,8 +439,9 @@ impl FileExplorerDelegate {
             .initial_selected_path
             .take()
             .and_then(|target_path| {
-                self.matches.iter().position(|m| {
-                    match &self.all_entries[m.candidate_id] {
+                self.matches
+                    .iter()
+                    .position(|m| match &self.all_entries[m.candidate_id] {
                         FileExplorerEntry::ParentDirectory
                         | FileExplorerEntry::AllWorktrees
                         | FileExplorerEntry::Worktree(..) => false,
@@ -448,8 +449,7 @@ impl FileExplorerDelegate {
                             e.path.file_name().map(|s| s.to_string()).as_deref()
                                 == Some(&target_path)
                         }
-                    }
-                })
+                    })
             })
             .unwrap_or(0);
     }
@@ -584,11 +584,12 @@ impl PickerDelegate for FileExplorerDelegate {
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
-        if self
-            .matches
-            .first()
-            .is_some_and(|m| matches!(self.all_entries[m.candidate_id], FileExplorerEntry::ParentDirectory))
-        {
+        if self.matches.first().is_some_and(|m| {
+            matches!(
+                self.all_entries[m.candidate_id],
+                FileExplorerEntry::ParentDirectory
+            )
+        }) {
             vec![0]
         } else {
             Vec::new()
@@ -702,7 +703,9 @@ impl PickerDelegate for FileExplorerDelegate {
                     let file_explorer = self.file_explorer.clone();
                     cx.spawn_in(window, async move |_, mut cx| {
                         open_task.await.notify_async_err(&mut cx);
-                        file_explorer.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+                        file_explorer
+                            .update(cx, |_, cx| cx.emit(DismissEvent))
+                            .log_err();
                     })
                     .detach();
                 }
