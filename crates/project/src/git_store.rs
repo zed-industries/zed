@@ -1054,6 +1054,7 @@ impl GitStore {
                             project_id: project_id.to_proto(),
                             buffer_id: buffer_id.into(),
                             version: serialize_version(&version),
+                            extra_args: extra_args.clone(),
                         })
                         .await?;
                     Ok(deserialize_blame_buffer_response(response))
@@ -2753,7 +2754,7 @@ impl GitStore {
             .await?;
         let blame = this
             .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), &[], cx)
+                this.blame_buffer(&buffer, Some(version), &envelope.payload.extra_args, cx)
             })?
             .await?;
         Ok(serialize_blame_buffer_response(blame))
