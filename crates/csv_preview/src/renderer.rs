@@ -4,7 +4,11 @@ use ui::{
     TableResizeBehavior, div, h_flex, prelude::*,
 };
 
-use crate::{CsvPreviewView, Ordering, OrderingDirection};
+use crate::{
+    CsvPreviewView, Ordering,
+    cell_selection::TableSelection,
+    data_ordering::{OrderingDirection, generate_ordered_indecies},
+};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -197,7 +201,7 @@ impl CsvPreviewView {
                 let line_num_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                    let ordered_indices = this.generate_ordered_indices();
+                    let ordered_indices = generate_ordered_indecies(this.ordering, &this.contents);
 
                     range
                         .filter_map(|display_index| {
@@ -221,51 +225,25 @@ impl CsvPreviewView {
                                 let cell_content: SharedString =
                                     row.get(col).cloned().unwrap_or_else(|| "".into());
 
-                                // Use display_index for selection instead of row_index
-                                let is_selected = this.is_cell_selected(display_index, col);
-
-                                elements.push(
-                                    div()
-                                        .id(ElementId::NamedInteger(
-                                            format!("csv-display-cell-{}-{}", display_index, col)
-                                                .into(),
-                                            0,
-                                        ))
-                                        .child(cell_content)
-                                        .cursor_pointer()
-                                        .when(is_selected, |div| div.bg(selected_bg))
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let view = cx.entity();
-                                            move |_event, _window, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.start_selection(display_index, col, cx);
-                                                });
-                                            }
-                                        })
-                                        .on_mouse_move({
-                                            let view = cx.entity();
-                                            move |_event, _window, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    if this.is_selecting {
-                                                        this.extend_selection_to(
-                                                            display_index,
-                                                            col,
-                                                            cx,
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                        })
-                                        .on_mouse_up(MouseButton::Left, {
-                                            let view = cx.entity();
-                                            move |_event, _window, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.end_selection(cx);
-                                                });
-                                            }
-                                        })
-                                        .into_any_element(),
+                                // Check if this cell is selected using display coordinates
+                                let ordered_indices =
+                                    generate_ordered_indecies(this.ordering, &this.contents);
+                                let display_to_data_converter =
+                                    |dr: usize| ordered_indices.get(dr).copied();
+                                let is_selected = this.selection.is_cell_selected(
+                                    display_index,
+                                    col,
+                                    display_to_data_converter,
                                 );
+
+                                elements.push(TableSelection::create_selectable_cell(
+                                    display_index,
+                                    col,
+                                    cell_content,
+                                    cx.entity(),
+                                    selected_bg,
+                                    is_selected,
+                                ));
                             }
 
                             let elements_array: [gpui::AnyElement; COLS] =
@@ -285,7 +263,8 @@ impl CsvPreviewView {
                 let view = cx.entity();
                 move |_event, _window, cx| {
                     view.update(cx, |this, cx| {
-                        this.end_selection(cx);
+                        this.selection.end_selection();
+                        cx.notify();
                     });
                 }
             })
