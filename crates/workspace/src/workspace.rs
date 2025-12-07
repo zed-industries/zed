@@ -1,4 +1,5 @@
 pub mod dock;
+pub mod file_preview_matcher;
 pub mod history_manager;
 pub mod invalid_item_view;
 pub mod item;
@@ -3501,10 +3502,25 @@ impl Workspace {
 
         let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
+
+        // Get file preview mode settings
+        let settings = workspace_settings::WorkspaceSettings::get_global(cx);
+        let path_for_logging = project_path.path.clone();
+
+        let preview_mode_command = if !settings.file_preview_modes.is_empty() {
+            // Try to match the path against configured patterns
+            crate::file_preview_matcher::match_file_pattern(
+                path_for_logging.as_std_path(),
+                &settings.file_preview_modes,
+            )
+        } else {
+            None
+        };
+
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
 
-            pane.update_in(cx, |pane, window, cx| {
+            let item = pane.update_in(cx, |pane, window, cx| {
                 pane.open_item(
                     project_entry_id,
                     project_path,
@@ -3516,7 +3532,29 @@ impl Workspace {
                     cx,
                     build_item,
                 )
-            })
+            })?;
+
+            // Apply file preview mode if configured
+            if let Some(action_name) = preview_mode_command {
+                cx.update(|window, cx| {
+                    // Try to build and dispatch the action
+                    match cx.build_action(&action_name, None) {
+                        Ok(action) => {
+                            window.dispatch_action(action, cx);
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to apply preview mode '{}' for path {:?}: {}",
+                                action_name,
+                                path_for_logging,
+                                e
+                            );
+                        }
+                    }
+                })?;
+            }
+
+            Ok(item)
         })
     }
 

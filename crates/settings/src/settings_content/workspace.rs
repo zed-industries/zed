@@ -10,6 +10,28 @@ use crate::{
     ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
+/// Rule for automatically dispatching actions when opening files matching specific patterns.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct FilePreviewModeRule {
+    /// Glob pattern to match file paths.
+    ///
+    /// Examples:
+    /// - `"*.md"` - matches all markdown files
+    /// - `"README.md"` - matches specific filename
+    /// - `"docs/**/*.md"` - matches markdown files in docs directory (recursive)
+    pub filter: String,
+
+    /// Action to dispatch when pattern matches.
+    ///
+    /// Examples:
+    /// - `"markdown::OpenPreview"` - open markdown preview
+    /// - `"markdown::OpenPreviewToTheSide"` - open preview in split pane
+    /// - `"svg::OpenPreviewToTheSide"` - open SVG preview in split pane
+    ///
+    /// To discover action names, open the command palette (Cmd+Shift+P on macOS, Ctrl+Shift+P on Linux/Windows).
+    pub command: String,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
@@ -112,6 +134,29 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Configure actions to run automatically when opening files matching specific patterns.
+    /// Rules are processed in order - first match wins.
+    ///
+    /// Example:
+    /// ```json
+    /// "file_preview_modes": [
+    ///   {
+    ///     "filter": "README.md",
+    ///     "command": "markdown::OpenFollowingPreview"
+    ///   },
+    ///   {
+    ///     "filter": "*.md",
+    ///     "command": "markdown::OpenPreview"
+    ///   },
+    ///   {
+    ///     "filter": "*.svg",
+    ///     "command": "svg::OpenPreviewToTheSide"
+    ///   }
+    /// ]
+    /// ```
+    ///
+    /// Default: []
+    pub file_preview_modes: Option<Vec<FilePreviewModeRule>>,
 }
 
 #[with_fallible_options]
