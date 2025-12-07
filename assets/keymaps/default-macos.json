@@ -991,6 +991,16 @@
     }
   },
   {
+    "context": "GitPanel && StashList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "git_panel::SelectPrevStash",
+      "down": "git_panel::SelectNextStash",
+      "enter": "menu::Confirm",
+      "escape": "git_panel::ToggleFocus"
+    }
+  },
+  {
     "context": "GitPanel && CommitEditor",
     "use_key_equivalents": true,
     "bindings": {

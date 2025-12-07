@@ -281,7 +281,7 @@ impl StashListDelegate {
 
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))?
-                .await?;
+                .await??;
             Ok(())
         })
         .detach_and_prompt_err("Failed to pop stash", window, cx, |e, _, _| {

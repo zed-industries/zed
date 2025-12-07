@@ -30,7 +30,7 @@ use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
-    notifications::NotifyTaskExt,
+    notifications::DetachAndPromptErr,
     pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
@@ -76,6 +76,10 @@ const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
+    pub fn stash_index(&self) -> Option<usize> {
+        self.stash
+    }
+
     pub fn open(
         commit_sha: String,
         repo: WeakEntity<Repository>,
@@ -682,7 +686,7 @@ impl CommitViewToolbar {
                 })?;
 
                 match result {
-                    Ok(task) => task.await?,
+                    Ok(receiver) => receiver.await??,
                     Err(err) => {
                         Self::close_commit_view(commit_view, workspace, cx).await?;
                         return Err(err);
@@ -720,6 +724,27 @@ impl CommitViewToolbar {
         );
     }
 
+    fn format_stash_error(error: &anyhow::Error) -> String {
+        let error_str = error.to_string();
+        if error_str.contains("could not write index") || error_str.contains("conflict") {
+            format!(
+                "{}\n\nYour working directory has uncommitted changes that conflict with the stash. \
+                To resolve this:\n\
+                • Commit or stash your current changes first\n\
+                • Or discard your local changes if they're not needed",
+                error_str
+            )
+        } else if error_str.contains("CONFLICT") {
+            format!(
+                "{}\n\nThe stash could not be applied cleanly due to merge conflicts. \
+                You may need to resolve these conflicts manually.",
+                error_str
+            )
+        } else {
+            error_str
+        }
+    }
+
     fn stash_action<AsyncFn>(
         &mut self,
         str_action: &str,
@@ -752,6 +777,7 @@ impl CommitViewToolbar {
             cx,
         );
 
+        let error_title = format!("Failed to {} stash", str_action.to_lowercase());
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
             if answer.await != Ok(0) {
@@ -769,7 +795,9 @@ impl CommitViewToolbar {
             callback(repo, &sha, stash, commit_view, workspace, cx).await?;
             anyhow::Ok(())
         })
-        .detach_and_notify_err(window, cx);
+        .detach_and_prompt_err(&error_title, window, cx, |error, _, _| {
+            Some(Self::format_stash_error(error))
+        });
     }
 }
 

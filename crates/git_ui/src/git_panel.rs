@@ -25,17 +25,18 @@ use git::repository::{
     UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
-use git::status::StageStatus;
+use git::status::{DiffTreeType, StageStatus, TreeDiffStatus};
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
     TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    Action, AsyncApp, AsyncWindowContext, ClickEvent, Corner, DismissEvent, DragMoveEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -61,7 +62,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use ui::{
     ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu, ScrollAxes,
     Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
@@ -73,6 +74,7 @@ use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
+    pane::SaveIntent,
 };
 actions!(
     git_panel,
@@ -91,8 +93,23 @@ actions!(
         ToggleFillCoAuthors,
         /// Toggles sorting entries by path vs status.
         ToggleSortByPath,
+        /// Shows the Changes tab.
+        ShowChangesTab,
+        /// Shows the Stash tab.
+        ShowStashTab,
+        /// Selects the previous stash entry.
+        SelectPrevStash,
+        /// Selects the next stash entry.
+        SelectNextStash,
     ]
 );
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GitPanelTab {
+    #[default]
+    Changes,
+    Stash,
+}
 
 fn prompt<T>(
     msg: &str,
@@ -373,7 +390,40 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
+    current_tab: GitPanelTab,
+    stash_list_scroll_handle: UniformListScrollHandle,
+    stash_files_scroll_handle: UniformListScrollHandle,
+    selected_stash_entry: Option<usize>,
+    selected_stash_files: Vec<StashFileEntry>,
+    stash_files_loading: bool,
+    stash_files_preview_height: Pixels,
     _settings_subscription: Subscription,
+}
+
+#[derive(Clone, Debug)]
+struct StashFileEntry {
+    repo_path: RepoPath,
+    status: TreeDiffStatus,
+}
+
+impl StashFileEntry {
+    fn to_file_status(&self) -> FileStatus {
+        use git::status::{StatusCode, TrackedStatus};
+        match &self.status {
+            TreeDiffStatus::Added => FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Unmodified,
+            }),
+            TreeDiffStatus::Modified { .. } => FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Unmodified,
+            }),
+            TreeDiffStatus::Deleted { .. } => FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Deleted,
+                worktree_status: StatusCode::Unmodified,
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -381,6 +431,20 @@ struct BulkStaging {
     repo_id: RepositoryId,
     anchor: RepoPath,
 }
+
+#[derive(Clone)]
+struct DraggedStashFilesPreview;
+
+impl Render for DraggedStashFilesPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+const RESIZE_HANDLE_SIZE: Pixels = px(6.);
+const DEFAULT_STASH_FILES_PREVIEW_HEIGHT: Pixels = px(160.);
+const MIN_STASH_FILES_PREVIEW_HEIGHT: Pixels = px(80.);
+const MAX_STASH_FILES_PREVIEW_HEIGHT: Pixels = px(400.);
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
 
@@ -477,7 +541,8 @@ impl GitPanel {
                         _,
                         RepositoryEvent::StatusesChanged
                         | RepositoryEvent::BranchChanged
-                        | RepositoryEvent::MergeHeadsChanged,
+                        | RepositoryEvent::MergeHeadsChanged
+                        | RepositoryEvent::StashEntriesChanged,
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -534,6 +599,13 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
+                current_tab: GitPanelTab::default(),
+                stash_list_scroll_handle: UniformListScrollHandle::new(),
+                stash_files_scroll_handle: UniformListScrollHandle::new(),
+                selected_stash_entry: None,
+                selected_stash_files: Vec::new(),
+                stash_files_loading: false,
+                stash_files_preview_height: DEFAULT_STASH_FILES_PREVIEW_HEIGHT,
                 _settings_subscription,
             };
 
@@ -672,7 +744,10 @@ impl GitPanel {
             .is_some_and(|focused| self.focus_handle == focused)
         {
             dispatch_context.add("menu");
-            dispatch_context.add("ChangesList");
+            match self.current_tab {
+                GitPanelTab::Changes => dispatch_context.add("ChangesList"),
+                GitPanelTab::Stash => dispatch_context.add("StashList"),
+            }
         }
 
         if self.commit_editor.read(cx).is_focused(window) {
@@ -806,6 +881,63 @@ impl GitPanel {
 
         self.focus_handle.focus(window);
         cx.notify();
+    }
+
+    fn show_changes_tab(
+        &mut self,
+        _: &ShowChangesTab,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_tab = GitPanelTab::Changes;
+        cx.notify();
+    }
+
+    fn show_stash_tab(&mut self, _: &ShowStashTab, _window: &mut Window, cx: &mut Context<Self>) {
+        self.current_tab = GitPanelTab::Stash;
+        cx.notify();
+    }
+
+    fn select_prev_stash(
+        &mut self,
+        _: &SelectPrevStash,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current_tab != GitPanelTab::Stash || self.stash_entries.entries.is_empty() {
+            return;
+        }
+
+        let new_index = match self.selected_stash_entry {
+            Some(0) => 0,
+            Some(ix) => ix.saturating_sub(1),
+            None => 0,
+        };
+
+        self.select_stash_entry(new_index, cx);
+        self.stash_list_scroll_handle
+            .scroll_to_item(new_index, ScrollStrategy::Top);
+    }
+
+    fn select_next_stash(
+        &mut self,
+        _: &SelectNextStash,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current_tab != GitPanelTab::Stash || self.stash_entries.entries.is_empty() {
+            return;
+        }
+
+        let max_index = self.stash_entries.entries.len().saturating_sub(1);
+        let new_index = match self.selected_stash_entry {
+            Some(ix) => (ix + 1).min(max_index),
+            None => 0,
+        };
+
+        self.select_stash_entry(new_index, cx);
+        self.stash_list_scroll_handle
+            .scroll_to_item(new_index, ScrollStrategy::Top);
     }
 
     fn get_selected_entry(&self) -> Option<&GitListEntry> {
@@ -1410,11 +1542,11 @@ impl GitPanel {
 
         cx.spawn({
             async move |this, cx| {
-                let stash_task = active_repository
+                let stash_result = active_repository
                     .update(cx, |repo, cx| repo.stash_pop(None, cx))?
-                    .await;
+                    .await?;
                 this.update(cx, |this, cx| {
-                    stash_task
+                    stash_result
                         .map_err(|e| {
                             this.show_error_toast("stash pop", e, cx);
                         })
@@ -2809,6 +2941,20 @@ impl GitPanel {
 
         self.stash_entries = repo.cached_stash();
 
+        if self.stash_entries.entries.is_empty() {
+            self.selected_stash_entry = None;
+            self.selected_stash_files.clear();
+            if self.current_tab == GitPanelTab::Stash {
+                self.current_tab = GitPanelTab::Changes;
+            }
+        } else if let Some(selected_ix) = self.selected_stash_entry {
+            let stash_count = self.stash_entries.entries.len();
+            if selected_ix >= stash_count {
+                self.selected_stash_entry = Some(stash_count.saturating_sub(1));
+                self.selected_stash_files.clear();
+            }
+        }
+
         for entry in repo.cached_status() {
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
@@ -3960,6 +4106,583 @@ impl GitPanel {
             )
     }
 
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let changes_selected = self.current_tab == GitPanelTab::Changes;
+        let stash_selected = self.current_tab == GitPanelTab::Stash;
+        let has_stashes = !self.stash_entries.entries.is_empty();
+
+        h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                Button::new("changes-tab", "Changes")
+                    .style(if changes_selected {
+                        ButtonStyle::Filled
+                    } else {
+                        ButtonStyle::Subtle
+                    })
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.current_tab = GitPanelTab::Changes;
+                        cx.notify();
+                    })),
+            )
+            .when(has_stashes, |this| {
+                this.child(
+                    Button::new("stash-tab", "Stash")
+                        .style(if stash_selected {
+                            ButtonStyle::Filled
+                        } else {
+                            ButtonStyle::Subtle
+                        })
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.current_tab = GitPanelTab::Stash;
+                            cx.notify();
+                        })),
+                )
+            })
+    }
+
+    fn render_stash_list(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stash_count = self.stash_entries.entries.len();
+        let has_selected_stash = self.selected_stash_entry.is_some();
+
+        v_flex()
+            .flex_1()
+            .size_full()
+            .overflow_hidden()
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<DraggedStashFilesPreview>, _, cx| {
+                    let new_height = e.bounds.bottom() - e.event.position.y;
+                    this.stash_files_preview_height = new_height
+                        .max(MIN_STASH_FILES_PREVIEW_HEIGHT)
+                        .min(MAX_STASH_FILES_PREVIEW_HEIGHT);
+                    cx.notify();
+                },
+            ))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h(rems(6.))
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .size_full()
+                            .overflow_hidden()
+                            .child(
+                                uniform_list(
+                                    "stash-entries",
+                                    stash_count,
+                                    cx.processor(move |this, range: Range<usize>, window, cx| {
+                                        let mut items = Vec::with_capacity(range.end - range.start);
+                                        let timezone =
+                                            UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+
+                                        for ix in range {
+                                            if let Some(entry) = this.stash_entries.entries.get(ix) {
+                                                items.push(
+                                                    this.render_stash_entry(ix, entry, timezone, window, cx),
+                                                );
+                                            }
+                                        }
+
+                                        items
+                                    }),
+                                )
+                                .size_full()
+                                .flex_grow()
+                                .with_sizing_behavior(ListSizingBehavior::Auto)
+                                .track_scroll(&self.stash_list_scroll_handle),
+                            )
+                            .custom_scrollbars(
+                                Scrollbars::for_settings::<GitPanelSettings>()
+                                    .tracked_scroll_handle(&self.stash_list_scroll_handle),
+                                window,
+                                cx,
+                            ),
+                    ),
+            )
+            .when(has_selected_stash, |this| {
+                this.child(self.render_stash_files_preview(window, cx))
+            })
+            .child(self.render_stash_footer(cx))
+    }
+
+    fn render_stash_files_preview(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let file_count = self.selected_stash_files.len();
+        let preview_height = self.stash_files_preview_height;
+
+        v_flex()
+            .h(preview_height)
+            .flex_shrink_0()
+            .w_full()
+            .overflow_hidden()
+            .relative()
+            .child(
+                deferred(
+                    div()
+                        .id("stash-files-resize-handle")
+                        .absolute()
+                        .top(-RESIZE_HANDLE_SIZE / 2.)
+                        .left(px(0.))
+                        .w_full()
+                        .h(RESIZE_HANDLE_SIZE)
+                        .cursor_row_resize()
+                        .on_drag(DraggedStashFilesPreview, |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.new(|_| DraggedStashFilesPreview)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                            }),
+                        ),
+                ),
+            )
+            .child(
+                div()
+                    .h_px()
+                    .w_full()
+                    .bg(cx.theme().colors().border_variant),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Label::new(if self.stash_files_loading {
+                            "Loading...".to_string()
+                        } else {
+                            format!(
+                                "{} file{}",
+                                file_count,
+                                if file_count == 1 { "" } else { "s" }
+                            )
+                        })
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                    ),
+            )
+            .child(
+                uniform_list(
+                    "stash-files",
+                    file_count,
+                    cx.processor(move |this, range: Range<usize>, window, cx| {
+                        let mut items = Vec::with_capacity(range.end - range.start);
+
+                        for ix in range {
+                            if let Some(file_entry) = this.selected_stash_files.get(ix) {
+                                items.push(this.render_stash_file_entry(
+                                    ix, file_entry, window, cx,
+                                ));
+                            }
+                        }
+
+                        items
+                    }),
+                )
+                .flex_1()
+                .with_sizing_behavior(ListSizingBehavior::Auto)
+                .track_scroll(&self.stash_files_scroll_handle),
+            )
+    }
+
+    fn render_stash_file_entry(
+        &self,
+        ix: usize,
+        file_entry: &StashFileEntry,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let path_style = self.project.read(cx).path_style(cx);
+
+        let file_name = file_entry
+            .repo_path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| file_entry.repo_path.display(path_style).to_string());
+
+        let parent_dir = file_entry
+            .repo_path
+            .parent()
+            .map(|parent| parent.display(path_style).to_string());
+
+        let status_color = match &file_entry.status {
+            TreeDiffStatus::Added => Color::Created,
+            TreeDiffStatus::Modified { .. } => Color::Modified,
+            TreeDiffStatus::Deleted { .. } => Color::Deleted,
+        };
+
+        h_flex()
+            .id(ElementId::Name(format!("stash-file-{}", ix).into()))
+            .h(self.list_item_height())
+            .w_full()
+            .px_2()
+            .gap_2()
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_stash_diff(window, cx);
+            }))
+            .child(git_status_icon(file_entry.to_file_status()))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .overflow_hidden()
+                    .gap_1()
+                    .child(Label::new(file_name).color(status_color).truncate())
+                    .when_some(parent_dir, |this, dir| {
+                        this.child(
+                            Label::new(dir)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .truncate(),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn open_stash_diff(&self, window: &mut Window, cx: &mut App) {
+        let Some(stash_ix) = self.selected_stash_entry else {
+            return;
+        };
+        let Some(entry) = self.stash_entries.entries.get(stash_ix) else {
+            return;
+        };
+        let stash_sha = entry.oid.to_string();
+        let stash_index = entry.index;
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+
+        CommitView::open(
+            stash_sha,
+            repo.downgrade(),
+            self.workspace.clone(),
+            Some(stash_index),
+            window,
+            cx,
+        );
+    }
+
+    fn render_stash_entry(
+        &self,
+        ix: usize,
+        entry: &git::stash::StashEntry,
+        timezone: UtcOffset,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_selected = self.selected_stash_entry == Some(ix);
+        let stash_index = entry.index;
+
+        let message = entry.message.clone();
+        let branch_name = entry.branch.clone().unwrap_or_default();
+        let formatted_timestamp = Self::format_stash_timestamp(entry.timestamp, timezone);
+
+        h_flex()
+            .id(ElementId::Name(format!("stash-entry-{}", ix).into()))
+            .h(rems(2.5))
+            .w_full()
+            .px_2()
+            .gap_2()
+            .cursor_pointer()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_selected)
+            })
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                this.select_stash_entry(ix, cx);
+            }))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!("#{}", stash_index))
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(Label::new(message).truncate().size(LabelSize::Small)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(branch_name)
+                                    .truncate()
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            )
+                            .when(!formatted_timestamp.is_empty(), |this| {
+                                this.child(
+                                    Label::new("•")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall),
+                                )
+                                .child(
+                                    Label::new(formatted_timestamp)
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall),
+                                )
+                            }),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn format_stash_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp =
+            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
+        time_format::format_localized_timestamp(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            timezone,
+            time_format::TimestampFormat::EnhancedAbsolute,
+        )
+    }
+
+    fn render_stash_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_selection = self.selected_stash_entry.is_some();
+
+        h_flex()
+            .w_full()
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                Button::new("apply-stash", "Apply")
+                    .style(ButtonStyle::Filled)
+                    .disabled(!has_selection)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.apply_selected_stash(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("pop-stash", "Pop")
+                    .disabled(!has_selection)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.pop_selected_stash(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("drop-stash", "Drop")
+                    .disabled(!has_selection)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.drop_selected_stash(window, cx);
+                    })),
+            )
+    }
+
+    fn format_stash_error(error: &anyhow::Error) -> String {
+        let error_str = error.to_string();
+        if error_str.contains("could not write index") || error_str.contains("conflict") {
+            format!(
+                "{}\n\nYour working directory has uncommitted changes that conflict with the stash. \
+                To resolve this:\n\
+                • Commit or stash your current changes first\n\
+                • Or discard your local changes if they're not needed",
+                error_str
+            )
+        } else if error_str.contains("CONFLICT") {
+            format!(
+                "{}\n\nThe stash could not be applied cleanly due to merge conflicts. \
+                You may need to resolve these conflicts manually.",
+                error_str
+            )
+        } else {
+            error_str
+        }
+    }
+
+    fn apply_selected_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(stash_index) = self.selected_stash_entry else {
+            return;
+        };
+        let Some(entry) = self.stash_entries.entries.get(stash_index) else {
+            return;
+        };
+        let stash_index = entry.index;
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))?
+                .await?;
+            this.update(cx, |this, cx| {
+                this.selected_stash_entry = None;
+                this.selected_stash_files.clear();
+                cx.notify();
+            })
+        })
+        .detach_and_prompt_err("Failed to apply stash", window, cx, |error, _, _| {
+            Some(Self::format_stash_error(&error))
+        });
+    }
+
+    fn pop_selected_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(stash_index) = self.selected_stash_entry else {
+            return;
+        };
+        let Some(entry) = self.stash_entries.entries.get(stash_index) else {
+            return;
+        };
+        let stash_index = entry.index;
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))?
+                .await??;
+            this.update(cx, |this, cx| {
+                this.selected_stash_entry = None;
+                this.selected_stash_files.clear();
+                cx.notify();
+            })
+        })
+        .detach_and_prompt_err("Failed to pop stash", window, cx, |error, _, _| {
+            Some(Self::format_stash_error(&error))
+        });
+    }
+
+    fn drop_selected_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected_index) = self.selected_stash_entry else {
+            return;
+        };
+        let Some(entry) = self.stash_entries.entries.get(selected_index) else {
+            return;
+        };
+        let stash_index = entry.index;
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        self.close_stash_diff_view(stash_index, window, cx);
+
+        cx.spawn(async move |this, cx| {
+            repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))?
+                .await??;
+
+            this.update(cx, |this, cx| {
+                this.selected_stash_files.clear();
+                cx.notify();
+            })
+        })
+        .detach_and_prompt_err("Failed to drop stash", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn close_stash_diff_view(&self, stash_index: usize, window: &mut Window, cx: &mut App) {
+        use crate::commit_view::CommitView;
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let commit_views: Vec<_> = workspace
+                .items_of_type::<CommitView>(cx)
+                .filter(|view| view.read(cx).stash_index() == Some(stash_index))
+                .collect();
+
+            for commit_view in commit_views {
+                let pane = workspace.pane_for(&commit_view);
+                if let Some(pane) = pane {
+                    pane.update(cx, |pane, cx| {
+                        pane.close_item_by_id(commit_view.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+        });
+    }
+
+    fn select_stash_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.selected_stash_entry == Some(ix) {
+            return;
+        }
+
+        self.selected_stash_entry = Some(ix);
+        self.selected_stash_files.clear();
+        self.stash_files_loading = true;
+        cx.notify();
+
+        let Some(entry) = self.stash_entries.entries.get(ix) else {
+            self.stash_files_loading = false;
+            return;
+        };
+
+        let stash_oid = entry.oid.to_string();
+        let Some(repo) = self.active_repository.clone() else {
+            self.stash_files_loading = false;
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let diff_type = DiffTreeType::Since {
+                base: format!("{}^", stash_oid).into(),
+                head: stash_oid.into(),
+            };
+
+            let tree_diff = repo
+                .update(cx, |repo, cx| repo.diff_tree(diff_type, cx))?
+                .await??;
+
+            this.update(cx, |this, cx| {
+                this.selected_stash_files = tree_diff
+                    .entries
+                    .into_iter()
+                    .map(|(path, status)| StashFileEntry {
+                        repo_path: path,
+                        status,
+                    })
+                    .collect();
+                this.selected_stash_files
+                    .sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+                this.stash_files_loading = false;
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn render_stash_empty_state(&self, _cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .flex_1()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .child(
+                Label::new("No stashes")
+                    .color(Color::Muted)
+                    .size(LabelSize::Large),
+            )
+            .child(
+                Label::new("Use 'Stash All' to stash your changes")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            )
+    }
+
     fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
         Label::new(label.into()).color(color).single_line()
     }
@@ -4553,26 +5276,41 @@ impl Render for GitPanel {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
+            .on_action(cx.listener(Self::show_changes_tab))
+            .on_action(cx.listener(Self::show_stash_tab))
+            .on_action(cx.listener(Self::select_prev_stash))
+            .on_action(cx.listener(Self::select_next_stash))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
             .child(
                 v_flex()
                     .size_full()
-                    .children(self.render_panel_header(window, cx))
-                    .map(|this| {
-                        if has_entries {
-                            this.child(self.render_entries(has_write_access, window, cx))
-                        } else {
-                            this.child(self.render_empty_state(cx).into_any_element())
+                    .child(self.render_tab_bar(cx))
+                    .map(|this| match self.current_tab {
+                        GitPanelTab::Changes => this
+                            .children(self.render_panel_header(window, cx))
+                            .map(|this| {
+                                if has_entries {
+                                    this.child(self.render_entries(has_write_access, window, cx))
+                                } else {
+                                    this.child(self.render_empty_state(cx).into_any_element())
+                                }
+                            })
+                            .children(self.render_footer(window, cx))
+                            .when(self.amend_pending, |this| {
+                                this.child(self.render_pending_amend(cx))
+                            })
+                            .when(!self.amend_pending, |this| {
+                                this.children(self.render_previous_commit(cx))
+                            }),
+                        GitPanelTab::Stash => {
+                            if self.stash_entries.entries.is_empty() {
+                                this.child(self.render_stash_empty_state(cx).into_any_element())
+                            } else {
+                                this.child(self.render_stash_list(window, cx).into_any_element())
+                            }
                         }
-                    })
-                    .children(self.render_footer(window, cx))
-                    .when(self.amend_pending, |this| {
-                        this.child(self.render_pending_amend(cx))
-                    })
-                    .when(!self.amend_pending, |this| {
-                        this.children(self.render_previous_commit(cx))
                     })
                     .into_any_element(),
             )
