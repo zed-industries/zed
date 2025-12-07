@@ -23,13 +23,28 @@ pub fn init(cx: &mut App) {
     .detach()
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum OrderingDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy)]
+pub struct Ordering {
+    /// 0-based column index
+    pub col_idx: usize,
+    /// Direction of ordering
+    pub direction: OrderingDirection,
+}
+
 pub struct CsvPreviewView {
-    focus_handle: FocusHandle,
+    pub(crate) focus_handle: FocusHandle,
     pub(crate) active_editor: Option<EditorState>,
     pub(crate) contents: ParsedCsv,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
+    pub(crate) ordering: Option<Ordering>,
 }
 
 impl CsvPreviewView {
@@ -78,6 +93,7 @@ impl CsvPreviewView {
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
+                ordering: None,
             };
 
             view.set_editor(editor.clone(), cx);
