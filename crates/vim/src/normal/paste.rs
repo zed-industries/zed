@@ -774,6 +774,52 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_paste_system_clipboard_never(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                ˇThe quick brown
+                fox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("something else".to_string()));
+
+        cx.simulate_keystrokes("d d");
+        cx.assert_state(
+            indoc! {"
+                ˇfox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("shift-v p");
+        cx.assert_state(
+            indoc! {"
+                ˇThe quick brown
+                the lazy dog"},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("shift-v");
+        cx.dispatch_action(editor::actions::Paste);
+        cx.assert_state(
+            indoc! {"
+                ˇsomething else
+                the lazy dog"},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_numbered_registers(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
