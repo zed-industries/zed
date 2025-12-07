@@ -2,7 +2,7 @@ use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Context, Entity, Subscription, Task};
 use std::time::Duration;
 
-use crate::{CsvPreviewView, parsed_csv::ParsedCsv};
+use crate::{CsvPreviewView, table_data::TableData};
 
 pub(crate) const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -70,7 +70,7 @@ impl CsvPreviewView {
                     .unwrap_or_default()
             })?;
 
-            let parsing_task = cx.background_spawn(async move { ParsedCsv::from_str(contents) });
+            let parsing_task = cx.background_spawn(async move { TableData::from_str(contents) });
 
             let parsed_csv = parsing_task.await;
 

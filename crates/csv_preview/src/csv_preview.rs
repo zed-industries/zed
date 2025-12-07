@@ -6,15 +6,16 @@ use workspace::{Item, Workspace};
 
 use crate::{
     cell_selection::TableSelection, data_ordering::Ordering, nasty_code_duplication::ColumnWidths,
-    parsed_csv::ParsedCsv, parser::EditorState,
+    parser::EditorState, table_data::TableData,
 };
 
 mod cell_selection;
 mod data_ordering;
+mod line_numbers;
 mod nasty_code_duplication;
-mod parsed_csv;
 mod parser;
 mod renderer;
+mod table_data;
 
 actions!(csv, [OpenPreview]);
 
@@ -31,7 +32,7 @@ pub fn init(cx: &mut App) {
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) active_editor: Option<EditorState>,
-    pub(crate) contents: ParsedCsv,
+    pub(crate) contents: TableData,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
@@ -75,7 +76,7 @@ impl CsvPreviewView {
 
     fn from_editor(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-        let contents = ParsedCsv::default();
+        let contents = TableData::default();
 
         cx.new(|cx| {
             let mut view = Self {
