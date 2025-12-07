@@ -643,7 +643,7 @@ impl PickerDelegate for FileExplorerDelegate {
                         }
                         cx.notify();
                     })
-                    .ok();
+                    .log_err();
             })
         }
     }
@@ -702,7 +702,7 @@ impl PickerDelegate for FileExplorerDelegate {
                     let file_explorer = self.file_explorer.clone();
                     cx.spawn_in(window, async move |_, mut cx| {
                         open_task.await.notify_async_err(&mut cx);
-                        file_explorer.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                        file_explorer.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
                     })
                     .detach();
                 }
