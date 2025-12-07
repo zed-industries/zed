@@ -3746,52 +3746,6 @@ impl Workspace {
         None
     }
 
-    /// Check if an item matches any preview mode rules
-    fn get_preview_mode_for_item(
-        &self,
-        item: &dyn ItemHandle,
-        cx: &App,
-    ) -> Option<settings::PreviewMode> {
-        let file_path = self.get_file_path_from_item(item, cx)?;
-        let registry = cx.try_global::<PreviewRegistry>()?;
-
-        let can_preview = registry
-            .factories
-            .iter()
-            .any(|factory| factory.can_preview(item, cx));
-
-        if !can_preview {
-            return None;
-        }
-
-        let settings = WorkspaceSettings::get(None, cx);
-        let path_style = self.project.read(cx).path_style(cx);
-        for rule in &settings.file_preview_modes {
-            let matcher = util::paths::PathMatcher::new(&[rule.filter.clone()], path_style).ok()?;
-
-            if matcher.is_match(&file_path) {
-                return Some(rule.mode);
-            }
-        }
-
-        None
-    }
-
-    /// Extract file path from a project item
-    fn get_file_path_from_item(
-        &self,
-        item: &dyn ItemHandle,
-        cx: &App,
-    ) -> Option<util::rel_path::RelPathBuf> {
-        let mut file_path = None;
-        item.for_each_project_item(cx, &mut |_, project_item| {
-            if let Some(path) = project_item.project_path(cx) {
-                file_path = Some(path.path.to_rel_path_buf());
-            }
-        });
-        file_path
-    }
-
     /// Create a preview view for an item using registered factories
     fn create_preview_for_item(
         &self,
@@ -3922,7 +3876,7 @@ impl Workspace {
         };
 
         // Split pane and add preview
-        let preview_pane = self.split_pane(pane.clone(), SplitDirection::Right, window, cx);
+        let preview_pane = self.adjacent_pane(window, cx);
 
         preview_pane.update(cx, |preview_pane, cx| {
             preview_pane.add_item(
@@ -3943,116 +3897,6 @@ impl Workspace {
         }
 
         Ok(editor)
-    }
-
-    /// Apply preview-only mode: create and add only the preview to the pane
-    fn apply_preview_only_mode(
-        &mut self,
-        pane: Entity<Pane>,
-        item: Box<dyn ItemHandle>,
-        destination_index: Option<usize>,
-        activate_pane: bool,
-        focus_item: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Try to create the preview view
-        let preview_view = match self.create_preview_for_item(item.clone(), window, cx) {
-            Some(preview) => preview,
-            None => {
-                // If preview creation fails, fall back to normal item behavior
-                self.add_item(
-                    pane,
-                    item,
-                    destination_index,
-                    activate_pane,
-                    focus_item,
-                    window,
-                    cx,
-                );
-                return;
-            }
-        };
-
-        // Add ONLY the preview to the pane (not the original item)
-        self.add_item(
-            pane,
-            preview_view,
-            destination_index,
-            activate_pane,
-            focus_item,
-            window,
-            cx,
-        );
-
-        // Note: The original item entity exists but is not added to any pane
-        // It will be cleaned up when it goes out of scope
-    }
-
-    /// Apply preview-and-editor mode: add editor to pane, then split and add preview
-    fn apply_preview_and_editor_mode(
-        &mut self,
-        pane: Entity<Pane>,
-        item: Box<dyn ItemHandle>,
-        destination_index: Option<usize>,
-        activate_pane: bool,
-        focus_item: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Try to create the preview view
-        let preview_view = match self.create_preview_for_item(item.clone(), window, cx) {
-            Some(preview) => preview,
-            None => {
-                // If preview creation fails, fall back to normal item behavior
-                self.add_item(
-                    pane,
-                    item,
-                    destination_index,
-                    activate_pane,
-                    focus_item,
-                    window,
-                    cx,
-                );
-                return;
-            }
-        };
-
-        // Add the original item (editor) to the original pane
-        self.add_item(
-            pane.clone(),
-            item,
-            destination_index,
-            false, // Don't activate yet
-            false, // Don't focus yet
-            window,
-            cx,
-        );
-
-        // Split the pane vertically (preview on the right)
-        let preview_pane = self.split_pane(pane.clone(), SplitDirection::Right, window, cx);
-
-        // Add preview to the new pane
-        preview_pane.update(cx, |preview_pane, cx| {
-            preview_pane.add_item(
-                preview_view,
-                false, // Don't activate the preview pane
-                false, // Don't focus the preview
-                None,
-                window,
-                cx,
-            );
-        });
-
-        // Activate/focus the item in the original pane if requested
-        if activate_pane || focus_item {
-            pane.update(cx, |pane, cx| {
-                if let Some(active_item) = pane.active_item() {
-                    let item_index = pane.index_for_item(active_item.as_ref()).unwrap();
-                    pane.activate_item(item_index, activate_pane, focus_item, window, cx);
-                }
-            });
-        }
     }
 
     pub fn open_project_item<T>(
@@ -4106,47 +3950,15 @@ impl Workspace {
             }
         });
 
-        // Check for preview mode rules
-        let item_box = Box::new(item.clone());
-        let preview_mode = self.get_preview_mode_for_item(item_box.as_ref(), cx);
-
-        match preview_mode {
-            Some(settings::PreviewMode::PreviewOnly) => {
-                self.apply_preview_only_mode(
-                    pane,
-                    item_box,
-                    destination_index,
-                    activate_pane,
-                    focus_item,
-                    window,
-                    cx,
-                );
-            }
-            Some(settings::PreviewMode::PreviewAndEditor) => {
-                self.apply_preview_and_editor_mode(
-                    pane,
-                    item_box,
-                    destination_index,
-                    activate_pane,
-                    focus_item,
-                    window,
-                    cx,
-                );
-            }
-            None => {
-                // Normal flow: add item to pane
-                self.add_item(
-                    pane,
-                    item_box,
-                    destination_index,
-                    activate_pane,
-                    focus_item,
-                    window,
-                    cx,
-                );
-            }
-        }
-
+        self.add_item(
+            pane,
+            Box::new(item.clone()),
+            destination_index,
+            activate_pane,
+            focus_item,
+            window,
+            cx,
+        );
         item
     }
 
