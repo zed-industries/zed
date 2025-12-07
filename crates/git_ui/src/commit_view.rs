@@ -705,7 +705,7 @@ impl language::File for GitBlob {
     }
 
     fn path_style(&self, _: &App) -> PathStyle {
-        PathStyle::Posix
+        PathStyle::local()
     }
 
     fn path(&self) -> &Arc<RelPath> {
