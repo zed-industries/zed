@@ -107,15 +107,14 @@ impl ColumnWidths {
 impl CsvPreviewView {
     /// Maps runtime column count to compile-time const generic.
     ///
-    /// Takes a dynamic `column_count` and dispatches to `create_table<COLS>()`
+    /// Takes number of headers (+1 for line numbers col) and dispatches to `create_table<COLS>()`
     /// with the matching `TableColumnWidths<COLS>` entity. Falls back to ASCII
     /// table for unsupported column counts.
-    pub(crate) fn render_table_with_cols(
-        &self,
-        column_count: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    pub(crate) fn render_table_with_cols(&self, cx: &mut Context<Self>) -> AnyElement {
         let w = &self.column_widths;
+        // Add 1 for the line number column
+        let column_count = self.contents.headers.len() + 1;
+
         match column_count {
             1 => self.create_table::<1>(&w.widths_1, cx),
             2 => self.create_table::<2>(&w.widths_2, cx),
