@@ -49,7 +49,7 @@ impl Render for CsvPreviewView {
                     };
 
                     this.ordering = new_dir.map(|d| Ordering {
-                        col_idx: 0, // For poc purposes always sorting 0th column
+                        col_idx: 0, // For POC: sort first CSV data column (displayed as column 1 after line numbers)
                         direction: d,
                     });
                     cx.notify();
@@ -67,7 +67,8 @@ impl Render for CsvPreviewView {
                         .child("No CSV content to display")
                         .into_any_element()
                 } else {
-                    let column_count = self.contents.headers.len();
+                    // Add 1 for the line number column
+                    let column_count = self.contents.headers.len() + 1;
 
                     self.render_table_with_cols(column_count, cx)
                 }
@@ -76,7 +77,9 @@ impl Render for CsvPreviewView {
 }
 
 impl CsvPreviewView {
-    /// Generate ordered row indices based on current ordering settings
+    /// Generate ordered row indices based on current ordering settings.
+    /// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
+    /// (display columns include the line number column at index 0)
     fn generate_ordered_indices(&self) -> Vec<usize> {
         let mut indices: Vec<usize> = (0..self.contents.rows.len()).collect();
 
@@ -137,9 +140,14 @@ impl CsvPreviewView {
         current_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Create headers array
+        // Create headers array with line number column first
         let mut headers = Vec::with_capacity(COLS);
-        for i in 0..COLS {
+
+        // First column is always line numbers
+        headers.push("Line #".into());
+
+        // Add the actual CSV headers (offset by 1 since we added line number column)
+        for i in 0..(COLS - 1) {
             headers.push(
                 self.contents
                     .headers
@@ -156,9 +164,8 @@ impl CsvPreviewView {
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
             .header(headers_array)
-            .uniform_list(
-                "csv-table",
-                row_count,
+            .uniform_list("csv-table", row_count, {
+                let muted_color = cx.theme().colors().text_muted;
                 cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
                     let ordered_indices = this.generate_ordered_indices();
 
@@ -169,7 +176,18 @@ impl CsvPreviewView {
                             let row = this.contents.rows.get(row_index)?;
 
                             let mut elements = Vec::with_capacity(COLS);
-                            for col in 0..COLS {
+
+                            // First column: original line number (row_index + 2 because of 0-based indexing + header row)
+                            let line_number: SharedString = (row_index + 2).to_string().into();
+                            elements.push(
+                                div()
+                                    .child(line_number)
+                                    .text_color(muted_color)
+                                    .into_any_element(),
+                            );
+
+                            // Remaining columns: actual CSV data
+                            for col in 0..(COLS - 1) {
                                 let cell_content: SharedString =
                                     row.get(col).cloned().unwrap_or_else(|| "".into());
                                 elements.push(div().child(cell_content).into_any_element());
@@ -180,8 +198,8 @@ impl CsvPreviewView {
                             Some(elements_array)
                         })
                         .collect()
-                }),
-            )
+                })
+            })
             .into_any_element()
     }
 }
