@@ -106,7 +106,7 @@ impl FileExplorer {
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-            picker.delegate.load_entries(&*cx);
+            picker.delegate.load_entries(cx);
         });
 
         Self {
@@ -420,7 +420,7 @@ impl FileExplorerDelegate {
         }
     }
 
-    fn load_entries(&mut self, cx: &Context<Picker<Self>>) {
+    fn load_entries(&mut self, cx: &App) {
         self.all_entries.clear();
 
         let project = self.project.read(cx);
