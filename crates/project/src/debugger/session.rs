@@ -1454,11 +1454,7 @@ impl Session {
         }
 
         self.selected_snapshot_index = ix;
-
-        if ix.is_some() {
-            cx.emit(SessionEvent::HistoricSnapshotSelected);
-        }
-
+        cx.emit(SessionEvent::HistoricSnapshotSelected);
         cx.notify();
     }
 
