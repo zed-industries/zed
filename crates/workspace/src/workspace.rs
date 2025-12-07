@@ -3736,7 +3736,9 @@ impl Workspace {
         // Check rules in order (first match wins)
         let path_style = self.project.read(cx).path_style(cx);
         for rule in &settings.file_preview_modes {
-            let matcher = util::paths::PathMatcher::new(&[rule.filter.clone()], path_style).ok()?;
+            let matcher =
+                util::paths::PathMatcher::new(std::slice::from_ref(&rule.filter), path_style)
+                    .ok()?;
 
             if matcher.is_match(&path.path) {
                 return Some(rule.mode);
