@@ -1,6 +1,7 @@
-use gpui::{AnyElement, Entity};
+use gpui::{AnyElement, ElementId, Entity};
 use ui::{
-    DefiniteLength, SharedString, Table, TableColumnWidths, TableResizeBehavior, div, prelude::*,
+    Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
+    TableResizeBehavior, div, h_flex, prelude::*,
 };
 
 use crate::{CsvPreviewView, Ordering, OrderingDirection};
@@ -14,47 +15,6 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
-            .child(
-                Button::new(
-                    "order-first-column",
-                    if let Some(order) = self.ordering {
-                        let col_name = self
-                            .contents
-                            .headers
-                            .get(0)
-                            .map(|h| h.as_ref())
-                            .unwrap_or("Column 1");
-                        if order.direction == OrderingDirection::Asc {
-                            format!("Sort {} desc", col_name)
-                        } else {
-                            "Clear sorting".to_string()
-                        }
-                    } else {
-                        let col_name = self
-                            .contents
-                            .headers
-                            .get(0)
-                            .map(|h| h.as_ref())
-                            .unwrap_or("Column 1");
-                        format!("Sort {} asc", col_name)
-                    },
-                )
-                .on_click(cx.listener(|this, _event, _window, cx| {
-                    let new_dir = match this.ordering {
-                        Some(ordering) => match ordering.direction {
-                            OrderingDirection::Asc => Some(OrderingDirection::Desc),
-                            OrderingDirection::Desc => None,
-                        },
-                        None => Some(OrderingDirection::Asc),
-                    };
-
-                    this.ordering = new_dir.map(|d| Ordering {
-                        col_idx: 0, // For POC: sort first CSV data column (displayed as column 1 after line numbers)
-                        direction: d,
-                    });
-                    cx.notify();
-                })),
-            )
             .child({
                 if self.contents.headers.is_empty() {
                     div()
@@ -115,6 +75,75 @@ impl CsvPreviewView {
         indices
     }
 
+    /// Create a header element with text on the left and clickable sort button on the right
+    fn create_header_element(
+        &self,
+        col_idx: Option<usize>, // None for line number column
+        header_text: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(col_idx) = col_idx {
+            // CSV data columns: text + sort button
+            let sort_symbol = match self.ordering {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    OrderingDirection::Asc => "↑",
+                    OrderingDirection::Desc => "↓",
+                },
+                _ => "↕", // Unsorted/available for sorting
+            };
+
+            h_flex()
+                .justify_between()
+                .items_center()
+                .w_full()
+                .child(
+                    // Header text on the left
+                    div().child(header_text),
+                )
+                .child(
+                    // Clickable sort button on the right
+                    Button::new(
+                        ElementId::NamedInteger("sort-button".into(), col_idx as u64),
+                        sort_symbol,
+                    )
+                    .size(ButtonSize::Compact)
+                    .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
+                        ButtonStyle::Filled
+                    } else {
+                        ButtonStyle::Subtle
+                    })
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        let new_ordering = match this.ordering {
+                            Some(ordering) if ordering.col_idx == col_idx => {
+                                // Same column clicked - cycle through states
+                                match ordering.direction {
+                                    OrderingDirection::Asc => Some(Ordering {
+                                        col_idx,
+                                        direction: OrderingDirection::Desc,
+                                    }),
+                                    OrderingDirection::Desc => None, // Clear sorting
+                                }
+                            }
+                            _ => {
+                                // Different column or no sorting - start with ascending
+                                Some(Ordering {
+                                    col_idx,
+                                    direction: OrderingDirection::Asc,
+                                })
+                            }
+                        };
+
+                        this.ordering = new_ordering;
+                        cx.notify();
+                    })),
+                )
+                .into_any_element()
+        } else {
+            // Line number column: just text, no sort button
+            div().child(header_text).into_any_element()
+        }
+    }
+
     pub(crate) fn create_table<const COLS: usize>(
         &self,
         current_widths: &Entity<TableColumnWidths<COLS>>,
@@ -140,23 +169,30 @@ impl CsvPreviewView {
         current_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Create headers array with line number column first
+        // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(COLS);
 
-        // First column is always line numbers
-        headers.push("Line #".into());
+        // First column: line numbers (not sortable)
+        headers.push(self.create_header_element(None, "Line #".to_string(), cx));
 
-        // Add the actual CSV headers (offset by 1 since we added line number column)
+        // Add the actual CSV headers with ordering buttons
         for i in 0..(COLS - 1) {
-            headers.push(
-                self.contents
-                    .headers
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Col {}", i + 1).into()),
-            );
+            let header_text = self
+                .contents
+                .headers
+                .get(i)
+                .map(|h| h.as_ref().to_string())
+                .unwrap_or_else(|| format!("Col {}", i + 1));
+
+            headers.push(self.create_header_element(Some(i), header_text, cx));
         }
-        let headers_array: [SharedString; COLS] = headers.try_into().unwrap();
+
+        // Manually construct array to avoid Debug trait requirement
+        let headers_array: [AnyElement; COLS] = {
+            assert_eq!(headers.len(), COLS, "Headers vector has wrong length");
+            let mut iter = headers.into_iter();
+            std::array::from_fn(|_| iter.next().unwrap())
+        };
 
         Table::new()
             .interactable(&self.table_interaction_state)
