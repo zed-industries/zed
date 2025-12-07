@@ -1,0 +1,25 @@
+use crate::CsvPreviewView;
+
+impl CsvPreviewView {
+    /// Calculate the optimal width for the line number column based on the total number of rows.
+    ///
+    /// This ensures the column is wide enough to display the largest line number comfortably,
+    /// but not wastefully wide for small files.
+    pub(crate) fn calculate_line_number_column_width(&self) -> f32 {
+        let max_line_number = self.contents.rows.len() + 1;
+
+        // Count digits in the maximum line number
+        let digit_count = if max_line_number == 0 {
+            1
+        } else {
+            (max_line_number as f32).log10().floor() as usize + 1
+        };
+
+        let char_width_px = 9.0; // TODO: get real width of the characters
+
+        let base_width = (digit_count as f32) * char_width_px;
+        let padding = 20.0;
+        let min_width = 50.;
+        (base_width + padding).max(min_width)
+    }
+}
