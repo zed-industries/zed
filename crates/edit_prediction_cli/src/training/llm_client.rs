@@ -382,6 +382,7 @@ impl LlmClient {
         )?))
     }
 
+    #[allow(dead_code)]
     pub fn dummy() -> Self {
         Self::Dummy()
     }
