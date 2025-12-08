@@ -6996,6 +6996,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "git",
+ "git_ui",
  "gpui",
  "project",
  "settings",

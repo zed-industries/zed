@@ -1,27 +1,32 @@
-use anyhow::Result;
+mod commit_data;
+mod graph_rendering;
+
+use git;
+use git_ui::commit_view::CommitView;
 use gpui::{
-    Action, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DismissEvent, ElementId,
-    Entity, EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, ListSizingBehavior,
+    Action, App, ClickEvent, ClipboardItem, Context, Corner, DismissEvent, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, ListAlignment, ListState,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, canvas,
-    deferred, uniform_list,
+    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list, px,
 };
 use project::Project;
-use project::git_store::GitStoreEvent;
+use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
-use std::ops::Range;
 use std::path::PathBuf;
 use theme::ThemeSettings;
-use time::{OffsetDateTime, UtcOffset};
 use ui::prelude::*;
-use ui::{ContextMenu, ScrollAxes, Scrollbars, Tooltip, WithScrollbar};
-use util::command::new_smol_command;
+use ui::{ContextMenu, Tooltip};
+use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
+
+use commit_data::{CommitEntry, load_commits, run_git_command};
+use graph_rendering::{format_timestamp, render_graph_cell, render_graph_continuation, render_ref_badges};
 
 actions!(
     git_graph,
     [
         OpenGitGraph,
+        OpenCommitView,
         RefreshGraph,
         CheckoutCommit,
         CopySha,
@@ -51,269 +56,57 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
             let project = workspace.project().clone();
-            let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
+            let workspace_handle = workspace.weak_handle();
+            let git_graph = cx.new(|cx| GitGraph::new(project, workspace_handle, window, cx));
             workspace.add_item_to_active_pane(Box::new(git_graph), None, true, window, cx);
         });
     })
     .detach();
 }
 
-const BRANCH_COLORS: &[Hsla] = &[
-    Hsla {
-        h: 200.0 / 360.0,
-        s: 0.9,
-        l: 0.55,
-        a: 1.0,
-    }, // Cyan
-    Hsla {
-        h: 320.0 / 360.0,
-        s: 0.9,
-        l: 0.55,
-        a: 1.0,
-    }, // Magenta/Pink
-    Hsla {
-        h: 45.0 / 360.0,
-        s: 0.95,
-        l: 0.50,
-        a: 1.0,
-    }, // Orange
-    Hsla {
-        h: 120.0 / 360.0,
-        s: 0.8,
-        l: 0.45,
-        a: 1.0,
-    }, // Green
-    Hsla {
-        h: 270.0 / 360.0,
-        s: 0.8,
-        l: 0.60,
-        a: 1.0,
-    }, // Purple
-    Hsla {
-        h: 0.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Red
-    Hsla {
-        h: 180.0 / 360.0,
-        s: 0.8,
-        l: 0.45,
-        a: 1.0,
-    }, // Teal
-    Hsla {
-        h: 60.0 / 360.0,
-        s: 0.9,
-        l: 0.50,
-        a: 1.0,
-    }, // Yellow
-    Hsla {
-        h: 210.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Blue
-    Hsla {
-        h: 340.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Rose
-    Hsla {
-        h: 90.0 / 360.0,
-        s: 0.75,
-        l: 0.50,
-        a: 1.0,
-    }, // Lime
-    Hsla {
-        h: 240.0 / 360.0,
-        s: 0.75,
-        l: 0.60,
-        a: 1.0,
-    }, // Indigo
-    Hsla {
-        h: 30.0 / 360.0,
-        s: 0.90,
-        l: 0.50,
-        a: 1.0,
-    }, // Orange-Red
-    Hsla {
-        h: 160.0 / 360.0,
-        s: 0.75,
-        l: 0.45,
-        a: 1.0,
-    }, // Sea Green
-    Hsla {
-        h: 290.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Violet
-    Hsla {
-        h: 15.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Coral
-    Hsla {
-        h: 175.0 / 360.0,
-        s: 0.70,
-        l: 0.50,
-        a: 1.0,
-    }, // Aqua
-    Hsla {
-        h: 300.0 / 360.0,
-        s: 0.65,
-        l: 0.55,
-        a: 1.0,
-    }, // Orchid
-    Hsla {
-        h: 75.0 / 360.0,
-        s: 0.80,
-        l: 0.45,
-        a: 1.0,
-    }, // Yellow-Green
-    Hsla {
-        h: 225.0 / 360.0,
-        s: 0.75,
-        l: 0.55,
-        a: 1.0,
-    }, // Slate Blue
-    Hsla {
-        h: 350.0 / 360.0,
-        s: 0.80,
-        l: 0.50,
-        a: 1.0,
-    }, // Crimson
-    Hsla {
-        h: 140.0 / 360.0,
-        s: 0.70,
-        l: 0.50,
-        a: 1.0,
-    }, // Spring Green
-    Hsla {
-        h: 255.0 / 360.0,
-        s: 0.65,
-        l: 0.60,
-        a: 1.0,
-    }, // Periwinkle
-    Hsla {
-        h: 20.0 / 360.0,
-        s: 0.85,
-        l: 0.50,
-        a: 1.0,
-    }, // Burnt Orange
-    Hsla {
-        h: 190.0 / 360.0,
-        s: 0.75,
-        l: 0.50,
-        a: 1.0,
-    }, // Steel Blue
-    Hsla {
-        h: 330.0 / 360.0,
-        s: 0.75,
-        l: 0.55,
-        a: 1.0,
-    }, // Hot Pink
-    Hsla {
-        h: 100.0 / 360.0,
-        s: 0.65,
-        l: 0.50,
-        a: 1.0,
-    }, // Olive Green
-    Hsla {
-        h: 265.0 / 360.0,
-        s: 0.60,
-        l: 0.55,
-        a: 1.0,
-    }, // Lavender
-    Hsla {
-        h: 5.0 / 360.0,
-        s: 0.80,
-        l: 0.55,
-        a: 1.0,
-    }, // Tomato
-    Hsla {
-        h: 150.0 / 360.0,
-        s: 0.65,
-        l: 0.50,
-        a: 1.0,
-    }, // Medium Sea Green
-    Hsla {
-        h: 280.0 / 360.0,
-        s: 0.55,
-        l: 0.55,
-        a: 1.0,
-    }, // Medium Purple
-    Hsla {
-        h: 35.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Gold
-    Hsla {
-        h: 195.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Light Blue
-    Hsla {
-        h: 310.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Medium Violet
-];
-
-#[derive(Clone, Debug)]
-pub struct GraphLine {
-    pub from_lane: usize,
-    pub to_lane: usize,
-    pub line_type: LineType,
-    pub color_idx: usize,
-    pub rows_to_parent: usize,
-    pub parent_sha: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum LineType {
-    Straight,
-    MergeDown,
-    BranchOut,
-}
-
-#[derive(Clone, Debug)]
-pub struct CommitEntry {
-    pub sha: String,
-    pub short_sha: String,
-    pub subject: String,
-    pub author_name: String,
-    pub timestamp: i64,
-    pub parents: Vec<String>,
-    pub refs: Vec<String>,
-    pub lane: usize,
-    pub color_idx: usize,
-    pub lines: Vec<GraphLine>,
-    pub is_first_on_lane: bool,
-}
-
 pub struct GitGraph {
     focus_handle: FocusHandle,
     project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     commits: Vec<CommitEntry>,
     max_lanes: usize,
     loading: bool,
     error: Option<SharedString>,
     _load_task: Option<Task<()>>,
-    scroll_handle: UniformListScrollHandle,
     selected_commit: Option<usize>,
+    expanded_commit: Option<usize>,
+    expanded_files: Vec<ChangedFile>,
+    loading_files: bool,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     work_dir: Option<PathBuf>,
+    row_height: Pixels,
+    list_state: ListState,
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: FileStatus,
+}
+
+#[derive(Clone, Debug)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+    Unknown,
+}
+
 impl GitGraph {
-    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
@@ -328,18 +121,29 @@ impl GitGraph {
             _ => {}
         });
 
+        let settings = ThemeSettings::get_global(cx);
+        let font_size = settings.buffer_font_size(cx);
+        let row_height = font_size + px(10.0);
+
+        let list_state = ListState::new(0, ListAlignment::Top, px(500.0));
+
         let mut this = GitGraph {
             focus_handle,
             project,
+            workspace,
             commits: Vec::new(),
             max_lanes: 0,
             loading: true,
             error: None,
             _load_task: None,
-            scroll_handle: UniformListScrollHandle::new(),
             selected_commit: None,
+            expanded_commit: None,
+            expanded_files: Vec::new(),
+            loading_files: false,
             context_menu: None,
             work_dir: None,
+            row_height,
+            list_state,
             _subscriptions: vec![git_store_subscription],
         };
 
@@ -349,6 +153,107 @@ impl GitGraph {
 
     fn get_selected_commit(&self) -> Option<&CommitEntry> {
         self.selected_commit.and_then(|idx| self.commits.get(idx))
+    }
+
+    fn get_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        let git_store = self.project.read(cx).git_store();
+        git_store.read(cx).repositories().values().next().cloned()
+    }
+
+    fn open_commit_view(&mut self, file_path: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let sha = commit.sha.clone();
+
+        let Some(repository) = self.get_repository(cx) else {
+            self.error = Some("No repository found".into());
+            cx.notify();
+            return;
+        };
+
+        let file_filter = file_path.and_then(|p| git::repository::RepoPath::new(&p).ok());
+
+        CommitView::open(
+            sha,
+            repository.downgrade(),
+            self.workspace.clone(),
+            None,
+            file_filter,
+            window,
+            cx,
+        );
+    }
+
+    fn toggle_commit_expansion(&mut self, commit_idx: usize, cx: &mut Context<Self>) {
+        if self.expanded_commit == Some(commit_idx) {
+            self.expanded_commit = None;
+            self.expanded_files.clear();
+            self.list_state.reset(self.commits.len());
+            cx.notify();
+            return;
+        }
+
+        let Some(commit) = self.commits.get(commit_idx) else {
+            return;
+        };
+        let sha = commit.sha.clone();
+
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        self.selected_commit = Some(commit_idx);
+        self.expanded_commit = Some(commit_idx);
+        self.expanded_files.clear();
+        self.loading_files = true;
+        self.error = None;
+        self.list_state.reset(self.commits.len());
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(
+                &work_dir,
+                &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", &sha],
+            )
+            .await;
+
+            this.update(cx, |this, cx| {
+                this.loading_files = false;
+                match result {
+                    Ok(output) => {
+                        this.expanded_files = output
+                            .lines()
+                            .filter_map(|line| {
+                                let parts: Vec<&str> = line.split('\t').collect();
+                                if parts.len() >= 2 {
+                                    let status = match parts[0].chars().next() {
+                                        Some('A') => FileStatus::Added,
+                                        Some('M') => FileStatus::Modified,
+                                        Some('D') => FileStatus::Deleted,
+                                        Some('R') => FileStatus::Renamed,
+                                        Some('C') => FileStatus::Copied,
+                                        _ => FileStatus::Unknown,
+                                    };
+                                    Some(ChangedFile {
+                                        path: parts[1].to_string(),
+                                        status,
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                    }
+                    Err(e) => {
+                        this.error = Some(format!("Failed to load files: {}", e).into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn deploy_context_menu(
@@ -1121,9 +1026,11 @@ impl GitGraph {
                 this.loading = false;
                 match result {
                     Ok((commits, max_lanes, work_dir)) => {
+                        let commit_count = commits.len();
                         this.commits = commits;
                         this.max_lanes = max_lanes;
                         this.work_dir = Some(work_dir);
+                        this.list_state.reset(commit_count);
                     }
                     Err(e) => {
                         this.error = Some(format!("{:?}", e).into());
@@ -1142,6 +1049,15 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         self.checkout_commit(cx);
+    }
+
+    fn handle_open_commit_view(
+        &mut self,
+        _: &OpenCommitView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_commit_view(None, window, cx);
     }
 
     fn handle_copy_sha(&mut self, _: &CopySha, _: &mut Window, cx: &mut Context<Self>) {
@@ -1252,484 +1168,348 @@ impl GitGraph {
     fn handle_stash_pop(&mut self, _: &StashPop, _: &mut Window, cx: &mut Context<Self>) {
         self.stash_pop(cx);
     }
-}
 
-async fn run_git_command(work_dir: &PathBuf, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
-        .current_dir(work_dir)
-        .args(args)
-        .output()
-        .await?;
+    fn render_list_item(
+        &mut self,
+        idx: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let row_height = self.row_height;
+        let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
+        let date_width = px(140.0);
+        let author_width = px(120.0);
+        let commit_width = px(80.0);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{}", stderr);
+        self.render_commit_row_inline(idx, row_height, graph_width, date_width, author_width, commit_width, cx)
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
+    fn render_commit_row_inline(
+        &self,
+        idx: usize,
+        row_height: Pixels,
+        graph_width: Pixels,
+        date_width: Pixels,
+        author_width: Pixels,
+        commit_width: Pixels,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_expanded = self.expanded_commit == Some(idx);
+        let row = self.render_commit_row(idx, row_height, graph_width, date_width, author_width, commit_width, cx);
 
-async fn load_commits(
-    project: Entity<Project>,
-    cx: &mut gpui::AsyncApp,
-) -> Result<(Vec<CommitEntry>, usize, PathBuf)> {
-    let work_dir = cx
-        .update(|cx| {
-            let project = project.read(cx);
-            project
-                .worktrees(cx)
-                .next()
-                .map(|wt| wt.read(cx).abs_path().to_path_buf())
-        })?
-        .ok_or_else(|| anyhow::anyhow!("No worktree found"))?;
-
-    let (commits, max_lanes) = fetch_git_log(&work_dir).await?;
-    Ok((commits, max_lanes, work_dir))
-}
-
-async fn fetch_git_log(work_dir: &PathBuf) -> Result<(Vec<CommitEntry>, usize)> {
-    let output = new_smol_command("git")
-        .current_dir(work_dir)
-        .args([
-            "log",
-            "--all",
-            "--format=%H|%h|%s|%an|%at|%P|%D",
-            "--date-order",
-        ])
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git log failed: {}", stderr);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut raw_commits = Vec::new();
-
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() >= 6 {
-            let sha = parts[0].to_string();
-            let short_sha = parts[1].to_string();
-            let subject = parts[2].to_string();
-            let author_name = parts[3].to_string();
-            let timestamp = parts[4].parse().unwrap_or(0);
-            let parents: Vec<String> = parts[5].split_whitespace().map(|s| s.to_string()).collect();
-            let refs: Vec<String> = if parts.len() > 6 && !parts[6].is_empty() {
-                parts[6].split(", ").map(|s| s.to_string()).collect()
-            } else {
-                Vec::new()
-            };
-
-            raw_commits.push((
-                sha,
-                short_sha,
-                subject,
-                author_name,
-                timestamp,
-                parents,
-                refs,
-            ));
+        if is_expanded {
+            v_flex()
+                .w_full()
+                .child(row)
+                .child(self.render_inline_expansion(idx, graph_width, cx))
+                .into_any_element()
+        } else {
+            row
         }
     }
 
-    let (commits, max_lanes) = build_graph(raw_commits);
-    Ok((commits, max_lanes))
-}
+    fn render_commit_row(
+        &self,
+        idx: usize,
+        row_height: Pixels,
+        graph_width: Pixels,
+        date_width: Pixels,
+        author_width: Pixels,
+        commit_width: Pixels,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some(commit) = self.commits.get(idx) else {
+            return div().into_any_element();
+        };
 
-fn build_graph(
-    raw_commits: Vec<(
-        String,
-        String,
-        String,
-        String,
-        i64,
-        Vec<String>,
-        Vec<String>,
-    )>,
-) -> (Vec<CommitEntry>, usize) {
-    use std::collections::HashMap;
+        let subject: SharedString = commit.subject.clone().into();
+        let author_name: SharedString = commit.author_name.clone().into();
+        let short_sha: SharedString = commit.short_sha.clone().into();
+        let timestamp = commit.timestamp;
+        let refs = commit.refs.clone();
+        let lane = commit.lane;
+        let lines = commit.lines.clone();
+        let color_idx = commit.color_idx;
 
-    let mut commits = Vec::new();
-    let mut active_lanes: Vec<Option<(String, usize)>> = Vec::new();
-    let mut lane_colors: HashMap<usize, usize> = HashMap::new();
-    let mut next_color = 0;
-    let mut max_lanes = 0;
+        let is_selected = self.expanded_commit == Some(idx);
+        let bg = if is_selected {
+            cx.theme().colors().ghost_element_selected
+        } else if idx % 2 == 0 {
+            cx.theme().colors().surface_background
+        } else {
+            cx.theme().colors().background
+        };
+        let hover_bg = cx.theme().colors().ghost_element_hover;
 
-    for (sha, short_sha, subject, author_name, timestamp, parents, refs) in raw_commits {
-        let mut lines = Vec::new();
-
-        let was_expected = active_lanes
-            .iter()
-            .any(|s| s.as_ref().map(|(h, _)| h) == Some(&sha));
-
-        let commit_lane = active_lanes
-            .iter()
-            .position(|s| s.as_ref().map(|(h, _)| h) == Some(&sha))
-            .unwrap_or_else(|| {
-                let lane = active_lanes
-                    .iter()
-                    .position(|s| s.is_none())
-                    .unwrap_or_else(|| {
-                        active_lanes.push(None);
-                        active_lanes.len() - 1
-                    });
-                lane
-            });
-
-        let is_first_on_lane = !was_expected;
-
-        let color_idx = *lane_colors.entry(commit_lane).or_insert_with(|| {
-            let color = next_color;
-            next_color = (next_color + 1) % BRANCH_COLORS.len();
-            color
-        });
-
-        for (lane_idx, lane_data) in active_lanes.iter().enumerate() {
-            if let Some((hash, lane_color)) = lane_data {
-                if hash != &sha {
-                    lines.push(GraphLine {
-                        from_lane: lane_idx,
-                        to_lane: lane_idx,
-                        line_type: LineType::Straight,
-                        color_idx: *lane_color,
-                        rows_to_parent: 1,
-                        parent_sha: None,
-                    });
-                }
-            }
-        }
-
-        if commit_lane < active_lanes.len() {
-            active_lanes[commit_lane] = None;
-        }
-
-        for (i, parent) in parents.iter().enumerate() {
-            let existing_lane = active_lanes
-                .iter()
-                .position(|s| s.as_ref().map(|(h, _)| h) == Some(parent));
-
-            if let Some(target_lane) = existing_lane {
-                let target_color = active_lanes[target_lane]
-                    .as_ref()
-                    .map(|(_, c)| *c)
-                    .unwrap_or(color_idx);
-                if target_lane != commit_lane {
-                    lines.push(GraphLine {
-                        from_lane: commit_lane,
-                        to_lane: target_lane,
-                        line_type: LineType::MergeDown,
-                        color_idx: target_color,
-                        rows_to_parent: 1,
-                        parent_sha: Some(parent.clone()),
-                    });
-                }
-            } else if i == 0 {
-                if commit_lane < active_lanes.len() {
-                    active_lanes[commit_lane] = Some((parent.clone(), color_idx));
+        h_flex()
+            .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
+            .w_full()
+            .px_2()
+            .gap_4()
+            .h(row_height)
+            .min_h(row_height)
+            .flex_shrink_0()
+            .bg(bg)
+            .hover(move |style| style.bg(hover_bg))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+                this.selected_commit = Some(idx);
+                if event.click_count() == 2 {
+                    this.checkout_commit(cx);
                 } else {
-                    active_lanes.push(Some((parent.clone(), color_idx)));
+                    this.toggle_commit_expansion(idx, cx);
                 }
-                lines.push(GraphLine {
-                    from_lane: commit_lane,
-                    to_lane: commit_lane,
-                    line_type: LineType::Straight,
-                    color_idx,
-                    rows_to_parent: 1,
-                    parent_sha: Some(parent.clone()),
-                });
-            } else {
-                let target_lane = active_lanes
-                    .iter()
-                    .position(|s| s.is_none())
-                    .unwrap_or_else(|| {
-                        active_lanes.push(None);
-                        active_lanes.len() - 1
-                    });
-
-                let branch_color = *lane_colors.entry(target_lane).or_insert_with(|| {
-                    let color = next_color;
-                    next_color = (next_color + 1) % BRANCH_COLORS.len();
-                    color
-                });
-
-                active_lanes[target_lane] = Some((parent.clone(), branch_color));
-                lines.push(GraphLine {
-                    from_lane: commit_lane,
-                    to_lane: target_lane,
-                    line_type: LineType::BranchOut,
-                    color_idx: branch_color,
-                    rows_to_parent: 1,
-                    parent_sha: Some(parent.clone()),
-                });
-            }
-        }
-
-        max_lanes = max_lanes.max(active_lanes.len());
-
-        commits.push(CommitEntry {
-            sha,
-            short_sha,
-            subject,
-            author_name,
-            timestamp,
-            parents,
-            refs,
-            lane: commit_lane,
-            color_idx,
-            lines,
-            is_first_on_lane,
-        });
-    }
-
-    let sha_to_row: HashMap<String, usize> = commits
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.sha.clone(), i))
-        .collect();
-
-    for (row_idx, commit) in commits.iter_mut().enumerate() {
-        for line in &mut commit.lines {
-            if let Some(ref parent_sha) = line.parent_sha {
-                if let Some(&parent_row) = sha_to_row.get(parent_sha) {
-                    if parent_row > row_idx {
-                        line.rows_to_parent = parent_row - row_idx;
-                    }
-                }
-            }
-        }
-    }
-
-    (commits, max_lanes.max(1))
-}
-
-fn format_timestamp(timestamp: i64) -> String {
-    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
-    };
-
-    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    let local_datetime = datetime.to_offset(local_offset);
-
-    let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-        .unwrap_or_default();
-    local_datetime.format(&format).unwrap_or_default()
-}
-
-fn render_graph_cell(
-    commit: &CommitEntry,
-    row_height: Pixels,
-    graph_width: Pixels,
-) -> impl IntoElement {
-    let lane = commit.lane;
-    let lines = commit.lines.clone();
-    let commit_color_idx = commit.color_idx;
-    let is_first_on_lane = commit.is_first_on_lane;
-
-    canvas(
-        move |_bounds, _window, _cx| {},
-        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
-            let lane_width = px(16.0);
-            let left_padding = px(12.0);
-            let y_top = bounds.origin.y;
-            let y_center = bounds.origin.y + row_height / 2.0;
-            let y_bottom = bounds.origin.y + row_height;
-            let line_width = px(2.0);
-
-            for line in &lines {
-                let color = BRANCH_COLORS[line.color_idx % BRANCH_COLORS.len()];
-                let from_x = bounds.origin.x
-                    + left_padding
-                    + lane_width * line.from_lane as f32
-                    + lane_width / 2.0;
-                let to_x = bounds.origin.x
-                    + left_padding
-                    + lane_width * line.to_lane as f32
-                    + lane_width / 2.0;
-
-                match line.line_type {
-                    LineType::Straight => {
-                        let is_commit_lane = line.from_lane == lane;
-                        let start_y = if is_commit_lane && is_first_on_lane {
-                            y_center
-                        } else {
-                            y_top
-                        };
-
-                        window.paint_quad(gpui::fill(
-                            Bounds::new(
-                                Point::new(from_x - line_width / 2.0, start_y),
-                                gpui::size(line_width, y_bottom - start_y),
-                            ),
-                            color,
-                        ));
-                    }
-                    LineType::MergeDown | LineType::BranchOut => {
-                        draw_s_curve(window, from_x, y_center, to_x, y_bottom, line_width, color);
-                    }
-                }
-            }
-
-            let commit_x =
-                bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
-            let commit_color = BRANCH_COLORS[commit_color_idx % BRANCH_COLORS.len()];
-            let dot_radius = px(4.0);
-
-            window.paint_quad(
-                gpui::fill(
-                    Bounds::centered_at(
-                        Point::new(commit_x, y_center),
-                        gpui::size(dot_radius * 2.0, dot_radius * 2.0),
+            }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                this.deploy_context_menu(event.position, idx, window, cx);
+            }))
+            .child(
+                div()
+                    .w(graph_width)
+                    .h_full()
+                    .flex_shrink_0()
+                    .child(render_graph_cell(lane, lines, color_idx, row_height, graph_width))
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap_2()
+                    .overflow_hidden()
+                    .items_center()
+                    .when(!refs.is_empty(), |el| {
+                        el.child(render_ref_badges(&refs))
+                    })
+                    .child(
+                        div()
+                            .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .tooltip(Tooltip::text(subject.clone()))
+                            .child(Label::new(subject).single_line())
                     ),
-                    commit_color,
-                )
-                .corner_radii(dot_radius),
-            );
-        },
-    )
-    .w(graph_width)
-    .h(row_height)
-}
-
-fn draw_s_curve(
-    window: &mut Window,
-    from_x: Pixels,
-    from_y: Pixels,
-    to_x: Pixels,
-    to_y: Pixels,
-    line_width: Pixels,
-    color: Hsla,
-) {
-    let segments = 20;
-    let half_width = f32::from(line_width / 2.0);
-
-    let mid_y = (from_y + to_y) / 2.0;
-
-    for i in 0..segments {
-        let t0 = i as f32 / segments as f32;
-        let t1 = (i + 1) as f32 / segments as f32;
-
-        let (x0, y0) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t0);
-        let (x1, y1) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t1);
-
-        let dx = f32::from(x1 - x0);
-        let dy = f32::from(y1 - y0);
-        let len = (dx * dx + dy * dy).sqrt();
-
-        if len > 0.01 {
-            let nx = -dy / len * half_width;
-            let ny = dx / len * half_width;
-
-            let mut path = gpui::Path::new(Point::new(x0 - px(nx), y0 - px(ny)));
-            path.line_to(Point::new(x0 + px(nx), y0 + px(ny)));
-            path.line_to(Point::new(x1 + px(nx), y1 + px(ny)));
-            path.line_to(Point::new(x1 - px(nx), y1 - px(ny)));
-            window.paint_path(path, color);
-        }
+            )
+            .child(
+                div()
+                    .w(date_width)
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(Label::new(format_timestamp(timestamp)).color(Color::Muted).single_line()),
+            )
+            .child(
+                div()
+                    .w(author_width)
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(Label::new(author_name).color(Color::Muted).single_line()),
+            )
+            .child(
+                div()
+                    .w(commit_width)
+                    .flex_shrink_0()
+                    .child(Label::new(short_sha).color(Color::Accent).single_line()),
+            )
+            .into_any_element()
     }
-}
 
-fn cubic_bezier(
-    p0x: Pixels,
-    p0y: Pixels,
-    p1x: Pixels,
-    p1y: Pixels,
-    p2x: Pixels,
-    p2y: Pixels,
-    p3x: Pixels,
-    p3y: Pixels,
-    t: f32,
-) -> (Pixels, Pixels) {
-    let inv_t = 1.0 - t;
-    let inv_t2 = inv_t * inv_t;
-    let inv_t3 = inv_t2 * inv_t;
-    let t2 = t * t;
-    let t3 = t2 * t;
+    fn render_inline_expansion(
+        &self,
+        idx: usize,
+        graph_width: Pixels,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let Some(commit) = self.commits.get(idx) else {
+            return div().into_any_element();
+        };
 
-    let x = inv_t3 * p0x + 3.0 * inv_t2 * t * p1x + 3.0 * inv_t * t2 * p2x + t3 * p3x;
-    let y = inv_t3 * p0y + 3.0 * inv_t2 * t * p1y + 3.0 * inv_t * t2 * p2y + t3 * p3y;
-    (x, y)
-}
+        let commit_sha = commit.sha.clone();
+        let parents = commit.parents.clone();
+        let author = commit.author_name.clone();
+        let subject = commit.subject.clone();
+        let timestamp = commit.timestamp;
+        let lines = commit.lines.clone();
+        let loading_files = self.loading_files;
+        let expanded_files = &self.expanded_files;
 
-fn render_ref_badges(refs: &[String], cx: &Context<GitGraph>) -> impl IntoElement {
-    let badges: Vec<_> = refs
-        .iter()
-        .take(3)
-        .map(|ref_name| {
-            let (bg_color, text_color, border_color, icon) = if ref_name.starts_with("HEAD") {
-                (
-                    cx.theme().colors().element_selected,
-                    Color::Default,
-                    Some(cx.theme().colors().border_focused),
-                    IconName::GitBranch,
-                )
-            } else if ref_name.starts_with("origin/") {
-                (
-                    cx.theme().colors().element_background,
-                    Color::Muted,
-                    None,
-                    IconName::GitBranch,
-                )
-            } else if ref_name.starts_with("tag:") {
-                (
-                    cx.theme().colors().element_background,
-                    Color::Muted,
-                    None,
-                    IconName::GitBranch,
-                )
-            } else {
-                (
-                    cx.theme().colors().element_selected,
-                    Color::Accent,
-                    None,
-                    IconName::GitBranch,
-                )
-            };
+        h_flex()
+            .id(ElementId::NamedInteger("expanded-details".into(), idx as u64))
+            .w_full()
+            .min_h(px(120.0))
+            .px_2()
+            .gap_4()
+            .bg(cx.theme().colors().background)
+            .flex_shrink_0()
+            .child(
+                div()
+                    .w(graph_width)
+                    .h_full()
+                    .flex_shrink_0()
+                    .child(render_graph_continuation(lines, graph_width))
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h_full()
+                    .child(
+                        v_flex()
+                            .w(px(400.0))
+                            .p_2()
+                            .gap_1()
+                            .border_r_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .pb_1()
+                                    .mb_1()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::Info).color(Color::Muted).size(IconSize::Small))
+                                            .child(Label::new("Info").size(LabelSize::Small).color(Color::Muted))
+                                    )
+                            )
+                            .child(
+                                h_flex().gap_2()
+                                    .child(Label::new("Commit:").size(LabelSize::Small).color(Color::Muted))
+                                    .child(Label::new(commit_sha).size(LabelSize::Small).color(Color::Accent))
+                            )
+                            .when(!parents.is_empty(), |el| {
+                                let parent_str = parents.iter()
+                                    .map(|p| if p.len() >= 7 { &p[..7] } else { p.as_str() })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                el.child(
+                                    h_flex().gap_2()
+                                        .child(Label::new("Parents:").size(LabelSize::Small).color(Color::Muted))
+                                        .child(Label::new(parent_str).size(LabelSize::Small).color(Color::Accent))
+                                )
+                            })
+                            .child(
+                                h_flex().gap_2()
+                                    .child(Label::new("Author:").size(LabelSize::Small).color(Color::Muted))
+                                    .child(Label::new(author).size(LabelSize::Small))
+                            )
+                            .child(
+                                h_flex().gap_2()
+                                    .child(Label::new("Date:").size(LabelSize::Small).color(Color::Muted))
+                                    .child(Label::new(format_timestamp(timestamp)).size(LabelSize::Small))
+                            )
+                            .child(div().h_2())
+                            .child(Label::new(subject).size(LabelSize::Small))
+                    )
+                    .child(
+                        v_flex()
+                            .id("file-list-scroll")
+                            .flex_1()
+                            .h_full()
+                            .p_2()
+                            .gap_0p5()
+                            .overflow_y_scroll()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .pb_1()
+                                    .mb_1()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::FileTree).color(Color::Muted).size(IconSize::Small))
+                                            .child(Label::new(format!("{} files", expanded_files.len())).size(LabelSize::Small).color(Color::Muted))
+                                    )
+                                    .child(
+                                        Button::new("view-diff", "View Diff")
+                                            .style(ButtonStyle::Filled)
+                                            .label_size(LabelSize::Small)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_commit_view(None, window, cx);
+                                            }))
+                                    )
+                            )
+                            .when(loading_files, |el| {
+                                el.child(
+                                    div()
+                                        .w_full()
+                                        .py_2()
+                                        .child(Label::new("Loading...").size(LabelSize::Small).color(Color::Muted))
+                                )
+                            })
+                            .when(!loading_files && expanded_files.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .w_full()
+                                        .py_2()
+                                        .child(Label::new("No files changed").size(LabelSize::Small).color(Color::Muted))
+                                )
+                            })
+                            .when(!loading_files && !expanded_files.is_empty(), |el| {
+                                el.children(expanded_files.iter().enumerate().map(|(file_idx, file)| {
+                                    let file_path = file.path.clone();
+                                    let status_icon = match file.status {
+                                        FileStatus::Added => IconName::Plus,
+                                        FileStatus::Modified => IconName::Pencil,
+                                        FileStatus::Deleted => IconName::Trash,
+                                        FileStatus::Renamed => IconName::Replace,
+                                        FileStatus::Copied => IconName::Copy,
+                                        FileStatus::Unknown => IconName::File,
+                                    };
+                                    let status_color = match file.status {
+                                        FileStatus::Added => Color::Created,
+                                        FileStatus::Modified => Color::Modified,
+                                        FileStatus::Deleted => Color::Deleted,
+                                        _ => Color::Muted,
+                                    };
 
-            let display_name: SharedString = if let Some(stripped) = ref_name.strip_prefix("tag: ")
-            {
-                stripped.to_string().into()
-            } else if let Some(stripped) = ref_name.strip_prefix("HEAD -> ") {
-                stripped.to_string().into()
-            } else {
-                ref_name.clone().into()
-            };
-
-            (display_name, bg_color, text_color, border_color, icon)
-        })
-        .collect();
-
-    h_flex().gap_1().children(badges.into_iter().map(
-        |(display_name, bg_color, text_color, border_color, icon)| {
-            h_flex()
-                .gap_1()
-                .px_1()
-                .py_px()
-                .rounded_sm()
-                .bg(bg_color)
-                .when_some(border_color, |this, color| {
-                    this.border_1().border_color(color)
-                })
-                .child(Icon::new(icon).size(IconSize::Small).color(text_color))
-                .child(
-                    Label::new(display_name)
-                        .size(LabelSize::Small)
-                        .color(text_color),
-                )
-        },
-    ))
+                                    h_flex()
+                                        .id(ElementId::NamedInteger("file-row".into(), file_idx as u64))
+                                        .w_full()
+                                        .px_1()
+                                        .py_0p5()
+                                        .gap_2()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                                        .rounded_sm()
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_commit_view(Some(file_path.clone()), window, cx);
+                                        }))
+                                        .child(Icon::new(status_icon).color(status_color).size(IconSize::Small))
+                                        .child(Label::new(file.path.clone()).size(LabelSize::Small).single_line())
+                                }))
+                            })
+                    )
+            )
+            .child(
+                div()
+                    .w(px(24.0))
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .pt_1()
+                    .child(
+                        IconButton::new("close-expanded", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.expanded_commit = None;
+                                this.expanded_files.clear();
+                                cx.notify();
+                            }))
+                    )
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for GitGraph {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.buffer_font_size(cx);
-        let _row_height = font_size + px(10.0);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
@@ -1778,8 +1558,6 @@ impl Render for GitGraph {
                 .justify_center()
                 .child(Label::new("No commits found").color(Color::Muted))
         } else {
-            let commit_count = self.commits.len();
-
             div()
                 .size_full()
                 .flex()
@@ -1789,6 +1567,7 @@ impl Render for GitGraph {
                         .w_full()
                         .px_2()
                         .py_1()
+                        .gap_4()
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .flex_shrink_0()
@@ -1799,123 +1578,12 @@ impl Render for GitGraph {
                         .child(div().w(commit_width).child(Label::new("Commit").color(Color::Muted))),
                 )
                 .child(
-                    div()
-                        .id("git-graph-list")
-                        .flex_1()
-                        .size_full()
-                        .child(
-                            uniform_list(
-                                "git-graph-commits",
-                                commit_count,
-                                cx.processor(move |this: &mut Self, range: Range<usize>, _window, cx| {
-                                    let settings = ThemeSettings::get_global(cx);
-                                    let font_size = settings.buffer_font_size(cx);
-                                    let row_height = font_size + px(10.0);
-                                    let graph_width = px(16.0) * (this.max_lanes.max(2) as f32) + px(24.0);
-                                    let date_width = px(140.0);
-                                    let author_width = px(120.0);
-                                    let commit_width = px(80.0);
-
-                                    range
-                                        .filter_map(|idx| {
-                                            let commit = this.commits.get(idx)?;
-                                            let bg = if idx % 2 == 0 {
-                                                cx.theme().colors().surface_background
-                                            } else {
-                                                cx.theme().colors().background
-                                            };
-
-                                            Some(
-                                                h_flex()
-                                                    .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
-                                                    .w_full()
-                                                    .px_2()
-                                                    .h(row_height)
-                                                    .min_h(row_height)
-                                                    .max_h(row_height)
-                                                    .flex_shrink_0()
-                                                    .bg(bg)
-                                                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                                                    .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
-                                                        if event.click_count() == 2 {
-                                                            this.selected_commit = Some(idx);
-                                                            this.checkout_commit(cx);
-                                                        }
-                                                    }))
-                                                    .child(
-                                                        div()
-                                                            .w(graph_width)
-                                                            .h_full()
-                                                            .flex_shrink_0()
-                                                            .child(render_graph_cell(commit, row_height, graph_width))
-                                                    )
-                                                    .child(
-                                                        h_flex()
-                                                            .flex_1()
-                                                            .min_w(px(0.0))
-                                                            .gap_2()
-                                                            .overflow_hidden()
-                                                            .items_center()
-                                                            .when(!commit.refs.is_empty(), |this| {
-                                                                this.child(
-                                                                    div()
-                                                                        .id(ElementId::NamedInteger("ref-badges".into(), idx as u64))
-                                                                        .cursor_pointer()
-                                                                        .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                                                            this.deploy_context_menu(event.position, idx, window, cx);
-                                                                        }))
-                                                                        .child(render_ref_badges(&commit.refs, cx))
-                                                                )
-                                                            })
-                                                            .child({
-                                                                let subject = commit.subject.clone();
-                                                                div()
-                                                                    .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
-                                                                    .flex_1()
-                                                                    .min_w(px(0.0))
-                                                                    .overflow_hidden()
-                                                                    .tooltip(Tooltip::text(subject.clone()))
-                                                                    .child(
-                                                                        Label::new(subject)
-                                                                            .single_line()
-                                                                    )
-                                                            }),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .w(date_width)
-                                                            .flex_shrink_0()
-                                                            .overflow_hidden()
-                                                            .child(Label::new(format_timestamp(commit.timestamp)).color(Color::Muted).single_line()),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .w(author_width)
-                                                            .flex_shrink_0()
-                                                            .overflow_hidden()
-                                                            .child(Label::new(commit.author_name.clone()).color(Color::Muted).single_line()),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .w(commit_width)
-                                                            .flex_shrink_0()
-                                                            .child(Label::new(commit.short_sha.clone()).color(Color::Accent).single_line()),
-                                                    )
-                                            )
-                                        })
-                                        .collect()
-                                }),
-                            )
-                            .size_full()
-                            .with_sizing_behavior(ListSizingBehavior::Infer)
-                            .track_scroll(&self.scroll_handle),
-                        )
-                        .custom_scrollbars(
-                            Scrollbars::new(ScrollAxes::Vertical)
-                                .tracked_scroll_handle(&self.scroll_handle),
-                            window,
-                            cx,
-                        ),
+                    list(
+                        self.list_state.clone(),
+                        cx.processor(Self::render_list_item),
+                    )
+                    .flex_1()
+                    .w_full()
                 )
         };
 
@@ -1925,6 +1593,7 @@ impl Render for GitGraph {
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::handle_refresh_graph))
+            .on_action(cx.listener(Self::handle_open_commit_view))
             .on_action(cx.listener(Self::handle_checkout_commit))
             .on_action(cx.listener(Self::handle_copy_sha))
             .on_action(cx.listener(Self::handle_create_branch))

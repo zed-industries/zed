@@ -14,6 +14,7 @@ path = "src/git_graph.rs"
 [dependencies]
 anyhow.workspace = true
 git.workspace = true
+git_ui.workspace = true
 gpui.workspace = true
 project.workspace = true
 settings.workspace = true
