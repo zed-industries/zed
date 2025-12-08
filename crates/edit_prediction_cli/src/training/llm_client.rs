@@ -367,6 +367,7 @@ pub enum LlmClient {
     // No batching
     Plain(PlainLlmClient),
     Batch(BatchingLlmClient),
+    Dummy(),
 }
 
 impl LlmClient {
@@ -379,6 +380,10 @@ impl LlmClient {
             cache_path,
             http_client,
         )?))
+    }
+
+    pub fn dummy() -> Self {
+        Self::Dummy()
     }
 
     pub async fn generate(
@@ -397,6 +402,7 @@ impl LlmClient {
                     .generate(model, max_tokens, messages)
                     .await
             }
+            LlmClient::Dummy() => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 
@@ -404,6 +410,7 @@ impl LlmClient {
         match self {
             LlmClient::Plain(_) => Ok(()),
             LlmClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
+            LlmClient::Dummy() => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 }

@@ -233,17 +233,14 @@ mod tests {
             "};
         let last_block = TeacherModel::extract_last_codeblock(text);
         assert_eq!(last_block, "last block");
-
-        // https://on.tty-share.com/s/-pZoHQTn8OTfu6W9KvuyEJgFKwfR1CrCJSRwC1Y2I94SzoVLHekaqmrCcaO1d_lNpGQ/
     }
 
     #[test]
     fn test_extract_editable_region() {
-        let http_client = std::sync::Arc::new(http_client::BlockedHttpClient);
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain(http_client).unwrap(),
+            LlmClient::dummy(),
         );
         let response = indoc::indoc! {"
             some lines
