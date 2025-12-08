@@ -40,7 +40,7 @@ const PATH_SAMPLE_COUNT: u32 = 4;
 // https://developer.apple.com/documentation/metal/synchronizing-cpu-and-gpu-work#Reuse-multiple-buffer-instances-in-your-app
 const MAXIMUM_DRAWABLE_COUNT: usize = 3;
 
-pub type Context = ();
+pub type Context = Option<()>;
 pub type Renderer = MetalRenderer;
 
 pub unsafe fn new_renderer(
