@@ -515,20 +515,6 @@ Uses your OpenAI API credits. See [OpenAI pricing](https://openai.com/pricing) f
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        let provided = llm_request_credential(
-            "openai",
-            LlmCredentialType::ApiKey,
-            "OpenAI API Key",
-            "sk-...",
-        )?;
-        if provided {
-            Ok(())
-        } else {
-            Err("Authentication cancelled".to_string())
-        }
-    }
-
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
         llm_delete_credential("openai")
     }

@@ -18,7 +18,7 @@ world extension {
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
     use llm-provider.{
         provider-info, model-info, completion-request,
-        credential-type, cache-configuration, completion-event, token-usage
+        cache-configuration, completion-event, token-usage
     };
 
     /// Initializes the extension.
@@ -182,9 +182,6 @@ world extension {
 
     /// Check if the provider is authenticated.
     export llm-provider-is-authenticated: func(provider-id: string) -> bool;
-
-    /// Attempt to authenticate the provider.
-    export llm-provider-authenticate: func(provider-id: string) -> result<_, string>;
 
     /// Reset credentials for the provider.
     export llm-provider-reset-credentials: func(provider-id: string) -> result<_, string>;

@@ -639,20 +639,6 @@ Pay-per-use based on model. See [openrouter.ai/models](https://openrouter.ai/mod
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        let provided = llm_request_credential(
-            "open_router",
-            LlmCredentialType::ApiKey,
-            "OpenRouter API Key",
-            "sk-or-v1-...",
-        )?;
-        if provided {
-            Ok(())
-        } else {
-            Err("Authentication cancelled".to_string())
-        }
-    }
-
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
         llm_delete_credential("open_router")
     }

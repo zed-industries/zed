@@ -502,20 +502,6 @@ This extension requires an active GitHub Copilot subscription.
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        let provided = llm_request_credential(
-            "copilot_chat",
-            LlmCredentialType::ApiKey,
-            "GitHub Copilot Token",
-            "ghu_...",
-        )?;
-        if provided {
-            Ok(())
-        } else {
-            Err("Authentication cancelled".to_string())
-        }
-    }
-
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
         llm_delete_credential("copilot_chat")
     }

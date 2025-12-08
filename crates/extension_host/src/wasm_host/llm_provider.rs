@@ -182,37 +182,9 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
         self.state.read(cx).is_authenticated
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        let extension = self.extension.clone();
-        let provider_id = self.provider_info.id.clone();
-        let state = self.state.clone();
-
-        cx.spawn(async move |cx| {
-            let result = extension
-                .call(|extension, store| {
-                    async move {
-                        extension
-                            .call_llm_provider_authenticate(store, &provider_id)
-                            .await
-                    }
-                    .boxed()
-                })
-                .await;
-
-            match result {
-                Ok(Ok(Ok(()))) => {
-                    cx.update(|cx| {
-                        state.update(cx, |state, _| {
-                            state.is_authenticated = true;
-                        });
-                    })?;
-                    Ok(())
-                }
-                Ok(Ok(Err(e))) => Err(AuthenticateError::Other(anyhow!("{}", e))),
-                Ok(Err(e)) => Err(AuthenticateError::Other(e)),
-                Err(e) => Err(AuthenticateError::Other(e)),
-            }
-        })
+    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        // Authentication is handled via the configuration view UI
+        Task::ready(Ok(()))
     }
 
     fn configuration_view(

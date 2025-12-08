@@ -633,20 +633,6 @@ Uses your Google AI API credits. See [Google AI pricing](https://ai.google.dev/p
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        let provided = llm_request_credential(
-            "google-ai",
-            LlmCredentialType::ApiKey,
-            "Google AI API Key",
-            "AIza...",
-        )?;
-        if provided {
-            Ok(())
-        } else {
-            Err("Authentication cancelled".to_string())
-        }
-    }
-
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
         llm_delete_credential("google-ai")
     }

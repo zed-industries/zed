@@ -562,20 +562,6 @@ Uses your Anthropic API credits. See [Anthropic pricing](https://www.anthropic.c
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        let provided = llm_request_credential(
-            "anthropic",
-            LlmCredentialType::ApiKey,
-            "Anthropic API Key",
-            "sk-ant-...",
-        )?;
-        if provided {
-            Ok(())
-        } else {
-            Err("Authentication cancelled".to_string())
-        }
-    }
-
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
         llm_delete_credential("anthropic")
     }

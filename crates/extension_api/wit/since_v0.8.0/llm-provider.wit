@@ -235,14 +235,6 @@ interface llm-provider {
         cache-read-input-tokens: option<u64>,
     }
 
-    /// Credential types that can be requested.
-    enum credential-type {
-        /// An API key.
-        api-key,
-        /// An OAuth token.
-        oauth-token,
-    }
-
     /// Cache configuration for prompt caching.
     record cache-configuration {
         /// Maximum number of cache anchors.
@@ -295,15 +287,6 @@ interface llm-provider {
         /// Response body as a string.
         body: string,
     }
-
-    /// Request a credential from the user.
-    /// Returns true if the credential was provided, false if the user cancelled.
-    request-credential: func(
-        provider-id: string,
-        credential-type: credential-type,
-        label: string,
-        placeholder: string
-    ) -> result<bool, string>;
 
     /// Get a stored credential for this provider.
     get-credential: func(provider-id: string) -> option<string>;
