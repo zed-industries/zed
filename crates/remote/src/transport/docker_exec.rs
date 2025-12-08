@@ -585,6 +585,9 @@ impl DockerExecConnection {
 
 #[async_trait(?Send)]
 impl RemoteConnection for DockerExecConnection {
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
     fn start_proxy(
         &self,
         unique_identifier: String,
