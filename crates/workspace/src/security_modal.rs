@@ -1,15 +1,20 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use collections::HashSet;
-use gpui::{BorrowAppContext, DismissEvent, EventEmitter, FocusHandle, Focusable};
-use project::trusted_worktrees::TrustedWorktreesStorage;
+use collections::{HashMap, HashSet};
+use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use project::{
+    WorktreeId,
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
+    worktree_store::WorktreeStore,
+};
 use theme::ActiveTheme;
 use ui::{
-    AlertModal, App, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color,
-    Context, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding, Label,
+    AlertModal, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color, Context,
+    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding, Label,
     LabelCommon as _, ListBulletItem, ParentElement as _, Render, Styled, ToggleState, Window,
     h_flex, rems, v_flex,
 };
@@ -17,10 +22,11 @@ use ui::{
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    pub paths: HashSet<PathBuf>,
+    restricted_paths: HashMap<WorktreeId, Arc<Path>>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
+    worktree_store: WeakEntity<WorktreeStore>,
     focus_handle: FocusHandle,
 }
 
@@ -48,12 +54,12 @@ impl ModalView for SecurityModal {
 
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.paths.is_empty() {
+        if self.restricted_paths.is_empty() {
             self.dismiss(cx);
             return v_flex().into_any_element();
         }
 
-        let header_label = if self.paths.len() == 1 {
+        let header_label = if self.restricted_paths.len() == 1 {
             "Unrecognized Workspace"
         } else {
             "Unrecognized Workspaces"
@@ -74,9 +80,9 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Headline::new(header_label).size(HeadlineSize::Small)),
                     )
-                    .children(self.paths.iter().map(|path| {
+                    .children(self.restricted_paths.iter().map(|(_, abs_path)| {
                         h_flex().pl(IconSize::default().rems() + rems(0.5)).child(
-                            Label::new(self.shorten_path(path).display().to_string())
+                            Label::new(self.shorten_path(abs_path).display().to_string())
                                 .color(Color::Muted),
                         )
                     })),
@@ -136,22 +142,26 @@ Review .zed/settings.json for any extensions or commands configured by this proj
 }
 
 impl SecurityModal {
-    pub fn new(paths: HashSet<PathBuf>, cx: &App) -> Self {
-        Self {
-            paths,
+    pub fn new(worktree_store: WeakEntity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        let mut this = Self {
+            worktree_store,
+            restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
             dismissed: false,
             trust_parents: false,
             home_dir: std::env::home_dir(),
-        }
+        };
+        this.refresh_restricted_paths(cx);
+
+        this
     }
 
     fn build_trust_label(&self) -> Cow<'static, str> {
-        if self.paths.len() == 1 {
-            let Some(single_path) = self.paths.iter().next() else {
+        if self.restricted_paths.len() == 1 {
+            let Some((_, single_abs_path)) = self.restricted_paths.iter().next() else {
                 return Cow::Borrowed("Trust all projects in the parent folders");
             };
-            match single_path.parent().map(|path| self.shorten_path(path)) {
+            match single_abs_path.parent().map(|path| self.shorten_path(path)) {
                 Some(parent) => Cow::Owned(format!("Trust all projects in the {parent:?} folder")),
                 None => Cow::Borrowed("Trust all projects in the parent folders"),
             }
@@ -172,18 +182,23 @@ impl SecurityModal {
     }
 
     fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
-        if cx.has_global::<TrustedWorktreesStorage>() {
-            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                let mut paths_to_trust = self.paths.clone();
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                let mut paths_to_trust = self
+                    .restricted_paths
+                    .iter()
+                    .map(|(worktree_id, _)| PathTrust::Worktree(*worktree_id))
+                    .collect::<HashSet<_>>();
                 if self.trust_parents {
                     paths_to_trust.extend(
-                        self.paths
+                        self.restricted_paths
                             .iter()
-                            .filter_map(|path| Some(path.parent()?.to_owned())),
+                            .filter_map(|(_, abs_path)| Some(abs_path.parent()?.to_owned()))
+                            .map(PathTrust::AbsPath),
                     );
                 }
 
-                trusted_worktrees_storage.trust(paths_to_trust, cx);
+                trusted_worktrees.trust(paths_to_trust, cx);
             });
         }
 
@@ -193,5 +208,22 @@ impl SecurityModal {
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.dismissed = true;
         cx.emit(DismissEvent);
+    }
+
+    pub fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            if let Some(worktree_store) = self.worktree_store.upgrade() {
+                let new_restricted_worktrees = trusted_worktrees
+                    .read(cx)
+                    .restricted_worktree_abs_paths(worktree_store.read(cx), cx);
+                if self.restricted_paths != new_restricted_worktrees {
+                    self.restricted_paths = new_restricted_worktrees;
+                    cx.notify();
+                }
+            }
+        } else if !self.restricted_paths.is_empty() {
+            self.restricted_paths.clear();
+            cx.notify();
+        }
     }
 }

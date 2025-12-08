@@ -38,7 +38,7 @@ use crate::{
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
-    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
+    trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
 };
@@ -55,8 +55,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, PromptLevel,
-    SharedString, Subscription, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -383,9 +383,12 @@ impl LocalLspStore {
             adapter.name.0
         );
 
-        let untrusted_worktree_task = if cx.has_global::<TrustedWorktreesStorage>() {
-            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                if trusted_worktrees_storage.can_trust_path(&worktree_abs_path, cx) {
+        let untrusted_worktree_task =
+            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
+                let can_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(worktree_id, cx)
+                });
+                if can_trust {
                     self.restricted_worktrees_tasks.remove(&worktree_id);
                     None
                 } else {
@@ -393,24 +396,19 @@ impl LocalLspStore {
                         hash_map::Entry::Occupied(o) => Some(o.get().1.clone()),
                         hash_map::Entry::Vacant(v) => {
                             let (tx, rx) = smol::channel::bounded::<()>(1);
-                            let root_path = worktree_abs_path.clone();
-                            let subscription =
-                                trusted_worktrees_storage.subscribe_app(cx, move |e, _| {
-                                    if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
-                                        if trusted_paths.contains(root_path.as_ref()) {
-                                            tx.send_blocking(()).ok();
-                                        }
+                            let subscription = cx.subscribe(&trusted_worktrees, move |_, e, _| {
+                                if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                                    if trusted_paths.contains(&PathTrust::Worktree(worktree_id)) {
+                                        tx.send_blocking(()).ok();
                                     }
-                                });
+                                }
+                            });
                             v.insert((subscription, rx.clone()));
                             Some(rx)
                         }
                     }
                 }
-            })
-        } else {
-            None
-        };
+            });
 
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),

@@ -15,7 +15,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use crate::{
     Project,
     project_settings::{ContextServerSettings, ProjectSettings},
-    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
+    trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::WorktreeStore,
 };
 
@@ -669,57 +669,36 @@ fn wait_for_worktree_trust(
     context_server_store: WeakEntity<ContextServerStore>,
     cx: &mut AsyncApp,
 ) -> Option<Task<()>> {
-    if !cx.has_global::<TrustedWorktreesStorage>().unwrap_or(false) {
-        return None;
-    }
+    let trusted_worktrees = cx
+        .update(|cx| TrustedWorktrees::try_get_global(cx))
+        .ok()??;
 
     // TODO kb move this and lsp server checks into the storage?
     Some(cx.spawn(async move |cx| {
         loop {
-            let Some((_subscription, restricted_worktrees_task)) = cx
-                .update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                    let Some(mut restricted_worktrees) = context_server_store
+            let Some(mut restricted_worktrees) = trusted_worktrees
+                .update(cx, |trusted_worktrees, cx| {
+                    let mut worktrees_to_check = context_server_store
                         .update(cx, |context_server_store, cx| {
                             context_server_store
                                 .worktree_store
-                                .update(cx, |worktree_store, cx| {
-                                    worktree_store
-                                        // TODO kb handle no worktrees case better
-                                        .worktrees()
-                                        .filter_map(|worktree| {
-                                            let worktree_abs_path = dbg!(worktree.read(cx).root_dir())?;
-                                            if trusted_worktrees_storage
-                                                .can_trust_path(worktree_abs_path.as_ref(), cx)
-                                            {
-                                                Some(worktree_abs_path)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect::<HashSet<_>>()
-                                })
+                                .read(cx)
+                                .worktrees()
+                                .map(|worktree| worktree.read(cx).id())
+                                .collect::<Vec<_>>()
                         })
-                        .ok()
-                    else {
-                        return None;
-                    };
+                        .ok()?;
+                    worktrees_to_check
+                        .retain(|&worktree_id| trusted_worktrees.can_trust(worktree_id, cx));
                     // TODO kb this is `true` at the moment of panel initialization, as it is deserialized when no worktrees are added and checked for trust
                     // yet, we need to allow starting MCP servers for empty projects, only to stop them back?
-                    if !dbg!(restricted_worktrees.is_empty()) {
-                        log::info!("Waiting for restricted worktrees to be trusted before starting context servers");
-                        let (tx, rx) = smol::channel::bounded::<()>(1);
-                        let subscription =
-                            trusted_worktrees_storage.subscribe_app(cx, move |e, _| {
-                                if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
-                                    for trusted_path in trusted_paths {
-                                        restricted_worktrees.remove(trusted_path.as_path());
-                                    }
-                                    if restricted_worktrees.is_empty() {
-                                        tx.send_blocking(()).ok();
-                                    }
-                                }
-                            });
-                        Some((subscription, rx))
+                    if !worktrees_to_check.is_empty() {
+                        Some(
+                            worktrees_to_check
+                                .into_iter()
+                                .map(PathTrust::Worktree)
+                                .collect::<HashSet<_>>(),
+                        )
                     } else {
                         None
                     }
@@ -727,6 +706,25 @@ fn wait_for_worktree_trust(
                 .ok()
                 .flatten()
             else {
+                return;
+            };
+
+            log::info!(
+                "Waiting for restricted worktrees to be trusted before starting context servers"
+            );
+            let (tx, restricted_worktrees_task) = smol::channel::bounded::<()>(1);
+            let Ok(_subscription) = cx.update(|cx| {
+                cx.subscribe(&trusted_worktrees, move |_, e, _| {
+                    if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                        for trusted_path in trusted_paths {
+                            restricted_worktrees.remove(trusted_path);
+                        }
+                        if restricted_worktrees.is_empty() {
+                            tx.send_blocking(()).ok();
+                        }
+                    }
+                })
+            }) else {
                 return;
             };
 

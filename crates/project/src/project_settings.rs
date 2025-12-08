@@ -30,7 +30,7 @@ use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::{TaskSettingsLocation, TaskStore},
-    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
+    trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -601,7 +601,8 @@ pub struct SettingsObserver {
     worktree_store: Entity<WorktreeStore>,
     project_id: u64,
     task_store: Entity<TaskStore>,
-    pending_local_settings: HashMap<PathBuf, BTreeMap<(WorktreeId, Arc<RelPath>), Option<String>>>,
+    pending_local_settings:
+        HashMap<PathTrust, BTreeMap<(WorktreeId, Arc<RelPath>), Option<String>>>,
     _trusted_worktrees_watcher: Option<Subscription>,
     _user_settings_watcher: Option<Subscription>,
     _global_task_config_watcher: Task<()>,
@@ -628,10 +629,11 @@ impl SettingsObserver {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
 
-        let _trusted_worktrees_watcher = if cx.has_global::<TrustedWorktreesStorage>() {
-            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees, cx| {
-                let watcher =
-                    trusted_worktrees.subscribe(cx, move |settings_observer, e, cx| match e {
+        let _trusted_worktrees_watcher =
+            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
+                let watcher = cx.subscribe(
+                    &trusted_worktrees,
+                    move |settings_observer, _, e, cx| match e {
                         TrustedWorktreesEvent::Trusted(trusted_paths) => {
                             for trusted_path in trusted_paths {
                                 if let Some(pending_local_settings) = settings_observer
@@ -671,12 +673,10 @@ impl SettingsObserver {
                             }
                         }
                         TrustedWorktreesEvent::Restricted(_) => {}
-                    });
+                    },
+                );
                 Some(watcher)
-            })
-        } else {
-            None
-        };
+            });
 
         Self {
             worktree_store,
@@ -1030,20 +1030,16 @@ impl SettingsObserver {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();
         let task_store = self.task_store.clone();
-        let worktree_abs_path = worktree.read(cx).abs_path();
         let can_trust_worktree = OnceCell::new();
         for (directory, kind, file_content) in settings_contents {
             let mut applied = true;
             match kind {
                 LocalSettingsKind::Settings => {
                     if *can_trust_worktree.get_or_init(|| {
-                        if cx.has_global::<TrustedWorktreesStorage>() {
-                            cx.update_global::<TrustedWorktreesStorage, _>(
-                                |trusted_worktrees_storage, cx| {
-                                    trusted_worktrees_storage
-                                        .can_trust_path(worktree_abs_path.as_ref(), cx)
-                                },
-                            )
+                        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                trusted_worktrees.can_trust(worktree_id, cx)
+                            })
                         } else {
                             true
                         }
@@ -1052,7 +1048,7 @@ impl SettingsObserver {
                     } else {
                         applied = false;
                         self.pending_local_settings
-                            .entry(worktree_abs_path.to_path_buf())
+                            .entry(PathTrust::Worktree(worktree_id))
                             .or_default()
                             .insert((worktree_id, directory.clone()), file_content.clone());
                     }

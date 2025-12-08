@@ -1023,7 +1023,6 @@ impl settings::Settings for DisableAiSettings {
 
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
-        trusted_worktrees::init(cx);
         connection_manager::init(client.clone(), cx);
 
         let client: AnyProtoClient = client.clone().into();
@@ -1071,6 +1070,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
+            trusted_worktrees::init_global(worktree_store.clone(), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1262,6 +1262,7 @@ impl Project {
                     path_style,
                 )
             });
+            trusted_worktrees::init_global(worktree_store.clone(), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 

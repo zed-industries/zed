@@ -169,6 +169,7 @@ impl HeadlessProject {
             task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             task_store
         });
+        // TODO kb we should also check for trust on the headless host side?
         let settings_observer = cx.new(|cx| {
             let mut observer = SettingsObserver::new_local(
                 fs.clone(),
