@@ -1,3 +1,5 @@
+use std::fs;
+
 use zed_extension_api::{
     self as zed, Architecture, DownloadedFileType, GithubReleaseOptions, Os, Result,
     settings::LspSettings,
@@ -5,15 +7,15 @@ use zed_extension_api::{
 
 use crate::language_servers::util;
 
-pub(crate) struct ProtoLs {
+pub(crate) struct BufLsp {
     cached_binary_path: Option<String>,
 }
 
-impl ProtoLs {
-    pub(crate) const SERVER_NAME: &str = "protols";
+impl BufLsp {
+    pub(crate) const SERVER_NAME: &str = "buf";
 
     pub(crate) fn new() -> Self {
-        ProtoLs {
+        BufLsp {
             cached_binary_path: None,
         }
     }
@@ -29,33 +31,31 @@ impl ProtoLs {
         let args = binary_settings
             .as_ref()
             .and_then(|binary_settings| binary_settings.arguments.clone())
-            .unwrap_or_default();
-
-        let env = worktree.shell_env();
+            .unwrap_or_else(|| ["lsp", "serve"].map(ToOwned::to_owned).into());
 
         if let Some(path) = binary_settings.and_then(|binary_settings| binary_settings.path) {
             return Ok(zed::Command {
                 command: path,
                 args,
-                env,
+                env: Default::default(),
             });
         } else if let Some(path) = self.cached_binary_path.clone() {
             return Ok(zed::Command {
                 command: path,
                 args,
-                env,
+                env: Default::default(),
             });
         } else if let Some(path) = worktree.which(Self::SERVER_NAME) {
             self.cached_binary_path = Some(path.clone());
             return Ok(zed::Command {
                 command: path,
                 args,
-                env,
+                env: Default::default(),
             });
         }
 
         let latest_release = zed::latest_github_release(
-            "coder3101/protols",
+            "bufbuild/buf",
             GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
@@ -65,28 +65,25 @@ impl ProtoLs {
         let (os, arch) = zed::current_platform();
 
         let release_suffix = match (os, arch) {
-            (Os::Mac, Architecture::Aarch64) => "aarch64-apple-darwin.tar.gz",
-            (Os::Mac, Architecture::X8664) => "x86_64-apple-darwin.tar.gz",
-            (Os::Linux, Architecture::Aarch64) => "aarch64-unknown-linux-gnu.tar.gz",
-            (Os::Linux, Architecture::X8664) => "x86_64-unknown-linux-gnu.tar.gz",
-            (Os::Windows, Architecture::X8664) => "x86_64-pc-windows-msvc.zip",
+            (Os::Mac, Architecture::Aarch64) => "Darwin-arm64",
+            (Os::Mac, Architecture::X8664) => "Darwin-x86_64",
+            (Os::Linux, Architecture::Aarch64) => "Linux-aarch64",
+            (Os::Linux, Architecture::X8664) => "Linux-x86_64",
+            (Os::Windows, Architecture::Aarch64) => "Windows-arm64.exe",
+            (Os::Windows, Architecture::X8664) => "Windows-x86_64.exe",
             _ => {
                 return Err(format!(
-                    "Platform and architecture not supported by Protols"
+                    "Platform and architecture not supported by buf CLI"
                 ));
             }
         };
 
-        let release_name = format!("protols-{release_suffix}");
-
-        let file_type = if os == Os::Windows {
-            DownloadedFileType::Zip
-        } else {
-            DownloadedFileType::GzipTar
-        };
+        let release_name = format!("buf-{release_suffix}");
 
         let version_dir = format!("{}-{}", Self::SERVER_NAME, latest_release.version);
-        let binary_path = format!("{version_dir}/protols");
+        fs::create_dir_all(&version_dir).map_err(|_| "Could not create directory")?;
+
+        let binary_path = format!("{version_dir}/buf");
 
         let download_target = latest_release
             .assets
@@ -94,12 +91,16 @@ impl ProtoLs {
             .find(|asset| asset.name == release_name)
             .ok_or_else(|| {
                 format!(
-                    "Could not find asset with name {} in Protols release",
+                    "Could not find asset with name {} in buf CLI release",
                     &release_name
                 )
             })?;
 
-        zed::download_file(&download_target.download_url, &version_dir, file_type)?;
+        zed::download_file(
+            &download_target.download_url,
+            &binary_path,
+            DownloadedFileType::Uncompressed,
+        )?;
         zed::make_file_executable(&binary_path)?;
 
         util::remove_outdated_versions(Self::SERVER_NAME, &version_dir)?;
@@ -109,7 +110,7 @@ impl ProtoLs {
         Ok(zed::Command {
             command: binary_path,
             args,
-            env,
+            env: Default::default(),
         })
     }
 }

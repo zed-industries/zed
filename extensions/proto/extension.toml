@@ -10,6 +10,11 @@ repository = "https://github.com/zed-industries/zed"
 repository = "https://github.com/coder3101/tree-sitter-proto"
 commit = "a6caac94b5aa36b322b5b70040d5b67132f109d0"
 
+
+[language_servers.buf]
+name = "Buf"
+languages = ["Proto"]
+
 [language_servers.protobuf-language-server]
 name = "Protobuf Language Server"
 languages = ["Proto"]

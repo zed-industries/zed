@@ -1,12 +1,13 @@
 use zed_extension_api::{self as zed, Result, settings::LspSettings};
 
-use crate::language_servers::{ProtoLs, ProtobufLanguageServer};
+use crate::language_servers::{BufLsp, ProtoLs, ProtobufLanguageServer};
 
 mod language_servers;
 
 struct ProtobufExtension {
     protobuf_language_server: Option<ProtobufLanguageServer>,
     protols: Option<ProtoLs>,
+    buf_lsp: Option<BufLsp>,
 }
 
 impl zed::Extension for ProtobufExtension {
@@ -14,6 +15,7 @@ impl zed::Extension for ProtobufExtension {
         Self {
             protobuf_language_server: None,
             protols: None,
+            buf_lsp: None,
         }
     }
 
@@ -31,6 +33,11 @@ impl zed::Extension for ProtobufExtension {
             ProtoLs::SERVER_NAME => self
                 .protols
                 .get_or_insert_with(ProtoLs::new)
+                .language_server_binary(worktree),
+
+            BufLsp::SERVER_NAME => self
+                .buf_lsp
+                .get_or_insert_with(BufLsp::new)
                 .language_server_binary(worktree),
 
             _ => Err(format!("Unknown language server ID {}", language_server_id)),
