@@ -245,7 +245,7 @@ impl ConflictSet {
                 conflicts.push(ConflictRegion {
                     ours_name: ours_branch_name
                         .take()
-                        .unwrap_or_else(|| SharedString::new_static("Head")),
+                        .unwrap_or_else(|| SharedString::new_static("HEAD")),
                     theirs_name: theirs_branch_name
                         .take()
                         .unwrap_or_else(|| SharedString::new_static("Origin")),
