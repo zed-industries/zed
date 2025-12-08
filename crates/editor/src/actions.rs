@@ -332,7 +332,9 @@ pub struct AddSelectionBelow {
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct InsertSnippet {
-    /// Language name if using a named snippet, typically lowercase (filename containing the snippet, without the `.json` extension)
+    /// Language name if using a named snippet, or `None` for a global snippet
+    ///
+    /// This is typically lowercase and matches the filename containing the snippet, without the `.json` extension.
     pub language: Option<String>,
     /// Name if using a named snippet
     pub name: Option<String>,

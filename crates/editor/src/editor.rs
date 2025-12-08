@@ -14780,6 +14780,7 @@ impl Editor {
                 .context("snippet not found")?;
             Snippet::parse(&snippet.body)?
         } else {
+            // todo(andrew): open modal to select snippet
             bail!("`name` or `snippet` is required")
         };
 
