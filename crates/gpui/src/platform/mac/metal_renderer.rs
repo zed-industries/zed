@@ -59,6 +59,8 @@ pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
     current_index: usize,
+    // Sync between CPU and GPU work, is a semaphore
+    // https://developer.apple.com/documentation/metal/synchronizing-cpu-and-gpu-work#Manage-the-rate-of-CPU-and-GPU-work
     sync: Arc<(Mutex<u8>, Condvar)>,
 }
 
