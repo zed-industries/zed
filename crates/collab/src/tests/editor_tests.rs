@@ -1,4 +1,7 @@
+// TODO kb have semantic tokens tests: refresh and regular updates
+
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
+
 use call::ActiveCall;
 use editor::{
     DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
