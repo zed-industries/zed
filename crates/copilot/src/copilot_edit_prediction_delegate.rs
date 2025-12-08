@@ -289,6 +289,7 @@ mod tests {
         path,
         test::{TextRangeMarker, marked_text_ranges_by},
     };
+    use edit_prediction_types::EditPredictionGranularity;
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -581,13 +582,15 @@ mod tests {
             assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
+
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
 
             // Accepting next word should accept the non-word and copilot suggestion should be gone
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
+
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
@@ -623,7 +626,7 @@ mod tests {
             assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
             assert_eq!(
@@ -632,7 +635,7 @@ mod tests {
             );
 
             // Accepting next word should accept the next word and copilot suggestion should still exist
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
             assert_eq!(
@@ -641,7 +644,7 @@ mod tests {
             );
 
             // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
-            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Whitespace, window, cx);
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
             assert_eq!(
