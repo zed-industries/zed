@@ -2508,10 +2508,22 @@ mod tests {
 
         let test_cases = [
             (DiffHunkSecondaryStatus::NoSecondaryHunk, true, false),
-            (DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk, true, true),
+            (
+                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+                true,
+                true,
+            ),
             (DiffHunkSecondaryStatus::HasSecondaryHunk, false, true),
-            (DiffHunkSecondaryStatus::SecondaryHunkAdditionPending, false, true),
-            (DiffHunkSecondaryStatus::SecondaryHunkRemovalPending, false, true),
+            (
+                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending,
+                false,
+                true,
+            ),
+            (
+                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending,
+                false,
+                true,
+            ),
         ];
 
         for (status, expected_staged, expected_unstaged) in test_cases {
