@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
-use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
@@ -33,7 +32,6 @@ use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
-use crate::api_key::ApiKey;
 use crate::api_key::ApiKeyState;
 use crate::ui::{ConfiguredApiCard, InstructionListItem};
 
@@ -125,22 +123,6 @@ impl GoogleLanguageModelProvider {
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
-        })
-    }
-
-    pub fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
-        if let Some(key) = API_KEY_ENV_VAR.value.clone() {
-            return Task::ready(Ok(key));
-        }
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = Self::api_url(cx).to_string();
-        cx.spawn(async move |cx| {
-            Ok(
-                ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
-                    .await?
-                    .key()
-                    .to_string(),
-            )
         })
     }
 

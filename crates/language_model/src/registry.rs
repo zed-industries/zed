@@ -237,11 +237,6 @@ impl LanguageModelRegistry {
         }
     }
 
-    /// Returns the set of installed LLM extension IDs.
-    pub fn installed_llm_extension_ids(&self) -> &HashSet<Arc<str>> {
-        &self.installed_llm_extension_ids
-    }
-
     /// Returns true if a provider should be hidden from the UI.
     /// Built-in providers are hidden when their corresponding extension is installed.
     pub fn should_hide_provider(&self, provider_id: &LanguageModelProviderId) -> bool {
