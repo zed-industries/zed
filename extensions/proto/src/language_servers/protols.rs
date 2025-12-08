@@ -71,9 +71,7 @@ impl ProtoLs {
             (Os::Linux, Architecture::X8664) => "x86_64-unknown-linux-gnu.tar.gz",
             (Os::Windows, Architecture::X8664) => "x86_64-pc-windows-msvc.zip",
             _ => {
-                return Err(format!(
-                    "Platform and architecture not supported by Protols"
-                ));
+                return Err("Platform and architecture not supported by Protols".to_string());
             }
         };
 
