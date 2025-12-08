@@ -17444,7 +17444,9 @@ impl Editor {
                 num_locations += ranges.len();
             }
 
+            dbg!(num_locations, always_open_multibuffer);
             if num_locations == 1 && !always_open_multibuffer {
+                dbg!("aaaa");
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
                 let target_range = target_ranges.first().unwrap().clone();
 

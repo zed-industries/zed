@@ -827,10 +827,18 @@ actions!(
 );
 
 /// Finds all references to the symbol at cursor.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+}
+
+impl Default for FindAllReferences {
+    fn default() -> Self {
+        Self {
+            always_open_multibuffer: true,
+        }
+    }
 }
