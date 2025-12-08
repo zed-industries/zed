@@ -1501,8 +1501,8 @@ fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
         return None;
     };
 
-    // Only Windows x86_64 uses .zip in release assets
-    let ext = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+    // Windows uses .zip in release assets
+    let ext = if cfg!(target_os = "windows") {
         "zip"
     } else {
         "tar.gz"
