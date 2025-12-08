@@ -139,7 +139,6 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
             migrations::m_2025_04_15::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_04_15,
         ),
-
         MigrationType::TreeSitter(
             migrations::m_2025_12_08::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_12_08,

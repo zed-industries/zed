@@ -61,6 +61,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 
+use edit_prediction_types::EditPredictionGranularity;
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -100,8 +101,6 @@ use workspace::{
     item::{Item, ItemBufferKind},
     notifications::NotifyTaskExt,
 };
-use edit_prediction_types::EditPredictionGranularity;
-
 
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
@@ -4862,8 +4861,11 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding =
-                            editor.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
+                        let accept_binding = editor.accept_edit_prediction_keybind(
+                            EditPredictionGranularity::Full,
+                            window,
+                            cx,
+                        );
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,

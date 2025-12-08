@@ -269,6 +269,7 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use edit_prediction_types::EditPredictionGranularity;
     use editor::{
         Editor, ExcerptRange, MultiBuffer, MultiBufferOffset, SelectionEffects,
         test::editor_lsp_test_context::EditorLspTestContext,
@@ -289,7 +290,6 @@ mod tests {
         path,
         test::{TextRangeMarker, marked_text_ranges_by},
     };
-    use edit_prediction_types::EditPredictionGranularity;
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {

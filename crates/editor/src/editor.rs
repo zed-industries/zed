@@ -92,7 +92,9 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use edit_prediction_types::{EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionGranularity};
+use edit_prediction_types::{
+    EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionGranularity,
+};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -2734,17 +2736,16 @@ impl Editor {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
-        let bindings = match granularity {
-            EditPredictionGranularity::Word => {
-                window.bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context)
-            }
-            EditPredictionGranularity::Line => {
-                window.bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context)
-            }
-            EditPredictionGranularity::Full => {
-                window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-            }
-        };
+        let bindings =
+            match granularity {
+                EditPredictionGranularity::Word => window
+                    .bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context),
+                EditPredictionGranularity::Line => window
+                    .bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context),
+                EditPredictionGranularity::Full => {
+                    window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+                }
+            };
 
         AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
             !in_conflict
@@ -7603,12 +7604,14 @@ impl Editor {
                                 },
                             );
                             self.clear_row_highlights::<EditPredictionPreview>();
-                            self.edit_prediction_preview.set_previous_scroll_position(None);
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(None);
                         } else {
                             // Highlight and request scroll
-                            self.edit_prediction_preview.set_previous_scroll_position(Some(
-                                position_map.snapshot.scroll_anchor,
-                            ));
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(Some(
+                                    position_map.snapshot.scroll_anchor,
+                                ));
                             self.highlight_rows::<EditPredictionPreview>(
                                 target..target,
                                 cx.theme().colors().editor_highlighted_line_background,
@@ -7664,7 +7667,9 @@ impl Editor {
                         });
 
                         let selections = self.selections.disjoint_anchors_arc();
-                        if let Some(transaction_id_now) = self.buffer.read(cx).last_transaction_id(cx) {
+                        if let Some(transaction_id_now) =
+                            self.buffer.read(cx).last_transaction_id(cx)
+                        {
                             if transaction_id_prev != Some(transaction_id_now) {
                                 self.selection_history
                                     .insert_transaction(transaction_id_now, selections);
@@ -7769,7 +7774,6 @@ impl Editor {
     ) {
         self.accept_partial_edit_prediction(EditPredictionGranularity::Full, window, cx);
     }
-
 
     fn discard_edit_prediction(
         &mut self,
@@ -8003,8 +8007,7 @@ impl Editor {
                 .keystroke()
             {
                 modifiers_held = modifiers_held
-                    || (keystroke.modifiers() == modifiers
-                        && keystroke.modifiers().modified());
+                    || (keystroke.modifiers() == modifiers && keystroke.modifiers().modified());
             }
         }
 
@@ -9424,7 +9427,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
+        let accept_binding =
+            self.accept_edit_prediction_keybind(EditPredictionGranularity::Full, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
