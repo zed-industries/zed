@@ -258,6 +258,8 @@ impl RenderOnce for Checkbox {
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
+                } else if self.vizualization {
+                    this.cursor_default()
                 } else {
                     this.cursor_pointer()
                 }
