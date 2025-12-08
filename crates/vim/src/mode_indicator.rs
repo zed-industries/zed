@@ -116,10 +116,21 @@ impl Render for ModeIndicator {
         {
             (label, None)
         } else {
+            let mode_str = match mode {
+                crate::state::Mode::Normal => "Vim",
+                crate::state::Mode::Insert => "Insert",
+                crate::state::Mode::Replace => "Replace",
+                crate::state::Mode::Visual => "Visual",
+                crate::state::Mode::VisualLine => "Visual Line",
+                crate::state::Mode::VisualBlock => "Visual Block",
+                crate::state::Mode::HelixNormal => "NORMAL",
+                crate::state::Mode::HelixSelect => "SELECT",
+            };
+
             let mode_str = if temp_mode {
-                format!("(insert) {}", mode)
+                format!("(insert) {}", mode_str)
             } else {
-                mode.to_string()
+                mode_str.to_string()
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
@@ -127,12 +138,7 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            let mode = if bg_color != system_transparent {
-                mode_str.into()
-            } else {
-                format!("-- {} --", mode_str).into()
-            };
-            (pending.into(), Some(mode))
+            (pending.into(), Some(mode_str.into()))
         };
         h_flex()
             .gap_1()
