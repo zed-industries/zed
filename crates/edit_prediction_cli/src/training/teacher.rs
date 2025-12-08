@@ -6,7 +6,7 @@ use crate::{
         llm_client::LlmClient,
     },
 };
-use anthropic_sdk::{ContentBlock, MessageCreateBuilder};
+use anthropic::{Message, RequestContent, ResponseContent, Role};
 use anyhow::Result;
 
 pub struct TeacherModel {
@@ -62,13 +62,17 @@ impl TeacherModel {
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history);
 
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![RequestContent::Text {
+                text: prompt.clone(),
+                cache_control: None,
+            }],
+        }];
+
         let Some(response) = self
             .client
-            .generate(
-                MessageCreateBuilder::new(self.llm_name.clone(), 16384)
-                    .user(prompt.clone())
-                    .build(),
-            )
+            .generate(self.llm_name.clone(), 16384, messages)
             .await?
         else {
             return Ok(None);
@@ -77,12 +81,9 @@ impl TeacherModel {
         let response_text = response
             .content
             .into_iter()
-            .filter_map(|content| {
-                if let ContentBlock::Text { text } = content {
-                    Some(text)
-                } else {
-                    None
-                }
+            .filter_map(|content| match content {
+                ResponseContent::Text { text } => Some(text),
+                _ => None,
             })
             .collect::<Vec<String>>()
             .join("\n");
@@ -196,10 +197,11 @@ mod tests {
 
     #[test]
     fn test_parse_response() {
+        let http_client = std::sync::Arc::new(http_client::BlockedHttpClient);
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain().unwrap(),
+            LlmClient::plain(http_client).unwrap(),
         );
         let response = "This is a test response.";
         let parsed = teacher.parse_response(response);
@@ -237,10 +239,11 @@ mod tests {
 
     #[test]
     fn test_extract_editable_region() {
+        let http_client = std::sync::Arc::new(http_client::BlockedHttpClient);
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain().unwrap(),
+            LlmClient::plain(http_client).unwrap(),
         );
         let response = indoc::indoc! {"
             some lines

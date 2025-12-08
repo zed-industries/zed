@@ -1,32 +1,71 @@
-use anthropic_sdk::BatchCreateParams;
-use anthropic_sdk::BatchRequest;
-use anthropic_sdk::MessageCreateBuilder;
+use anthropic::{
+    ANTHROPIC_API_URL, Message, Request as AnthropicRequest, RequestContent,
+    Response as AnthropicResponse, Role, complete,
+};
+use anyhow::Result;
+use http_client::HttpClient;
 use indoc::indoc;
 use sqlez::bindable::Bind;
 use sqlez::bindable::StaticColumnCount;
 use sqlez_macros::sql;
 use std::hash::Hash;
 use std::hash::Hasher;
-
-use anthropic_sdk::{Anthropic, BatchRequestBuilder, Message, MessageCreateParams};
-use anyhow::Result;
+use std::sync::Arc;
 
 pub struct PlainLlmClient {
-    client: Anthropic,
+    http_client: Arc<dyn HttpClient>,
+    api_key: String,
 }
 
 impl PlainLlmClient {
-    fn new() -> Result<Self> {
-        let client = Anthropic::from_env()?;
-        Ok(Self { client })
+    fn new(http_client: Arc<dyn HttpClient>) -> Result<Self> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
+        Ok(Self {
+            http_client,
+            api_key,
+        })
     }
-    async fn generate(&self, message: MessageCreateParams) -> Result<Message> {
-        Ok(self.client.messages().create(message).await?)
+
+    async fn generate(
+        &self,
+        model: String,
+        max_tokens: u64,
+        messages: Vec<Message>,
+    ) -> Result<AnthropicResponse> {
+        let request = AnthropicRequest {
+            model,
+            max_tokens,
+            messages,
+            tools: Vec::new(),
+            thinking: None,
+            tool_choice: None,
+            system: None,
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: None,
+            top_k: None,
+            top_p: None,
+        };
+
+        let response = complete(
+            self.http_client.as_ref(),
+            ANTHROPIC_API_URL,
+            &self.api_key,
+            request,
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+        Ok(response)
     }
 }
 
 pub struct BatchingLlmClient {
     connection: sqlez::connection::Connection,
+    http_client: Arc<dyn HttpClient>,
+    api_key: String,
 }
 
 struct CacheRow {
@@ -52,8 +91,24 @@ impl Bind for CacheRow {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SerializableRequest {
+    model: String,
+    max_tokens: u64,
+    messages: Vec<SerializableMessage>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SerializableMessage {
+    role: String,
+    content: String,
+}
+
 impl BatchingLlmClient {
-    fn new(cache_path: &str) -> Result<Self> {
+    fn new(cache_path: &str, http_client: Arc<dyn HttpClient>) -> Result<Self> {
+        let api_key = std::env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
+
         let connection = sqlez::connection::Connection::open_file(&cache_path);
         let mut statement = sqlez::statement::Statement::prepare(
             &connection,
@@ -69,11 +124,20 @@ impl BatchingLlmClient {
         statement.exec()?;
         drop(statement);
 
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            http_client,
+            api_key,
+        })
     }
 
-    pub fn lookup(&self, message: &MessageCreateParams) -> Result<Option<Message>> {
-        let request_hash_str = Self::request_hash(message);
+    pub fn lookup(
+        &self,
+        model: &str,
+        max_tokens: u64,
+        messages: &[Message],
+    ) -> Result<Option<AnthropicResponse>> {
+        let request_hash_str = Self::request_hash(model, max_tokens, messages);
         let response: Vec<String> = self.connection.select_bound(
             &sql!(SELECT response FROM cache WHERE request_hash = ?1 AND response IS NOT NULL;),
         )?(request_hash_str.as_str())?;
@@ -83,10 +147,27 @@ impl BatchingLlmClient {
             .and_then(|text| serde_json::from_str(&text).ok()))
     }
 
-    pub fn mark_for_batch(&self, message: &MessageCreateParams) -> Result<()> {
-        let request_hash = Self::request_hash(message);
+    pub fn mark_for_batch(&self, model: &str, max_tokens: u64, messages: &[Message]) -> Result<()> {
+        let request_hash = Self::request_hash(model, max_tokens, messages);
 
-        let request = Some(serde_json::to_string(message).unwrap());
+        let serializable_messages: Vec<SerializableMessage> = messages
+            .iter()
+            .map(|msg| SerializableMessage {
+                role: match msg.role {
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                },
+                content: message_content_to_string(&msg.content),
+            })
+            .collect();
+
+        let serializable_request = SerializableRequest {
+            model: model.to_string(),
+            max_tokens,
+            messages: serializable_messages,
+        };
+
+        let request = Some(serde_json::to_string(&serializable_request)?);
         let cache_row = CacheRow {
             request_hash,
             request,
@@ -99,13 +180,18 @@ impl BatchingLlmClient {
         )
     }
 
-    async fn generate(&self, message: MessageCreateParams) -> Result<Option<Message>> {
-        let response = self.lookup(&message)?;
+    async fn generate(
+        &self,
+        model: String,
+        max_tokens: u64,
+        messages: Vec<Message>,
+    ) -> Result<Option<AnthropicResponse>> {
+        let response = self.lookup(&model, max_tokens, &messages)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(&message)?;
+        self.mark_for_batch(&model, max_tokens, &messages)?;
 
         Ok(None)
     }
@@ -115,11 +201,60 @@ impl BatchingLlmClient {
         self.upload_pending_requests().await?;
         self.download_finished_batches().await
     }
+
     async fn download_finished_batches(&self) -> Result<()> {
+        let q = sql!(SELECT DISTINCT batch_id FROM cache WHERE batch_id IS NOT NULL AND response IS NULL);
+        let batch_ids: Vec<String> = self.connection.select(q)?()?;
+
+        for batch_id in batch_ids {
+            let batch_status = anthropic::batches::retrieve_batch(
+                self.http_client.as_ref(),
+                ANTHROPIC_API_URL,
+                &self.api_key,
+                &batch_id,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+            if batch_status.processing_status == "ended" {
+                let results = anthropic::batches::retrieve_batch_results(
+                    self.http_client.as_ref(),
+                    ANTHROPIC_API_URL,
+                    &self.api_key,
+                    &batch_id,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+                for result in results {
+                    let request_hash = result
+                        .custom_id
+                        .strip_prefix("req_hash_")
+                        .unwrap_or(&result.custom_id)
+                        .to_string();
+
+                    match result.result {
+                        anthropic::batches::BatchResult::Succeeded { message } => {
+                            let response_json = serde_json::to_string(&message)?;
+                            let q = sql!(UPDATE cache SET response = ? WHERE request_hash = ?);
+                            self.connection.exec_bound(q)?((response_json, request_hash))?;
+                        }
+                        anthropic::batches::BatchResult::Errored { error } => {
+                            log::error!("Batch request {} failed: {:?}", request_hash, error);
+                        }
+                        anthropic::batches::BatchResult::Canceled => {
+                            log::warn!("Batch request {} was canceled", request_hash);
+                        }
+                        anthropic::batches::BatchResult::Expired => {
+                            log::warn!("Batch request {} expired", request_hash);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
-
-    // https://on.tty-share.com/s/scB68CoH4O9K0xGHResjdM34DziPJGxyNzrUfFO3BsMm0YaodM49qmPxSP3yGPs7mh8/
 
     async fn upload_pending_requests(&self) -> Result<String> {
         let q = sql!(
@@ -135,23 +270,55 @@ impl BatchingLlmClient {
         let batch_requests = rows
             .iter()
             .map(|(hash, request_str)| {
-                let params: MessageCreateParams = serde_json::from_str(&request_str).unwrap();
+                let serializable_request: SerializableRequest =
+                    serde_json::from_str(&request_str).unwrap();
+
+                let messages: Vec<Message> = serializable_request
+                    .messages
+                    .into_iter()
+                    .map(|msg| Message {
+                        role: match msg.role.as_str() {
+                            "user" => Role::User,
+                            "assistant" => Role::Assistant,
+                            _ => Role::User,
+                        },
+                        content: vec![RequestContent::Text {
+                            text: msg.content,
+                            cache_control: None,
+                        }],
+                    })
+                    .collect();
+
+                let params = AnthropicRequest {
+                    model: serializable_request.model,
+                    max_tokens: serializable_request.max_tokens,
+                    messages,
+                    tools: Vec::new(),
+                    thinking: None,
+                    tool_choice: None,
+                    system: None,
+                    metadata: None,
+                    stop_sequences: Vec::new(),
+                    temperature: None,
+                    top_k: None,
+                    top_p: None,
+                };
+
                 let custom_id = format!("req_hash_{}", hash);
-                BatchRequest {
-                    custom_id,
-                    method: "POST".to_string(),
-                    url: "/v1/messages".to_string(),
-                    params,
-                }
+                anthropic::batches::BatchRequest { custom_id, params }
             })
             .collect::<Vec<_>>();
 
-        let client = Anthropic::from_env()?;
-
-        let batch = client
-            .batches()
-            .create(BatchCreateParams::new(batch_requests))
-            .await?;
+        let batch = anthropic::batches::create_batch(
+            self.http_client.as_ref(),
+            ANTHROPIC_API_URL,
+            &self.api_key,
+            anthropic::batches::CreateBatchRequest {
+                requests: batch_requests,
+            },
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
         let q = sql!(
             UPDATE cache SET batch_id = ? WHERE batch_id is NULL
@@ -159,26 +326,25 @@ impl BatchingLlmClient {
         self.connection.exec_bound(q)?(batch.id.as_str())?;
 
         Ok(batch.id)
-
-        // // Check batch status
-        // let status = client.batches().retrieve(&batch.id).await?;
-        // println!("Batch status: {:?}", status.processing_status);
     }
 
-    fn request_hash(message: &MessageCreateParams) -> String {
+    fn request_hash(model: &str, max_tokens: u64, messages: &[Message]) -> String {
         let mut hasher = std::hash::DefaultHasher::new();
-        message_text(&message).hash(&mut hasher);
+        model.hash(&mut hasher);
+        max_tokens.hash(&mut hasher);
+        for msg in messages {
+            message_content_to_string(&msg.content).hash(&mut hasher);
+        }
         let request_hash = hasher.finish();
         format!("{request_hash:016x}")
     }
 }
 
-fn message_text(message: &MessageCreateParams) -> String {
-    message
-        .messages
+fn message_content_to_string(content: &[RequestContent]) -> String {
+    content
         .iter()
-        .filter_map(|msg| match &msg.content {
-            anthropic_sdk::MessageContent::Text(text) => Some(text.clone()),
+        .filter_map(|c| match c {
+            RequestContent::Text { text, .. } => Some(text.clone()),
             _ => None,
         })
         .collect::<Vec<String>>()
@@ -192,18 +358,33 @@ pub enum LlmClient {
 }
 
 impl LlmClient {
-    pub fn plain() -> Result<Self> {
-        Ok(Self::Plain(PlainLlmClient::new()?))
+    pub fn plain(http_client: Arc<dyn HttpClient>) -> Result<Self> {
+        Ok(Self::Plain(PlainLlmClient::new(http_client)?))
     }
-    pub fn batch(cache_path: &str) -> Result<Self> {
-        Ok(Self::Batch(BatchingLlmClient::new(cache_path)?))
+
+    pub fn batch(cache_path: &str, http_client: Arc<dyn HttpClient>) -> Result<Self> {
+        Ok(Self::Batch(BatchingLlmClient::new(
+            cache_path,
+            http_client,
+        )?))
     }
-    pub async fn generate(&self, message: MessageCreateParams) -> Result<Option<Message>> {
+
+    pub async fn generate(
+        &self,
+        model: String,
+        max_tokens: u64,
+        messages: Vec<Message>,
+    ) -> Result<Option<AnthropicResponse>> {
         match self {
-            LlmClient::Plain(plain_llm_client) => {
-                plain_llm_client.generate(message).await.map(Some)
+            LlmClient::Plain(plain_llm_client) => plain_llm_client
+                .generate(model, max_tokens, messages)
+                .await
+                .map(Some),
+            LlmClient::Batch(batching_llm_client) => {
+                batching_llm_client
+                    .generate(model, max_tokens, messages)
+                    .await
             }
-            LlmClient::Batch(batching_llm_client) => batching_llm_client.generate(message).await,
         }
     }
 
@@ -213,13 +394,4 @@ impl LlmClient {
             LlmClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
         }
     }
-
-    // let response = client
-    //     .messages()
-    //     .create(
-    //         MessageCreateBuilder::new(self.llm_name.clone(), 16384)
-    //             .user(prompt.clone())
-    //             .build(),
-    //     )
-    //     .await?;
 }

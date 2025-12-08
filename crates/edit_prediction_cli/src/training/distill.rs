@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::{
     DistillArguments,
@@ -11,6 +12,7 @@ use crate::{
     },
 };
 use anyhow::Result;
+use reqwest_client::ReqwestClient;
 
 #[derive(Debug, Deserialize)]
 pub struct SplitCommit {
@@ -28,9 +30,13 @@ pub async fn run_distill(arguments: DistillArguments) -> Result<()> {
         .map(|line| serde_json::from_str(line).expect("Failed to parse JSON line"))
         .collect();
 
-    let llm_client = arguments
-        .batch
-        .map_or_else(LlmClient::plain, |cache_path| LlmClient::batch(&cache_path))?;
+    let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
+
+    let llm_client = if let Some(cache_path) = arguments.batch {
+        LlmClient::batch(&cache_path, http_client)?
+    } else {
+        LlmClient::plain(http_client)?
+    };
 
     let mut teacher = TeacherModel::new(
         "claude-sonnet-4-5".to_string(),
