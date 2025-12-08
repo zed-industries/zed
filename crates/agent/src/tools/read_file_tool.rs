@@ -152,12 +152,11 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
-        let mut location = acp::ToolCallLocation::new(&abs_path);
-        if let Some(line) = input.start_line {
-            location = location.line(line.saturating_sub(1));
-        }
 
-        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
+        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                acp::ToolCallLocation::new(&abs_path)
+                    .line(input.start_line.map(|line| line.saturating_sub(1))),
+            ]));
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
