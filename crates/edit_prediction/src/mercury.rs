@@ -119,6 +119,7 @@ impl Mercury {
                 tools: vec![],
                 prompt_cache_key: None,
                 reasoning_effort: None,
+                max_tokens: None,
             };
 
             let buf = serde_json::to_vec(&request_body)?;

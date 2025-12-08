@@ -1,5 +1,6 @@
 #[cfg(feature = "eval-support")]
 use crate::EvalCacheEntryKind;
+use crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position;
 use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
@@ -14,7 +15,7 @@ use edit_prediction_context::{EditPredictionExcerpt, Line};
 use edit_prediction_context::{RelatedExcerpt, RelatedFile};
 use futures::channel::oneshot;
 use gpui::{Entity, Task, prelude::*};
-use language::{Anchor, BufferSnapshot};
+use language::{Anchor, BufferSnapshot, OffsetRangeExt};
 use language::{Buffer, Point, ToOffset as _, ToPoint};
 use project::{Project, ProjectItem as _};
 use release_channel::AppVersion;
@@ -24,6 +25,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+
+pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
+pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
@@ -74,41 +78,20 @@ pub fn request_prediction_with_zeta2(
 
             let excerpt_options = options.context;
 
-            let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
+            let (editable_range, context_range) = editable_and_context_ranges_for_cursor_position(
                 cursor_point,
                 &active_snapshot,
-                &excerpt_options,
-            ) else {
-                return Ok((None, None));
-            };
+                MAX_REWRITE_TOKENS,
+                MAX_CONTEXT_TOKENS,
+            );
+            let excerpt = active_snapshot
+                .text_for_range(context_range.clone())
+                .collect::<String>();
 
-            let excerpt_anchor_range = active_snapshot.anchor_after(excerpt.range.start)
-                ..active_snapshot.anchor_before(excerpt.range.end);
-            let related_excerpt = RelatedExcerpt {
-                anchor_range: excerpt_anchor_range.clone(),
-                point_range: Point::new(excerpt.line_range.start.0, 0)
-                    ..Point::new(excerpt.line_range.end.0, 0),
-                text: active_snapshot.as_rope().slice(excerpt.range),
-            };
-
-            if let Some(buffer_ix) = included_files
-                .iter()
-                .position(|file| file.buffer.entity_id() == active_buffer.entity_id())
-            {
-                let file = &mut included_files[buffer_ix];
-                file.excerpts.push(related_excerpt);
-                file.merge_excerpts();
-                let last_ix = included_files.len() - 1;
-                included_files.swap(buffer_ix, last_ix);
-            } else {
-                let active_file = RelatedFile {
-                    path: active_project_path,
-                    buffer: active_buffer.downgrade(),
-                    excerpts: vec![related_excerpt],
-                    max_row: active_snapshot.max_point().row,
-                };
-                included_files.push(active_file);
-            }
+            let context_offset = context_range.start.to_offset(&active_snapshot);
+            let editable_offset_range = editable_range.to_offset(&active_snapshot);
+            let excerpt_anchor_range = active_snapshot.anchor_after(context_offset)
+                ..active_snapshot.anchor_before(context_offset);
 
             let included_files = included_files
                 .iter()
@@ -128,9 +111,7 @@ pub fn request_prediction_with_zeta2(
 
             let cloud_request = predict_edits_v3::PredictEditsRequest {
                 excerpt_path,
-                excerpt: String::new(),
-                excerpt_line_range: Line(0)..Line(0),
-                excerpt_range: 0..0,
+                excerpt,
                 cursor_point: predict_edits_v3::Point {
                     line: predict_edits_v3::Line(cursor_point.row),
                     column: cursor_point.column,
@@ -141,9 +122,11 @@ pub fn request_prediction_with_zeta2(
                 debug_info: debug_tx.is_some(),
                 prompt_max_bytes: Some(options.max_prompt_bytes),
                 prompt_format: options.prompt_format,
-                excerpt_parent: None,
                 git_info: None,
                 trigger,
+                editable_range_in_excerpt: (editable_offset_range.start - context_offset)
+                    ..(editable_offset_range.end - context_offset),
+                cursor_offset_in_excerpt: cursor_offset - context_offset,
             };
 
             let prompt_result = cloud_zeta2_prompt::build_prompt(&cloud_request);
@@ -190,6 +173,9 @@ pub fn request_prediction_with_zeta2(
             }
 
             let prompt = prompt_result?;
+
+            eprintln!("prompt:\n{prompt}");
+
             let generation_params =
                 cloud_zeta2_prompt::generation_params(cloud_request.prompt_format);
             let request = open_ai::Request {
@@ -199,6 +185,7 @@ pub fn request_prediction_with_zeta2(
                 }],
                 stream: false,
                 max_completion_tokens: None,
+                max_tokens: Some(1024 * 4),
                 stop: generation_params.stop.unwrap_or_default(),
                 temperature: generation_params.temperature.or(Some(0.7)),
                 tool_choice: None,
@@ -261,17 +248,40 @@ pub fn request_prediction_with_zeta2(
                 }
             };
 
-            let (_, edits) = match options.prompt_format {
+            let edits = match options.prompt_format {
                 PromptFormat::Minimal | PromptFormat::MinimalQwen | PromptFormat::SeedCoder1120 => {
                     if output_text.contains("--- a/\n+++ b/\nNo edits") {
-                        let edits = vec![];
-                        (&active_snapshot, edits)
+                        vec![]
                     } else {
-                        crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                        crate::udiff::parse_diff(&output_text, get_buffer_from_context)
+                            .await?
+                            .1
                     }
                 }
                 PromptFormat::OldTextNewText => {
-                    crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context).await?
+                    crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context)
+                        .await?
+                        .1
+                }
+                PromptFormat::Zeta => {
+                    let old_text = active_snapshot
+                        .text_for_range(editable_offset_range.clone())
+                        .collect::<String>();
+                    let new_text = output_text.trim_end_matches("<|im_end|>");
+                    eprintln!("OUTPUT:\n<old_text>\n{old_text}\n</old_text>\n<new_text>\n{new_text}\n</new_text>");
+
+                    language::text_diff(&old_text, &new_text)
+                        .into_iter()
+                        .map(|(range, text)| {
+                            (
+                                active_snapshot
+                                    .anchor_after(editable_offset_range.start + range.start)
+                                    ..active_snapshot
+                                        .anchor_before(editable_offset_range.start + range.end),
+                                text,
+                            )
+                        })
+                        .collect()
                 }
                 _ => {
                     bail!("unsupported prompt format {}", options.prompt_format)

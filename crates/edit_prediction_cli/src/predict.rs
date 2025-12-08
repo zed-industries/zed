@@ -129,6 +129,7 @@ pub async fn perform_predict(
     store.update(cx, |store, _cx| {
         let mut options = store.options().clone();
         options.prompt_format = prompt_format.into();
+        store.set_use_context(true);
         store.set_options(options);
     })?;
 
@@ -143,7 +144,7 @@ pub async fn perform_predict(
                 let mut start_time = None;
                 let mut retrieval_finished_at = None;
                 while let Some(event) = debug_rx.next().await {
-                    match event {
+                    match dbg!(event) {
                         edit_prediction::DebugEvent::ContextRetrievalStarted(info) => {
                             start_time = Some(info.timestamp);
                             fs::write(
@@ -219,9 +220,14 @@ pub async fn perform_predict(
             }
         });
 
-        store.update(cx, |store, cx| {
-            store.refresh_context(&project, &cursor_buffer, cursor_anchor, cx)
-        })?;
+        store
+            .update(cx, |store, cx| {
+                store.refresh_context(&project, &cursor_buffer, cursor_anchor, cx);
+                store.project_context_updates(&project)
+            })?
+            .unwrap()
+            .recv()
+            .await;
     }
 
     let prediction = store

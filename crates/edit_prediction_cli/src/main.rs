@@ -197,11 +197,12 @@ fn zeta2_args_to_options(args: &Zeta2Args) -> edit_prediction::ZetaOptions {
 #[derive(clap::ValueEnum, Default, Debug, Clone, Copy)]
 enum PromptFormat {
     OnlySnippets,
-    #[default]
     OldTextNewText,
     Minimal,
     MinimalQwen,
     SeedCoder1120,
+    #[default]
+    Zeta,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -212,6 +213,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::Minimal => predict_edits_v3::PromptFormat::Minimal,
             Self::MinimalQwen => predict_edits_v3::PromptFormat::MinimalQwen,
             Self::SeedCoder1120 => predict_edits_v3::PromptFormat::SeedCoder1120,
+            Self::Zeta => predict_edits_v3::PromptFormat::Zeta,
         }
     }
 }

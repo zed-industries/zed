@@ -5,6 +5,7 @@ use cloud_llm_client::predict_edits_v3::{
 use indoc::indoc;
 use std::cmp;
 use std::fmt::Write;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -80,18 +81,26 @@ const OLD_TEXT_NEW_TEXT_REMINDER: &str = indoc! {r#"
 "#};
 
 pub fn build_prompt(request: &predict_edits_v3::PredictEditsRequest) -> Result<String> {
+    // todo! do we need this?
     let prompt_data = PromptData {
         events: request.events.clone(),
         cursor_point: request.cursor_point,
         cursor_path: request.excerpt_path.clone(),
         included_files: request.related_files.clone(),
+        excerpt: request.excerpt.clone(),
+        editable_range_in_excerpt: request.editable_range_in_excerpt.clone(),
+        cursor_offset_in_excerpt: request.cursor_offset_in_excerpt,
     };
+
     match request.prompt_format {
         PromptFormat::MinimalQwen => {
             return Ok(MinimalQwenPrompt.render(&prompt_data));
         }
         PromptFormat::SeedCoder1120 => {
             return Ok(SeedCoder1120Prompt.render(&prompt_data));
+        }
+        PromptFormat::Zeta => {
+            return Ok(ZetaPrompt.render(&prompt_data));
         }
         _ => (),
     };
@@ -101,8 +110,9 @@ pub fn build_prompt(request: &predict_edits_v3::PredictEditsRequest) -> Result<S
             vec![(request.cursor_point, CURSOR_MARKER)]
         }
         PromptFormat::OnlySnippets => vec![],
-        PromptFormat::MinimalQwen => unreachable!(),
-        PromptFormat::SeedCoder1120 => unreachable!(),
+        PromptFormat::MinimalQwen | PromptFormat::SeedCoder1120 | PromptFormat::Zeta => {
+            unreachable!()
+        }
     };
 
     let mut prompt = match request.prompt_format {
@@ -111,6 +121,7 @@ pub fn build_prompt(request: &predict_edits_v3::PredictEditsRequest) -> Result<S
         PromptFormat::Minimal => STUDENT_MODEL_INSTRUCTIONS.to_string(),
         PromptFormat::MinimalQwen => unreachable!(),
         PromptFormat::SeedCoder1120 => unreachable!(),
+        PromptFormat::Zeta => unreachable!(),
     };
 
     if request.events.is_empty() {
@@ -159,6 +170,7 @@ pub fn build_prompt(request: &predict_edits_v3::PredictEditsRequest) -> Result<S
             The file is in current state, edits from edit history have been applied.
         "}
         }
+        PromptFormat::Zeta => unreachable!(),
     };
 
     prompt.push_str(excerpts_preamble);
@@ -211,6 +223,7 @@ pub fn build_prompt(request: &predict_edits_v3::PredictEditsRequest) -> Result<S
 pub fn generation_params(prompt_format: PromptFormat) -> GenerationParams {
     match prompt_format {
         PromptFormat::SeedCoder1120 => SeedCoder1120Prompt::generation_params(),
+        PromptFormat::Zeta => ZetaPrompt::generation_params(),
         _ => GenerationParams::default(),
     }
 }
@@ -323,6 +336,9 @@ struct PromptData {
     events: Vec<Arc<Event>>,
     cursor_point: Point,
     cursor_path: Arc<Path>, // TODO: make a common struct with cursor_point
+    excerpt: String,
+    editable_range_in_excerpt: Range<usize>,
+    cursor_offset_in_excerpt: usize,
     included_files: Vec<RelatedFile>,
 }
 
@@ -481,5 +497,99 @@ impl SeedCoder1120Prompt {
         let suffix = &buf[index..];
 
         format!("{}{}{}", suffix, prefix, FIM_MIDDLE)
+    }
+}
+
+struct ZetaPrompt;
+
+impl ZetaPrompt {
+    const INSTRUCTIONS: &str = "Reference the user excerpt, user edits, and the snippets to understand the developer's intent. Update the editable region of the user excerpt by predicting and completing the changes they would have made next. This may be a deletion, addition, or modification of code.";
+    const CONTEXT_START: &str = "### Context:";
+    const CONTEXT_FILE: &str = "<|context_file|>";
+    const SNIPPET: &str = "<|snippet|>";
+    const USER_EDITS: &str = "### User Edits:";
+    const USER_EDITED_FILE: &str = "User edited file";
+    const USER_EXCERPT: &str = "### User Excerpt:";
+    const EDITABLE_REGION_START_WITH_NEWLINE: &str = "<|editable_region_start|>\n";
+    const EDITABLE_REGION_END_WITH_NEWLINE: &str = "\n<|editable_region_end|>";
+    const USER_CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+}
+
+impl PromptFormatter for ZetaPrompt {
+    fn render(&self, data: &PromptData) -> String {
+        let mut prompt = String::new();
+
+        prompt.push_str(Self::INSTRUCTIONS);
+        prompt.push_str("\n\n");
+
+        prompt.push_str(Self::CONTEXT_START);
+        prompt.push_str("\n\n");
+
+        for file in &data.included_files {
+            for excerpt in &file.excerpts {
+                writeln!(
+                    &mut prompt,
+                    "{} {}",
+                    Self::CONTEXT_FILE,
+                    file.path.to_string_lossy()
+                )
+                .ok();
+                prompt.push_str(Self::SNIPPET);
+                prompt.push('\n');
+                prompt.push_str(&excerpt.text);
+                prompt.push_str("\n\n");
+            }
+        }
+
+        prompt.push_str(Self::USER_EDITS);
+        prompt.push_str("\n\n");
+
+        for event in &data.events {
+            match event.as_ref() {
+                Event::BufferChange {
+                    path,
+                    old_path, // todo!
+                    diff,
+                    ..
+                } => {
+                    write!(
+                        &mut prompt,
+                        "{} \"{}\"\n\n```diff\n{diff}```\n\n",
+                        Self::USER_EDITED_FILE,
+                        path.display()
+                    )
+                    .ok();
+                }
+            }
+        }
+
+        prompt.push_str(Self::USER_EXCERPT);
+        write!(
+            &mut prompt,
+            "\n\"{}\"\n\n",
+            &data.cursor_path.to_string_lossy()
+        )
+        .ok();
+        prompt.push_str(&data.excerpt[..data.editable_range_in_excerpt.start]);
+        prompt.push_str(Self::EDITABLE_REGION_START_WITH_NEWLINE);
+        prompt.push_str(
+            &data.excerpt[data.editable_range_in_excerpt.start..data.cursor_offset_in_excerpt],
+        );
+        prompt.push_str(Self::USER_CURSOR_MARKER);
+        prompt.push_str(
+            &data.excerpt[dbg!(data.cursor_offset_in_excerpt..data.editable_range_in_excerpt.end)],
+        );
+        prompt.push_str(Self::EDITABLE_REGION_END_WITH_NEWLINE);
+        prompt.push_str(&data.excerpt[data.editable_range_in_excerpt.end..]);
+
+        prompt
+    }
+
+    fn generation_params() -> GenerationParams {
+        return GenerationParams {
+            stop: Some(vec!["<|im_end|>".into()]),
+            temperature: None,
+            top_p: None,
+        };
     }
 }

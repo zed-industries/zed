@@ -24,12 +24,9 @@ pub struct PlanContextRetrievalRequest {
 pub struct PredictEditsRequest {
     pub excerpt: String,
     pub excerpt_path: Arc<Path>,
-    /// Within file
-    pub excerpt_range: Range<usize>,
-    pub excerpt_line_range: Range<Line>,
+    pub editable_range_in_excerpt: Range<usize>,
+    pub cursor_offset_in_excerpt: usize,
     pub cursor_point: Point,
-    /// Within `signatures`
-    pub excerpt_parent: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub related_files: Vec<RelatedFile>,
     pub events: Vec<Arc<Event>>,
@@ -74,10 +71,11 @@ pub enum PromptFormat {
     MinimalQwen,
     /// No instructions, Qwen chat + Seed-Coder 1120 FIM-like template
     SeedCoder1120,
+    Zeta,
 }
 
 impl PromptFormat {
-    pub const DEFAULT: PromptFormat = PromptFormat::Minimal;
+    pub const DEFAULT: PromptFormat = PromptFormat::Zeta;
 }
 
 impl Default for PromptFormat {
@@ -100,6 +98,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::Minimal => write!(f, "Minimal"),
             PromptFormat::MinimalQwen => write!(f, "Minimal + Qwen FIM"),
             PromptFormat::SeedCoder1120 => write!(f, "Seed-Coder 1120"),
+            PromptFormat::Zeta => write!(f, "Zeta"),
         }
     }
 }
