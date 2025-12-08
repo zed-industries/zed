@@ -28,13 +28,17 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use futures::Future;
+use futures::future::LocalBoxFuture;
+use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity, SharedString};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
-use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use lsp::{
+    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
+};
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -51,7 +55,6 @@ use std::{
     mem,
     ops::{DerefMut, Range},
     path::{Path, PathBuf},
-    pin::Pin,
     str,
     sync::{
         Arc, LazyLock,
@@ -63,6 +66,7 @@ use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+    word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -152,7 +156,14 @@ pub struct Location {
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
-
+type DownloadableLanguageServerBinary = LocalBoxFuture<'static, Result<LanguageServerBinary>>;
+pub type LanguageServerBinaryLocations = LocalBoxFuture<
+    'static,
+    (
+        Result<LanguageServerBinary>,
+        Option<DownloadableLanguageServerBinary>,
+    ),
+>;
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -162,7 +173,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    cached_binary: ServerBinaryCache,
+    cached_binary: Arc<ServerBinaryCache>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -209,18 +220,15 @@ impl CachedLspAdapter {
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
-    ) -> Result<LanguageServerBinary> {
-        let mut cached_binary = self.cached_binary.lock().await;
-        self.adapter
-            .clone()
-            .get_language_server_command(
-                delegate,
-                toolchains,
-                binary_options,
-                &mut cached_binary,
-                cx,
-            )
-            .await
+    ) -> LanguageServerBinaryLocations {
+        let cached_binary = self.cached_binary.clone().lock_owned().await;
+        self.adapter.clone().get_language_server_command(
+            delegate,
+            toolchains,
+            binary_options,
+            cached_binary,
+            cx.clone(),
+        )
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -401,6 +409,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -513,14 +522,14 @@ pub trait DynLspInstaller {
         pre_release: bool,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary>;
-    fn get_language_server_command<'a>(
+    fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>>;
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: AsyncApp,
+    ) -> LanguageServerBinaryLocations;
 }
 
 #[async_trait(?Send)]
@@ -562,15 +571,16 @@ where
             binary
         }
     }
-    fn get_language_server_command<'a>(
+    fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        mut cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        mut cx: AsyncApp,
+    ) -> LanguageServerBinaryLocations {
         async move {
+            let cached_binary_deref = cached_binary.deref_mut();
             // First we check whether the adapter can give us a user-installed binary.
             // If so, we do *not* want to cache that, because each worktree might give us a different
             // binary:
@@ -584,7 +594,7 @@ where
             // for each worktree we might have open.
             if binary_options.allow_path_lookup
                 && let Some(binary) = self
-                    .check_if_user_installed(delegate.as_ref(), toolchain, cx)
+                    .check_if_user_installed(delegate.as_ref(), toolchain, &mut cx)
                     .await
             {
                 log::info!(
@@ -593,62 +603,77 @@ where
                     binary.path,
                     binary.arguments
                 );
-                return Ok(binary);
+                return (Ok(binary), None);
             }
 
-            anyhow::ensure!(
-                binary_options.allow_binary_download,
-                "downloading language servers disabled"
-            );
+            if !binary_options.allow_binary_download {
+                return (
+                    Err(anyhow::anyhow!("downloading language servers disabled")),
+                    None,
+                );
+            }
 
-            if let Some((pre_release, cached_binary)) = cached_binary
+            if let Some((pre_release, cached_binary)) = cached_binary_deref
                 && *pre_release == binary_options.pre_release
             {
-                return Ok(cached_binary.clone());
+                return (Ok(cached_binary.clone()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
             else {
-                anyhow::bail!("no language server download dir defined")
+                return (
+                    Err(anyhow::anyhow!("no language server download dir defined")),
+                    None,
+                );
             };
 
-            let mut binary = self
-                .try_fetch_server_binary(
-                    &delegate,
-                    container_dir.to_path_buf(),
-                    binary_options.pre_release,
-                    cx,
-                )
-                .await;
+            let last_downloaded_binary = self
+                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                .await
+                .context(
+                    "did not find existing language server binary, falling back to downloading",
+                );
+            let download_binary = async move {
+                let mut binary = self
+                    .try_fetch_server_binary(
+                        &delegate,
+                        container_dir.to_path_buf(),
+                        binary_options.pre_release,
+                        &mut cx,
+                    )
+                    .await;
 
-            if let Err(error) = binary.as_ref() {
-                if let Some(prev_downloaded_binary) = self
-                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                    .await
-                {
-                    log::info!(
-                        "failed to fetch newest version of language server {:?}. \
-                        error: {:?}, falling back to using {:?}",
-                        self.name(),
-                        error,
-                        prev_downloaded_binary.path
-                    );
-                    binary = Ok(prev_downloaded_binary);
-                } else {
-                    delegate.update_status(
-                        self.name(),
-                        BinaryStatus::Failed {
-                            error: format!("{error:?}"),
-                        },
-                    );
+                if let Err(error) = binary.as_ref() {
+                    if let Some(prev_downloaded_binary) = self
+                        .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                        .await
+                    {
+                        log::info!(
+                            "failed to fetch newest version of language server {:?}. \
+                            error: {:?}, falling back to using {:?}",
+                            self.name(),
+                            error,
+                            prev_downloaded_binary.path
+                        );
+                        binary = Ok(prev_downloaded_binary);
+                    } else {
+                        delegate.update_status(
+                            self.name(),
+                            BinaryStatus::Failed {
+                                error: format!("{error:?}"),
+                            },
+                        );
+                    }
                 }
-            }
 
-            if let Ok(binary) = &binary {
-                *cached_binary = Some((binary_options.pre_release, binary.clone()));
-            }
+                if let Ok(binary) = &binary {
+                    *cached_binary = Some((binary_options.pre_release, binary.clone()));
+                }
 
-            binary
+                binary
+            }
+            .boxed_local();
+            (last_downloaded_binary, Some(download_binary))
         }
         .boxed_local()
     }
@@ -1323,6 +1348,7 @@ struct BracketsConfig {
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
     newline_only: bool,
+    rainbow_exclude: bool,
 }
 
 pub struct DebugVariablesConfig {
@@ -1685,8 +1711,12 @@ impl Language {
                 .map(|ix| {
                     let mut config = BracketsPatternConfig::default();
                     for setting in query.property_settings(ix) {
-                        if setting.key.as_ref() == "newline.only" {
+                        let setting_key = setting.key.as_ref();
+                        if setting_key == "newline.only" {
                             config.newline_only = true
+                        }
+                        if setting_key == "rainbow.exclude" {
+                            config.rainbow_exclude = true
                         }
                     }
                     config
@@ -2617,42 +2647,37 @@ pub fn rust_lang() -> Arc<Language> {
         outline: Some(Cow::from(include_str!(
             "../../languages/src/rust/outline.scm"
         ))),
-        indents: Some(Cow::from(
-            r#"
-[
-    ((where_clause) _ @end)
-    (field_expression)
-    (call_expression)
-    (assignment_expression)
-    (let_declaration)
-    (let_chain)
-    (await_expression)
-] @indent
-
-(_ "[" "]" @end) @indent
-(_ "<" ">" @end) @indent
-(_ "{" "}" @end) @indent
-(_ "(" ")" @end) @indent"#,
-        )),
-        brackets: Some(Cow::from(
-            r#"
-("(" @open ")" @close)
-("[" @open "]" @close)
-("{" @open "}" @close)
-("<" @open ">" @close)
-("\"" @open "\"" @close)
-(closure_parameters "|" @open "|" @close)"#,
-        )),
-        text_objects: Some(Cow::from(
-            r#"
-(function_item
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}" )) @function.around
-        "#,
-        )),
-        ..LanguageQueries::default()
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/rust/indents.scm"
+        ))),
+        brackets: Some(Cow::from(include_str!(
+            "../../languages/src/rust/brackets.scm"
+        ))),
+        text_objects: Some(Cow::from(include_str!(
+            "../../languages/src/rust/textobjects.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/rust/highlights.scm"
+        ))),
+        embedding: Some(Cow::from(include_str!(
+            "../../languages/src/rust/embedding.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/rust/injections.scm"
+        ))),
+        overrides: Some(Cow::from(include_str!(
+            "../../languages/src/rust/overrides.scm"
+        ))),
+        redactions: None,
+        runnables: Some(Cow::from(include_str!(
+            "../../languages/src/rust/runnables.scm"
+        ))),
+        debugger: Some(Cow::from(include_str!(
+            "../../languages/src/rust/debugger.scm"
+        ))),
+        imports: Some(Cow::from(include_str!(
+            "../../languages/src/rust/imports.scm"
+        ))),
     })
     .expect("Could not parse queries");
     Arc::new(language)
@@ -2670,7 +2695,7 @@ pub fn markdown_lang() -> Arc<Language> {
                 path_suffixes: vec!["md".into()],
                 ..Default::default()
             },
-            ..Default::default()
+            ..LanguageConfig::default()
         },
         Some(tree_sitter_md::LANGUAGE.into()),
     )
@@ -2681,7 +2706,16 @@ pub fn markdown_lang() -> Arc<Language> {
         injections: Some(Cow::from(include_str!(
             "../../languages/src/markdown/injections.scm"
         ))),
-        ..Default::default()
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/highlights.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/indents.scm"
+        ))),
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/outline.scm"
+        ))),
+        ..LanguageQueries::default()
     })
     .expect("Could not parse markdown queries");
     Arc::new(language)

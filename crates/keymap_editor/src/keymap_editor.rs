@@ -1769,7 +1769,7 @@ impl Render for KeymapEditor {
                                                                 )
                                                                 .action(
                                                                     "Vim Bindings",
-                                                                    vim::OpenDefaultKeymap.boxed_clone(),
+                                                                    zed_actions::vim::OpenDefaultKeymap.boxed_clone(),
                                                                 )
                                                         }))
                                                     })
@@ -3001,7 +3001,6 @@ impl CompletionProvider for KeyContextCompletionProvider {
         _position: language::Anchor,
         text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
         text.chars()

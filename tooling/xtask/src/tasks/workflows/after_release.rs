@@ -3,7 +3,7 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     release::{self, notify_on_failure},
     runners,
-    steps::{NamedJob, checkout_repo, dependant_job, named},
+    steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
     vars::{self, StepOutput},
 };
 
@@ -43,9 +43,7 @@ fn rebuild_releases_page() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .cond(Expression::new(
-                "github.repository_owner == 'zed-industries'",
-            ))
+            .with_repository_owner_guard()
             .add_step(refresh_cloud_releases())
             .add_step(redeploy_zed_dev()),
     )
@@ -95,9 +93,7 @@ fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
     }
     let job = dependant_job(deps)
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .add_step(get_release_url())
         .add_step(get_content())
         .add_step(discord_webhook_action());
@@ -145,9 +141,7 @@ fn publish_winget() -> NamedJob {
 fn create_sentry_release() -> NamedJob {
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .add_step(checkout_repo())
         .add_step(release::create_sentry_release());
     named::job(job)

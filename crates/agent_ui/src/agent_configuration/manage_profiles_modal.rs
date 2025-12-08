@@ -253,6 +253,7 @@ impl ManageProfilesModal {
                     });
                 },
                 false, // Do not use popover styles for the model picker
+                self.focus_handle.clone(),
                 window,
                 cx,
             )

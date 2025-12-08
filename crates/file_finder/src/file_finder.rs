@@ -1060,7 +1060,7 @@ impl FileFinderDelegate {
                         (
                             filename.to_string(),
                             Vec::new(),
-                            prefix.display(path_style).to_string() + path_style.separator(),
+                            prefix.display(path_style).to_string() + path_style.primary_separator(),
                             Vec::new(),
                         )
                     } else {
@@ -1071,7 +1071,7 @@ impl FileFinderDelegate {
                                 .map_or(String::new(), |f| f.to_string_lossy().into_owned()),
                             Vec::new(),
                             entry_path.absolute.parent().map_or(String::new(), |path| {
-                                path.to_string_lossy().into_owned() + path_style.separator()
+                                path.to_string_lossy().into_owned() + path_style.primary_separator()
                             }),
                             Vec::new(),
                         )

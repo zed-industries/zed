@@ -1,6 +1,6 @@
 //! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
 
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, time::Duration};
 
@@ -28,7 +28,7 @@ pub struct EventRequestBody {
 }
 
 impl EventRequestBody {
-    pub fn semver(&self) -> Option<SemanticVersion> {
+    pub fn semver(&self) -> Option<Version> {
         self.app_version.parse().ok()
     }
 }
