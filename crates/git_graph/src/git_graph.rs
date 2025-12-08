@@ -14,6 +14,7 @@ use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
 use std::path::PathBuf;
+use util::ResultExt;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{ContextMenu, Tooltip};
@@ -28,29 +29,53 @@ use graph_rendering::{render_graph_cell, render_graph_continuation, parse_refs_t
 actions!(
     git_graph,
     [
+        /// Opens the Git Graph panel.
         OpenGitGraph,
+        /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Refreshes the git graph data.
         RefreshGraph,
+        /// Checks out the selected commit or branch.
         CheckoutCommit,
+        /// Copies the SHA of the selected commit to clipboard.
         CopySha,
+        /// Copies the branch name to clipboard.
         CopyBranchName,
+        /// Creates a new branch at the selected commit.
         CreateBranch,
+        /// Creates a new tag at the selected commit.
         CreateTag,
+        /// Renames the selected branch.
         RenameBranch,
+        /// Deletes the selected local branch.
         DeleteBranch,
+        /// Deletes the selected remote branch.
         DeleteRemoteBranch,
+        /// Reverts the selected commit.
         RevertCommit,
+        /// Cherry-picks the selected commit onto the current branch.
         CherryPickCommit,
+        /// Merges the selected branch into the current branch.
         MergeIntoCurrent,
+        /// Pulls the selected branch into the current branch.
         PullIntoCurrent,
+        /// Rebases the current branch onto the selected commit.
         RebaseOnto,
+        /// Soft resets to the selected commit (keeps changes staged).
         ResetSoft,
+        /// Mixed resets to the selected commit (keeps changes unstaged).
         ResetMixed,
+        /// Hard resets to the selected commit (discards all changes).
         ResetHard,
+        /// Pushes the current branch to remote.
         PushBranch,
+        /// Pulls the current branch from remote.
         PullBranch,
+        /// Fetches all remotes.
         FetchAll,
+        /// Stashes current changes.
         StashChanges,
+        /// Pops the most recent stash.
         StashPop,
     ]
 );
@@ -195,7 +220,7 @@ impl InputModal {
                     }
                     cx.notify();
                 })
-                .ok();
+                .log_err();
         })
         .detach();
 
@@ -514,7 +539,7 @@ impl GitGraph {
                 }
                 cx.notify();
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -712,7 +737,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -760,7 +785,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -828,7 +853,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -855,7 +880,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -882,7 +907,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -909,7 +934,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -936,7 +961,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1001,7 +1026,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1040,7 +1065,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1168,7 +1193,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1208,7 +1233,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1242,7 +1267,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1265,7 +1290,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1288,7 +1313,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1311,7 +1336,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1338,7 +1363,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1361,7 +1386,7 @@ impl GitGraph {
                     cx.notify();
                 }
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -1390,7 +1415,7 @@ impl GitGraph {
                 }
                 cx.notify();
             })
-            .ok();
+            .log_err();
         }));
     }
 

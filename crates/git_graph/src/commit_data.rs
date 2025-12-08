@@ -110,29 +110,33 @@ async fn fetch_git_log(work_dir: &PathBuf) -> Result<(Vec<CommitEntry>, usize)> 
         }
 
         let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() >= 6 {
-            let sha = parts[0].to_string();
-            let short_sha = parts[1].to_string();
-            let subject = parts[2].to_string();
-            let author_name = parts[3].to_string();
-            let timestamp = parts[4].parse().unwrap_or(0);
-            let parents: Vec<String> = parts[5].split_whitespace().map(|s| s.to_string()).collect();
-            let refs: Vec<String> = if parts.len() > 6 && !parts[6].is_empty() {
-                parts[6].split(", ").map(|s| s.to_string()).collect()
-            } else {
-                Vec::new()
-            };
+        let Some(sha) = parts.get(0) else { continue };
+        let Some(short_sha) = parts.get(1) else { continue };
+        let Some(subject) = parts.get(2) else { continue };
+        let Some(author_name) = parts.get(3) else { continue };
+        let Some(timestamp_str) = parts.get(4) else { continue };
+        let Some(parents_str) = parts.get(5) else { continue };
 
-            raw_commits.push((
-                sha,
-                short_sha,
-                subject,
-                author_name,
-                timestamp,
-                parents,
-                refs,
-            ));
-        }
+        let timestamp: i64 = timestamp_str.parse().unwrap_or(0);
+        let parents: Vec<String> = parents_str
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        let refs: Vec<String> = parts
+            .get(6)
+            .filter(|r| !r.is_empty())
+            .map(|r| r.split(", ").map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+
+        raw_commits.push((
+            sha.to_string(),
+            short_sha.to_string(),
+            subject.to_string(),
+            author_name.to_string(),
+            timestamp,
+            parents,
+            refs,
+        ));
     }
 
     let (commits, max_lanes) = build_graph(raw_commits);
@@ -298,4 +302,158 @@ fn build_graph(
     }
 
     (commits, max_lanes.max(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_timestamp_valid() {
+        let timestamp = 1700000000; // Nov 14, 2023
+        let formatted = format_timestamp(timestamp);
+        assert!(!formatted.is_empty());
+        assert_ne!(formatted, "Unknown");
+    }
+
+    #[test]
+    fn test_format_timestamp_invalid() {
+        let timestamp = i64::MAX;
+        let formatted = format_timestamp(timestamp);
+        assert_eq!(formatted, "Unknown");
+    }
+
+    #[test]
+    fn test_build_graph_empty() {
+        let raw_commits = vec![];
+        let (commits, max_lanes) = build_graph(raw_commits);
+        assert!(commits.is_empty());
+        assert_eq!(max_lanes, 1);
+    }
+
+    #[test]
+    fn test_build_graph_single_commit() {
+        let raw_commits = vec![(
+            "abc123".to_string(),
+            "abc".to_string(),
+            "Initial commit".to_string(),
+            "Author".to_string(),
+            1700000000i64,
+            vec![],
+            vec![],
+        )];
+        let (commits, max_lanes) = build_graph(raw_commits);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].sha, "abc123");
+        assert_eq!(commits[0].short_sha, "abc");
+        assert_eq!(commits[0].subject, "Initial commit");
+        assert_eq!(commits[0].author_name, "Author");
+        assert_eq!(commits[0].lane, 0);
+        assert_eq!(max_lanes, 1);
+    }
+
+    #[test]
+    fn test_build_graph_linear_history() {
+        let raw_commits = vec![
+            (
+                "commit3".to_string(),
+                "c3".to_string(),
+                "Third".to_string(),
+                "Author".to_string(),
+                1700000003i64,
+                vec!["commit2".to_string()],
+                vec![],
+            ),
+            (
+                "commit2".to_string(),
+                "c2".to_string(),
+                "Second".to_string(),
+                "Author".to_string(),
+                1700000002i64,
+                vec!["commit1".to_string()],
+                vec![],
+            ),
+            (
+                "commit1".to_string(),
+                "c1".to_string(),
+                "First".to_string(),
+                "Author".to_string(),
+                1700000001i64,
+                vec![],
+                vec![],
+            ),
+        ];
+        let (commits, max_lanes) = build_graph(raw_commits);
+        assert_eq!(commits.len(), 3);
+        assert_eq!(max_lanes, 1);
+
+        for commit in &commits {
+            assert_eq!(commit.lane, 0);
+        }
+    }
+
+    #[test]
+    fn test_build_graph_with_refs() {
+        let raw_commits = vec![(
+            "abc123".to_string(),
+            "abc".to_string(),
+            "Commit with refs".to_string(),
+            "Author".to_string(),
+            1700000000i64,
+            vec![],
+            vec!["HEAD -> main".to_string(), "origin/main".to_string()],
+        )];
+        let (commits, _) = build_graph(raw_commits);
+        assert_eq!(commits[0].refs.len(), 2);
+        assert!(commits[0].refs.contains(&"HEAD -> main".to_string()));
+        assert!(commits[0].refs.contains(&"origin/main".to_string()));
+    }
+
+    #[test]
+    fn test_build_graph_merge_commit() {
+        let raw_commits = vec![
+            (
+                "merge".to_string(),
+                "m".to_string(),
+                "Merge branch".to_string(),
+                "Author".to_string(),
+                1700000003i64,
+                vec!["parent1".to_string(), "parent2".to_string()],
+                vec![],
+            ),
+            (
+                "parent1".to_string(),
+                "p1".to_string(),
+                "Parent 1".to_string(),
+                "Author".to_string(),
+                1700000002i64,
+                vec!["base".to_string()],
+                vec![],
+            ),
+            (
+                "parent2".to_string(),
+                "p2".to_string(),
+                "Parent 2".to_string(),
+                "Author".to_string(),
+                1700000001i64,
+                vec!["base".to_string()],
+                vec![],
+            ),
+            (
+                "base".to_string(),
+                "b".to_string(),
+                "Base commit".to_string(),
+                "Author".to_string(),
+                1700000000i64,
+                vec![],
+                vec![],
+            ),
+        ];
+        let (commits, max_lanes) = build_graph(raw_commits);
+        assert_eq!(commits.len(), 4);
+        assert!(max_lanes >= 1);
+
+        let merge_commit = &commits[0];
+        assert_eq!(merge_commit.parents.len(), 2);
+    }
 }
