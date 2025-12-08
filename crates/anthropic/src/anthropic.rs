@@ -12,6 +12,8 @@ pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
+pub mod batches;
+
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
