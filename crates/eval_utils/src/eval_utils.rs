@@ -49,6 +49,8 @@ impl EvalOutputProcessor for NoProcessor {
     fn assert(&mut self) {}
 }
 
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn eval<P>(
     iterations: usize,
     expected_pass_ratio: f32,
@@ -57,6 +59,8 @@ pub fn eval<P>(
 ) where
     P: EvalOutputProcessor,
 {
+    // Guard so we only run one eval at a time - otherwise we get a SIGABRT.
+    let _guard = LOCK.lock().unwrap();
     let mut evaluated_count = 0;
     let mut failed_count = 0;
     let evalf = Arc::new(evalf);
