@@ -182,7 +182,9 @@ impl TitleBar {
 
                     this.children(current_user_face_pile.map(|face_pile| {
                         v_flex()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.prevent_default()
+                            })
                             .child(face_pile)
                             .child(render_color_ribbon(player_colors.local().cursor))
                     }))
@@ -217,6 +219,9 @@ impl TitleBar {
                                 .child(facepile)
                                 .child(render_color_ribbon(player_color.cursor))
                                 .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                    window.prevent_default()
+                                })
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
