@@ -746,7 +746,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -762,7 +762,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })

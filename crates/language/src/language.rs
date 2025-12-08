@@ -982,7 +982,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: LanguageName::new(""),
+            name: LanguageName::new_static(""),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -2726,9 +2726,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2739,9 +2739,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2752,9 +2752,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 

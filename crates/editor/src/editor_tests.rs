@@ -9970,7 +9970,7 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
                     ],
                     ..Default::default()
                 },
-                name: LanguageName::new("rust"),
+                name: LanguageName::new_static("rust"),
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
