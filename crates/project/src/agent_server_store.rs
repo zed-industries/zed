@@ -1409,7 +1409,7 @@ impl ExternalAgentServer for LocalCodex {
                 };
 
                 let find_latest_local_version = async || -> Option<PathBuf> {
-                    let mut local_versions = Vec::new();
+                    let mut local_versions: Vec<(semver::Version, String)> = Vec::new();
                     let mut stream = fs.read_dir(&dir).await.ok()?;
                     while let Some(entry) = stream.next().await {
                         let Ok(entry) = entry else { continue };
@@ -1418,11 +1418,16 @@ impl ExternalAgentServer for LocalCodex {
                         };
                         let version_path = dir.join(&file_name);
                         if fs.is_file(&version_path.join(bin_name)).await {
-                            local_versions.push(file_name.to_string_lossy().to_string());
+                            let version_str = file_name.to_string_lossy();
+                            if let Ok(version) =
+                                semver::Version::from_str(version_str.trim_start_matches('v'))
+                            {
+                                local_versions.push((version, version_str.into_owned()));
+                            }
                         }
                     }
-                    local_versions.sort();
-                    local_versions.last().map(|v| dir.join(v))
+                    local_versions.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    dbg!(local_versions.last().map(|(_, v)| dir.join(v)))
                 };
 
                 let fallback_to_latest_local_version =
