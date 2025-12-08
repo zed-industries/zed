@@ -541,8 +541,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let prefix = match &location {
-            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
-                Some(SharedString::from(&wsl.distro_name))
+            SerializedWorkspaceLocation::Remote(options) => {
+                Some(SharedString::from(options.display_name()))
             }
             _ => None,
         };
