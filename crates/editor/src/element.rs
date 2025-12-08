@@ -365,6 +365,7 @@ impl EditorElement {
         register_action(editor, window, Editor::split_selection_into_lines);
         register_action(editor, window, Editor::add_selection_above);
         register_action(editor, window, Editor::add_selection_below);
+        register_action(editor, window, Editor::insert_snippet_at_selections);
         register_action(editor, window, |editor, action, window, cx| {
             editor.select_next(action, window, cx).log_err();
         });

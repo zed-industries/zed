@@ -79,7 +79,7 @@ use ::git::{
     status::FileStatus,
 };
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
@@ -14809,6 +14809,52 @@ impl Editor {
         if !state.groups.is_empty() {
             self.add_selections_state = Some(state);
         }
+    }
+
+    pub fn insert_snippet_at_selections(
+        &mut self,
+        action: &InsertSnippet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.try_insert_snippet_at_selections(action, window, cx)
+            .log_err();
+    }
+
+    fn try_insert_snippet_at_selections(
+        &mut self,
+        action: &InsertSnippet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let insertion_ranges = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect_vec();
+
+        let snippet = if let Some(snippet_body) = &action.snippet {
+            if action.language.is_none() && action.name.is_none() {
+                Snippet::parse(snippet_body)?
+            } else {
+                bail!("`snippet` is mutually exclusive with `language` and `name`")
+            }
+        } else if let Some(name) = &action.name {
+            let project = self.project().context("no project")?;
+            let snippet_store = project.read(cx).snippets().read(cx);
+            let snippet = snippet_store
+                .snippets_for(action.language.clone(), cx)
+                .into_iter()
+                .find(|snippet| snippet.name == *name)
+                .context("snippet not found")?;
+            Snippet::parse(&snippet.body)?
+        } else {
+            // todo(andrew): open modal to select snippet
+            bail!("`name` or `snippet` is required")
+        };
+
+        self.insert_snippet(&insertion_ranges, snippet, window, cx)
     }
 
     fn select_match_ranges(

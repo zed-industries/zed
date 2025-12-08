@@ -327,6 +327,23 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Inserts a snippet at the cursor.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct InsertSnippet {
+    /// Language name if using a named snippet, or `None` for a global snippet
+    ///
+    /// This is typically lowercase and matches the filename containing the snippet, without the `.json` extension.
+    pub language: Option<String>,
+    /// Name if using a named snippet
+    pub name: Option<String>,
+
+    /// Snippet body, if not using a named snippet
+    // todo(andrew): use `ListOrDirect` or similar for multiline snippet body
+    pub snippet: Option<String>,
+}
+
 actions!(
     debugger,
     [
