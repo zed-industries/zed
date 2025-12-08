@@ -208,7 +208,8 @@ fn path_match<T>(
     if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
         return None;
     }
-
+    debug_assert!(line_start <= hovered);
+    debug_assert!(line_end >= hovered);
     let search_start_time = Instant::now();
 
     let timed_out = || {
@@ -225,9 +226,20 @@ fn path_match<T>(
         (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
     );
     line.push(term.grid()[line_start].c);
+    let mut start_offset = 0;
+    let mut hovered_range = None;
     for cell in term.grid().iter_from(line_start) {
         if cell.point > line_end {
             break;
+        }
+        if cell.point == hovered {
+            debug_assert!(hovered_range.is_none());
+            hovered_range = Some(Range {
+                start: start_offset,
+                end: start_offset + cell.c.len_utf8(),
+            });
+        } else if cell.point < hovered {
+            start_offset += cell.c.len_utf8();
         }
 
         if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
@@ -238,7 +250,7 @@ fn path_match<T>(
         }
     }
     let line = line.trim_ascii_end();
-
+    let hovered_range = hovered_range.expect("To find out the exact UTF offset of hovered range");
     let found_from_range = |path_range: Range<usize>,
                             link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
@@ -268,7 +280,7 @@ fn path_match<T>(
                 .expand_wide(link_end, AlacDirection::Left)
                 .sub(term, Boundary::Grid, 1);
 
-        Some((
+        (
             {
                 let mut path = line[path_range].to_string();
                 position.inspect(|(line, column)| {
@@ -278,7 +290,7 @@ fn path_match<T>(
                 path
             },
             link_match,
-        ))
+        )
     };
 
     for regex in path_hyperlink_regexes {
@@ -315,13 +327,17 @@ fn path_match<T>(
             let link_range = captures
                 .name("link")
                 .map_or(match_range, |link| link.range());
+
+            if hovered_range.start > path_range.end || path_range.start > hovered_range.end {
+                // No match, just skip.
+                continue;
+            }
             let found = found_from_range(path_range, link_range, line_column);
 
-            if let Some(found) = found {
-                path_found = true;
-                if found.1.contains(&hovered) {
-                    return Some(found);
-                }
+            path_found = true;
+            debug_assert!(found.1.contains(&hovered));
+            if found.1.contains(&hovered) {
+                return Some(found);
             }
         }
 
