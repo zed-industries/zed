@@ -280,7 +280,6 @@ impl RenderOnce for Checkbox {
 /// Defines the color for a switch component.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum SwitchColor {
-    Default,
     #[default]
     Accent,
     Custom(Hsla),
@@ -296,12 +295,6 @@ impl SwitchColor {
         }
 
         match self {
-            SwitchColor::Default => {
-                let colors = cx.theme().colors();
-                let base_color = colors.text;
-                let bg_color = colors.element_background.blend(base_color.opacity(0.08));
-                (bg_color, colors.border_variant)
-            }
             SwitchColor::Accent => {
                 let status = cx.theme().status();
                 let colors = cx.theme().colors();
@@ -315,7 +308,6 @@ impl SwitchColor {
 impl From<SwitchColor> for Color {
     fn from(color: SwitchColor) -> Self {
         match color {
-            SwitchColor::Default => Color::Default,
             SwitchColor::Accent => Color::Accent,
             SwitchColor::Custom(_) => Color::Default,
         }
@@ -963,16 +955,8 @@ impl Component for Switch {
                         "Colors",
                         vec![
                             single_example(
-                                "Default",
-                                Switch::new("switch_default_style", ToggleState::Selected)
-                                    .color(SwitchColor::Default)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Accent",
+                                "Accent (Default)",
                                 Switch::new("switch_accent_style", ToggleState::Selected)
-                                    .color(SwitchColor::Accent)
                                     .on_click(|_, _, _cx| {})
                                     .into_any_element(),
                             ),
