@@ -77,7 +77,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{TrustedWorktreesEvent, TrustedWorktreesStorage},
+    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -1192,7 +1192,6 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
-    restricted_paths: Vec<PathBuf>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1223,52 +1222,32 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        if cx.has_global::<TrustedWorktreesStorage>() {
-            cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                trusted_worktrees_storage
-                    .subscribe_in(window, cx, move |workspace, e, window, cx| match e {
-                        TrustedWorktreesEvent::Trusted(trusted_paths) => {
-                            if let Some(security_modal) =
-                                workspace.active_modal::<SecurityModal>(cx)
-                            {
-                                let remove = security_modal.update(cx, |security_modal, _| {
-                                    for trusted_path in trusted_paths {
-                                        security_modal.paths.remove(trusted_path);
-                                    }
-                                    security_modal.paths.is_empty()
-                                });
-                                if remove {
-                                    workspace.hide_modal(window, cx);
-                                }
-                            }
-                            for trusted_path in trusted_paths {
-                                workspace.restricted_paths.retain(|restricted_path| {
-                                    !restricted_path.starts_with(trusted_path)
-                                });
-                            }
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            cx.subscribe_in(
+                &trusted_worktrees,
+                window,
+                move |workspace, _, e, window, cx| match e {
+                    TrustedWorktreesEvent::Trusted(_) => {
+                        if let Some(security_modal) = workspace.active_modal::<SecurityModal>(cx) {
+                            security_modal.update(cx, |security_modal, cx| {
+                                security_modal.refresh_restricted_paths(cx);
+                            });
                         }
-                        TrustedWorktreesEvent::Restricted(restricted_paths) => {
-                            let current_restricted_path_count = workspace.restricted_paths.len();
-                            workspace
-                                .restricted_paths
-                                .extend(restricted_paths.iter().cloned());
-                            if current_restricted_path_count != workspace.restricted_paths.len() {
-                                workspace.show_worktree_security_modal(false, window, cx)
-                            }
-                        }
-                    })
-                    .detach();
-            })
-        };
+                    }
+                    TrustedWorktreesEvent::Restricted(_) => {
+                        workspace.show_worktree_security_modal(false, window, cx)
+                    }
+                },
+            )
+            .detach();
+        }
 
         cx.observe_global::<SettingsStore>(|_, cx| {
             if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-                if cx.has_global::<TrustedWorktreesStorage>() {
-                    cx.update_global::<TrustedWorktreesStorage, _>(
-                        |trusted_worktrees_storage, cx| {
-                            trusted_worktrees_storage.trust_all(cx);
-                        },
-                    )
+                if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                        trusted_worktrees.trust_all(cx);
+                    })
                 }
             }
         })
@@ -1588,7 +1567,6 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
-            restricted_paths: Vec::new(),
 
             removing: false,
         }
@@ -5996,13 +5974,10 @@ impl Workspace {
             ))
             .on_action(
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
-                    if cx.has_global::<TrustedWorktreesStorage>() {
-                        let clear_task = cx.update_global::<TrustedWorktreesStorage, _>(
-                            |trusted_worktrees_storage, cx| {
-                                trusted_worktrees_storage.clear_trusted_paths(cx);
-                                trusted_worktrees_storage.take_task(cx)
-                            },
-                        );
+                    if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                        let clear_task = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.clear_trusted_paths(cx)
+                        });
                         cx.spawn(async move |_, cx| {
                             clear_task.await;
                             cx.update(|cx| reload(cx)).ok();
@@ -6460,26 +6435,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let restricted_worktrees = |cx: &mut App| {
-            if cx.has_global::<TrustedWorktreesStorage>() {
-                cx.update_global::<TrustedWorktreesStorage, _>(|trusted_worktrees_storage, cx| {
-                    trusted_worktrees_storage
-                        .restricted_worktrees()
-                        .iter()
-                        .filter(|restricted_path| {
-                            self.project()
-                                .read(cx)
-                                .find_worktree(restricted_path, cx)
-                                .is_some()
-                        })
-                        .cloned()
-                        .collect()
-                })
-            } else {
-                HashSet::default()
-            }
-        };
-
         if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
             if toggle {
                 security_modal.update(cx, |security_modal, cx| {
@@ -6487,16 +6442,24 @@ impl Workspace {
                 })
             } else {
                 security_modal.update(cx, |security_modal, cx| {
-                    security_modal.paths.extend(restricted_worktrees(cx));
-                    cx.notify();
+                    security_modal.refresh_restricted_paths(cx);
                 });
             }
         } else {
-            let restricted_worktrees = restricted_worktrees(cx);
-            if !restricted_worktrees.is_empty() {
-                self.toggle_modal(window, cx, |_, cx| {
-                    SecurityModal::new(restricted_worktrees, cx)
-                });
+            let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .map(|trusted_worktrees| {
+                    !trusted_worktrees
+                        .read(cx)
+                        .restricted_worktree_abs_paths(
+                            self.project().read(cx).worktree_store().read(cx),
+                            cx,
+                        )
+                        .is_empty()
+                })
+                .unwrap_or(false);
+            if has_restricted_worktrees {
+                let worktree_store = self.project().read(cx).worktree_store().downgrade();
+                self.toggle_modal(window, cx, |_, cx| SecurityModal::new(worktree_store, cx));
             }
         }
     }
