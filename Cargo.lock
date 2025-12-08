@@ -7205,6 +7205,7 @@ dependencies = [
  "cosmic-text",
  "ctor",
  "derive_more 0.99.20",
+ "dispatch",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
