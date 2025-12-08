@@ -992,6 +992,12 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                // If there are matches we need to emit a wake up event to
+                // invalidate the matches and recalculate their locations
+                // in the new terminal layout
+                if !self.matches.is_empty() {
+                    cx.emit(Event::Wakeup);
+                }
             }
             InternalEvent::Clear => {
                 trace!("Clearing");
@@ -2497,9 +2503,7 @@ mod tests {
         })
         .detach();
 
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);

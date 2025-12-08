@@ -22,16 +22,17 @@ use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use fs::Fs;
+use futures::FutureExt as _;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
+    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowKind, WindowOptions,
+    actions, image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -400,8 +401,8 @@ pub fn initialize_workspace(
         unstable_version_notification(cx);
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
-        let edit_prediction_button = cx.new(|cx| {
-            edit_prediction_button::EditPredictionButton::new(
+        let edit_prediction_ui = cx.new(|cx| {
+            edit_prediction_ui::EditPredictionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
@@ -410,7 +411,7 @@ pub fn initialize_workspace(
             )
         });
         workspace.register_action({
-            move |_, _: &edit_prediction_button::ToggleMenu, window, cx| {
+            move |_, _: &edit_prediction_ui::ToggleMenu, window, cx| {
                 edit_prediction_menu_handle.toggle(window, cx);
             }
         });
@@ -449,7 +450,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(edit_prediction_button, window, cx);
+            status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(line_ending_indicator, window, cx);
@@ -655,105 +656,111 @@ fn initialize_panels(
         );
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
-        let (
-            project_panel,
-            outline_panel,
-            terminal_panel,
-            git_panel,
-            channels_panel,
-            notification_panel,
-            debug_panel,
-        ) = futures::try_join!(
-            project_panel,
-            outline_panel,
-            git_panel,
-            terminal_panel,
-            channels_panel,
-            notification_panel,
-            debug_panel,
-        )?;
-
-        workspace_handle.update_in(cx, |workspace, window, cx| {
-            workspace.add_panel(project_panel, window, cx);
-            workspace.add_panel(outline_panel, window, cx);
-            workspace.add_panel(terminal_panel, window, cx);
-            workspace.add_panel(git_panel, window, cx);
-            workspace.add_panel(channels_panel, window, cx);
-            workspace.add_panel(notification_panel, window, cx);
-            workspace.add_panel(debug_panel, window, cx);
-        })?;
-
-        fn setup_or_teardown_agent_panel(
-            workspace: &mut Workspace,
-            prompt_builder: Arc<PromptBuilder>,
-            window: &mut Window,
-            cx: &mut Context<Workspace>,
-        ) -> Task<anyhow::Result<()>> {
-            let disable_ai = SettingsStore::global(cx)
-                .get::<DisableAiSettings>(None)
-                .disable_ai
-                || cfg!(test);
-            let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
-            match (disable_ai, existing_panel) {
-                (false, None) => cx.spawn_in(window, async move |workspace, cx| {
-                    let panel =
-                        agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
-                            .await?;
-                    workspace.update_in(cx, |workspace, window, cx| {
-                        let disable_ai = SettingsStore::global(cx)
-                            .get::<DisableAiSettings>(None)
-                            .disable_ai;
-                        let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
-                        if !disable_ai && !have_panel {
-                            workspace.add_panel(panel, window, cx);
-                        }
+        async fn add_panel_when_ready(
+            panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
+            workspace_handle: WeakEntity<Workspace>,
+            mut cx: gpui::AsyncWindowContext,
+        ) {
+            if let Some(panel) = panel_task.await.context("failed to load panel").log_err()
+            {
+                workspace_handle
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.add_panel(panel, window, cx);
                     })
-                }),
-                (true, Some(existing_panel)) => {
-                    workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
-                    Task::ready(Ok(()))
-                }
-                _ => Task::ready(Ok(())),
+                    .log_err();
             }
         }
 
-        workspace_handle
-            .update_in(cx, |workspace, window, cx| {
-                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-            })?
-            .await?;
-
-        workspace_handle.update_in(cx, |workspace, window, cx| {
-            cx.observe_global_in::<SettingsStore>(window, {
-                let prompt_builder = prompt_builder.clone();
-                move |workspace, window, cx| {
-                    setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-            .detach();
-
-            // Register the actions that are shared between `assistant` and `assistant2`.
-            //
-            // We need to do this here instead of within the individual `init`
-            // functions so that we only register the actions once.
-            //
-            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if !cfg!(test) {
-                <dyn AgentPanelDelegate>::set_global(
-                    Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(agent_ui::AgentPanel::toggle_focus)
-                    .register_action(agent_ui::InlineAssistant::inline_assist);
-            }
-        })?;
+        futures::join!(
+            add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
+            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err())
+        );
 
         anyhow::Ok(())
     })
     .detach();
+}
+
+async fn initialize_agent_panel(
+    workspace_handle: WeakEntity<Workspace>,
+    prompt_builder: Arc<PromptBuilder>,
+    mut cx: AsyncWindowContext,
+) -> anyhow::Result<()> {
+    fn setup_or_teardown_agent_panel(
+        workspace: &mut Workspace,
+        prompt_builder: Arc<PromptBuilder>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<anyhow::Result<()>> {
+        let disable_ai = SettingsStore::global(cx)
+            .get::<DisableAiSettings>(None)
+            .disable_ai
+            || cfg!(test);
+        let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
+        match (disable_ai, existing_panel) {
+            (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+                let panel =
+                    agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
+                        .await?;
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let disable_ai = SettingsStore::global(cx)
+                        .get::<DisableAiSettings>(None)
+                        .disable_ai;
+                    let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
+                    if !disable_ai && !have_panel {
+                        workspace.add_panel(panel, window, cx);
+                    }
+                })
+            }),
+            (true, Some(existing_panel)) => {
+                workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
+                Task::ready(Ok(()))
+            }
+            _ => Task::ready(Ok(())),
+        }
+    }
+
+    workspace_handle
+        .update_in(&mut cx, |workspace, window, cx| {
+            setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+        })?
+        .await?;
+
+    workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+        cx.observe_global_in::<SettingsStore>(window, {
+            let prompt_builder = prompt_builder.clone();
+            move |workspace, window, cx| {
+                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+                    .detach_and_log_err(cx);
+            }
+        })
+        .detach();
+
+        // Register the actions that are shared between `assistant` and `assistant2`.
+        //
+        // We need to do this here instead of within the individual `init`
+        // functions so that we only register the actions once.
+        //
+        // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
+        if !cfg!(test) {
+            <dyn AgentPanelDelegate>::set_global(
+                Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
+                cx,
+            );
+
+            workspace
+                .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::InlineAssistant::inline_assist);
+        }
+    })?;
+
+    anyhow::Ok(())
 }
 
 fn register_actions(
@@ -1157,7 +1164,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let commit_view_toolbar = cx.new(|cx| CommitViewToolbar::new(workspace, cx));
+            let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
@@ -1387,8 +1394,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
     };
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+    let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
     let showed_parse_error = match error {
         Some(error) => {
@@ -1420,7 +1426,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             false
         }
     };
-    let id = NotificationId::Named("failed-to-migrate-settings".into());
+    let id = NotificationId::Named(format!("failed-to-migrate-settings-{is_user}").into());
 
     match result.migration_status {
         settings::MigrationStatus::Succeeded | settings::MigrationStatus::NotNeeded => {
@@ -2249,7 +2255,8 @@ mod tests {
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
         VisualTestContext, WindowHandle, actions,
     };
-    use language::{LanguageMatcher, LanguageRegistry};
+    use language::LanguageRegistry;
+    use languages::{markdown_lang, rust_lang};
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
     use semver::Version;
@@ -2889,9 +2896,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3321,9 +3326,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3415,9 +3418,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3488,7 +3489,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _| {
-            project.languages().add(markdown_language());
+            project.languages().add(markdown_lang());
             project.languages().add(rust_lang());
         });
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
@@ -3641,8 +3642,8 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| {
-            project.languages().add(rust_lang());
-            project.languages().add(markdown_language());
+            project.languages().add(language::rust_lang());
+            project.languages().add(language::markdown_lang());
         });
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -3721,9 +3722,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
 
@@ -3825,9 +3824,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace
@@ -4219,9 +4216,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        project.update(cx, |project, _cx| {
-            project.languages().add(markdown_language())
-        });
+        project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace
             .read_with(cx, |workspace, _| workspace.active_pane().clone())
@@ -4679,6 +4674,134 @@ mod tests {
         });
     }
 
+    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
+    /// and let you know when introducing a new namespace.
+    #[gpui::test]
+    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
+        use itertools::Itertools;
+
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+
+            let mut actions_without_namespace = Vec::new();
+            let all_namespaces = all_actions
+                .iter()
+                .filter_map(|action_name| {
+                    let namespace = action_name
+                        .split("::")
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .skip(1)
+                        .rev()
+                        .join("::");
+                    if namespace.is_empty() {
+                        actions_without_namespace.push(*action_name);
+                    }
+                    if &namespace == "test_only" || &namespace == "stories" {
+                        None
+                    } else {
+                        Some(namespace)
+                    }
+                })
+                .sorted()
+                .dedup()
+                .collect::<Vec<_>>();
+            assert_eq!(actions_without_namespace, Vec::<&str>::new());
+
+            let expected_namespaces = vec![
+                "action",
+                "activity_indicator",
+                "agent",
+                #[cfg(not(target_os = "macos"))]
+                "app_menu",
+                "assistant",
+                "assistant2",
+                "auto_update",
+                "branch_picker",
+                "bedrock",
+                "branches",
+                "buffer_search",
+                "channel_modal",
+                "cli",
+                "client",
+                "collab",
+                "collab_panel",
+                "command_palette",
+                "console",
+                "context_server",
+                "copilot",
+                "debug_panel",
+                "debugger",
+                "dev",
+                "diagnostics",
+                "edit_prediction",
+                "editor",
+                "feedback",
+                "file_finder",
+                "git",
+                "git_onboarding",
+                "git_panel",
+                "go_to_line",
+                "icon_theme_selector",
+                "journal",
+                "keymap_editor",
+                "keystroke_input",
+                "language_selector",
+                "line_ending_selector",
+                "lsp_tool",
+                "markdown",
+                "menu",
+                "notebook",
+                "notification_panel",
+                "onboarding",
+                "outline",
+                "outline_panel",
+                "pane",
+                "panel",
+                "picker",
+                "project_panel",
+                "project_search",
+                "project_symbols",
+                "projects",
+                "repl",
+                "rules_library",
+                "search",
+                "settings_editor",
+                "settings_profile_selector",
+                "snippets",
+                "stash_picker",
+                "supermaven",
+                "svg",
+                "syntax_tree_view",
+                "tab_switcher",
+                "task",
+                "terminal",
+                "terminal_panel",
+                "theme_selector",
+                "toast",
+                "toolchain",
+                "variable_list",
+                "vim",
+                "window",
+                "workspace",
+                "zed",
+                "zed_actions",
+                "zed_predict_onboarding",
+                "zeta",
+            ];
+            assert_eq!(
+                all_namespaces,
+                expected_namespaces
+                    .into_iter()
+                    .map(|namespace| namespace.to_string())
+                    .sorted()
+                    .collect::<Vec<_>>()
+            );
+        });
+    }
+
     #[gpui::test]
     fn test_bundled_settings_and_themes(cx: &mut App) {
         cx.text_system()
@@ -4780,7 +4903,7 @@ mod tests {
 
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
-            app_state.languages.add(markdown_language());
+            app_state.languages.add(markdown_lang());
 
             gpui_tokio::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -4829,34 +4952,6 @@ mod tests {
             search::init(cx);
             app_state
         })
-    }
-
-    fn rust_lang() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
-    }
-
-    fn markdown_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Markdown".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["md".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_md::LANGUAGE.into()),
-        ))
     }
 
     #[track_caller]

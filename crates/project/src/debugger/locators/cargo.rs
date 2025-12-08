@@ -206,6 +206,7 @@ impl DapLocator for CargoLocator {
             args.push("--nocapture".to_owned());
             if is_ignored {
                 args.push("--include-ignored".to_owned());
+                args.push("--exact".to_owned());
             }
         }
 

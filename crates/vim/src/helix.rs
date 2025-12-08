@@ -109,19 +109,76 @@ impl Vim {
                 };
 
                 s.move_with(|map, selection| {
-                    let current_head = selection.head();
+                    let was_reversed = selection.reversed;
+                    let mut current_head = selection.head();
 
-                    let Some((new_head, goal)) = motion.move_point(
-                        map,
-                        current_head,
-                        selection.goal,
-                        times,
-                        &text_layout_details,
-                    ) else {
-                        return;
+                    // our motions assume the current character is after the cursor,
+                    // but in (forward) visual mode the current character is just
+                    // before the end of the selection.
+
+                    // If the file ends with a newline (which is common) we don't do this.
+                    // so that if you go to the end of such a file you can use "up" to go
+                    // to the previous line and have it work somewhat as expected.
+                    if !selection.reversed
+                        && !selection.is_empty()
+                        && !(selection.end.column() == 0 && selection.end == map.max_point())
+                    {
+                        current_head = movement::left(map, selection.end)
+                    }
+
+                    let (new_head, goal) = match motion {
+                        // Going to next word start is special cased
+                        // since Vim differs from Helix in that motion
+                        // Vim: `w` goes to the first character of a word
+                        // Helix: `w` goes to the character before a word
+                        Motion::NextWordStart { ignore_punctuation } => {
+                            let mut head = movement::right(map, current_head);
+                            let classifier =
+                                map.buffer_snapshot().char_classifier_at(head.to_point(map));
+                            for _ in 0..times.unwrap_or(1) {
+                                let (_, new_head) =
+                                    movement::find_boundary_trail(map, head, |left, right| {
+                                        Self::is_boundary_right(ignore_punctuation)(
+                                            left,
+                                            right,
+                                            &classifier,
+                                        )
+                                    });
+                                head = new_head;
+                            }
+                            head = movement::left(map, head);
+                            (head, SelectionGoal::None)
+                        }
+                        _ => motion
+                            .move_point(
+                                map,
+                                current_head,
+                                selection.goal,
+                                times,
+                                &text_layout_details,
+                            )
+                            .unwrap_or((current_head, selection.goal)),
                     };
 
                     selection.set_head(new_head, goal);
+
+                    // ensure the current character is included in the selection.
+                    if !selection.reversed {
+                        let next_point = movement::right(map, selection.end);
+
+                        if !(next_point.column() == 0 && next_point == map.max_point()) {
+                            selection.end = next_point;
+                        }
+                    }
+
+                    // vim always ensures the anchor character stays selected.
+                    // if our selection has reversed, we need to move the opposite end
+                    // to ensure the anchor is still selected.
+                    if was_reversed && !selection.reversed {
+                        selection.start = movement::left(map, selection.start);
+                    } else if !was_reversed && selection.reversed {
+                        selection.end = movement::right(map, selection.end);
+                    }
                 })
             });
         });
@@ -255,6 +312,30 @@ impl Vim {
         });
     }
 
+    fn is_boundary_right(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
+        }
+    }
+
+    fn is_boundary_left(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
+        }
+    }
+
     pub fn helix_move_cursor(
         &mut self,
         motion: Motion,
@@ -263,6 +344,30 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
+            Motion::NextWordStart { ignore_punctuation } => self.helix_find_range_forward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_right(ignore_punctuation),
+            ),
+            Motion::NextWordEnd { ignore_punctuation } => self.helix_find_range_forward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_left(ignore_punctuation),
+            ),
+            Motion::PreviousWordStart { ignore_punctuation } => self.helix_find_range_backward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_left(ignore_punctuation),
+            ),
+            Motion::PreviousWordEnd { ignore_punctuation } => self.helix_find_range_backward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_right(ignore_punctuation),
+            ),
             Motion::EndOfLine { .. } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We therefore need special handling for it.
@@ -287,42 +392,6 @@ impl Vim {
                         })
                     });
                 });
-            }
-            Motion::NextWordStart { ignore_punctuation } => {
-                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::NextWordEnd { ignore_punctuation } => {
-                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::PreviousWordStart { ignore_punctuation } => {
-                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::PreviousWordEnd { ignore_punctuation } => {
-                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
-                })
             }
             Motion::FindForward {
                 before,
@@ -1392,6 +1461,30 @@ mod test {
         cx.assert_state("«one ˇ»two", Mode::HelixSelect);
         cx.simulate_keystrokes("escape");
         cx.assert_state("«one ˇ»two", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("«ˇ»one two three", Mode::HelixSelect);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("«one ˇ»two three", Mode::HelixSelect);
+
+        cx.set_state("«ˇ»one two three", Mode::HelixSelect);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("«oneˇ» two three", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_full_cursor_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("ˇone two three", Mode::HelixNormal);
+        cx.simulate_keystrokes("l l v h h h");
+        cx.assert_state("«ˇone» two three", Mode::HelixSelect);
     }
 
     #[gpui::test]

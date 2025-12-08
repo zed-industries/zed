@@ -70,8 +70,8 @@ pub(super) fn refresh_linked_ranges(
                     let cursor_position = selection.head();
                     let start_position = snapshot.anchor_before(cursor_position);
                     let end_position = snapshot.anchor_after(selection.tail());
-                    if start_position.buffer_id != end_position.buffer_id
-                        || end_position.buffer_id.is_none()
+                    if start_position.text_anchor.buffer_id != end_position.text_anchor.buffer_id
+                        || end_position.text_anchor.buffer_id.is_none()
                     {
                         // Throw away selections spanning multiple buffers.
                         continue;

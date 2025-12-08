@@ -145,7 +145,7 @@ impl AgentDiffPane {
 
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
-                    language::Anchor::MIN..language::Anchor::MAX,
+                    language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
                     cx,
                 )
@@ -493,7 +493,7 @@ impl Item for AgentDiffPane {
         Some("Assistant Diff Opened")
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 

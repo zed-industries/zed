@@ -23,7 +23,7 @@ use smol::{
 };
 
 use text::BufferId;
-use util::{ResultExt, maybe, paths::compare_rel_paths};
+use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
@@ -93,9 +93,6 @@ enum FindSearchCandidates {
         /// based on disk contents of a buffer. This step is not performed for buffers we already have in memory.
         confirm_contents_will_match_tx: Sender<MatchingEntry>,
         confirm_contents_will_match_rx: Receiver<MatchingEntry>,
-        /// Of those that contain at least one match (or are already in memory), look for rest of matches (and figure out their ranges).
-        /// But wait - first, we need to go back to the main thread to open a buffer (& create an entity for it).
-        get_buffer_for_full_scan_tx: Sender<ProjectPath>,
     },
     Remote,
     OpenBuffersOnly,
@@ -226,7 +223,7 @@ impl Search {
                             .boxed_local(),
                             cx.background_spawn(Self::maintain_sorted_search_results(
                                 sorted_search_results_rx,
-                                get_buffer_for_full_scan_tx.clone(),
+                                get_buffer_for_full_scan_tx,
                                 self.limit,
                             ))
                             .boxed_local(),
@@ -234,7 +231,6 @@ impl Search {
                         (
                             FindSearchCandidates::Local {
                                 fs,
-                                get_buffer_for_full_scan_tx,
                                 confirm_contents_will_match_tx,
                                 confirm_contents_will_match_rx,
                                 input_paths_rx,
@@ -267,10 +263,6 @@ impl Search {
                             .spawn(async move |cx| {
                                 let _ = maybe!(async move {
                                     let response = request.await?;
-                                    log::error!(
-                                        "Received {} match candidates for a project search",
-                                        response.buffer_ids.len()
-                                    );
                                     for buffer_id in response.buffer_ids {
                                         let buffer_id = BufferId::new(buffer_id)?;
                                         let buffer = buffer_store
@@ -547,7 +539,7 @@ impl Search {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.match_path(file.path().as_std_path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if !search_query.include_ignored()
@@ -597,7 +589,6 @@ impl Worker<'_> {
             input_paths_rx,
             confirm_contents_will_match_rx,
             mut confirm_contents_will_match_tx,
-            mut get_buffer_for_full_scan_tx,
             fs,
         ) = match self.candidates {
             FindSearchCandidates::Local {
@@ -605,21 +596,15 @@ impl Worker<'_> {
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx,
             } => (
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx,
                 Some(fs),
             ),
-            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => (
-                unbounded().1,
-                unbounded().1,
-                unbounded().0,
-                unbounded().0,
-                None,
-            ),
+            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => {
+                (unbounded().1, unbounded().1, unbounded().0, None)
+            }
         };
         // WorkerA: grabs a request for "find all matches in file/a" <- takes 5 minutes
         // right after: WorkerB: grabs a request for "find all matches in file/b" <- takes 5 seconds
@@ -633,7 +618,6 @@ impl Worker<'_> {
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
-                get_buffer_for_full_scan_tx: &get_buffer_for_full_scan_tx,
             };
             // Whenever we notice that some step of a pipeline is closed, we don't want to close subsequent
             // steps straight away. Another worker might be about to produce a value that will
@@ -649,10 +633,7 @@ impl Worker<'_> {
                 find_first_match = find_first_match.next() => {
                     if let Some(buffer_with_at_least_one_match) = find_first_match {
                         handler.handle_find_first_match(buffer_with_at_least_one_match).await;
-                    } else {
-                        get_buffer_for_full_scan_tx = bounded(1).0;
                     }
-
                 },
                 scan_path = scan_path.next() => {
                     if let Some(path_to_scan) = scan_path {
@@ -677,7 +658,6 @@ struct RequestHandler<'worker> {
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
-    get_buffer_for_full_scan_tx: &'worker Sender<ProjectPath>,
 }
 
 impl RequestHandler<'_> {
@@ -733,9 +713,8 @@ impl RequestHandler<'_> {
         _ = maybe!(async move {
             let InputPath {
                 entry,
-
                 snapshot,
-                should_scan_tx,
+                mut should_scan_tx,
             } = req;
 
             if entry.is_fifo || !entry.is_file() {
@@ -744,11 +723,11 @@ impl RequestHandler<'_> {
 
             if self.query.filters_path() {
                 let matched_path = if self.query.match_full_paths() {
-                    let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                    full_path.push(entry.path.as_std_path());
+                    let mut full_path = snapshot.root_name().to_owned();
+                    full_path.push(&entry.path);
                     self.query.match_path(&full_path)
                 } else {
-                    self.query.match_path(entry.path.as_std_path())
+                    self.query.match_path(&entry.path)
                 };
                 if !matched_path {
                     return Ok(());
@@ -758,7 +737,7 @@ impl RequestHandler<'_> {
             if self.open_entries.contains(&entry.id) {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
-                self.get_buffer_for_full_scan_tx
+                should_scan_tx
                     .send(ProjectPath {
                         worktree_id: snapshot.id(),
                         path: entry.path.clone(),
@@ -815,7 +794,6 @@ impl PathInclusionMatcher {
                 query
                     .files_to_include()
                     .sources()
-                    .iter()
                     .flat_map(|glob| Some(wax::Glob::new(glob).ok()?.partition().0)),
             );
         }
@@ -842,10 +820,10 @@ impl PathInclusionMatcher {
         }
 
         let as_abs_path = LazyCell::new(move || snapshot.absolutize(&entry.path));
-        let entry_path = entry.path.as_std_path();
+        let entry_path = &entry.path;
         // 3. Check Exclusions (Pruning)
         // If the current path is a child of an excluded path, we stop.
-        let is_excluded = self.path_is_definitely_excluded(entry_path, snapshot);
+        let is_excluded = self.path_is_definitely_excluded(&entry_path, snapshot);
 
         if is_excluded {
             return false;
@@ -865,10 +843,12 @@ impl PathInclusionMatcher {
                     as_abs_path.starts_with(prefix),
                 )
             } else {
-                (
-                    prefix.starts_with(entry_path),
-                    entry_path.starts_with(prefix),
-                )
+                RelPath::new(prefix, snapshot.path_style()).map_or((false, false), |prefix| {
+                    (
+                        prefix.starts_with(entry_path),
+                        entry_path.starts_with(&prefix),
+                    )
+                })
             };
 
             // Logic:
@@ -879,10 +859,10 @@ impl PathInclusionMatcher {
 
         is_included
     }
-    fn path_is_definitely_excluded(&self, path: &Path, snapshot: &Snapshot) -> bool {
-        if !self.query.files_to_exclude().sources().is_empty() {
+    fn path_is_definitely_excluded(&self, path: &RelPath, snapshot: &Snapshot) -> bool {
+        if !self.query.files_to_exclude().sources().next().is_none() {
             let mut path = if self.query.match_full_paths() {
-                let mut full_path = snapshot.root_name().as_std_path().to_owned();
+                let mut full_path = snapshot.root_name().to_owned();
                 full_path.push(path);
                 full_path
             } else {

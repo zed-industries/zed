@@ -890,7 +890,7 @@ impl Element for MarkdownElement {
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
                                             .id(("markdown-code-block-scrollbar", range.start))
-                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .tracked_scroll_handle(scroll_handle)
                                             .with_track_along(
                                                 ScrollAxes::Horizontal,
                                                 cx.theme().colors().editor_background,
@@ -1219,6 +1219,15 @@ impl Element for MarkdownElement {
                     builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<code>") {
+                        builder.push_text_style(self.style.inline_code.clone());
+                        continue;
+                    }
+                    if html.trim_end().starts_with("</code>") {
+                        builder.pop_text_style();
+                        continue;
+                    }
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {

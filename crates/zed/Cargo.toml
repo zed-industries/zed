@@ -2,13 +2,16 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.215.0"
+version = "0.217.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
 
 [lints]
 workspace = true
+
+[features]
+tracy = ["ztracing/tracy"]
 
 [[bin]]
 name = "zed"
@@ -50,7 +53,6 @@ debugger_tools.workspace = true
 debugger_ui.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
-zeta2_tools.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true
@@ -74,7 +76,8 @@ gpui = { workspace = true, features = [
 gpui_tokio.workspace = true
 rayon.workspace = true
 
-edit_prediction_button.workspace = true
+edit_prediction.workspace = true
+edit_prediction_ui.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inspector_ui.workspace = true
@@ -144,6 +147,8 @@ theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_input.workspace = true
@@ -160,8 +165,6 @@ web_search_providers.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
-zeta.workspace = true
-zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
 chrono.workspace = true
@@ -225,4 +228,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling", "zstd"]
+ignored = ["profiling", "zstd", "tracing"]

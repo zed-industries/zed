@@ -7,6 +7,8 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+#[cfg(test)]
+mod evals;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -69,6 +71,8 @@ actions!(
         CycleModeSelector,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Removes all thread history.
+        RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
         /// Adds a context server to the configuration.

@@ -7,7 +7,9 @@ use std::sync::atomic::AtomicBool;
 use acp_thread::MentionUri;
 use agent::{HistoryEntry, HistoryStore};
 use anyhow::Result;
-use editor::{CompletionProvider, Editor, ExcerptId};
+use editor::{
+    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
+};
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
@@ -25,6 +27,7 @@ use ui::prelude::*;
 use util::ResultExt as _;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
+use util::truncate_and_remove_front;
 use workspace::Workspace;
 
 use crate::AgentPanel;
@@ -336,14 +339,20 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
         project: Entity<Project>,
+        label_max_chars: usize,
         cx: &mut App,
     ) -> Option<Completion> {
         let path_style = project.read(cx).path_style(cx);
         let (file_name, directory) =
             extract_file_name_and_directory(&project_path.path, path_prefix, path_style);
 
-        let label =
-            build_code_label_for_path(&file_name, directory.as_ref().map(|s| s.as_ref()), None, cx);
+        let label = build_code_label_for_path(
+            &file_name,
+            directory.as_ref().map(|s| s.as_ref()),
+            None,
+            label_max_chars,
+            cx,
+        );
 
         let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
@@ -392,6 +401,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
         workspace: Entity<Workspace>,
+        label_max_chars: usize,
         cx: &mut App,
     ) -> Option<Completion> {
         let project = workspace.read(cx).project().clone();
@@ -414,6 +424,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             &symbol.name,
             Some(&file_name),
             Some(symbol.range.start.0.row + 1),
+            label_max_chars,
             cx,
         );
 
@@ -852,7 +863,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
         let state = buffer.update(cx, |buffer, cx| {
@@ -861,7 +872,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            ContextCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
         });
         let Some(state) = state else {
             return Task::ready(Ok(Vec::new()));
@@ -880,7 +891,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         let editor = self.editor.clone();
         let mention_set = self.mention_set.downgrade();
         match state {
-            ContextCompletion::SlashCommand(SlashCommandCompletion {
+            PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
@@ -943,10 +954,35 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     }])
                 })
             }
-            ContextCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
+            PromptCompletion::Mention(MentionCompletion { mode, argument, .. }) => {
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
+
+                // Calculate maximum characters available for the full label (file_name + space + directory)
+                // based on maximum menu width after accounting for padding, spacing, and icon width
+                let label_max_chars = {
+                    // Base06 left padding + Base06 gap + Base06 right padding + icon width
+                    let used_pixels = DynamicSpacing::Base06.px(cx) * 3.0
+                        + IconSize::XSmall.rems() * window.rem_size();
+
+                    let style = window.text_style();
+                    let font_id = window.text_system().resolve_font(&style.font());
+                    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+                    // Fallback em_width of 10px matches file_finder.rs fallback for TextSize::Small
+                    let em_width = cx
+                        .text_system()
+                        .em_width(font_id, font_size)
+                        .unwrap_or(px(10.0));
+
+                    // Calculate available pixels for text (file_name + directory)
+                    // Using max width since dynamic_width allows the menu to expand up to this
+                    let available_pixels = COMPLETION_MENU_MAX_WIDTH - used_pixels;
+
+                    // Convert to character count (total available for file_name + directory)
+                    (f32::from(available_pixels) / f32::from(em_width)) as usize
+                };
 
                 cx.spawn(async move |_, cx| {
                     let matches = search_task.await;
@@ -984,6 +1020,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         mention_set.clone(),
                                         workspace.clone(),
                                         project.clone(),
+                                        label_max_chars,
                                         cx,
                                     )
                                 }
@@ -996,6 +1033,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
+                                        label_max_chars,
                                         cx,
                                     )
                                 }
@@ -1076,7 +1114,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
@@ -1085,12 +1122,12 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            ContextCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
+            PromptCompletion::try_parse(line, offset_to_line, &self.source.supported_modes(cx))
                 .filter(|completion| {
                     // Right now we don't support completing arguments of slash commands
                     let is_slash_command_with_argument = matches!(
                         completion,
-                        ContextCompletion::SlashCommand(SlashCommandCompletion {
+                        PromptCompletion::SlashCommand(SlashCommandCompletion {
                             argument: Some(_),
                             ..
                         })
@@ -1160,12 +1197,13 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     })
 }
 
-enum ContextCompletion {
+#[derive(Debug, PartialEq)]
+enum PromptCompletion {
     SlashCommand(SlashCommandCompletion),
     Mention(MentionCompletion),
 }
 
-impl ContextCompletion {
+impl PromptCompletion {
     fn source_range(&self) -> Range<usize> {
         match self {
             Self::SlashCommand(completion) => completion.source_range.clone(),
@@ -1178,15 +1216,14 @@ impl ContextCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        if let Some(command) = SlashCommandCompletion::try_parse(line, offset_to_line) {
-            Some(Self::SlashCommand(command))
-        } else if let Some(mention) =
-            MentionCompletion::try_parse(line, offset_to_line, supported_modes)
-        {
-            Some(Self::Mention(mention))
-        } else {
-            None
+        if line.contains('@') {
+            if let Some(mention) =
+                MentionCompletion::try_parse(line, offset_to_line, supported_modes)
+            {
+                return Some(Self::Mention(mention));
+            }
         }
+        SlashCommandCompletion::try_parse(line, offset_to_line).map(Self::SlashCommand)
     }
 }
 
@@ -1595,6 +1632,7 @@ fn build_code_label_for_path(
     file: &str,
     directory: Option<&str>,
     line_number: Option<u32>,
+    label_max_chars: usize,
     cx: &App,
 ) -> CodeLabel {
     let variable_highlight_id = cx
@@ -1608,7 +1646,13 @@ fn build_code_label_for_path(
     label.push_str(" ", None);
 
     if let Some(directory) = directory {
-        label.push_str(directory, variable_highlight_id);
+        let file_name_chars = file.chars().count();
+        // Account for: file_name + space (ellipsis is handled by truncate_and_remove_front)
+        let directory_max_chars = label_max_chars
+            .saturating_sub(file_name_chars)
+            .saturating_sub(1);
+        let truncated_directory = truncate_and_remove_front(directory, directory_max_chars.max(5));
+        label.push_str(&truncated_directory, variable_highlight_id);
     }
     if let Some(line_number) = line_number {
         label.push_str(&format!(" L{}", line_number), variable_highlight_id);
@@ -1652,6 +1696,38 @@ fn selection_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_prompt_completion_parse() {
+        let supported_modes = vec![PromptContextType::File, PromptContextType::Symbol];
+
+        assert_eq!(
+            PromptCompletion::try_parse("/", 0, &supported_modes),
+            Some(PromptCompletion::SlashCommand(SlashCommandCompletion {
+                source_range: 0..1,
+                command: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("@", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 0..1,
+                mode: None,
+                argument: None,
+            }))
+        );
+
+        assert_eq!(
+            PromptCompletion::try_parse("/test @file", 0, &supported_modes),
+            Some(PromptCompletion::Mention(MentionCompletion {
+                source_range: 6..11,
+                mode: Some(PromptContextType::File),
+                argument: None,
+            }))
+        );
+    }
 
     #[test]
     fn test_slash_command_completion_parse() {
