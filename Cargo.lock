@@ -7005,8 +7005,15 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "menu",
+ "project",
+ "settings",
+ "theme",
+ "time",
  "ui",
+ "ui_input",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -20527,6 +20534,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",
