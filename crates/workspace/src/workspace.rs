@@ -1641,20 +1641,18 @@ impl Workspace {
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
-                } else {
-                    let restorable_bounds = serialized_workspace
-                        .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                        .or_else(|| {
-                            let (display, window_bounds) = DB.last_window().log_err()?;
-                            Some((display?, window_bounds?))
-                        });
-
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
+                } else if let Some(workspace) = serialized_workspace.as_ref() {
+                    // Reopening an existing workspace - restore its saved bounds
+                    if let (Some(display), Some(bounds)) =
+                        (workspace.display, workspace.window_bounds.as_ref())
+                    {
+                        (Some(bounds.0), Some(display))
                     } else {
                         (None, None)
                     }
+                } else {
+                    // New window - let GPUI's default_bounds() handle cascading
+                    (None, None)
                 };
 
                 // Use the serialized workspace to construct the new window
