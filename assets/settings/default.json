@@ -2124,10 +2124,10 @@
     // The mode can be one of the following: "normal", "replace", "insert", "visual".
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {},
-    // Whether Vim status shows friendly mode indicator labels.
+    // Whether to show friendly mode display.
     //
     // Default: false
-    "friendly_mode_indicator": false
+    "friendly_mode_display": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

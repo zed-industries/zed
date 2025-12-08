@@ -123,7 +123,7 @@ impl Render for ModeIndicator {
             return div().hidden().into_any_element();
         };
 
-        let friendly_mode = VimSettings::get_global(cx).friendly_mode_indicator;
+        let friendly_mode = VimSettings::get_global(cx).friendly_mode_display;
 
         let vim_readable = vim.read(cx);
         let status_label = vim_readable.status_label.clone();

@@ -1962,7 +1962,7 @@ pub(crate) struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
-    pub friendly_mode_indicator: bool,
+    pub friendly_mode_display: bool,
 }
 
 /// The settings for cursor shape.
@@ -2017,7 +2017,7 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
-            friendly_mode_indicator: vim.friendly_mode_indicator.unwrap(),
+            friendly_mode_display: vim.friendly_mode_display.unwrap(),
         }
     }
 }

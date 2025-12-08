@@ -673,10 +673,10 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
-    /// Whether to show friendly mode indicator labels in the Vim status.
+    /// Whether to show friendly mode display.
     ///
     /// Default: false
-    pub friendly_mode_indicator: Option<bool>,
+    pub friendly_mode_display: Option<bool>,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
