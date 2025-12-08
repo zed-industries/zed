@@ -93,9 +93,9 @@ impl std::fmt::Display for LanguageName {
     }
 }
 
-impl<'a> From<&'a str> for LanguageName {
-    fn from(str: &'a str) -> LanguageName {
-        LanguageName(SharedString::new(str))
+impl From<&'static str> for LanguageName {
+    fn from(str: &'static str) -> Self {
+        Self(SharedString::new_static(str))
     }
 }
 
