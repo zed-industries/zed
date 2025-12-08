@@ -327,8 +327,6 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 }
 
-// ---
-
 pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
@@ -340,29 +338,23 @@ pub fn into_deepseek(
     let mut current_reasoning: Option<String> = None;
 
     for message in request.messages {
-        for content in &message.content {
+        for content in message.content {
             match content {
-                MessageContent::Text(text) => {
-                    messages.push(match message.role {
-                        Role::User => deepseek::RequestMessage::User {
-                            content: text.clone(),
-                        },
-                        Role::Assistant => deepseek::RequestMessage::Assistant {
-                            content: Some(text.clone()),
-                            tool_calls: Vec::new(),
-                            reasoning_content: current_reasoning.take(),
-                        },
-                        Role::System => deepseek::RequestMessage::System {
-                            content: text.clone(),
-                        },
-                    });
-                }
+                MessageContent::Text(text) => messages.push(match message.role {
+                    Role::User => deepseek::RequestMessage::User { content: text },
+                    Role::Assistant => deepseek::RequestMessage::Assistant {
+                        content: Some(text),
+                        tool_calls: Vec::new(),
+                        reasoning_content: current_reasoning.take(),
+                    },
+                    Role::System => deepseek::RequestMessage::System { content: text },
+                }),
                 MessageContent::Thinking { text, .. } => {
                     // Accumulate reasoning content for next assistant message
-                    current_reasoning = Some(text.clone());
+                    current_reasoning.get_or_insert_default().push_str(&text);
                 }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image { .. } => {}
+                MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),
@@ -387,15 +379,17 @@ pub fn into_deepseek(
                         });
                     }
                 }
-                MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text) => {
-                        messages.push(deepseek::RequestMessage::Tool {
-                            content: text.to_string(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
-                    }
-                    LanguageModelToolResultContent::Image { .. } => {}
-                },
+                MessageContent::ToolResult(tool_result) => {
+                    match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            messages.push(deepseek::RequestMessage::Tool {
+                                content: text.to_string(),
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                            });
+                        }
+                        LanguageModelToolResultContent::Image(_) => {}
+                    };
+                }
             }
         }
     }
@@ -528,7 +522,8 @@ impl DeepSeekEventMapper {
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
-            Some(_stop_reason) => {
+            Some(stop_reason) => {
+                log::error!("Unexpected DeepSeek stop_reason: {stop_reason:?}",);
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}

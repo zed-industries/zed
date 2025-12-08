@@ -266,17 +266,13 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
-
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request_json = serde_json::to_string(&request)?;
-
-    let request = request_builder.body(AsyncBody::from(request_json))?;
-
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
