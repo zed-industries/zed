@@ -216,6 +216,12 @@ impl BatchingLlmClient {
             .await
             .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
+            log::info!(
+                "Batch {} status: {}",
+                batch_id,
+                batch_status.processing_status
+            );
+
             if batch_status.processing_status == "ended" {
                 let results = anthropic::batches::retrieve_batch_results(
                     self.http_client.as_ref(),
@@ -226,6 +232,7 @@ impl BatchingLlmClient {
                 .await
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
+                let mut success_count = 0;
                 for result in results {
                     let request_hash = result
                         .custom_id
@@ -238,6 +245,7 @@ impl BatchingLlmClient {
                             let response_json = serde_json::to_string(&message)?;
                             let q = sql!(UPDATE cache SET response = ? WHERE request_hash = ?);
                             self.connection.exec_bound(q)?((response_json, request_hash))?;
+                            success_count += 1;
                         }
                         anthropic::batches::BatchResult::Errored { error } => {
                             log::error!("Batch request {} failed: {:?}", request_hash, error);
@@ -250,6 +258,7 @@ impl BatchingLlmClient {
                         }
                     }
                 }
+                log::info!("Uploaded {} successful requests", success_count);
             }
         }
 
@@ -309,6 +318,7 @@ impl BatchingLlmClient {
             })
             .collect::<Vec<_>>();
 
+        let batch_len = batch_requests.len();
         let batch = anthropic::batches::create_batch(
             self.http_client.as_ref(),
             ANTHROPIC_API_URL,
@@ -324,6 +334,8 @@ impl BatchingLlmClient {
             UPDATE cache SET batch_id = ? WHERE batch_id is NULL
         );
         self.connection.exec_bound(q)?(batch.id.as_str())?;
+
+        log::info!("Uploaded batch with {} requests", batch_len);
 
         Ok(batch.id)
     }
