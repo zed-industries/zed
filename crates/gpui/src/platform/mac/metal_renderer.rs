@@ -95,13 +95,7 @@ impl InstanceBufferPool {
     pub(crate) fn acquire(&mut self) -> InstanceBuffer {
         let (mutex, condvar) = &*self.sync;
         let mut available = mutex.lock();
-        condvar.wait_while(&mut available, |count| {
-            let cond = *count == 0;
-            if cond {
-                println!("Acquire is locked!")
-            }
-            cond
-        });
+        condvar.wait_while(&mut available, |count| *count == 0);
         *available -= 1;
 
         let index = self.current_index;
