@@ -27636,7 +27636,7 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         "
     });
 
-    // Case 9: Test blockquote newline preserves something
+    // Case 7: Test blockquote newline preserves something
     cx.set_state(indoc! {"
         > Item 1ˇ
         "
