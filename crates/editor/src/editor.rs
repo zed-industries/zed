@@ -17039,9 +17039,7 @@ impl Editor {
             })
             .collect();
 
-        let Some(workspace) = self.workspace() else {
-            return Task::ready(Ok(Navigated::No));
-        };
+        let workspace = self.workspace();
 
         cx.spawn_in(window, async move |editor, cx| {
             let locations: Vec<Location> = future::join_all(definitions)
@@ -17096,6 +17094,10 @@ impl Editor {
                     })
                     .context("buffer title")?;
 
+                let Some(workspace) = workspace else {
+                    return Ok(Navigated::No);
+                };
+
                 let opened = workspace
                     .update_in(cx, |workspace, window, cx| {
                         let allow_preview = PreviewTabsSettings::get_global(cx)
@@ -17125,6 +17127,9 @@ impl Editor {
                         // TODO(andrew): respect preview tab settings
                         //               `enable_keep_preview_on_code_navigation` and
                         //               `enable_preview_file_from_code_navigation`
+                        let Some(workspace) = workspace else {
+                            return Ok(Navigated::No);
+                        };
                         workspace
                             .update_in(cx, |workspace, window, cx| {
                                 workspace.open_resolved_path(path, window, cx)
@@ -17148,6 +17153,9 @@ impl Editor {
                     {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
+                        let Some(workspace) = workspace else {
+                            return Navigated::No;
+                        };
                         let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
