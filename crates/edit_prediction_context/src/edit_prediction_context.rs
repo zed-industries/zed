@@ -383,6 +383,8 @@ async fn rebuild_related_files(
         .await)
 }
 
+const MAX_TARGET_LEN: usize = 128;
+
 fn process_definition(
     location: LocationLink,
     project: &Entity<Project>,
@@ -395,6 +397,15 @@ fn process_definition(
     if worktree.read(cx).is_single_file() {
         return None;
     }
+
+    // If the target range is large, it likely means we requested the definition of an entire module.
+    // For individual definitions, the target range should be small as it only covers the symbol.
+    let buffer = location.target.buffer.read(cx);
+    let target_len = anchor_range.to_offset(&buffer).len();
+    if target_len > MAX_TARGET_LEN {
+        return None;
+    }
+
     Some(CachedDefinition {
         path: ProjectPath {
             worktree_id: file.worktree_id(cx),
