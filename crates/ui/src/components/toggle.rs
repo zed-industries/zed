@@ -280,12 +280,9 @@ impl RenderOnce for Checkbox {
 /// Defines the color for a switch component.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum SwitchColor {
-    #[default]
     Default,
+    #[default]
     Accent,
-    Error,
-    Warning,
-    Success,
     Custom(Hsla),
 }
 
@@ -307,19 +304,8 @@ impl SwitchColor {
             }
             SwitchColor::Accent => {
                 let status = cx.theme().status();
-                (status.info.opacity(0.4), status.info.opacity(0.2))
-            }
-            SwitchColor::Error => {
-                let status = cx.theme().status();
-                (status.error.opacity(0.4), status.error.opacity(0.2))
-            }
-            SwitchColor::Warning => {
-                let status = cx.theme().status();
-                (status.warning.opacity(0.4), status.warning.opacity(0.2))
-            }
-            SwitchColor::Success => {
-                let status = cx.theme().status();
-                (status.success.opacity(0.4), status.success.opacity(0.2))
+                let colors = cx.theme().colors();
+                (status.info.opacity(0.4), colors.text_accent.opacity(0.2))
             }
             SwitchColor::Custom(color) => (*color, color.opacity(0.6)),
         }
@@ -331,9 +317,6 @@ impl From<SwitchColor> for Color {
         match color {
             SwitchColor::Default => Color::Default,
             SwitchColor::Accent => Color::Accent,
-            SwitchColor::Error => Color::Error,
-            SwitchColor::Warning => Color::Warning,
-            SwitchColor::Success => Color::Success,
             SwitchColor::Custom(_) => Color::Default,
         }
     }
@@ -990,27 +973,6 @@ impl Component for Switch {
                                 "Accent",
                                 Switch::new("switch_accent_style", ToggleState::Selected)
                                     .color(SwitchColor::Accent)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Switch::new("switch_error_style", ToggleState::Selected)
-                                    .color(SwitchColor::Error)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Switch::new("switch_warning_style", ToggleState::Selected)
-                                    .color(SwitchColor::Warning)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Success",
-                                Switch::new("switch_success_style", ToggleState::Selected)
-                                    .color(SwitchColor::Success)
                                     .on_click(|_, _, _cx| {})
                                     .into_any_element(),
                             ),
