@@ -5,13 +5,11 @@ use crate::{
     Surface, Underline, point, size,
 };
 use anyhow::Result;
-use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
-use dispatch::Semaphore;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -58,11 +56,12 @@ pub unsafe fn new_renderer(
 pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
-    current_index: usize,
-    semaphore: Semaphore,
+    in_flight: [Option<usize>; MAXIMUM_DRAWABLE_COUNT],
+    in_flight_index: usize,
 }
 
 pub(crate) struct InstanceBuffer {
+    pool_index: usize,
     metal_buffer: metal::Buffer,
     size: usize,
 }
@@ -70,13 +69,14 @@ pub(crate) struct InstanceBuffer {
 impl InstanceBufferPool {
     const MIN_BUFFER_SIZE: usize = 2 * 1024 * 1024;
     const MAX_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+    const ACQUIRED_SENTINEL: usize = usize::MAX;
 
     pub(crate) fn new(device: &metal::Device) -> Self {
         Self {
             buffer_size: Self::MIN_BUFFER_SIZE,
             buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device),
-            current_index: 0,
-            semaphore: Semaphore::new(MAXIMUM_DRAWABLE_COUNT as u32),
+            in_flight: [None; MAXIMUM_DRAWABLE_COUNT],
+            in_flight_index: 0,
         }
     }
 
@@ -87,22 +87,38 @@ impl InstanceBufferPool {
         } else {
             self.buffer_size = next_size;
             self.buffers = Self::build_buffers(next_size, device);
+            self.in_flight = [None; MAXIMUM_DRAWABLE_COUNT];
             Ok(next_size)
         }
     }
 
-    pub(crate) fn acquire(&mut self) -> InstanceBuffer {
-        self.semaphore.wait();
-        let index = self.current_index;
-        self.current_index = (self.current_index + 1) % MAXIMUM_DRAWABLE_COUNT;
-        InstanceBuffer {
-            metal_buffer: self.buffers[index].clone(),
-            size: self.buffer_size,
+    pub(crate) fn acquire(&mut self) -> Option<InstanceBuffer> {
+        let index = self.in_flight_index % MAXIMUM_DRAWABLE_COUNT;
+        let in_flight_frame = &mut self.in_flight[index];
+
+        let available = match *in_flight_frame {
+            None => true,
+            Some(Self::ACQUIRED_SENTINEL) => false,
+            Some(frame) => self.in_flight_index.saturating_sub(frame) >= MAXIMUM_DRAWABLE_COUNT,
+        };
+
+        if available {
+            *in_flight_frame = Some(Self::ACQUIRED_SENTINEL);
+            Some(InstanceBuffer {
+                pool_index: index,
+                metal_buffer: self.buffers[index].clone(),
+                size: self.buffer_size,
+            })
+        } else {
+            None
         }
     }
 
-    pub(crate) fn semaphore(&self) -> Semaphore {
-        self.semaphore.clone()
+    pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
+        if buffer.size == self.buffer_size {
+            self.in_flight[buffer.pool_index] = Some(self.in_flight_index);
+        }
+        self.in_flight_index = self.in_flight_index.wrapping_add(1);
     }
 
     fn build_buffers(
@@ -397,18 +413,17 @@ impl MetalRenderer {
         };
 
         loop {
-            let mut instance_buffer = self.instance_buffer_pool.acquire();
-            let semaphore = self.instance_buffer_pool.semaphore();
+            let Some(mut instance_buffer) = self.instance_buffer_pool.acquire() else {
+                log::error!("failed to acquire instance buffer: all buffers in flight");
+                return;
+            };
 
             let command_buffer =
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
                 Ok(command_buffer) => {
-                    let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
-                        semaphore.signal();
-                    });
-                    command_buffer.add_completed_handler(&block);
+                    self.instance_buffer_pool.release(instance_buffer);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -425,8 +440,6 @@ impl MetalRenderer {
                         "failed to render: {}. retrying with larger instance buffer size",
                         err
                     );
-
-                    semaphore.signal();
 
                     match self.instance_buffer_pool.grow(&self.device) {
                         Ok(new_size) => {
