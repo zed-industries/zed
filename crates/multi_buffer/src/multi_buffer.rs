@@ -57,6 +57,7 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
+use ztracing::instrument;
 
 pub use self::path_key::PathKey;
 
@@ -1673,6 +1674,7 @@ impl MultiBuffer {
         self.insert_excerpts_after(ExcerptId::max(), buffer, ranges, cx)
     }
 
+    #[instrument(skip_all)]
     fn merge_excerpt_ranges<'a>(
         expanded_ranges: impl IntoIterator<Item = &'a ExcerptRange<Point>> + 'a,
     ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
@@ -4533,6 +4535,7 @@ impl MultiBufferSnapshot {
         self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_point)
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> MultiBufferOffset {
         self.convert_dimension(point, text::BufferSnapshot::point_to_offset)
     }
@@ -4586,6 +4589,7 @@ impl MultiBufferSnapshot {
         }
     }
 
+    #[instrument(skip_all)]
     fn convert_dimension<MBR1, MBR2, BR1, BR2>(
         &self,
         key: MBR1,
@@ -6503,12 +6507,13 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt for the given id. The returned excerpt is guaranteed
-    /// to have the same excerpt id as the one passed in, with the exception of
-    /// `ExcerptId::max()`.
+    /// to have the latest excerpt id for the one passed in and will also remap
+    /// `ExcerptId::max()` to the corresponding excertp ID.
     ///
     /// Callers of this function should generally use the resulting excerpt's `id` field
     /// afterwards.
     fn excerpt(&self, excerpt_id: ExcerptId) -> Option<&Excerpt> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         cursor.seek(&Some(locator), Bias::Left);
@@ -6734,6 +6739,7 @@ where
     MBD: MultiBufferDimension + Ord + Sub + ops::AddAssign<<MBD as Sub>::Output>,
     BD: TextDimension + AddAssign<<MBD as Sub>::Output>,
 {
+    #[instrument(skip_all)]
     fn seek(&mut self, position: &MBD) {
         let position = OutputDimension(*position);
         self.cached_region.take();

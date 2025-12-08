@@ -1359,11 +1359,11 @@ impl WorkspaceDb {
             // If a local workspace points to WSL, this check will cause us to wait for the
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
-            if !has_wsl_path
-                && paths.paths().iter().all(|path| path.exists())
-                && paths.paths().iter().any(|path| path.is_dir())
-            {
-                result.push((id, SerializedWorkspaceLocation::Local, paths));
+            if !has_wsl_path && paths.paths().iter().all(|path| path.exists()) {
+                // Only show directories in recent projects
+                if paths.paths().iter().any(|path| path.is_dir()) {
+                    result.push((id, SerializedWorkspaceLocation::Local, paths));
+                }
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }

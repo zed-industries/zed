@@ -162,10 +162,11 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
-
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
+    ztracing::init();
+
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]

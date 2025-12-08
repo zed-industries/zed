@@ -2,13 +2,13 @@ use super::*;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
-use language::{Language, LanguageConfig, LanguageMatcher, Point, ToPoint as _, tree_sitter_rust};
+use language::{Point, ToPoint as _, rust_lang};
 use lsp::FakeLanguageServer;
 use project::{FakeFs, LocationLink, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::sync::Arc;
-use util::path;
+use std::fmt::Write as _;
+use util::{path, test::marked_text_ranges};
 
 #[gpui::test]
 async fn test_edit_prediction_context(cx: &mut TestAppContext) {
@@ -37,6 +37,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             buffer.anchor_before(offset)
         };
 
+        store.set_identifier_line_count(0);
         store.refresh(buffer.clone(), position, cx);
     });
 
@@ -83,6 +84,150 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             ],
         );
     });
+}
+
+#[gpui::test]
+fn test_assemble_excerpts(cx: &mut TestAppContext) {
+    let table = [
+        (
+            indoc! {r#"
+                struct User {
+                    first_name: String,
+                    «last_name»: String,
+                    age: u32,
+                    email: String,
+                    create_at: Instant,
+                }
+
+                impl User {
+                    pub fn first_name(&self) -> String {
+                        self.first_name.clone()
+                    }
+
+                    pub fn full_name(&self) -> String {
+                «        format!("{} {}", self.first_name, self.last_name)
+                »    }
+                }
+            "#},
+            indoc! {r#"
+                struct User {
+                    first_name: String,
+                    last_name: String,
+                …
+                }
+
+                impl User {
+                …
+                    pub fn full_name(&self) -> String {
+                        format!("{} {}", self.first_name, self.last_name)
+                    }
+                }
+            "#},
+        ),
+        (
+            indoc! {r#"
+                struct «User» {
+                    first_name: String,
+                    last_name: String,
+                    age: u32,
+                }
+
+                impl User {
+                    // methods
+                }
+            "#},
+            indoc! {r#"
+                struct User {
+                    first_name: String,
+                    last_name: String,
+                    age: u32,
+                }
+                …
+            "#},
+        ),
+        (
+            indoc! {r#"
+                trait «FooProvider» {
+                    const NAME: &'static str;
+
+                    fn provide_foo(&self, id: usize) -> Foo;
+
+                    fn provide_foo_batched(&self, ids: &[usize]) -> Vec<Foo> {
+                            ids.iter()
+                            .map(|id| self.provide_foo(*id))
+                            .collect()
+                    }
+
+                    fn sync(&self);
+                }
+                "#
+            },
+            indoc! {r#"
+                trait FooProvider {
+                    const NAME: &'static str;
+
+                    fn provide_foo(&self, id: usize) -> Foo;
+
+                    fn provide_foo_batched(&self, ids: &[usize]) -> Vec<Foo> {
+                …
+                    }
+
+                    fn sync(&self);
+                }
+            "#},
+        ),
+        (
+            indoc! {r#"
+                trait «Something» {
+                    fn method1(&self, id: usize) -> Foo;
+
+                    fn method2(&self, ids: &[usize]) -> Vec<Foo> {
+                            struct Helper1 {
+                            field1: usize,
+                            }
+
+                            struct Helper2 {
+                            field2: usize,
+                            }
+
+                            struct Helper3 {
+                            filed2: usize,
+                        }
+                    }
+
+                    fn sync(&self);
+                }
+                "#
+            },
+            indoc! {r#"
+                trait Something {
+                    fn method1(&self, id: usize) -> Foo;
+
+                    fn method2(&self, ids: &[usize]) -> Vec<Foo> {
+                …
+                    }
+
+                    fn sync(&self);
+                }
+            "#},
+        ),
+    ];
+
+    for (input, expected_output) in table {
+        let (input, ranges) = marked_text_ranges(&input, false);
+        let buffer = cx.new(|cx| Buffer::local(input, cx).with_language(rust_lang(), cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            let ranges: Vec<Range<Point>> = ranges
+                .into_iter()
+                .map(|range| range.to_point(&buffer))
+                .collect();
+
+            let excerpts = assemble_excerpts(&buffer.snapshot(), ranges);
+
+            let output = format_excerpts(buffer, &excerpts);
+            assert_eq!(output, expected_output);
+        });
+    }
 }
 
 #[gpui::test]
@@ -339,22 +484,27 @@ fn assert_definitions(definitions: &[LocationLink], first_lines: &[&str], cx: &m
     assert_eq!(actual_first_lines, first_lines);
 }
 
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    first_line_pattern: None,
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(include_str!("../../languages/src/rust/highlights.scm"))
-        .unwrap()
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap(),
-    )
+fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
+    let mut output = String::new();
+    let file_line_count = buffer.max_point().row;
+    let mut current_row = 0;
+    for excerpt in excerpts {
+        if excerpt.text.is_empty() {
+            continue;
+        }
+        if current_row < excerpt.point_range.start.row {
+            writeln!(&mut output, "…").unwrap();
+        }
+        current_row = excerpt.point_range.start.row;
+
+        for line in excerpt.text.to_string().lines() {
+            output.push_str(line);
+            output.push('\n');
+            current_row += 1;
+        }
+    }
+    if current_row < file_line_count {
+        writeln!(&mut output, "…").unwrap();
+    }
+    output
 }

@@ -1023,7 +1023,7 @@ impl DebugDelegate {
             Some(TaskSourceKind::Lsp { language_name, .. }) => {
                 Some(format!("LSP: {language_name}"))
             }
-            Some(TaskSourceKind::Language { name }) => Some(format!("Lang: {name}")),
+            Some(TaskSourceKind::Language { name }) => Some(format!("Language: {name}")),
             _ => context.clone().and_then(|ctx| {
                 ctx.task_context
                     .task_variables
