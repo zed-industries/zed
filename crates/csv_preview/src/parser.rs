@@ -60,6 +60,7 @@ impl CsvPreviewView {
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
 
+            let instant = Instant::now();
             let contents = view.update(cx, |_, cx| {
                 editor
                     .read(cx)
@@ -74,6 +75,7 @@ impl CsvPreviewView {
 
             let parsed_csv = parsing_task.await;
 
+            log::debug!("Parsed CSV in {}ms", instant.elapsed().as_millis());
             view.update(cx, move |view, cx| {
                 view.contents = parsed_csv;
                 cx.notify();
