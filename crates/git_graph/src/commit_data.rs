@@ -2,9 +2,23 @@ use anyhow::Result;
 use gpui::Entity;
 use project::Project;
 use std::path::PathBuf;
+use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;
 
 use crate::graph_rendering::BRANCH_COLORS;
+
+fn format_timestamp(timestamp: i64) -> String {
+    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return "Unknown".to_string();
+    };
+
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    let local_datetime = datetime.to_offset(local_offset);
+
+    let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+        .unwrap_or_default();
+    local_datetime.format(&format).unwrap_or_default()
+}
 
 #[derive(Clone, Debug)]
 pub struct GraphLine {
@@ -29,7 +43,7 @@ pub struct CommitEntry {
     pub short_sha: String,
     pub subject: String,
     pub author_name: String,
-    pub timestamp: i64,
+    pub formatted_time: String,
     pub parents: Vec<String>,
     pub refs: Vec<String>,
     pub lane: usize,
@@ -274,7 +288,7 @@ fn build_graph(
             short_sha,
             subject,
             author_name,
-            timestamp,
+            formatted_time: format_timestamp(timestamp),
             parents,
             refs,
             lane: commit_lane,

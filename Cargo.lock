@@ -6998,11 +6998,13 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "menu",
  "project",
  "settings",
  "theme",
  "time",
  "ui",
+ "ui_input",
  "util",
  "workspace",
 ]

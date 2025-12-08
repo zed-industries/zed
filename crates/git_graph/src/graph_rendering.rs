@@ -1,9 +1,4 @@
-use gpui::{
-    App, Bounds, Hsla, IntoElement, Pixels, Point, SharedString, Styled, Window, canvas,
-    hsla, px,
-};
-use time::{OffsetDateTime, UtcOffset};
-use ui::prelude::*;
+use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
 
 use crate::commit_data::LineType;
 
@@ -214,19 +209,6 @@ pub const BRANCH_COLORS: &[Hsla] = &[
     }, // Medium Violet
 ];
 
-pub fn format_timestamp(timestamp: i64) -> String {
-    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
-    };
-
-    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    let local_datetime = datetime.to_offset(local_offset);
-
-    let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-        .unwrap_or_default();
-    local_datetime.format(&format).unwrap_or_default()
-}
-
 pub fn render_graph_continuation(
     lines: Vec<crate::commit_data::GraphLine>,
     graph_width: Pixels,
@@ -240,29 +222,17 @@ pub fn render_graph_continuation(
             let y_bottom = bounds.origin.y + bounds.size.height;
             let line_width = px(2.0);
 
-            let mut lanes_to_draw: std::collections::HashMap<usize, usize> =
-                std::collections::HashMap::new();
-
             for line in &lines {
-                match line.line_type {
-                    LineType::Straight => {
-                        if !line.ends_at_commit {
-                            lanes_to_draw
-                                .entry(line.from_lane)
-                                .or_insert(line.color_idx);
-                        }
+                let (lane, color_idx) = match line.line_type {
+                    LineType::Straight if !line.ends_at_commit => {
+                        (line.from_lane, line.color_idx)
                     }
-                    LineType::BranchOut => {
-                        lanes_to_draw.entry(line.to_lane).or_insert(line.color_idx);
-                    }
-                    _ => {}
-                }
-            }
+                    LineType::BranchOut => (line.to_lane, line.color_idx),
+                    _ => continue,
+                };
 
-            for (lane, color_idx) in &lanes_to_draw {
-                let color = BRANCH_COLORS[*color_idx % BRANCH_COLORS.len()];
-                let x =
-                    bounds.origin.x + left_padding + lane_width * *lane as f32 + lane_width / 2.0;
+                let color = BRANCH_COLORS[color_idx % BRANCH_COLORS.len()];
+                let x = bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
 
                 window.paint_quad(gpui::fill(
                     Bounds::new(
@@ -363,44 +333,58 @@ fn draw_s_curve(
     line_width: Pixels,
     color: Hsla,
 ) {
-    let segments = 20;
-    let half_width = f32::from(line_width / 2.0);
+    if from_x == to_x {
+        window.paint_quad(gpui::fill(
+            Bounds::new(
+                Point::new(from_x - line_width / 2.0, from_y),
+                gpui::size(line_width, to_y - from_y),
+            ),
+            color,
+        ));
+        return;
+    }
 
+    let segments = 12;
+    let half_width = f32::from(line_width / 2.0);
     let mid_y = (from_y + to_y) / 2.0;
 
-    for i in 0..segments {
-        let t0 = i as f32 / segments as f32;
-        let t1 = (i + 1) as f32 / segments as f32;
+    let mut left_points = Vec::with_capacity(segments + 1);
+    let mut right_points = Vec::with_capacity(segments + 1);
 
-        let (x0, y0) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t0);
-        let (x1, y1) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t1);
+    for i in 0..=segments {
+        let t = i as f32 / segments as f32;
+        let (x, y) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t);
 
-        let dx = f32::from(x1 - x0);
-        let dy = f32::from(y1 - y0);
-        let len = (dx * dx + dy * dy).sqrt();
+        let (dx, dy) = cubic_bezier_derivative(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t);
+        let dx_f = f32::from(dx);
+        let dy_f = f32::from(dy);
+        let len = (dx_f * dx_f + dy_f * dy_f).sqrt();
 
-        if len > 0.01 {
-            let nx = -dy / len * half_width;
-            let ny = dx / len * half_width;
+        let (nx, ny) = if len > 0.001 {
+            (-dy_f / len * half_width, dx_f / len * half_width)
+        } else {
+            (half_width, 0.0)
+        };
 
-            let mut path = gpui::Path::new(Point::new(x0 - px(nx), y0 - px(ny)));
-            path.line_to(Point::new(x0 + px(nx), y0 + px(ny)));
-            path.line_to(Point::new(x1 + px(nx), y1 + px(ny)));
-            path.line_to(Point::new(x1 - px(nx), y1 - px(ny)));
-            window.paint_path(path, color);
-        }
+        left_points.push(Point::new(x - px(nx), y - px(ny)));
+        right_points.push(Point::new(x + px(nx), y + px(ny)));
     }
+
+    let mut path = gpui::Path::new(left_points[0]);
+    for point in left_points.iter().skip(1) {
+        path.line_to(*point);
+    }
+    for point in right_points.iter().rev() {
+        path.line_to(*point);
+    }
+    window.paint_path(path, color);
 }
 
 fn cubic_bezier(
-    p0x: Pixels,
-    p0y: Pixels,
-    p1x: Pixels,
-    p1y: Pixels,
-    p2x: Pixels,
-    p2y: Pixels,
-    p3x: Pixels,
-    p3y: Pixels,
+    p0x: Pixels, p0y: Pixels,
+    p1x: Pixels, p1y: Pixels,
+    p2x: Pixels, p2y: Pixels,
+    p3x: Pixels, p3y: Pixels,
     t: f32,
 ) -> (Pixels, Pixels) {
     let inv_t = 1.0 - t;
@@ -414,120 +398,82 @@ fn cubic_bezier(
     (x, y)
 }
 
-enum RefType {
-    Head,
-    LocalBranch { is_current: bool },
-    RemoteBranch,
-    Tag,
+fn cubic_bezier_derivative(
+    p0x: Pixels, p0y: Pixels,
+    p1x: Pixels, p1y: Pixels,
+    p2x: Pixels, p2y: Pixels,
+    p3x: Pixels, p3y: Pixels,
+    t: f32,
+) -> (Pixels, Pixels) {
+    let inv_t = 1.0 - t;
+    let inv_t2 = inv_t * inv_t;
+    let t2 = t * t;
+
+    let dx = 3.0 * inv_t2 * (p1x - p0x) + 6.0 * inv_t * t * (p2x - p1x) + 3.0 * t2 * (p3x - p2x);
+    let dy = 3.0 * inv_t2 * (p1y - p0y) + 6.0 * inv_t * t * (p2y - p1y) + 3.0 * t2 * (p3y - p2y);
+    (dx, dy)
 }
 
-struct RefBadge {
-    display_name: SharedString,
-    ref_type: RefType,
+pub enum BadgeType {
+    CurrentBranch(String, bool),  // name, has_origin
+    LocalBranch(String, bool),    // name, has_origin
+    RemoteBranch(String),         // full name like "origin/dev"
+    Tag(String),
 }
 
-fn parse_refs(refs: &[String]) -> Vec<RefBadge> {
-    let mut badges = Vec::new();
-    let mut has_head = false;
+pub fn parse_refs_to_badges(refs: &[String]) -> Vec<BadgeType> {
+    use std::collections::HashSet;
 
+    let mut result = Vec::new();
+    let mut local_branches: HashSet<String> = HashSet::new();
+    let mut remote_branches: HashSet<String> = HashSet::new();
+    let mut current_branch: Option<String> = None;
+
+    // First pass: collect all refs
     for ref_name in refs {
         if ref_name.starts_with("HEAD -> ") {
-            has_head = true;
             if let Some(branch) = ref_name.strip_prefix("HEAD -> ") {
-                badges.push(RefBadge {
-                    display_name: branch.to_string().into(),
-                    ref_type: RefType::LocalBranch { is_current: true },
-                });
+                current_branch = Some(branch.to_string());
+                local_branches.insert(branch.to_string());
             }
-        } else if ref_name == "HEAD" {
-            has_head = true;
         } else if let Some(tag) = ref_name.strip_prefix("tag: ") {
-            badges.push(RefBadge {
-                display_name: tag.to_string().into(),
-                ref_type: RefType::Tag,
-            });
-        } else if ref_name.starts_with("origin/") {
-            if ref_name != "origin/HEAD" {
-                badges.push(RefBadge {
-                    display_name: ref_name.clone().into(),
-                    ref_type: RefType::RemoteBranch,
-                });
+            result.push(BadgeType::Tag(tag.to_string()));
+        } else if let Some(remote) = ref_name.strip_prefix("origin/") {
+            if remote != "HEAD" {
+                remote_branches.insert(remote.to_string());
             }
         } else if !ref_name.contains("HEAD") {
-            badges.push(RefBadge {
-                display_name: ref_name.clone().into(),
-                ref_type: RefType::LocalBranch { is_current: false },
-            });
+            local_branches.insert(ref_name.clone());
         }
     }
 
-    if has_head && badges.is_empty() {
-        badges.insert(
-            0,
-            RefBadge {
-                display_name: "HEAD".into(),
-                ref_type: RefType::Head,
-            },
-        );
+    // Build badges: current branch first
+    let mut branch_badges = Vec::new();
+    if let Some(ref current) = current_branch {
+        let has_origin = remote_branches.contains(current);
+        branch_badges.push(BadgeType::CurrentBranch(current.clone(), has_origin));
+        remote_branches.remove(current);
+        local_branches.remove(current);
     }
 
-    badges
-}
+    // Then other local branches
+    let mut local_sorted: Vec<_> = local_branches.iter().cloned().collect();
+    local_sorted.sort();
+    for branch in local_sorted {
+        let has_origin = remote_branches.contains(&branch);
+        branch_badges.push(BadgeType::LocalBranch(branch.clone(), has_origin));
+        remote_branches.remove(&branch);
+    }
 
-pub fn render_ref_badges(refs: &[String]) -> impl IntoElement {
-    let badges = parse_refs(refs);
+    // Then remote-only branches
+    let mut remote_sorted: Vec<_> = remote_branches.iter().cloned().collect();
+    remote_sorted.sort();
+    for branch in remote_sorted {
+        branch_badges.push(BadgeType::RemoteBranch(format!("origin/{}", branch)));
+    }
 
-    h_flex()
-        .gap_1()
-        .children(badges.into_iter().take(4).map(|badge| {
-            let (bg_color, text_color, icon) = match badge.ref_type {
-                RefType::Head => (
-                    hsla(180.0 / 360.0, 0.7, 0.35, 1.0),
-                    hsla(0.0, 0.0, 1.0, 1.0),
-                    IconName::ArrowUpRight,
-                ),
-                RefType::LocalBranch { is_current } => {
-                    if is_current {
-                        (
-                            hsla(145.0 / 360.0, 0.65, 0.35, 1.0),
-                            hsla(0.0, 0.0, 1.0, 1.0),
-                            IconName::GitBranch,
-                        )
-                    } else {
-                        (
-                            hsla(145.0 / 360.0, 0.5, 0.4, 1.0),
-                            hsla(0.0, 0.0, 1.0, 1.0),
-                            IconName::GitBranch,
-                        )
-                    }
-                }
-                RefType::RemoteBranch => (
-                    hsla(210.0 / 360.0, 0.6, 0.45, 1.0),
-                    hsla(0.0, 0.0, 1.0, 1.0),
-                    IconName::Server,
-                ),
-                RefType::Tag => (
-                    hsla(35.0 / 360.0, 0.8, 0.45, 1.0),
-                    hsla(0.0, 0.0, 1.0, 1.0),
-                    IconName::Hash,
-                ),
-            };
-
-            h_flex()
-                .gap_1()
-                .px_1p5()
-                .py_0p5()
-                .rounded_sm()
-                .bg(bg_color)
-                .child(
-                    Icon::new(icon)
-                        .size(IconSize::XSmall)
-                        .color(Color::Custom(text_color)),
-                )
-                .child(
-                    Label::new(badge.display_name)
-                        .size(LabelSize::Small)
-                        .color(Color::Custom(text_color)),
-                )
-        }))
+    // Combine: branches first, then tags
+    let tags: Vec<_> = result.into_iter().collect();
+    branch_badges.extend(tags);
+    branch_badges
 }

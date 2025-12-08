@@ -9,6 +9,7 @@ use gpui::{
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled,
     Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list, px,
 };
+use menu;
 use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
@@ -16,11 +17,13 @@ use std::path::PathBuf;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{ContextMenu, Tooltip};
+use ui_input::InputField;
+use workspace::ModalView;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
 
 use commit_data::{CommitEntry, load_commits, run_git_command};
-use graph_rendering::{format_timestamp, render_graph_cell, render_graph_continuation, render_ref_badges};
+use graph_rendering::{render_graph_cell, render_graph_continuation, parse_refs_to_badges, BadgeType, BRANCH_COLORS};
 
 actions!(
     git_graph,
@@ -62,6 +65,250 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+#[derive(Clone)]
+pub enum InputModalKind {
+    CreateBranch { sha: String },
+    CreateTag { sha: String },
+    RenameBranch { old_name: String },
+    CheckoutRemoteBranch { remote_branch: String },
+}
+
+pub struct InputModal {
+    focus_handle: FocusHandle,
+    input: Entity<InputField>,
+    kind: InputModalKind,
+    work_dir: PathBuf,
+    git_graph: WeakEntity<GitGraph>,
+    push_to_remote: bool,
+}
+
+impl InputModal {
+    pub fn new(
+        kind: InputModalKind,
+        placeholder: impl Into<SharedString>,
+        default_value: &str,
+        work_dir: PathBuf,
+        git_graph: WeakEntity<GitGraph>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let placeholder_text: SharedString = placeholder.into();
+        let default_text = default_value.to_string();
+        let input = cx.new(|cx| {
+            let field = InputField::new(window, cx, placeholder_text);
+            field.set_text(default_text, window, cx);
+            field
+        });
+
+        Self {
+            focus_handle: cx.focus_handle(),
+            input,
+            kind,
+            work_dir,
+            git_graph,
+            push_to_remote: false,
+        }
+    }
+
+    fn supports_push(&self) -> bool {
+        matches!(self.kind, InputModalKind::CreateBranch { .. } | InputModalKind::CreateTag { .. })
+    }
+
+    fn is_checkout_remote(&self) -> bool {
+        matches!(self.kind, InputModalKind::CheckoutRemoteBranch { .. })
+    }
+
+    fn toggle_push_to_remote(&mut self, cx: &mut Context<Self>) {
+        self.push_to_remote = !self.push_to_remote;
+        cx.notify();
+    }
+
+    fn title(&self) -> &'static str {
+        match &self.kind {
+            InputModalKind::CreateBranch { .. } => "Create Branch",
+            InputModalKind::CreateTag { .. } => "Create Tag",
+            InputModalKind::RenameBranch { .. } => "Rename Branch",
+            InputModalKind::CheckoutRemoteBranch { .. } => "Checkout Remote Branch",
+        }
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let input_text = self.input.read(cx).text(cx);
+        if input_text.is_empty() {
+            return;
+        }
+
+        let work_dir = self.work_dir.clone();
+        let kind = self.kind.clone();
+        let git_graph = self.git_graph.clone();
+        let push_to_remote = self.push_to_remote;
+
+        cx.spawn(async move |_, cx| {
+            let result = match &kind {
+                InputModalKind::CreateBranch { sha } => {
+                    run_git_command(&work_dir, &["branch", &input_text, sha]).await
+                }
+                InputModalKind::CreateTag { sha } => {
+                    run_git_command(&work_dir, &["tag", &input_text, sha]).await
+                }
+                InputModalKind::RenameBranch { old_name } => {
+                    run_git_command(&work_dir, &["branch", "-m", old_name, &input_text]).await
+                }
+                InputModalKind::CheckoutRemoteBranch { remote_branch } => {
+                    run_git_command(&work_dir, &["checkout", "-b", &input_text, remote_branch]).await
+                }
+            };
+
+            let post_result = if result.is_ok() && push_to_remote {
+                match &kind {
+                    InputModalKind::CreateBranch { .. } => {
+                        run_git_command(&work_dir, &["push", "-u", "origin", &input_text]).await
+                    }
+                    InputModalKind::CreateTag { .. } => {
+                        run_git_command(&work_dir, &["push", "origin", &input_text]).await
+                    }
+                    InputModalKind::CheckoutRemoteBranch { .. } => {
+                        run_git_command(&work_dir, &["pull"]).await
+                    }
+                    InputModalKind::RenameBranch { .. } => Ok(String::new()),
+                }
+            } else {
+                Ok(String::new())
+            };
+
+            git_graph
+                .update(cx, |this, cx| {
+                    match (&result, &post_result) {
+                        (Ok(_), Ok(_)) => {
+                            this.error = None;
+                            this.load_data(cx);
+                        }
+                        (Err(e), _) => {
+                            this.error = Some(format!("Failed: {}", e).into());
+                        }
+                        (Ok(_), Err(e)) => {
+                            this.error = Some(format!("Checkout succeeded but pull failed: {}", e).into());
+                            this.load_data(cx);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+
+        cx.emit(DismissEvent);
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+}
+
+impl Focusable for InputModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for InputModal {}
+
+impl ModalView for InputModal {}
+
+impl Render for InputModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = self.title();
+        let supports_push = self.supports_push();
+        let is_checkout_remote = self.is_checkout_remote();
+        let checkbox_state = if self.push_to_remote {
+            ui::ToggleState::Selected
+        } else {
+            ui::ToggleState::Unselected
+        };
+        let checkbox_label = if is_checkout_remote {
+            "Pull after checkout"
+        } else {
+            "Push to remote"
+        };
+        let confirm_label = if is_checkout_remote {
+            "Checkout"
+        } else {
+            "Confirm"
+        };
+
+        v_flex()
+            .key_context("InputModal")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .elevation_2(cx)
+            .w(px(400.0))
+            .overflow_hidden()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new(title).size(LabelSize::Small).color(Color::Muted)),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .p_3()
+                    .gap_2()
+                    .child(self.input.clone())
+                    .when(supports_push || is_checkout_remote, |el| {
+                        el.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    ui::Checkbox::new("checkbox-option", checkbox_state)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.toggle_push_to_remote(cx);
+                                        })),
+                                )
+                                .child(
+                                    Label::new(checkbox_label)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Button::new("cancel", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel(&menu::Cancel, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("confirm", confirm_label)
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm(&menu::Confirm, window, cx);
+                            })),
+                    ),
+            )
+    }
 }
 
 pub struct GitGraph {
@@ -160,7 +407,12 @@ impl GitGraph {
         git_store.read(cx).repositories().values().next().cloned()
     }
 
-    fn open_commit_view(&mut self, file_path: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_commit_view(
+        &mut self,
+        file_path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
@@ -186,10 +438,13 @@ impl GitGraph {
     }
 
     fn toggle_commit_expansion(&mut self, commit_idx: usize, cx: &mut Context<Self>) {
+        let scroll_pos = self.list_state.logical_scroll_top();
+
         if self.expanded_commit == Some(commit_idx) {
             self.expanded_commit = None;
             self.expanded_files.clear();
             self.list_state.reset(self.commits.len());
+            self.list_state.scroll_to(scroll_pos);
             cx.notify();
             return;
         }
@@ -209,12 +464,20 @@ impl GitGraph {
         self.loading_files = true;
         self.error = None;
         self.list_state.reset(self.commits.len());
+        self.list_state.scroll_to(scroll_pos);
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let result = run_git_command(
                 &work_dir,
-                &["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", &sha],
+                &[
+                    "diff-tree",
+                    "--root",
+                    "--no-commit-id",
+                    "--name-status",
+                    "-r",
+                    &sha,
+                ],
             )
             .await;
 
@@ -378,7 +641,7 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn checkout_commit(&mut self, cx: &mut Context<Self>) {
+    fn checkout_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
@@ -387,6 +650,41 @@ impl GitGraph {
         let Some(work_dir) = self.work_dir.clone() else {
             return;
         };
+
+        let has_local_branch = refs.iter().any(|r| {
+            !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
+        }) || refs.iter().any(|r| r.starts_with("HEAD -> "));
+
+        let remote_only_branch = if !has_local_branch {
+            refs.iter()
+                .find(|r| r.starts_with("origin/") && !r.ends_with("/HEAD"))
+                .cloned()
+        } else {
+            None
+        };
+
+        if let Some(remote_branch) = remote_only_branch {
+            let local_name = remote_branch.strip_prefix("origin/").unwrap_or(&remote_branch).to_string();
+            let Some(workspace) = self.workspace.upgrade() else {
+                return;
+            };
+            let git_graph = cx.entity().downgrade();
+
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    InputModal::new(
+                        InputModalKind::CheckoutRemoteBranch { remote_branch },
+                        "Enter local branch name",
+                        &local_name,
+                        work_dir,
+                        git_graph,
+                        window,
+                        cx,
+                    )
+                });
+            });
+            return;
+        }
 
         let target = refs
             .iter()
@@ -419,6 +717,54 @@ impl GitGraph {
         .detach();
     }
 
+    fn checkout_branch(&mut self, branch: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let is_remote = branch.starts_with("origin/");
+
+        if is_remote {
+            let local_name = branch.strip_prefix("origin/").unwrap_or(&branch).to_string();
+            let Some(workspace) = self.workspace.upgrade() else {
+                return;
+            };
+            let git_graph = cx.entity().downgrade();
+
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    InputModal::new(
+                        InputModalKind::CheckoutRemoteBranch { remote_branch: branch },
+                        "Enter local branch name",
+                        &local_name,
+                        work_dir,
+                        git_graph,
+                        window,
+                        cx,
+                    )
+                });
+            });
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["checkout", &branch]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Checkout failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn copy_sha(&mut self, cx: &mut Context<Self>) {
         let sha = match self.get_selected_commit() {
             Some(commit) => commit.sha.clone(),
@@ -429,33 +775,35 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn create_branch(&mut self, cx: &mut Context<Self>) {
+    fn create_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
         let sha = commit.sha.clone();
+        let short_sha = commit.short_sha.clone();
         let Some(work_dir) = self.work_dir.clone() else {
             return;
         };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
 
-        let branch_name = format!("branch-from-{}", &commit.short_sha);
+        let git_graph = cx.entity().downgrade();
+        let default_name = format!("branch-from-{}", short_sha);
 
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["checkout", "-b", &branch_name, &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Create branch failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                InputModal::new(
+                    InputModalKind::CreateBranch { sha },
+                    "Enter branch name",
+                    &default_name,
+                    work_dir,
+                    git_graph,
+                    window,
+                    cx,
+                )
+            });
+        });
     }
 
     fn cherry_pick_commit(&mut self, cx: &mut Context<Self>) {
@@ -593,33 +941,35 @@ impl GitGraph {
         .detach();
     }
 
-    fn create_tag(&mut self, cx: &mut Context<Self>) {
+    fn create_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
         let sha = commit.sha.clone();
+        let short_sha = commit.short_sha.clone();
         let Some(work_dir) = self.work_dir.clone() else {
             return;
         };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
 
-        let tag_name = format!("tag-{}", &commit.short_sha);
+        let git_graph = cx.entity().downgrade();
+        let default_name = format!("v{}", short_sha);
 
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["tag", &tag_name, &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Create tag failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                InputModal::new(
+                    InputModalKind::CreateTag { sha },
+                    "Enter tag name",
+                    &default_name,
+                    work_dir,
+                    git_graph,
+                    window,
+                    cx,
+                )
+            });
+        });
     }
 
     fn merge_into_current(&mut self, cx: &mut Context<Self>) {
@@ -734,11 +1084,14 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn rename_branch(&mut self, cx: &mut Context<Self>) {
+    fn rename_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
         let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
@@ -763,24 +1116,23 @@ impl GitGraph {
             return;
         };
 
-        let new_name = format!("{}-renamed", old_name);
+        let git_graph = cx.entity().downgrade();
 
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["branch", "-m", &old_name, &new_name]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Rename failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                InputModal::new(
+                    InputModalKind::RenameBranch {
+                        old_name: old_name.clone(),
+                    },
+                    "Enter new branch name",
+                    &old_name,
+                    work_dir,
+                    git_graph,
+                    window,
+                    cx,
+                )
+            });
+        });
     }
 
     fn delete_branch(&mut self, cx: &mut Context<Self>) {
@@ -1045,10 +1397,10 @@ impl GitGraph {
     fn handle_checkout_commit(
         &mut self,
         _: &CheckoutCommit,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.checkout_commit(cx);
+        self.checkout_commit(window, cx);
     }
 
     fn handle_open_commit_view(
@@ -1064,8 +1416,13 @@ impl GitGraph {
         self.copy_sha(cx);
     }
 
-    fn handle_create_branch(&mut self, _: &CreateBranch, _: &mut Window, cx: &mut Context<Self>) {
-        self.create_branch(cx);
+    fn handle_create_branch(
+        &mut self,
+        _: &CreateBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_branch(window, cx);
     }
 
     fn handle_cherry_pick_commit(
@@ -1097,8 +1454,8 @@ impl GitGraph {
         self.reset_mixed(cx);
     }
 
-    fn handle_create_tag(&mut self, _: &CreateTag, _: &mut Window, cx: &mut Context<Self>) {
-        self.create_tag(cx);
+    fn handle_create_tag(&mut self, _: &CreateTag, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_tag(window, cx);
     }
 
     fn handle_merge_into_current(
@@ -1128,8 +1485,13 @@ impl GitGraph {
         self.copy_branch_name(cx);
     }
 
-    fn handle_rename_branch(&mut self, _: &RenameBranch, _: &mut Window, cx: &mut Context<Self>) {
-        self.rename_branch(cx);
+    fn handle_rename_branch(
+        &mut self,
+        _: &RenameBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rename_branch(window, cx);
     }
 
     fn handle_delete_branch(&mut self, _: &DeleteBranch, _: &mut Window, cx: &mut Context<Self>) {
@@ -1169,6 +1531,151 @@ impl GitGraph {
         self.stash_pop(cx);
     }
 
+    fn render_badges(
+        &self,
+        refs: &[String],
+        color_idx: usize,
+        commit_idx: usize,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let badges = parse_refs_to_badges(refs);
+        let branch_color = BRANCH_COLORS[color_idx % BRANCH_COLORS.len()];
+        let tag_color = gpui::hsla(140.0 / 360.0, 0.55, 0.45, 1.0);
+        let hover_bg = cx.theme().colors().ghost_element_hover;
+        let accent_color = cx.theme().colors().border_focused;
+
+        h_flex()
+            .gap_1()
+            .flex_shrink_0()
+            .children(badges.into_iter().take(5).enumerate().map(|(badge_idx, badge)| {
+                match badge {
+                    BadgeType::Tag(name) => {
+                        h_flex()
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .child(
+                                Icon::new(IconName::Hash)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(tag_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Default),
+                            )
+                            .into_any_element()
+                    }
+                    BadgeType::CurrentBranch(name, has_origin) => {
+                        let branch_name = name.clone();
+                        h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!("badge-current-{}-{}", commit_idx, badge_idx)),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(accent_color)
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                if event.click_count() == 2 {
+                                    this.checkout_branch(branch_name.clone(), window, cx);
+                                }
+                            }))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Default),
+                            )
+                            .when(has_origin, |el| {
+                                el.child(
+                                    Label::new("origin")
+                                        .size(LabelSize::Default)
+                                        .color(Color::Muted),
+                                )
+                            })
+                            .into_any_element()
+                    }
+                    BadgeType::LocalBranch(name, has_origin) => {
+                        let branch_name = name.clone();
+                        h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!("badge-local-{}-{}", commit_idx, badge_idx)),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                if event.click_count() == 2 {
+                                    this.checkout_branch(branch_name.clone(), window, cx);
+                                }
+                            }))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Default),
+                            )
+                            .when(has_origin, |el| {
+                                el.child(
+                                    Label::new("origin")
+                                        .size(LabelSize::Default)
+                                        .color(Color::Muted),
+                                )
+                            })
+                            .into_any_element()
+                    }
+                    BadgeType::RemoteBranch(name) => {
+                        let branch_name = name.clone();
+                        h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!("badge-remote-{}-{}", commit_idx, badge_idx)),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                if event.click_count() == 2 {
+                                    this.checkout_branch(branch_name.clone(), window, cx);
+                                }
+                            }))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element()
+                    }
+                }
+            }))
+    }
+
     fn render_list_item(
         &mut self,
         idx: usize,
@@ -1181,7 +1688,15 @@ impl GitGraph {
         let author_width = px(120.0);
         let commit_width = px(80.0);
 
-        self.render_commit_row_inline(idx, row_height, graph_width, date_width, author_width, commit_width, cx)
+        self.render_commit_row_inline(
+            idx,
+            row_height,
+            graph_width,
+            date_width,
+            author_width,
+            commit_width,
+            cx,
+        )
     }
 
     fn render_commit_row_inline(
@@ -1195,7 +1710,15 @@ impl GitGraph {
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         let is_expanded = self.expanded_commit == Some(idx);
-        let row = self.render_commit_row(idx, row_height, graph_width, date_width, author_width, commit_width, cx);
+        let row = self.render_commit_row(
+            idx,
+            row_height,
+            graph_width,
+            date_width,
+            author_width,
+            commit_width,
+            cx,
+        );
 
         if is_expanded {
             v_flex()
@@ -1225,7 +1748,7 @@ impl GitGraph {
         let subject: SharedString = commit.subject.clone().into();
         let author_name: SharedString = commit.author_name.clone().into();
         let short_sha: SharedString = commit.short_sha.clone().into();
-        let timestamp = commit.timestamp;
+        let formatted_time: SharedString = commit.formatted_time.clone().into();
         let refs = commit.refs.clone();
         let lane = commit.lane;
         let lines = commit.lines.clone();
@@ -1234,10 +1757,8 @@ impl GitGraph {
         let is_selected = self.expanded_commit == Some(idx);
         let bg = if is_selected {
             cx.theme().colors().ghost_element_selected
-        } else if idx % 2 == 0 {
-            cx.theme().colors().surface_background
         } else {
-            cx.theme().colors().background
+            cx.theme().colors().editor_background
         };
         let hover_bg = cx.theme().colors().ghost_element_hover;
 
@@ -1251,23 +1772,28 @@ impl GitGraph {
             .flex_shrink_0()
             .bg(bg)
             .hover(move |style| style.bg(hover_bg))
-            .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                 this.selected_commit = Some(idx);
-                if event.click_count() == 2 {
-                    this.checkout_commit(cx);
-                } else {
-                    this.toggle_commit_expansion(idx, cx);
-                }
+                this.toggle_commit_expansion(idx, cx);
             }))
-            .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                this.deploy_context_menu(event.position, idx, window, cx);
-            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_context_menu(event.position, idx, window, cx);
+                }),
+            )
             .child(
                 div()
                     .w(graph_width)
                     .h_full()
                     .flex_shrink_0()
-                    .child(render_graph_cell(lane, lines, color_idx, row_height, graph_width))
+                    .child(render_graph_cell(
+                        lane,
+                        lines,
+                        color_idx,
+                        row_height,
+                        graph_width,
+                    )),
             )
             .child(
                 h_flex()
@@ -1277,7 +1803,7 @@ impl GitGraph {
                     .overflow_hidden()
                     .items_center()
                     .when(!refs.is_empty(), |el| {
-                        el.child(render_ref_badges(&refs))
+                        el.child(self.render_badges(&refs, color_idx, idx, cx))
                     })
                     .child(
                         div()
@@ -1286,7 +1812,7 @@ impl GitGraph {
                             .min_w(px(0.0))
                             .overflow_hidden()
                             .tooltip(Tooltip::text(subject.clone()))
-                            .child(Label::new(subject).single_line())
+                            .child(Label::new(subject).single_line()),
                     ),
             )
             .child(
@@ -1294,7 +1820,7 @@ impl GitGraph {
                     .w(date_width)
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .child(Label::new(format_timestamp(timestamp)).color(Color::Muted).single_line()),
+                    .child(Label::new(formatted_time).color(Color::Muted).single_line()),
             )
             .child(
                 div()
@@ -1326,13 +1852,16 @@ impl GitGraph {
         let parents = commit.parents.clone();
         let author = commit.author_name.clone();
         let subject = commit.subject.clone();
-        let timestamp = commit.timestamp;
+        let formatted_time = commit.formatted_time.clone();
         let lines = commit.lines.clone();
         let loading_files = self.loading_files;
         let expanded_files = &self.expanded_files;
 
         h_flex()
-            .id(ElementId::NamedInteger("expanded-details".into(), idx as u64))
+            .id(ElementId::NamedInteger(
+                "expanded-details".into(),
+                idx as u64,
+            ))
             .w_full()
             .min_h(px(120.0))
             .px_2()
@@ -1344,61 +1873,102 @@ impl GitGraph {
                     .w(graph_width)
                     .h_full()
                     .flex_shrink_0()
-                    .child(render_graph_continuation(lines, graph_width))
+                    .child(render_graph_continuation(lines, graph_width)),
             )
             .child(
                 h_flex()
                     .flex_1()
                     .h_full()
+                    .items_start()
                     .child(
                         v_flex()
                             .w(px(400.0))
                             .p_2()
-                            .gap_1()
+                            .gap_0p5()
                             .border_r_1()
                             .border_color(cx.theme().colors().border)
                             .child(
                                 h_flex()
                                     .w_full()
+                                    .h(px(28.0))
                                     .pb_1()
                                     .mb_1()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
+                                    .items_center()
                                     .child(
                                         h_flex()
                                             .gap_2()
-                                            .child(Icon::new(IconName::Info).color(Color::Muted).size(IconSize::Small))
-                                            .child(Label::new("Info").size(LabelSize::Small).color(Color::Muted))
-                                    )
+                                            .items_center()
+                                            .child(
+                                                Icon::new(IconName::Info)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("Info")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
+                                    ),
                             )
                             .child(
-                                h_flex().gap_2()
-                                    .child(Label::new("Commit:").size(LabelSize::Small).color(Color::Muted))
-                                    .child(Label::new(commit_sha).size(LabelSize::Small).color(Color::Accent))
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Commit:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(commit_sha)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Accent),
+                                    ),
                             )
                             .when(!parents.is_empty(), |el| {
-                                let parent_str = parents.iter()
+                                let parent_str = parents
+                                    .iter()
                                     .map(|p| if p.len() >= 7 { &p[..7] } else { p.as_str() })
                                     .collect::<Vec<_>>()
                                     .join(", ");
                                 el.child(
-                                    h_flex().gap_2()
-                                        .child(Label::new("Parents:").size(LabelSize::Small).color(Color::Muted))
-                                        .child(Label::new(parent_str).size(LabelSize::Small).color(Color::Accent))
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Label::new("Parents:")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(parent_str)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Accent),
+                                        ),
                                 )
                             })
                             .child(
-                                h_flex().gap_2()
-                                    .child(Label::new("Author:").size(LabelSize::Small).color(Color::Muted))
-                                    .child(Label::new(author).size(LabelSize::Small))
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Author:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new(author).size(LabelSize::Small)),
                             )
                             .child(
-                                h_flex().gap_2()
-                                    .child(Label::new("Date:").size(LabelSize::Small).color(Color::Muted))
-                                    .child(Label::new(format_timestamp(timestamp)).size(LabelSize::Small))
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Date:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new(formatted_time).size(LabelSize::Small)),
                             )
                             .child(div().h_2())
-                            .child(Label::new(subject).size(LabelSize::Small))
+                            .child(Label::new(subject).size(LabelSize::Small)),
                     )
                     .child(
                         v_flex()
@@ -1411,6 +1981,7 @@ impl GitGraph {
                             .child(
                                 h_flex()
                                     .w_full()
+                                    .h(px(28.0))
                                     .pb_1()
                                     .mb_1()
                                     .border_b_1()
@@ -1420,8 +1991,20 @@ impl GitGraph {
                                     .child(
                                         h_flex()
                                             .gap_2()
-                                            .child(Icon::new(IconName::FileTree).color(Color::Muted).size(IconSize::Small))
-                                            .child(Label::new(format!("{} files", expanded_files.len())).size(LabelSize::Small).color(Color::Muted))
+                                            .items_center()
+                                            .child(
+                                                Icon::new(IconName::FileTree)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new(format!(
+                                                    "{} files",
+                                                    expanded_files.len()
+                                                ))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                            ),
                                     )
                                     .child(
                                         Button::new("view-diff", "View Diff")
@@ -1429,61 +2012,82 @@ impl GitGraph {
                                             .label_size(LabelSize::Small)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.open_commit_view(None, window, cx);
-                                            }))
-                                    )
+                                            })),
+                                    ),
                             )
                             .when(loading_files, |el| {
                                 el.child(
-                                    div()
-                                        .w_full()
-                                        .py_2()
-                                        .child(Label::new("Loading...").size(LabelSize::Small).color(Color::Muted))
+                                    div().w_full().py_2().child(
+                                        Label::new("Loading...")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
                                 )
                             })
                             .when(!loading_files && expanded_files.is_empty(), |el| {
                                 el.child(
-                                    div()
-                                        .w_full()
-                                        .py_2()
-                                        .child(Label::new("No files changed").size(LabelSize::Small).color(Color::Muted))
+                                    div().w_full().py_2().child(
+                                        Label::new("No files changed")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
                                 )
                             })
                             .when(!loading_files && !expanded_files.is_empty(), |el| {
-                                el.children(expanded_files.iter().enumerate().map(|(file_idx, file)| {
-                                    let file_path = file.path.clone();
-                                    let status_icon = match file.status {
-                                        FileStatus::Added => IconName::Plus,
-                                        FileStatus::Modified => IconName::Pencil,
-                                        FileStatus::Deleted => IconName::Trash,
-                                        FileStatus::Renamed => IconName::Replace,
-                                        FileStatus::Copied => IconName::Copy,
-                                        FileStatus::Unknown => IconName::File,
-                                    };
-                                    let status_color = match file.status {
-                                        FileStatus::Added => Color::Created,
-                                        FileStatus::Modified => Color::Modified,
-                                        FileStatus::Deleted => Color::Deleted,
-                                        _ => Color::Muted,
-                                    };
+                                el.children(expanded_files.iter().enumerate().map(
+                                    |(file_idx, file)| {
+                                        let file_path = file.path.clone();
+                                        let status_icon = match file.status {
+                                            FileStatus::Added => IconName::Plus,
+                                            FileStatus::Modified => IconName::Pencil,
+                                            FileStatus::Deleted => IconName::Trash,
+                                            FileStatus::Renamed => IconName::Replace,
+                                            FileStatus::Copied => IconName::Copy,
+                                            FileStatus::Unknown => IconName::File,
+                                        };
+                                        let status_color = match file.status {
+                                            FileStatus::Added => Color::Created,
+                                            FileStatus::Modified => Color::Modified,
+                                            FileStatus::Deleted => Color::Deleted,
+                                            _ => Color::Muted,
+                                        };
 
-                                    h_flex()
-                                        .id(ElementId::NamedInteger("file-row".into(), file_idx as u64))
-                                        .w_full()
-                                        .px_1()
-                                        .py_0p5()
-                                        .gap_2()
-                                        .items_center()
-                                        .cursor_pointer()
-                                        .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                                        .rounded_sm()
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_commit_view(Some(file_path.clone()), window, cx);
-                                        }))
-                                        .child(Icon::new(status_icon).color(status_color).size(IconSize::Small))
-                                        .child(Label::new(file.path.clone()).size(LabelSize::Small).single_line())
-                                }))
-                            })
-                    )
+                                        h_flex()
+                                            .id(ElementId::NamedInteger(
+                                                "file-row".into(),
+                                                file_idx as u64,
+                                            ))
+                                            .w_full()
+                                            .px_1()
+                                            .py_0p5()
+                                            .gap_2()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .hover(|style| {
+                                                style.bg(cx.theme().colors().ghost_element_hover)
+                                            })
+                                            .rounded_sm()
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.open_commit_view(
+                                                    Some(file_path.clone()),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }))
+                                            .child(
+                                                Icon::new(status_icon)
+                                                    .color(status_color)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new(file.path.clone())
+                                                    .size(LabelSize::Small)
+                                                    .single_line(),
+                                            )
+                                    },
+                                ))
+                            }),
+                    ),
             )
             .child(
                 div()
@@ -1501,8 +2105,8 @@ impl GitGraph {
                                 this.expanded_commit = None;
                                 this.expanded_files.clear();
                                 cx.notify();
-                            }))
-                    )
+                            })),
+                    ),
             )
             .into_any_element()
     }
@@ -1571,11 +2175,31 @@ impl Render for GitGraph {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .flex_shrink_0()
-                        .child(div().w(graph_width).child(Label::new("Graph").color(Color::Muted)))
-                        .child(div().flex_1().child(Label::new("Description").color(Color::Muted)))
-                        .child(div().w(date_width).child(Label::new("Date").color(Color::Muted)))
-                        .child(div().w(author_width).child(Label::new("Author").color(Color::Muted)))
-                        .child(div().w(commit_width).child(Label::new("Commit").color(Color::Muted))),
+                        .child(
+                            div()
+                                .w(graph_width)
+                                .child(Label::new("Graph").color(Color::Muted)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(Label::new("Description").color(Color::Muted)),
+                        )
+                        .child(
+                            div()
+                                .w(date_width)
+                                .child(Label::new("Date").color(Color::Muted)),
+                        )
+                        .child(
+                            div()
+                                .w(author_width)
+                                .child(Label::new("Author").color(Color::Muted)),
+                        )
+                        .child(
+                            div()
+                                .w(commit_width)
+                                .child(Label::new("Commit").color(Color::Muted)),
+                        ),
                 )
                 .child(
                     list(
@@ -1583,7 +2207,7 @@ impl Render for GitGraph {
                         cx.processor(Self::render_list_item),
                     )
                     .flex_1()
-                    .w_full()
+                    .w_full(),
                 )
         };
 
