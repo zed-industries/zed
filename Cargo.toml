@@ -244,7 +244,6 @@ activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
-ai = { path = "crates/ai" }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -254,7 +253,6 @@ assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
-auto_update_helper = { path = "crates/auto_update_helper" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 aws_http_client = { path = "crates/aws_http_client" }
 bedrock = { path = "crates/bedrock" }
@@ -269,7 +267,6 @@ cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
 cloud_zeta2_prompt = { path = "crates/cloud_zeta2_prompt" }
-collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
@@ -358,8 +355,6 @@ panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
-plugin = { path = "crates/plugin" }
-plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
@@ -370,12 +365,10 @@ proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
-scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rich_text = { path = "crates/rich_text" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf717e076bdda7a9ac6e70b", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -392,7 +385,6 @@ snippets_ui = { path = "crates/snippets_ui" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
-storybook = { path = "crates/storybook" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
@@ -409,7 +401,6 @@ terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
-theme_importer = { path = "crates/theme_importer" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
@@ -510,13 +501,11 @@ exec = "0.3.1"
 fancy-regex = "0.16.0"
 fork = "0.4.0"
 futures = "0.3"
-futures-batch = "0.6.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "09acfdf2bd5c1d6254abefd609c808ff73547b2c" }
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
-hashbrown = "0.15.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
@@ -552,7 +541,6 @@ nanoid = "0.4"
 nbformat = "0.15.0"
 nix = "0.29"
 num-format = "0.4.4"
-num-traits = "0.2"
 objc = "0.2"
 objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSArray",
@@ -591,7 +579,6 @@ pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev =
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
-pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
 pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1e86914c3ce2f3a08c0cedbcb0615a7f9fa7a5da" }
@@ -631,7 +618,6 @@ scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
-serde_derive = "1.0.221"
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
@@ -643,7 +629,6 @@ serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
-similar = "2.6"
 simplelog = "0.12.2"
 slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union"] }
@@ -722,7 +707,6 @@ wasmtime-wasi = "29"
 wax = "0.6"
 which = "6.0.0"
 windows-core = "0.61"
-wit-component = "0.221"
 yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
@@ -804,20 +788,13 @@ settings_macros = { opt-level = 3 }
 sqlez_macros = { opt-level = 3, codegen-units = 1 }
 ui_macros = { opt-level = 3 }
 util_macros = { opt-level = 3 }
-serde_derive = { opt-level = 3 }
 quote = { opt-level = 3 }
 syn = { opt-level = 3 }
 proc-macro2 = { opt-level = 3 }
 # proc-macros end
 
 taffy = { opt-level = 3 }
-cranelift-codegen = { opt-level = 3 }
-cranelift-codegen-meta = { opt-level = 3 }
-cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
-rustybuzz = { opt-level = 3 }
-ttf-parser = { opt-level = 3 }
-wasmtime-cranelift = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
@@ -826,7 +803,6 @@ breadcrumbs = { codegen-units = 1 }
 collections = { codegen-units = 1 }
 command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
-extension_cli = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
@@ -846,7 +822,6 @@ project_symbols = { codegen-units = 1 }
 refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
-rich_text = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
