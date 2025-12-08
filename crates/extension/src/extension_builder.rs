@@ -250,7 +250,9 @@ impl ExtensionBuilder {
         // Skip recompiling if the WASM object is already newer than the source files
         if file_newer_than_deps(&grammar_wasm_path, &[&parser_path, &scanner_path]).unwrap_or(false)
         {
-            log::info!("skipping compilation of {grammar_name} parser because the existing compiled grammar is up to date");
+            log::info!(
+                "skipping compilation of {grammar_name} parser because the existing compiled grammar is up to date"
+            );
         } else {
             log::info!("compiling {grammar_name} parser");
             let clang_output = util::command::new_smol_command(&clang_path)
