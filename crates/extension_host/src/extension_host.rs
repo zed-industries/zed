@@ -980,12 +980,14 @@ impl ExtensionStore {
 
             cx.background_spawn({
                 let extension_source_path = extension_source_path.clone();
+                let fs = fs.clone();
                 async move {
                     builder
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
                             CompileExtensionOptions { release: false },
+                            fs,
                         )
                         .await
                 }
@@ -1042,12 +1044,13 @@ impl ExtensionStore {
 
         cx.notify();
         let compile = cx.background_spawn(async move {
-            let mut manifest = ExtensionManifest::load(fs, &path).await?;
+            let mut manifest = ExtensionManifest::load(fs.clone(), &path).await?;
             builder
                 .compile_extension(
                     &path,
                     &mut manifest,
                     CompileExtensionOptions { release: true },
+                    fs,
                 )
                 .await
         });
