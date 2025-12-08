@@ -551,6 +551,8 @@ impl PickerDelegate for BranchListDelegate {
             editor.set_placeholder_text(placeholder, window, cx);
         });
 
+        let focus_handle = self.focus_handle.clone();
+
         v_flex()
             .when(
                 self.editor_position() == PickerEditorPosition::End,
@@ -562,7 +564,37 @@ impl PickerDelegate for BranchListDelegate {
                     .flex_none()
                     .h_9()
                     .px_2p5()
-                    .child(editor.clone()),
+                    .child(editor.clone())
+                    .when(
+                        self.editor_position() == PickerEditorPosition::End,
+                        |this| {
+                            let tooltip_label = if self.display_remotes {
+                                "Turn Off Remote Filter"
+                            } else {
+                                "Filter Remote Branches"
+                            };
+
+                            this.gap_1().justify_between().child({
+                                IconButton::new("filter-remotes", IconName::Filter)
+                                    .disabled(self.loading)
+                                    .toggle_state(self.display_remotes)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action_in(
+                                            tooltip_label,
+                                            &branch_picker::FilterRemotes,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(|_click, window, cx| {
+                                        window.dispatch_action(
+                                            branch_picker::FilterRemotes.boxed_clone(),
+                                            cx,
+                                        );
+                                    })
+                            })
+                        },
+                    ),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
@@ -842,6 +874,42 @@ impl PickerDelegate for BranchListDelegate {
             }
         };
 
+        let focus_handle = self.focus_handle.clone();
+        let is_new_items = matches!(entry, Entry::NewUrl { .. } | Entry::NewBranch { .. });
+
+        let delete_branch_button = IconButton::new("delete", IconName::Trash)
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in(
+                    "Delete Branch",
+                    &branch_picker::DeleteBranch,
+                    &focus_handle,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                let selected_idx = this.delegate.selected_index();
+                this.delegate.delete_at(selected_idx, window, cx);
+            }));
+
+        let create_from_default_button = self.default_branch.as_ref().map(|default_branch| {
+            let tooltip_label: SharedString = format!("Create New From: {default_branch}").into();
+            let focus_handle = self.focus_handle.clone();
+
+            IconButton::new("create_from_default", IconName::GitBranchPlus)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(
+                        tooltip_label.clone(),
+                        &menu::SecondaryConfirm,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.delegate.confirm(true, window, cx);
+                }))
+                .into_any_element()
+        });
+
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
@@ -929,6 +997,34 @@ impl PickerDelegate for BranchListDelegate {
                                     |this, branch_name| this.tooltip(Tooltip::text(branch_name)),
                                 ),
                         ),
+                )
+                .when(
+                    self.editor_position() == PickerEditorPosition::End && !is_new_items,
+                    |this| {
+                        this.map(|this| {
+                            if self.selected_index() == ix {
+                                this.end_slot(delete_branch_button)
+                            } else {
+                                this.end_hover_slot(delete_branch_button)
+                            }
+                        })
+                    },
+                )
+                .when_some(
+                    if self.editor_position() == PickerEditorPosition::End && is_new_items {
+                        create_from_default_button
+                    } else {
+                        None
+                    },
+                    |this, create_from_default_button| {
+                        this.map(|this| {
+                            if self.selected_index() == ix {
+                                this.end_slot(create_from_default_button)
+                            } else {
+                                this.end_hover_slot(create_from_default_button)
+                            }
+                        })
+                    },
                 ),
         )
     }
@@ -950,6 +1046,10 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.editor_position() == PickerEditorPosition::End {
+            return None;
+        }
+
         let focus_handle = self.focus_handle.clone();
         let loading_icon = Icon::new(IconName::LoadCircle)
             .size(IconSize::Small)
@@ -989,7 +1089,7 @@ impl PickerDelegate for BranchListDelegate {
                     });
 
                 let delete_and_select_btns = h_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(
                         Button::new("delete-branch", "Delete")
                             .disabled(self.loading)
@@ -1093,7 +1193,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 Some(
                     footer_container()
-                        .gap_0p5()
+                        .gap_1()
                         .justify_end()
                         .when_some(branch_from_default_button, |this, button| {
                             this.child(button)
