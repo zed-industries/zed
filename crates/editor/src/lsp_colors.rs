@@ -2,7 +2,7 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba, Task};
+use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
@@ -149,7 +149,7 @@ impl Editor {
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if self.ignore_lsp_data() {
+        if !self.mode().is_full() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -163,10 +163,11 @@ impl Editor {
             return;
         }
 
-        let visible_buffers = self
+        let buffers_to_query = self
             .visible_excerpts(true, cx)
             .into_values()
             .map(|(buffer, ..)| buffer)
+            .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
@@ -175,29 +176,38 @@ impl Editor {
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        let all_colors_task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            visible_buffers
-                .into_iter()
-                .filter_map(|buffer| {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    let known_cache_version = self.colors.as_ref().and_then(|colors| {
-                        Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
-                    });
-                    let colors_task = lsp_store.document_colors(known_cache_version, buffer, cx)?;
-                    Some(async move { (buffer_id, colors_task.await) })
-                })
-                .collect::<Vec<_>>()
-        });
-
-        if all_colors_task.is_empty() {
-            self.refresh_colors_task = Task::ready(());
-            return;
-        }
-
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(FETCH_COLORS_DEBOUNCE_TIMEOUT)
                 .await;
+
+            let Some(all_colors_task) = editor
+                .update(cx, |editor, cx| {
+                    project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                        buffers_to_query
+                            .into_iter()
+                            .filter_map(|buffer| {
+                                let buffer_id = buffer.read(cx).remote_id();
+                                let known_cache_version =
+                                    editor.colors.as_ref().and_then(|colors| {
+                                        Some(
+                                            colors
+                                                .buffer_colors
+                                                .get(&buffer_id)?
+                                                .cache_version_used,
+                                        )
+                                    });
+                                let colors_task =
+                                    lsp_store.document_colors(known_cache_version, buffer, cx)?;
+                                Some(async move { (buffer_id, colors_task.await) })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .ok()
+            else {
+                return;
+            };
 
             let all_colors = join_all(all_colors_task).await;
             if all_colors.is_empty() {
