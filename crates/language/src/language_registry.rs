@@ -43,6 +43,10 @@ impl LanguageName {
         Self(SharedString::new(s))
     }
 
+    pub fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
