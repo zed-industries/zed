@@ -21,8 +21,8 @@ use editor::{
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat, KeyContext,
-    SharedString, Subscription, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
+    KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, Language, language_settings::InlayHintKind};
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
@@ -543,6 +543,120 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let editor_clipboard_selections = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => {
+                    text.metadata_json::<Vec<editor::ClipboardSelection>>()
+                }
+                _ => None,
+            });
+
+        let has_file_context = editor_clipboard_selections
+            .as_ref()
+            .is_some_and(|selections| {
+                selections
+                    .iter()
+                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
+            });
+
+        if has_file_context {
+            if let Some((workspace, selections)) =
+                self.workspace.upgrade().zip(editor_clipboard_selections)
+            {
+                cx.stop_propagation();
+
+                let project = workspace.read(cx).project().clone();
+                for selection in selections {
+                    if let (Some(file_path), Some(line_range)) =
+                        (selection.file_path, selection.line_range)
+                    {
+                        let crease_text =
+                            acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
+
+                        let mention_uri = MentionUri::Selection {
+                            abs_path: Some(file_path.clone()),
+                            line_range: line_range.clone(),
+                        };
+
+                        let mention_text = mention_uri.as_link().to_string();
+                        let (excerpt_id, text_anchor, content_len) =
+                            self.editor.update(cx, |editor, cx| {
+                                let buffer = editor.buffer().read(cx);
+                                let snapshot = buffer.snapshot(cx);
+                                let (excerpt_id, _, buffer_snapshot) =
+                                    snapshot.as_singleton().unwrap();
+                                let start_offset = buffer_snapshot.len();
+                                let text_anchor = buffer_snapshot.anchor_before(start_offset);
+
+                                editor.insert(&mention_text, window, cx);
+                                editor.insert(" ", window, cx);
+
+                                (*excerpt_id, text_anchor, mention_text.len())
+                            });
+
+                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                            excerpt_id,
+                            text_anchor,
+                            content_len,
+                            crease_text.into(),
+                            mention_uri.icon_path(cx),
+                            None,
+                            self.editor.clone(),
+                            window,
+                            cx,
+                        ) else {
+                            continue;
+                        };
+                        drop(tx);
+
+                        let mention_task = cx
+                            .spawn({
+                                let project = project.clone();
+                                async move |_, cx| {
+                                    let project_path = project
+                                        .update(cx, |project, cx| {
+                                            project.project_path_for_absolute_path(&file_path, cx)
+                                        })
+                                        .map_err(|e| e.to_string())?
+                                        .ok_or_else(|| "project path not found".to_string())?;
+
+                                    let buffer = project
+                                        .update(cx, |project, cx| {
+                                            project.open_buffer(project_path, cx)
+                                        })
+                                        .map_err(|e| e.to_string())?
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+
+                                    buffer
+                                        .update(cx, |buffer, cx| {
+                                            let start = Point::new(*line_range.start(), 0)
+                                                .min(buffer.max_point());
+                                            let end = Point::new(*line_range.end() + 1, 0)
+                                                .min(buffer.max_point());
+                                            let content =
+                                                buffer.text_for_range(start..end).collect();
+                                            Mention::Text {
+                                                content,
+                                                tracked_buffers: vec![cx.entity()],
+                                            }
+                                        })
+                                        .map_err(|e| e.to_string())
+                                }
+                            })
+                            .shared();
+
+                        self.mention_set.update(cx, |mention_set, _cx| {
+                            mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                        });
+                    }
+                }
+                return;
+            }
+        }
+
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
