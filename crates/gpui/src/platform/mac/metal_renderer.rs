@@ -5,7 +5,6 @@ use crate::{
     Surface, Underline, point, size,
 };
 use anyhow::Result;
-use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
     foundation::{NSSize, NSUInteger},
@@ -23,9 +22,8 @@ use metal::{
     RenderPassColorAttachmentDescriptorRef,
 };
 use objc::{self, msg_send, sel, sel_impl};
-use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = crate::Point<f32>;
@@ -37,62 +35,95 @@ const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitch
 // Use 4x MSAA, all devices support it.
 // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
 const PATH_SAMPLE_COUNT: u32 = 4;
+// Defines also the maximum number of buffers that can be used for rendering.
+// Metal supports only 2 or 3 drawables. 3 is the optimal: display N, GPU renders N+1 and CPU prepares N+2
+// https://developer.apple.com/documentation/metal/synchronizing-cpu-and-gpu-work#Reuse-multiple-buffer-instances-in-your-app
+const MAXIMUM_DRAWABLE_COUNT: usize = 3;
 
-pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
 
 pub unsafe fn new_renderer(
-    context: self::Context,
     _native_window: *mut c_void,
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
     _transparent: bool,
 ) -> Renderer {
-    MetalRenderer::new(context)
+    MetalRenderer::new()
 }
 
 pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
-    buffers: Vec<metal::Buffer>,
-}
-
-impl Default for InstanceBufferPool {
-    fn default() -> Self {
-        Self {
-            buffer_size: 2 * 1024 * 1024,
-            buffers: Vec::new(),
-        }
-    }
+    buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
+    in_flight: [Option<usize>; MAXIMUM_DRAWABLE_COUNT],
+    current_frame: usize,
 }
 
 pub(crate) struct InstanceBuffer {
+    pool_index: usize,
     metal_buffer: metal::Buffer,
     size: usize,
 }
 
 impl InstanceBufferPool {
-    pub(crate) fn reset(&mut self, buffer_size: usize) {
-        self.buffer_size = buffer_size;
-        self.buffers.clear();
+    const MIN_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+    const MAX_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+    const ACQUIRED_SENTINEL: usize = usize::MAX;
+
+    pub(crate) fn new(device: &metal::Device) -> Self {
+        Self {
+            buffer_size: Self::MIN_BUFFER_SIZE,
+            buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device),
+            in_flight: [None; MAXIMUM_DRAWABLE_COUNT],
+            current_frame: 0,
+        }
     }
 
-    pub(crate) fn acquire(&mut self, device: &metal::Device) -> InstanceBuffer {
-        let buffer = self.buffers.pop().unwrap_or_else(|| {
-            device.new_buffer(
-                self.buffer_size as u64,
-                MTLResourceOptions::StorageModeManaged,
-            )
-        });
-        InstanceBuffer {
-            metal_buffer: buffer,
-            size: self.buffer_size,
+    pub(crate) fn grow(&mut self, device: &metal::Device) -> Result<usize, usize> {
+        let next_size = self.buffer_size * 2;
+        if next_size > Self::MAX_BUFFER_SIZE {
+            Err(next_size)
+        } else {
+            self.buffer_size = next_size;
+            self.buffers = Self::build_buffers(next_size, device);
+            self.in_flight = [None; MAXIMUM_DRAWABLE_COUNT];
+            Ok(next_size)
         }
+    }
+
+    pub(crate) fn acquire(&mut self) -> Option<InstanceBuffer> {
+        for (index, in_flight_frame) in self.in_flight.iter_mut().enumerate() {
+            let available = match *in_flight_frame {
+                None => true,
+                Some(Self::ACQUIRED_SENTINEL) => false,
+                Some(frame) => self.current_frame.saturating_sub(frame) >= MAXIMUM_DRAWABLE_COUNT,
+            };
+
+            if available {
+                *in_flight_frame = Some(Self::ACQUIRED_SENTINEL);
+                return Some(InstanceBuffer {
+                    pool_index: index,
+                    metal_buffer: self.buffers[index].clone(),
+                    size: self.buffer_size,
+                });
+            }
+        }
+        None
     }
 
     pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
         if buffer.size == self.buffer_size {
-            self.buffers.push(buffer.metal_buffer)
+            self.in_flight[buffer.pool_index] = Some(self.current_frame);
         }
+        self.current_frame = self.current_frame.wrapping_add(1);
+    }
+
+    fn build_buffers(
+        size: usize,
+        device: &metal::Device,
+    ) -> [metal::Buffer; MAXIMUM_DRAWABLE_COUNT] {
+        std::array::from_fn(|_| {
+            device.new_buffer(size as u64, MTLResourceOptions::StorageModeManaged)
+        })
     }
 }
 
@@ -110,8 +141,7 @@ pub(crate) struct MetalRenderer {
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
-    #[allow(clippy::arc_with_non_send_sync)]
-    instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+    instance_buffer_pool: InstanceBufferPool,
     sprite_atlas: Arc<MetalAtlas>,
     core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
     path_intermediate_texture: Option<metal::Texture>,
@@ -128,7 +158,7 @@ pub struct PathRasterizationVertex {
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
+    pub fn new() -> Self {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
@@ -153,7 +183,7 @@ impl MetalRenderer {
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         layer.set_opaque(false);
-        layer.set_maximum_drawable_count(3);
+        layer.set_maximum_drawable_count(MAXIMUM_DRAWABLE_COUNT as NSUInteger);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -259,6 +289,7 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
 
+        let instance_buffer_pool = InstanceBufferPool::new(&device);
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
         let core_video_texture_cache =
@@ -378,22 +409,17 @@ impl MetalRenderer {
         };
 
         loop {
-            let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
+            let Some(mut instance_buffer) = self.instance_buffer_pool.acquire() else {
+                log::error!("failed to acquire instance buffer: all buffers in flight");
+                return;
+            };
 
             let command_buffer =
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
                 Ok(command_buffer) => {
-                    let instance_buffer_pool = self.instance_buffer_pool.clone();
-                    let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block = ConcreteBlock::new(move |_| {
-                        if let Some(instance_buffer) = instance_buffer.take() {
-                            instance_buffer_pool.lock().release(instance_buffer);
-                        }
-                    });
-                    let block = block.copy();
-                    command_buffer.add_completed_handler(&block);
+                    self.instance_buffer_pool.release(instance_buffer);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -410,17 +436,16 @@ impl MetalRenderer {
                         "failed to render: {}. retrying with larger instance buffer size",
                         err
                     );
-                    let mut instance_buffer_pool = self.instance_buffer_pool.lock();
-                    let buffer_size = instance_buffer_pool.buffer_size;
-                    if buffer_size >= 256 * 1024 * 1024 {
-                        log::error!("instance buffer size grew too large: {}", buffer_size);
-                        break;
+
+                    match self.instance_buffer_pool.grow(&self.device) {
+                        Ok(new_size) => {
+                            log::info!("increased instance buffer size to {}", new_size);
+                        }
+                        Err(tentative_size) => {
+                            log::error!("instance buffer size grew too large: {}", tentative_size);
+                            break;
+                        }
                     }
-                    instance_buffer_pool.reset(buffer_size * 2);
-                    log::info!(
-                        "increased instance buffer size to {}",
-                        instance_buffer_pool.buffer_size
-                    );
                 }
             }
         }
