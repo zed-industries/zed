@@ -272,12 +272,14 @@ fn update_command_palette_filter(cx: &mut App) {
 
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
-            AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+            AcceptEditPrediction, AcceptNextWordEditPrediction, AcceptNextLineEditPrediction, NextEditPrediction,
             PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
         };
         let edit_prediction_actions = [
             TypeId::of::<AcceptEditPrediction>(),
-            TypeId::of::<AcceptPartialEditPrediction>(),
+            TypeId::of::<AcceptNextWordEditPrediction>(),
+            TypeId::of::<AcceptNextLineEditPrediction>(),
+            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
