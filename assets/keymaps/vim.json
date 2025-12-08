@@ -895,18 +895,18 @@
       "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
       "ctrl-w n": "workspace::NewFileSplitHorizontal",
       "g t": "vim::GoToTab",
-      "g shift-t": "vim::GoToPreviousTab",
-      "] b": "pane::ActivateNextItem",
-      "[ b": "pane::ActivatePreviousItem",
-      "] shift-b": "pane::ActivateLastItem",
-      "[ shift-b": ["pane::ActivateItem", 0]
+      "g shift-t": "vim::GoToPreviousTab"
     }
   },
   {
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
-      "g /": "pane::DeploySearch"
+      "g /": "pane::DeploySearch",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0]
     }
   },
   {
