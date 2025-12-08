@@ -327,6 +327,18 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Inserts a snippet.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct InsertSnippet {
+    pub language: Option<String>,
+    pub name: Option<String>,
+
+    // todo(andrew): use `ListOrDirect` or similar for multiline snippet body
+    pub snippet: Option<String>,
+}
+
 actions!(
     debugger,
     [
