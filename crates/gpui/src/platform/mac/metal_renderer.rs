@@ -5,6 +5,7 @@ use crate::{
     Surface, Underline, point, size,
 };
 use anyhow::Result;
+use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
     foundation::{NSSize, NSUInteger},
@@ -23,6 +24,7 @@ use metal::{
 };
 use objc::{self, msg_send, sel, sel_impl};
 
+use parking_lot::{Condvar, Mutex};
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 // Exported to metal
@@ -56,12 +58,11 @@ pub unsafe fn new_renderer(
 pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
-    in_flight: [Option<usize>; MAXIMUM_DRAWABLE_COUNT],
-    in_flight_index: usize,
+    current_index: usize,
+    sync: Arc<(Mutex<u8>, Condvar)>,
 }
 
 pub(crate) struct InstanceBuffer {
-    pool_index: usize,
     metal_buffer: metal::Buffer,
     size: usize,
 }
@@ -69,14 +70,13 @@ pub(crate) struct InstanceBuffer {
 impl InstanceBufferPool {
     const MIN_BUFFER_SIZE: usize = 2 * 1024 * 1024;
     const MAX_BUFFER_SIZE: usize = 256 * 1024 * 1024;
-    const ACQUIRED_SENTINEL: usize = usize::MAX;
 
     pub(crate) fn new(device: &metal::Device) -> Self {
         Self {
             buffer_size: Self::MIN_BUFFER_SIZE,
             buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device),
-            in_flight: [None; MAXIMUM_DRAWABLE_COUNT],
-            in_flight_index: 0,
+            current_index: 0,
+            sync: Arc::new((Mutex::new(MAXIMUM_DRAWABLE_COUNT as u8), Condvar::new())),
         }
     }
 
@@ -87,38 +87,40 @@ impl InstanceBufferPool {
         } else {
             self.buffer_size = next_size;
             self.buffers = Self::build_buffers(next_size, device);
-            self.in_flight = [None; MAXIMUM_DRAWABLE_COUNT];
+            *self.sync.0.lock() = MAXIMUM_DRAWABLE_COUNT as u8;
             Ok(next_size)
         }
     }
 
-    pub(crate) fn acquire(&mut self) -> Option<InstanceBuffer> {
-        let index = self.in_flight_index % MAXIMUM_DRAWABLE_COUNT;
-        let in_flight_frame = &mut self.in_flight[index];
+    pub(crate) fn acquire(&mut self) -> InstanceBuffer {
+        let (mutex, condvar) = &*self.sync;
+        let mut available = mutex.lock();
+        condvar.wait_while(&mut available, |count| {
+            let cond = *count == 0;
+            if cond {
+                println!("Acquire is locked!")
+            }
+            cond
+        });
+        *available -= 1;
 
-        let available = match *in_flight_frame {
-            None => true,
-            Some(Self::ACQUIRED_SENTINEL) => false,
-            Some(frame) => self.in_flight_index.saturating_sub(frame) >= MAXIMUM_DRAWABLE_COUNT,
-        };
+        let index = self.current_index;
+        self.current_index = (self.current_index + 1) % MAXIMUM_DRAWABLE_COUNT;
 
-        if available {
-            *in_flight_frame = Some(Self::ACQUIRED_SENTINEL);
-            Some(InstanceBuffer {
-                pool_index: index,
-                metal_buffer: self.buffers[index].clone(),
-                size: self.buffer_size,
-            })
-        } else {
-            None
+        InstanceBuffer {
+            metal_buffer: self.buffers[index].clone(),
+            size: self.buffer_size,
         }
     }
 
-    pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
-        if buffer.size == self.buffer_size {
-            self.in_flight[buffer.pool_index] = Some(self.in_flight_index);
-        }
-        self.in_flight_index = self.in_flight_index.wrapping_add(1);
+    pub(crate) fn sync(&self) -> Arc<(Mutex<u8>, Condvar)> {
+        self.sync.clone()
+    }
+
+    pub(crate) fn release(sync: &Arc<(Mutex<u8>, Condvar)>) {
+        let (mutex, condvar) = &**sync;
+        *mutex.lock() += 1;
+        condvar.notify_one();
     }
 
     fn build_buffers(
@@ -413,17 +415,19 @@ impl MetalRenderer {
         };
 
         loop {
-            let Some(mut instance_buffer) = self.instance_buffer_pool.acquire() else {
-                log::error!("failed to acquire instance buffer: all buffers in flight");
-                return;
-            };
+            let mut instance_buffer = self.instance_buffer_pool.acquire();
+            let sync = self.instance_buffer_pool.sync();
 
             let command_buffer =
                 self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
                 Ok(command_buffer) => {
-                    self.instance_buffer_pool.release(instance_buffer);
+                    let block = ConcreteBlock::new(move |_: &metal::CommandBufferRef| {
+                        InstanceBufferPool::release(&sync);
+                    });
+                    let block = block.copy();
+                    command_buffer.add_completed_handler(&block);
 
                     if self.presents_with_transaction {
                         command_buffer.commit();
@@ -440,6 +444,8 @@ impl MetalRenderer {
                         "failed to render: {}. retrying with larger instance buffer size",
                         err
                     );
+
+                    InstanceBufferPool::release(&sync);
 
                     match self.instance_buffer_pool.grow(&self.device) {
                         Ok(new_size) => {
