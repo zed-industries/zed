@@ -43,12 +43,18 @@ impl LanguageName {
         Self(SharedString::new(s))
     }
 
+    pub fn new_static(s: &'static str) -> Self {
+        Self(SharedString::new_static(s))
+    }
+
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
+
     pub fn to_proto(&self) -> String {
         self.0.to_string()
     }
+
     pub fn lsp_id(&self) -> String {
         match self.0.as_ref() {
             "Plain Text" => "plaintext".to_string(),
@@ -87,9 +93,9 @@ impl std::fmt::Display for LanguageName {
     }
 }
 
-impl<'a> From<&'a str> for LanguageName {
-    fn from(str: &'a str) -> LanguageName {
-        LanguageName(SharedString::new(str))
+impl From<&'static str> for LanguageName {
+    fn from(str: &'static str) -> Self {
+        Self(SharedString::new_static(str))
     }
 }
 
