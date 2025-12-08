@@ -15,6 +15,8 @@ pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 impl MetalAtlas {
     pub(crate) fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
+            // Shared memory can be used only if CPU and GPU share the same memory space.
+            // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
             unified_memory: device.has_unified_memory(),
             device: AssertSend(device),
             monochrome_textures: Default::default(),
