@@ -1070,7 +1070,11 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            trusted_worktrees::init_global(worktree_store.clone(), cx);
+            trusted_worktrees::init_global(
+                worktree_store.clone(),
+                None::<RemoteConnectionOptions>,
+                cx,
+            );
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1252,8 +1256,14 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
-            let (remote_proto, path_style) =
-                remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
+            let (remote_proto, path_style, connection_options) =
+                remote.read_with(cx, |remote, _| {
+                    (
+                        remote.proto_client(),
+                        remote.path_style(),
+                        remote.connection_options(),
+                    )
+                });
             let worktree_store = cx.new(|_| {
                 WorktreeStore::remote(
                     false,
@@ -1262,7 +1272,7 @@ impl Project {
                     path_style,
                 )
             });
-            trusted_worktrees::init_global(worktree_store.clone(), cx);
+            trusted_worktrees::init_global(worktree_store.clone(), Some(connection_options), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
