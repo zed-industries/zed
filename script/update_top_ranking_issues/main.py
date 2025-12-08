@@ -9,6 +9,7 @@ from typer import Typer
 
 app: Typer = typer.Typer()
 
+AMERICA_NEW_YORK_TIMEZONE = "America/New_York"
 DATETIME_FORMAT: str = "%B %d, %Y %I:%M %p"
 ISSUES_PER_SECTION: int = 50
 ISSUES_TO_FETCH: int = 100
@@ -30,7 +31,7 @@ def main(
     start_date: date | None = None
 
     if query_day_interval:
-        tz = timezone("America/New_York")
+        tz = timezone(AMERICA_NEW_YORK_TIMEZONE)
         today = datetime.now(tz).date()
         start_date = today - timedelta(days=query_day_interval)
 
@@ -137,7 +138,7 @@ def update_reference_issue(
 
 
 def create_issue_text(section_to_issues: dict[str, list[dict[str, Any]]]) -> str:
-    tz = timezone("America/New_York")
+    tz = timezone(AMERICA_NEW_YORK_TIMEZONE)
     current_datetime: str = datetime.now(tz).strftime(f"{DATETIME_FORMAT} (%Z)")
 
     lines: list[str] = [f"*Updated on {current_datetime}*"]
