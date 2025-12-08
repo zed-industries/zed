@@ -2,8 +2,8 @@ use credentials_provider::CredentialsProvider;
 use gpui::App;
 use std::path::PathBuf;
 
-const COPILOT_CHAT_EXTENSION_ID: &str = "copilot_chat";
-const COPILOT_CHAT_PROVIDER_ID: &str = "copilot_chat";
+const COPILOT_CHAT_EXTENSION_ID: &str = "copilot-chat";
+const COPILOT_CHAT_PROVIDER_ID: &str = "copilot-chat";
 
 pub fn migrate_copilot_credentials_if_needed(extension_id: &str, cx: &mut App) {
     if extension_id != COPILOT_CHAT_EXTENSION_ID {
@@ -115,9 +115,10 @@ fn extract_oauth_token(contents: &str, domain: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     #[test]
-    fn test_extract_oauth_token() {
+    fn test_extract_oauth_token_from_hosts_json() {
         let contents = r#"{
             "github.com": {
                 "oauth_token": "ghu_test_token_12345"
@@ -129,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_oauth_token_with_prefix() {
+    fn test_extract_oauth_token_with_user_suffix() {
         let contents = r#"{
             "github.com:user": {
                 "oauth_token": "ghu_another_token"
@@ -141,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_oauth_token_missing() {
+    fn test_extract_oauth_token_wrong_domain() {
         let contents = r#"{
             "gitlab.com": {
                 "oauth_token": "some_token"
@@ -157,5 +158,87 @@ mod tests {
         let contents = "not valid json";
         let token = extract_oauth_token(contents, "github.com");
         assert_eq!(token, None);
+    }
+
+    #[test]
+    fn test_extract_oauth_token_missing_oauth_token_field() {
+        let contents = r#"{
+            "github.com": {
+                "user": "testuser"
+            }
+        }"#;
+
+        let token = extract_oauth_token(contents, "github.com");
+        assert_eq!(token, None);
+    }
+
+    #[test]
+    fn test_extract_oauth_token_multiple_entries_picks_first_match() {
+        let contents = r#"{
+            "gitlab.com": {
+                "oauth_token": "gitlab_token"
+            },
+            "github.com": {
+                "oauth_token": "github_token"
+            }
+        }"#;
+
+        let token = extract_oauth_token(contents, "github.com");
+        assert_eq!(token, Some("github_token".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_skips_migration_if_extension_already_has_credentials(cx: &mut TestAppContext) {
+        let existing_token = "existing_oauth_token";
+
+        cx.write_credentials(
+            "extension-llm-copilot-chat:copilot-chat",
+            "api_key",
+            existing_token.as_bytes(),
+        );
+
+        cx.update(|cx| {
+            migrate_copilot_credentials_if_needed(COPILOT_CHAT_EXTENSION_ID, cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
+        let (_, password) = credentials.unwrap();
+        assert_eq!(
+            String::from_utf8(password).unwrap(),
+            existing_token,
+            "Should not overwrite existing credentials"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_skips_migration_for_other_extensions(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            migrate_copilot_credentials_if_needed("some-other-extension", cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
+        assert!(
+            credentials.is_none(),
+            "Should not create credentials for other extensions"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_migration_when_no_copilot_config_exists(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            migrate_copilot_credentials_if_needed(COPILOT_CHAT_EXTENSION_ID, cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
+        assert!(
+            credentials.is_none(),
+            "Should not create credentials when no copilot config exists"
+        );
     }
 }

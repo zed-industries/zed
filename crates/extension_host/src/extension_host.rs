@@ -1,3 +1,4 @@
+mod anthropic_migration;
 mod capability_granter;
 mod copilot_migration;
 pub mod extension_settings;
@@ -85,9 +86,9 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// we automatically enable env var reading for these extensions on first install.
 const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
     "anthropic",
-    "copilot_chat",
+    "copilot-chat",
     "google-ai",
-    "open_router",
+    "open-router",
     "openai",
 ];
 
@@ -128,9 +129,9 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
             .unwrap_or(false);
 
         // Mark as migrated regardless of whether we enable env var reading
+        let should_enable_env_var = env_var_is_set;
         settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
             let full_provider_id = full_provider_id.clone();
-            let env_var_is_set = env_var_is_set;
             move |settings, _| {
                 // Always mark as migrated
                 let migrated = settings
@@ -146,7 +147,7 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
                 }
 
                 // Only enable env var reading if the env var is set
-                if env_var_is_set {
+                if should_enable_env_var {
                     let providers = settings
                         .extension
                         .allowed_env_var_providers
@@ -889,6 +890,7 @@ impl ExtensionStore {
 
                     // Run extension-specific migrations
                     copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
+                    anthropic_migration::migrate_anthropic_credentials_if_needed(&extension_id, cx);
                 })
                 .ok();
             }
