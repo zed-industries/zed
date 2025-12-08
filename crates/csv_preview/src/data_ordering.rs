@@ -17,7 +17,7 @@ pub struct Ordering {
 /// Generate ordered row indices based on current ordering settings.
 /// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
 /// (display columns include the line number column at index 0)
-pub fn generate_ordered_indecies(ordering: Option<Ordering>, contents: &TableData) -> Vec<usize> {
+pub fn generate_ordered_indices(ordering: Option<Ordering>, contents: &TableData) -> Vec<usize> {
     let indices: Vec<usize> = (0..contents.rows.len()).collect();
 
     let Some(ordering) = ordering else {
