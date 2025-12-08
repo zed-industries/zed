@@ -33,7 +33,7 @@ use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use std::collections::HashSet;
 use ui::{div, prelude::*};
 
-use crate::{CsvPreviewView, data_ordering::generate_ordered_indecies};
+use crate::{CsvPreviewView, data_ordering::generate_ordered_indices};
 
 /// Selected cells using data coordinates (data_row, col).
 ///
@@ -203,7 +203,7 @@ impl TableSelection {
                 move |_event, _window, cx| {
                     view.update(cx, |this, cx| {
                         let ordered_indices =
-                            generate_ordered_indecies(this.ordering, &this.contents);
+                            generate_ordered_indices(this.ordering, &this.contents);
                         let display_to_data_converter =
                             move |dr: usize| ordered_indices.get(dr).copied();
 
@@ -223,7 +223,7 @@ impl TableSelection {
                         }
                         // Create converter function without borrowing self
                         let ordered_indices =
-                            generate_ordered_indecies(this.ordering, &this.contents);
+                            generate_ordered_indices(this.ordering, &this.contents);
                         let display_to_data_converter =
                             move |dr: usize| ordered_indices.get(dr).copied();
 

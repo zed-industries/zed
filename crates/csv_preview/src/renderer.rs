@@ -9,7 +9,7 @@ use ui::{
 use crate::{
     CsvPreviewView, Ordering,
     cell_selection::TableSelection,
-    data_ordering::{OrderingDirection, generate_ordered_indecies},
+    data_ordering::{OrderingDirection, generate_ordered_indices},
 };
 
 impl Render for CsvPreviewView {
@@ -186,7 +186,7 @@ impl CsvPreviewView {
                 let line_num_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
                 cx.processor(move |this, range: Range<usize>, _window, cx| {
-                    let ordered_indices = generate_ordered_indecies(this.ordering, &this.contents);
+                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
 
                     range
                         .filter_map(|display_index| {
@@ -217,7 +217,7 @@ impl CsvPreviewView {
 
                                 // Check if this cell is selected using display coordinates
                                 let ordered_indices =
-                                    generate_ordered_indecies(this.ordering, &this.contents);
+                                    generate_ordered_indices(this.ordering, &this.contents);
                                 let display_to_data_converter =
                                     |dr: usize| ordered_indices.get(dr).copied();
                                 let is_selected = this.selection.is_cell_selected(
