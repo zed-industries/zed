@@ -1365,7 +1365,7 @@ impl ExternalAgentServer for LocalCodex {
         &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        status_tx: Option<watch::Sender<SharedString>>,
+        mut status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
@@ -1402,58 +1402,115 @@ impl ExternalAgentServer for LocalCodex {
                 let dir = paths::external_agents_dir().join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
 
-                // Find or install the latest Codex release (no update checks for now).
-                let release = ::http_client::github::latest_github_release(
+                let bin_name = if cfg!(windows) {
+                    "codex-acp.exe"
+                } else {
+                    "codex-acp"
+                };
+
+                let find_latest_local_version = async || -> Option<PathBuf> {
+                    let mut local_versions: Vec<(semver::Version, String)> = Vec::new();
+                    let mut stream = fs.read_dir(&dir).await.ok()?;
+                    while let Some(entry) = stream.next().await {
+                        let Ok(entry) = entry else { continue };
+                        let Some(file_name) = entry.file_name() else {
+                            continue;
+                        };
+                        let version_path = dir.join(&file_name);
+                        if fs.is_file(&version_path.join(bin_name)).await {
+                            let version_str = file_name.to_string_lossy();
+                            if let Ok(version) =
+                                semver::Version::from_str(version_str.trim_start_matches('v'))
+                            {
+                                local_versions.push((version, version_str.into_owned()));
+                            }
+                        }
+                    }
+                    local_versions.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    local_versions.last().map(|(_, v)| dir.join(v))
+                };
+
+                let fallback_to_latest_local_version =
+                    async |err: anyhow::Error| -> Result<PathBuf, anyhow::Error> {
+                        if let Some(local) = find_latest_local_version().await {
+                            log::info!(
+                                "Falling back to locally installed Codex version: {}",
+                                local.display()
+                            );
+                            Ok(local)
+                        } else {
+                            Err(err)
+                        }
+                    };
+
+                let version_dir = match ::http_client::github::latest_github_release(
                     CODEX_ACP_REPO,
                     true,
                     false,
                     http.clone(),
                 )
                 .await
-                .context("fetching Codex latest release")?;
+                {
+                    Ok(release) => {
+                        let version_dir = dir.join(&release.tag_name);
+                        if !fs.is_dir(&version_dir).await {
+                            if let Some(ref mut status_tx) = status_tx {
+                                status_tx.send("Installing…".into()).ok();
+                            }
 
-                let version_dir = dir.join(&release.tag_name);
-                if !fs.is_dir(&version_dir).await {
-                    if let Some(mut status_tx) = status_tx {
-                        status_tx.send("Installing…".into()).ok();
-                    }
-
-                    let tag = release.tag_name.clone();
-                    let version_number = tag.trim_start_matches('v');
-                    let asset_name = asset_name(version_number)
-                        .context("codex acp is not supported for this architecture")?;
-                    let asset = release
-                        .assets
-                        .into_iter()
-                        .find(|asset| asset.name == asset_name)
-                        .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-                    // Strip "sha256:" prefix from digest if present (GitHub API format)
-                    let digest = asset
-                        .digest
-                        .as_deref()
-                        .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
-                    ::http_client::github_download::download_server_binary(
-                        &*http,
-                        &asset.browser_download_url,
-                        digest,
-                        &version_dir,
-                        if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-                            AssetKind::Zip
+                            let tag = release.tag_name.clone();
+                            let version_number = tag.trim_start_matches('v');
+                            let asset_name = asset_name(version_number)
+                                .context("codex acp is not supported for this architecture")?;
+                            let asset = release
+                                .assets
+                                .into_iter()
+                                .find(|asset| asset.name == asset_name)
+                                .with_context(|| {
+                                    format!("no asset found matching `{asset_name:?}`")
+                                })?;
+                            // Strip "sha256:" prefix from digest if present (GitHub API format)
+                            let digest = asset
+                                .digest
+                                .as_deref()
+                                .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
+                            match ::http_client::github_download::download_server_binary(
+                                &*http,
+                                &asset.browser_download_url,
+                                digest,
+                                &version_dir,
+                                if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+                                    AssetKind::Zip
+                                } else {
+                                    AssetKind::TarGz
+                                },
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    // remove older versions
+                                    util::fs::remove_matching(&dir, |entry| entry != version_dir)
+                                        .await;
+                                    version_dir
+                                }
+                                Err(err) => {
+                                    log::error!(
+                                        "Failed to download Codex release {}: {err:#}",
+                                        release.tag_name
+                                    );
+                                    fallback_to_latest_local_version(err).await?
+                                }
+                            }
                         } else {
-                            AssetKind::TarGz
-                        },
-                    )
-                    .await?;
-
-                    // remove older versions
-                    util::fs::remove_matching(&dir, |entry| entry != version_dir).await;
-                }
-
-                let bin_name = if cfg!(windows) {
-                    "codex-acp.exe"
-                } else {
-                    "codex-acp"
+                            version_dir
+                        }
+                    }
+                    Err(err) => {
+                        log::error!("Failed to fetch Codex latest release: {err:#}");
+                        fallback_to_latest_local_version(err).await?
+                    }
                 };
+
                 let bin_path = version_dir.join(bin_name);
                 anyhow::ensure!(
                     fs.is_file(&bin_path).await,
