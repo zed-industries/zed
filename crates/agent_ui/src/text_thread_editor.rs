@@ -5,9 +5,7 @@ use crate::{
 use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
-use assistant_slash_commands::{
-    DefaultSlashCommand, FileSlashCommand, codeblock_fence_for_path, selections_creases,
-};
+use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
@@ -1684,35 +1682,31 @@ impl TextThreadEditor {
         let editor_clipboard_selections = cx
             .read_from_clipboard()
             .and_then(|item| item.entries().first().cloned())
-            .and_then(|entry| {
-                if let ClipboardEntry::String(text) = entry {
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
-                } else {
-                    None
                 }
+                _ => None,
             });
 
         let has_file_context = editor_clipboard_selections
             .as_ref()
-            .map(|selections| {
+            .is_some_and(|selections| {
                 selections
                     .iter()
                     .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
-            })
-            .unwrap_or(false);
+            });
 
         if has_file_context {
             if let Some(clipboard_item) = cx.read_from_clipboard() {
                 if let Some(ClipboardEntry::String(clipboard_text)) =
                     clipboard_item.entries().first()
                 {
-                    let text = clipboard_text.text();
                     if let Some(selections) = editor_clipboard_selections {
                         cx.stop_propagation();
 
+                        let text = clipboard_text.text();
                         self.editor.update(cx, |editor, cx| {
-                            editor.insert("\n", window, cx);
-
                             let mut current_offset = 0;
                             let weak_editor = cx.entity().downgrade();
 
@@ -1722,12 +1716,9 @@ impl TextThreadEditor {
                                 {
                                     let selected_text =
                                         &text[current_offset..current_offset + selection.len];
-                                    let start_line = *line_range.start();
-                                    let end_line = *line_range.end();
-
-                                    let fence = codeblock_fence_for_path(
-                                        Some(&file_path),
-                                        Some((start_line - 1)..=(end_line - 1)),
+                                    let fence = assistant_slash_commands::codeblock_fence_for_path(
+                                        file_path.to_str(),
+                                        Some(line_range.clone()),
                                     );
                                     let formatted_text = format!("{fence}{selected_text}\n```");
 
@@ -1749,30 +1740,13 @@ impl TextThreadEditor {
 
                                     editor.insert("\n", window, cx);
 
-                                    let path = std::path::Path::new(&file_path);
-                                    let display_name = if let Some(filename) =
-                                        path.file_name().and_then(|n| n.to_str())
-                                    {
-                                        if let Some(parent) = path
-                                            .parent()
-                                            .and_then(|p| p.file_name())
-                                            .and_then(|p| p.to_str())
-                                        {
-                                            format!("{}/{}", parent, filename)
-                                        } else {
-                                            filename.to_string()
-                                        }
-                                    } else {
-                                        file_path.clone()
-                                    };
-                                    let crease_title = if start_line == end_line {
-                                        format!("{} ({})", display_name, start_line)
-                                    } else {
-                                        format!("{} ({}-{})", display_name, start_line, end_line)
-                                    };
+                                    let crease_text = acp_thread::selection_name(
+                                        Some(file_path.as_ref()),
+                                        &line_range,
+                                    );
 
                                     let fold_placeholder = quote_selection_fold_placeholder(
-                                        crease_title,
+                                        crease_text,
                                         weak_editor.clone(),
                                     );
                                     let crease = Crease::inline(

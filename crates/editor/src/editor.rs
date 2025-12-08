@@ -1574,7 +1574,7 @@ pub struct ClipboardSelection {
     /// The indentation of the first line when this content was originally copied.
     pub first_line_indent: u32,
     #[serde(default)]
-    pub file_path: Option<String>,
+    pub file_path: Option<PathBuf>,
     #[serde(default)]
     pub line_range: Option<RangeInclusive<u32>>,
 }
@@ -1585,17 +1585,24 @@ impl ClipboardSelection {
         is_entire_line: bool,
         range: Range<Point>,
         buffer: &MultiBufferSnapshot,
+        project: Option<&Entity<Project>>,
         cx: &App,
     ) -> Self {
         let first_line_indent = buffer
             .indent_size_for_line(MultiBufferRow(range.start.row))
             .len;
-        let file_path = buffer
-            .file_at(range.start)
-            .map(|file| file.full_path(cx).to_string_lossy().into_owned());
-        let line_range = file_path
-            .as_ref()
-            .map(|_| range.start.row + 1..=range.end.row + 1);
+
+        let file_path = util::maybe!({
+            let project = project?.read(cx);
+            let file = buffer.file_at(range.start)?;
+            let project_path = ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            };
+            project.absolute_path(&project_path, cx)
+        });
+
+        let line_range = file_path.as_ref().map(|_| range.start.row..=range.end.row);
 
         Self {
             len,
@@ -12732,6 +12739,7 @@ impl Editor {
                     is_entire_line,
                     selection.range(),
                     &buffer,
+                    self.project.as_ref(),
                     cx,
                 ));
             }
@@ -12881,6 +12889,7 @@ impl Editor {
                         is_entire_line,
                         trimmed_range,
                         &buffer,
+                        self.project.as_ref(),
                         cx,
                     ));
                 }

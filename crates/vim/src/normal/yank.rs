@@ -198,6 +198,7 @@ impl Vim {
                     false,
                     start..end,
                     &buffer,
+                    editor.project(),
                     cx,
                 ));
             }

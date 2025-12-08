@@ -28,13 +28,7 @@ use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Wor
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{
-    cell::RefCell,
-    fmt::Write,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, fmt::Write, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{ResultExt, debug_panic};
@@ -571,22 +565,20 @@ impl MessageEditor {
         let editor_clipboard_selections = cx
             .read_from_clipboard()
             .and_then(|item| item.entries().first().cloned())
-            .and_then(|entry| {
-                if let ClipboardEntry::String(text) = entry {
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
-                } else {
-                    None
                 }
+                _ => None,
             });
 
         let has_file_context = editor_clipboard_selections
             .as_ref()
-            .map(|selections: &Vec<editor::ClipboardSelection>| {
+            .is_some_and(|selections| {
                 selections
                     .iter()
                     .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
-            })
-            .unwrap_or(false);
+            });
 
         if has_file_context {
             if let Some(selections) = editor_clipboard_selections {
@@ -596,37 +588,12 @@ impl MessageEditor {
                     if let (Some(file_path), Some(line_range)) =
                         (selection.file_path, selection.line_range)
                     {
-                        let abs_path = PathBuf::from(&file_path);
-                        let start_line = *line_range.start();
-                        let end_line = *line_range.end();
-                        let range = start_line..=end_line;
+                        let crease_text =
+                            acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
 
-                        let path = Path::new(&file_path);
-                        let display_name =
-                            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                                if let Some(parent) = path
-                                    .parent()
-                                    .and_then(|p| p.file_name())
-                                    .and_then(|p| p.to_str())
-                                {
-                                    format!("{}/{}", parent, filename)
-                                } else {
-                                    filename.to_string()
-                                }
-                            } else {
-                                file_path.clone()
-                            };
-
-                        let crease_text = if start_line == end_line {
-                            format!("{} ({})", display_name, start_line)
-                        } else {
-                            format!("{} ({}-{})", display_name, start_line, end_line)
-                        };
-
-                        let mention_uri = MentionUri::Symbol {
-                            abs_path: abs_path.clone(),
-                            name: display_name.clone(),
-                            line_range: range,
+                        let mention_uri = MentionUri::Selection {
+                            abs_path: Some(file_path.clone()),
+                            line_range: line_range.clone(),
                         };
 
                         let mention_text = mention_uri.as_link().to_string();
@@ -636,14 +603,13 @@ impl MessageEditor {
                                 let snapshot = buffer.snapshot(cx);
                                 let (excerpt_id, _, buffer_snapshot) =
                                     snapshot.as_singleton().unwrap();
-                                let excerpt_id = *excerpt_id; // Copy the ExcerptId
                                 let start_offset = buffer_snapshot.len();
                                 let text_anchor = buffer_snapshot.anchor_before(start_offset);
 
                                 editor.insert(&mention_text, window, cx);
                                 editor.insert(" ", window, cx);
 
-                                (excerpt_id, text_anchor, mention_text.len())
+                                (*excerpt_id, text_anchor, mention_text.len())
                             });
 
                         let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -667,7 +633,7 @@ impl MessageEditor {
                             .spawn(async move |_, cx| {
                                 let project_path = project
                                     .update(cx, |project, cx| {
-                                        project.project_path_for_absolute_path(&abs_path, cx)
+                                        project.project_path_for_absolute_path(&file_path, cx)
                                     })
                                     .map_err(|e| e.to_string())?
                                     .ok_or_else(|| "project path not found".to_string())?;
@@ -680,10 +646,12 @@ impl MessageEditor {
 
                                 buffer
                                     .update(cx, |buffer, cx| {
-                                        let start =
-                                            Point::new(start_line - 1, 0).min(buffer.max_point());
-                                        let end = Point::new(end_line, 0).min(buffer.max_point());
+                                        let start = Point::new(*line_range.start(), 0)
+                                            .min(buffer.max_point());
+                                        let end = Point::new(*line_range.end() + 1, 0)
+                                            .min(buffer.max_point());
                                         let content = buffer.text_for_range(start..end).collect();
+                                        dbg!(&content, start.row, end.row);
                                         Mention::Text {
                                             content,
                                             tracked_buffers: vec![cx.entity()],
