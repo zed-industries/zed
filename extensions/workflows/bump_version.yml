@@ -8,6 +8,9 @@ on:
   push:
     branches:
     - main
+    paths-ignore:
+    - .github/**
+  workflow_dispatch: {}
 jobs:
   determine_bump_type:
     runs-on: namespace-profile-16x32-ubuntu-2204

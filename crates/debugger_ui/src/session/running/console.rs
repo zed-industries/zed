@@ -252,10 +252,11 @@ impl Console {
                         let start_offset = range.start;
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
+                        let color_fn = color_fetcher(color);
                         console.highlight_background_key::<ConsoleAnsiHighlight>(
                             start_offset,
                             &[range],
-                            color_fetcher(color),
+                            move |_, theme| color_fn(theme),
                             cx,
                         );
                     }
@@ -559,7 +560,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -570,9 +570,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         };
 
         let snapshot = buffer.read(cx).snapshot();
-        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
-            return false;
-        }
 
         let classifier = snapshot
             .char_classifier_at(position)

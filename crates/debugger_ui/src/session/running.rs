@@ -1743,7 +1743,7 @@ impl RunningState {
 
         let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-            matches!(session.mode, session::SessionState::Booting(_))
+            matches!(session.state, session::SessionState::Booting(_))
         });
 
         if is_building {

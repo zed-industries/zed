@@ -1,6 +1,7 @@
 use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
@@ -47,6 +48,7 @@ pub(crate) struct WslRemoteConnection {
     shell: String,
     shell_kind: ShellKind,
     default_system_shell: String,
+    has_wsl_interop: bool,
     connection_options: WslConnectionOptions,
 }
 
@@ -71,6 +73,7 @@ impl WslRemoteConnection {
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
+            has_wsl_interop: false,
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.shell = this
@@ -79,6 +82,15 @@ impl WslRemoteConnection {
             .context("failed detecting shell")?;
         log::info!("Remote shell discovered: {}", this.shell);
         this.shell_kind = ShellKind::new(&this.shell, false);
+        this.has_wsl_interop = this.detect_has_wsl_interop().await.unwrap_or_default();
+        log::info!(
+            "Remote has wsl interop {}",
+            if this.has_wsl_interop {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         this.platform = this
             .detect_platform()
             .await
@@ -96,23 +108,30 @@ impl WslRemoteConnection {
 
     async fn detect_platform(&self) -> Result<RemotePlatform> {
         let program = self.shell_kind.prepend_command_prefix("uname");
-        let arch_str = self.run_wsl_command_with_output(&program, &["-m"]).await?;
-        let arch_str = arch_str.trim().to_string();
-        let arch = match arch_str.as_str() {
-            "x86_64" => "x86_64",
-            "aarch64" | "arm64" => "aarch64",
-            _ => "x86_64",
-        };
-        Ok(RemotePlatform { os: "linux", arch })
+        let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
+        parse_platform(&output)
     }
 
     async fn detect_shell(&self) -> Result<String> {
-        Ok(self
+        const DEFAULT_SHELL: &str = "sh";
+        match self
             .run_wsl_command_with_output("sh", &["-c", "echo $SHELL"])
             .await
-            .inspect_err(|err| log::error!("Failed to detect remote shell: {err}"))
-            .ok()
-            .unwrap_or_else(|| "/bin/sh".to_string()))
+        {
+            Ok(output) => Ok(parse_shell(&output, DEFAULT_SHELL)),
+            Err(e) => {
+                log::error!("Failed to detect remote shell: {e}");
+                Ok(DEFAULT_SHELL.to_owned())
+            }
+        }
+    }
+
+    async fn detect_has_wsl_interop(&self) -> Result<bool> {
+        Ok(self
+            .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop"])
+            .await
+            .inspect_err(|err| log::error!("Failed to detect wsl interop: {err}"))?
+            .contains("enabled"))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
@@ -317,6 +336,7 @@ impl RemoteConnection for WslRemoteConnection {
                 proxy_args.push(format!("{}={}", env_var, value));
             }
         }
+
         proxy_args.push(remote_binary_path.display(PathStyle::Posix).into_owned());
         proxy_args.push("proxy".to_owned());
         proxy_args.push("--identifier".to_owned());
@@ -488,6 +508,10 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn default_system_shell(&self) -> String {
         self.default_system_shell.clone()
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        self.has_wsl_interop
     }
 }
 

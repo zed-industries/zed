@@ -62,6 +62,8 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
+    /// Enables the experimental edit prediction context retrieval system.
+    pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
 /// The provider that supplies edit predictions.
@@ -79,6 +81,7 @@ pub enum EditPredictionProvider {
 
 pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
 pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -107,6 +110,13 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             {
                 EditPredictionProvider::Experimental(
                     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
                 )
             }
             Content::Experimental(name)

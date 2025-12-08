@@ -949,6 +949,7 @@ message PulledDiagnostics {
     optional string result_id = 3;
     bool changed = 4;
     repeated LspDiagnostic diagnostics = 5;
+    optional string registration_id = 6;
 }
 
 message PullWorkspaceDiagnostics {
