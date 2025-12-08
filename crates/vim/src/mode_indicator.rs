@@ -2,7 +2,7 @@ use gpui::{Context, Element, Entity, FontWeight, Render, Subscription, WeakEntit
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
-use crate::{Vim, VimEvent, VimGlobals};
+use crate::{Vim, VimEvent};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -61,27 +61,43 @@ impl ModeIndicator {
     }
 
     fn current_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
-        let recording = Vim::globals(cx)
-            .recording_register
-            .map(|reg| format!("recording @{reg} "))
-            .into_iter();
+        let globals = Vim::globals(cx);
+
+        // Check if recording a macro
+        if let Some(reg) = globals.recording_register {
+            return format!("Recording @{}", reg);
+        }
+
+        // Read counts before releasing the mutable borrow on cx
+        let pre_count = globals.pre_count;
+        let post_count = globals.post_count;
 
         let vim = vim.read(cx);
-        recording
-            .chain(
-                cx.global::<VimGlobals>()
-                    .pre_count
-                    .map(|count| format!("{}", count)),
-            )
-            .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
-            .chain(vim.operator_stack.iter().map(|item| item.status()))
-            .chain(
-                cx.global::<VimGlobals>()
-                    .post_count
-                    .map(|count| format!("{}", count)),
-            )
-            .collect::<Vec<_>>()
-            .join("")
+
+        // Get friendly operator names
+        let operators: Vec<_> = vim
+            .operator_stack
+            .iter()
+            .map(|item| item.friendly_status())
+            .collect();
+
+        // Combine pre_count and post_count
+        let count = pre_count.or(post_count);
+
+        if operators.is_empty() {
+            // No operators pending - check for count or register selection
+            if let Some(c) = count {
+                return format!("{}x...", c);
+            }
+            if let Some(reg) = vim.selected_register {
+                return format!("Register \"{}\"", reg);
+            }
+            return String::new();
+        }
+
+        let count_str = count.map(|c| format!(" {}x", c)).unwrap_or_default();
+
+        format!("{}{}...", operators.join(" "), count_str)
     }
 }
 
@@ -138,7 +154,17 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            (pending.into(), Some(mode_str.into()))
+
+            // Hide mode label when an operator is pending
+            let show_mode = pending.is_empty();
+            (
+                pending.into(),
+                if show_mode {
+                    Some(mode_str.into())
+                } else {
+                    None
+                },
+            )
         };
         h_flex()
             .gap_1()

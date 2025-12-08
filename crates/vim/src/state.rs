@@ -1038,28 +1038,46 @@ impl Operator {
         }
     }
 
-    pub fn status(&self) -> String {
-        fn make_visible(c: &str) -> &str {
-            match c {
-                "\n" => "enter",
-                "\t" => "tab",
-                " " => "space",
-                c => c,
-            }
-        }
+    pub fn friendly_status(&self) -> &'static str {
         match self {
-            Operator::Digraph {
-                first_char: Some(first_char),
-            } => format!("^K{}", make_visible(&first_char.to_string())),
-            Operator::Literal {
-                prefix: Some(prefix),
-            } => format!("^V{}", make_visible(prefix)),
-            Operator::AutoIndent => "=".to_string(),
-            Operator::ShellCommand => "=".to_string(),
-            Operator::HelixMatch => "m".to_string(),
-            Operator::HelixNext { .. } => "]".to_string(),
-            Operator::HelixPrevious { .. } => "[".to_string(),
-            _ => self.id().to_string(),
+            Operator::Change => "Change",
+            Operator::Delete => "Delete",
+            Operator::Yank => "Yank",
+            Operator::Replace => "Replace character",
+            Operator::Object { around: false } => "inner",
+            Operator::Object { around: true } => "around",
+            Operator::FindForward { before: false, .. } => "Find",
+            Operator::FindForward { before: true, .. } => "Till",
+            Operator::FindBackward { after: false, .. } => "Find back",
+            Operator::FindBackward { after: true, .. } => "Till back",
+            Operator::Sneak { .. } => "Sneak",
+            Operator::SneakBackward { .. } => "Sneak back",
+            Operator::AddSurrounds { .. } => "Add surround",
+            Operator::ChangeSurrounds { .. } => "Change surround",
+            Operator::DeleteSurrounds => "Delete surround",
+            Operator::Mark => "Mark",
+            Operator::Jump { .. } => "Jump to",
+            Operator::Indent => "Indent",
+            Operator::Outdent => "Outdent",
+            Operator::AutoIndent => "Auto indent",
+            Operator::Rewrap => "Rewrap",
+            Operator::ShellCommand => "Shell command",
+            Operator::Lowercase => "Lowercase",
+            Operator::Uppercase => "Uppercase",
+            Operator::OppositeCase => "Toggle case",
+            Operator::Rot13 => "ROT13",
+            Operator::Rot47 => "ROT47",
+            Operator::Digraph { .. } => "Digraph",
+            Operator::Literal { .. } => "Literal",
+            Operator::Register => "Register",
+            Operator::RecordRegister => "Record macro",
+            Operator::ReplayRegister => "Replay macro",
+            Operator::ToggleComments => "Toggle comments",
+            Operator::ReplaceWithRegister => "Replace with register",
+            Operator::Exchange => "Exchange",
+            Operator::HelixMatch => "Match",
+            Operator::HelixNext { .. } => "Next",
+            Operator::HelixPrevious { .. } => "Previous",
         }
     }
 
