@@ -224,15 +224,14 @@ pub fn render_graph_continuation(
 
             for line in &lines {
                 let (lane, color_idx) = match line.line_type {
-                    LineType::Straight if !line.ends_at_commit => {
-                        (line.from_lane, line.color_idx)
-                    }
+                    LineType::Straight if !line.ends_at_commit => (line.from_lane, line.color_idx),
                     LineType::BranchOut => (line.to_lane, line.color_idx),
                     _ => continue,
                 };
 
                 let color = BRANCH_COLORS[color_idx % BRANCH_COLORS.len()];
-                let x = bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
+                let x =
+                    bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
 
                 window.paint_quad(gpui::fill(
                     Bounds::new(
@@ -355,7 +354,8 @@ fn draw_s_curve(
         let t = i as f32 / segments as f32;
         let (x, y) = cubic_bezier(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t);
 
-        let (dx, dy) = cubic_bezier_derivative(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t);
+        let (dx, dy) =
+            cubic_bezier_derivative(from_x, from_y, from_x, mid_y, to_x, mid_y, to_x, to_y, t);
         let dx_f = f32::from(dx);
         let dy_f = f32::from(dy);
         let len = (dx_f * dx_f + dy_f * dy_f).sqrt();
@@ -381,10 +381,14 @@ fn draw_s_curve(
 }
 
 fn cubic_bezier(
-    p0x: Pixels, p0y: Pixels,
-    p1x: Pixels, p1y: Pixels,
-    p2x: Pixels, p2y: Pixels,
-    p3x: Pixels, p3y: Pixels,
+    p0x: Pixels,
+    p0y: Pixels,
+    p1x: Pixels,
+    p1y: Pixels,
+    p2x: Pixels,
+    p2y: Pixels,
+    p3x: Pixels,
+    p3y: Pixels,
     t: f32,
 ) -> (Pixels, Pixels) {
     let inv_t = 1.0 - t;
@@ -399,10 +403,14 @@ fn cubic_bezier(
 }
 
 fn cubic_bezier_derivative(
-    p0x: Pixels, p0y: Pixels,
-    p1x: Pixels, p1y: Pixels,
-    p2x: Pixels, p2y: Pixels,
-    p3x: Pixels, p3y: Pixels,
+    p0x: Pixels,
+    p0y: Pixels,
+    p1x: Pixels,
+    p1y: Pixels,
+    p2x: Pixels,
+    p2y: Pixels,
+    p3x: Pixels,
+    p3y: Pixels,
     t: f32,
 ) -> (Pixels, Pixels) {
     let inv_t = 1.0 - t;
@@ -415,9 +423,9 @@ fn cubic_bezier_derivative(
 }
 
 pub enum BadgeType {
-    CurrentBranch(String, bool),  // name, has_origin
-    LocalBranch(String, bool),    // name, has_origin
-    RemoteBranch(String),         // full name like "origin/dev"
+    CurrentBranch(String, bool), // name, has_origin
+    LocalBranch(String, bool),   // name, has_origin
+    RemoteBranch(String),        // full name like "origin/dev"
     Tag(String),
 }
 

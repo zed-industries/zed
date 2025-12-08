@@ -14,17 +14,19 @@ use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
 use std::path::PathBuf;
-use util::ResultExt;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{ContextMenu, Tooltip};
 use ui_input::InputField;
+use util::ResultExt;
 use workspace::ModalView;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
 
 use commit_data::{CommitEntry, load_commits, run_git_command};
-use graph_rendering::{render_graph_cell, render_graph_continuation, parse_refs_to_badges, BadgeType, BRANCH_COLORS};
+use graph_rendering::{
+    BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
+};
 
 actions!(
     git_graph,
@@ -138,7 +140,10 @@ impl InputModal {
     }
 
     fn supports_push(&self) -> bool {
-        matches!(self.kind, InputModalKind::CreateBranch { .. } | InputModalKind::CreateTag { .. })
+        matches!(
+            self.kind,
+            InputModalKind::CreateBranch { .. } | InputModalKind::CreateTag { .. }
+        )
     }
 
     fn is_checkout_remote(&self) -> bool {
@@ -182,7 +187,8 @@ impl InputModal {
                     run_git_command(&work_dir, &["branch", "-m", old_name, &input_text]).await
                 }
                 InputModalKind::CheckoutRemoteBranch { remote_branch } => {
-                    run_git_command(&work_dir, &["checkout", "-b", &input_text, remote_branch]).await
+                    run_git_command(&work_dir, &["checkout", "-b", &input_text, remote_branch])
+                        .await
                 }
             };
 
@@ -214,7 +220,8 @@ impl InputModal {
                             this.error = Some(format!("Failed: {}", e).into());
                         }
                         (Ok(_), Err(e)) => {
-                            this.error = Some(format!("Checkout succeeded but pull failed: {}", e).into());
+                            this.error =
+                                Some(format!("Checkout succeeded but pull failed: {}", e).into());
                             this.load_data(cx);
                         }
                     }
@@ -296,10 +303,11 @@ impl Render for InputModal {
                                 .gap_2()
                                 .items_center()
                                 .child(
-                                    ui::Checkbox::new("checkbox-option", checkbox_state)
-                                        .on_click(cx.listener(|this, _, _, cx| {
+                                    ui::Checkbox::new("checkbox-option", checkbox_state).on_click(
+                                        cx.listener(|this, _, _, cx| {
                                             this.toggle_push_to_remote(cx);
-                                        })),
+                                        }),
+                                    ),
                                 )
                                 .child(
                                     Label::new(checkbox_label)
@@ -676,9 +684,10 @@ impl GitGraph {
             return;
         };
 
-        let has_local_branch = refs.iter().any(|r| {
-            !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
-        }) || refs.iter().any(|r| r.starts_with("HEAD -> "));
+        let has_local_branch = refs
+            .iter()
+            .any(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
+            || refs.iter().any(|r| r.starts_with("HEAD -> "));
 
         let remote_only_branch = if !has_local_branch {
             refs.iter()
@@ -689,7 +698,10 @@ impl GitGraph {
         };
 
         if let Some(remote_branch) = remote_only_branch {
-            let local_name = remote_branch.strip_prefix("origin/").unwrap_or(&remote_branch).to_string();
+            let local_name = remote_branch
+                .strip_prefix("origin/")
+                .unwrap_or(&remote_branch)
+                .to_string();
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
@@ -750,7 +762,10 @@ impl GitGraph {
         let is_remote = branch.starts_with("origin/");
 
         if is_remote {
-            let local_name = branch.strip_prefix("origin/").unwrap_or(&branch).to_string();
+            let local_name = branch
+                .strip_prefix("origin/")
+                .unwrap_or(&branch)
+                .to_string();
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
@@ -759,7 +774,9 @@ impl GitGraph {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     InputModal::new(
-                        InputModalKind::CheckoutRemoteBranch { remote_branch: branch },
+                        InputModalKind::CheckoutRemoteBranch {
+                            remote_branch: branch,
+                        },
                         "Enter local branch name",
                         &local_name,
                         work_dir,
@@ -1572,10 +1589,13 @@ impl GitGraph {
         h_flex()
             .gap_1()
             .flex_shrink_0()
-            .children(badges.into_iter().take(5).enumerate().map(|(badge_idx, badge)| {
-                match badge {
-                    BadgeType::Tag(name) => {
-                        h_flex()
+            .children(
+                badges
+                    .into_iter()
+                    .take(5)
+                    .enumerate()
+                    .map(|(badge_idx, badge)| match badge {
+                        BadgeType::Tag(name) => h_flex()
                             .gap_0p5()
                             .px_1()
                             .rounded_sm()
@@ -1589,116 +1609,130 @@ impl GitGraph {
                                     .size(LabelSize::Default)
                                     .color(Color::Default),
                             )
-                            .into_any_element()
-                    }
-                    BadgeType::CurrentBranch(name, has_origin) => {
-                        let branch_name = name.clone();
-                        h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!("badge-current-{}-{}", commit_idx, badge_idx)),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(accent_color)
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                if event.click_count() == 2 {
-                                    this.checkout_branch(branch_name.clone(), window, cx);
-                                }
-                            }))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Default),
-                            )
-                            .when(has_origin, |el| {
-                                el.child(
-                                    Label::new("origin")
+                            .into_any_element(),
+                        BadgeType::CurrentBranch(name, has_origin) => {
+                            let branch_name = name.clone();
+                            h_flex()
+                                .id(ElementId::NamedInteger(
+                                    SharedString::from(format!(
+                                        "badge-current-{}-{}",
+                                        commit_idx, badge_idx
+                                    )),
+                                    commit_idx as u64,
+                                ))
+                                .gap_0p5()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(accent_color)
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(hover_bg))
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        if event.click_count() == 2 {
+                                            this.checkout_branch(branch_name.clone(), window, cx);
+                                        }
+                                    },
+                                ))
+                                .child(
+                                    Icon::new(IconName::GitBranch)
+                                        .size(IconSize::Small)
+                                        .color(Color::Custom(branch_color)),
+                                )
+                                .child(
+                                    Label::new(name)
+                                        .size(LabelSize::Default)
+                                        .color(Color::Default),
+                                )
+                                .when(has_origin, |el| {
+                                    el.child(
+                                        Label::new("origin")
+                                            .size(LabelSize::Default)
+                                            .color(Color::Muted),
+                                    )
+                                })
+                                .into_any_element()
+                        }
+                        BadgeType::LocalBranch(name, has_origin) => {
+                            let branch_name = name.clone();
+                            h_flex()
+                                .id(ElementId::NamedInteger(
+                                    SharedString::from(format!(
+                                        "badge-local-{}-{}",
+                                        commit_idx, badge_idx
+                                    )),
+                                    commit_idx as u64,
+                                ))
+                                .gap_0p5()
+                                .px_1()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(hover_bg))
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        if event.click_count() == 2 {
+                                            this.checkout_branch(branch_name.clone(), window, cx);
+                                        }
+                                    },
+                                ))
+                                .child(
+                                    Icon::new(IconName::GitBranch)
+                                        .size(IconSize::Small)
+                                        .color(Color::Custom(branch_color)),
+                                )
+                                .child(
+                                    Label::new(name)
+                                        .size(LabelSize::Default)
+                                        .color(Color::Default),
+                                )
+                                .when(has_origin, |el| {
+                                    el.child(
+                                        Label::new("origin")
+                                            .size(LabelSize::Default)
+                                            .color(Color::Muted),
+                                    )
+                                })
+                                .into_any_element()
+                        }
+                        BadgeType::RemoteBranch(name) => {
+                            let branch_name = name.clone();
+                            h_flex()
+                                .id(ElementId::NamedInteger(
+                                    SharedString::from(format!(
+                                        "badge-remote-{}-{}",
+                                        commit_idx, badge_idx
+                                    )),
+                                    commit_idx as u64,
+                                ))
+                                .gap_0p5()
+                                .px_1()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .hover(move |style| style.bg(hover_bg))
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        if event.click_count() == 2 {
+                                            this.checkout_branch(branch_name.clone(), window, cx);
+                                        }
+                                    },
+                                ))
+                                .child(
+                                    Icon::new(IconName::GitBranch)
+                                        .size(IconSize::Small)
+                                        .color(Color::Custom(branch_color)),
+                                )
+                                .child(
+                                    Label::new(name)
                                         .size(LabelSize::Default)
                                         .color(Color::Muted),
                                 )
-                            })
-                            .into_any_element()
-                    }
-                    BadgeType::LocalBranch(name, has_origin) => {
-                        let branch_name = name.clone();
-                        h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!("badge-local-{}-{}", commit_idx, badge_idx)),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                if event.click_count() == 2 {
-                                    this.checkout_branch(branch_name.clone(), window, cx);
-                                }
-                            }))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Default),
-                            )
-                            .when(has_origin, |el| {
-                                el.child(
-                                    Label::new("origin")
-                                        .size(LabelSize::Default)
-                                        .color(Color::Muted),
-                                )
-                            })
-                            .into_any_element()
-                    }
-                    BadgeType::RemoteBranch(name) => {
-                        let branch_name = name.clone();
-                        h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!("badge-remote-{}-{}", commit_idx, badge_idx)),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                if event.click_count() == 2 {
-                                    this.checkout_branch(branch_name.clone(), window, cx);
-                                }
-                            }))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Muted),
-                            )
-                            .into_any_element()
-                    }
-                }
-            }))
+                                .into_any_element()
+                        }
+                    }),
+            )
     }
 
     fn render_list_item(

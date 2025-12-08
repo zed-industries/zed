@@ -111,11 +111,21 @@ async fn fetch_git_log(work_dir: &PathBuf) -> Result<(Vec<CommitEntry>, usize)> 
 
         let parts: Vec<&str> = line.split('|').collect();
         let Some(sha) = parts.get(0) else { continue };
-        let Some(short_sha) = parts.get(1) else { continue };
-        let Some(subject) = parts.get(2) else { continue };
-        let Some(author_name) = parts.get(3) else { continue };
-        let Some(timestamp_str) = parts.get(4) else { continue };
-        let Some(parents_str) = parts.get(5) else { continue };
+        let Some(short_sha) = parts.get(1) else {
+            continue;
+        };
+        let Some(subject) = parts.get(2) else {
+            continue;
+        };
+        let Some(author_name) = parts.get(3) else {
+            continue;
+        };
+        let Some(timestamp_str) = parts.get(4) else {
+            continue;
+        };
+        let Some(parents_str) = parts.get(5) else {
+            continue;
+        };
 
         let timestamp: i64 = timestamp_str.parse().unwrap_or(0);
         let parents: Vec<String> = parents_str
