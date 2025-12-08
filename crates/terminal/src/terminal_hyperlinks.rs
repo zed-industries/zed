@@ -244,7 +244,10 @@ fn path_match<T>(
         let is_spacer = cell.flags.intersects(WIDE_CHAR_SPACERS);
         if cell.point == hovered {
             debug_assert!(hovered_point_byte_offset.is_none());
-
+            if start_offset > 0 && cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                // If we hovered on a trailing spacer, back up to the end of the previous char's bytes.
+                start_offset -= 1;
+            }
             hovered_point_byte_offset = Some(start_offset);
         } else if cell.point < hovered && !is_spacer {
             start_offset += cell.c.len_utf8();
@@ -335,7 +338,8 @@ fn path_match<T>(
             let link_range = captures
                 .name("link")
                 .map_or_else(|| match_range.clone(), |link| link.range());
-            if !(link_range.start..=link_range.end).contains(&hovered_point_byte_offset) {
+
+            if !link_range.contains(&hovered_point_byte_offset) {
                 // No match, just skip.
                 continue;
             }
