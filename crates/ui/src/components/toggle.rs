@@ -44,15 +44,16 @@ pub enum ToggleStyle {
 pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
+    style: ToggleStyle,
     disabled: bool,
     placeholder: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
     filled: bool,
-    style: ToggleStyle,
-    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    visualization: bool,
     label: Option<SharedString>,
     label_size: LabelSize,
     label_color: Color,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl Checkbox {
@@ -61,15 +62,16 @@ impl Checkbox {
         Self {
             id: id.into(),
             toggle_state: checked,
-            disabled: false,
-            on_click: None,
-            filled: false,
             style: ToggleStyle::default(),
-            tooltip: None,
+            disabled: false,
+            placeholder: false,
+            filled: false,
+            visualization: false,
             label: None,
             label_size: LabelSize::Default,
             label_color: Color::Muted,
-            placeholder: false,
+            tooltip: None,
+            on_click: None,
         }
     }
 
@@ -107,6 +109,13 @@ impl Checkbox {
     /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
     pub fn fill(mut self) -> Self {
         self.filled = true;
+        self
+    }
+
+    /// Makes the checkbox look enabled but without pointer cursor and hover styles.
+    /// Primarily used for uninteractive markdown previews.
+    pub fn visualization_only(mut self, visualization: bool) -> Self {
+        self.visualization = visualization;
         self
     }
 
@@ -209,11 +218,10 @@ impl RenderOnce for Checkbox {
         let size = Self::container_size();
 
         let checkbox = h_flex()
-            .id(self.id.clone())
-            .justify_center()
-            .items_center()
-            .size(size)
             .group(group_id.clone())
+            .id(self.id.clone())
+            .size(size)
+            .justify_center()
             .child(
                 div()
                     .flex()
@@ -230,7 +238,7 @@ impl RenderOnce for Checkbox {
                     .when(self.disabled, |this| {
                         this.bg(cx.theme().colors().element_disabled.opacity(0.6))
                     })
-                    .when(!self.disabled, |this| {
+                    .when(!self.disabled && !self.visualization, |this| {
                         this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
                     })
                     .when(self.placeholder, |this| {
@@ -250,20 +258,14 @@ impl RenderOnce for Checkbox {
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
+                } else if self.visualization {
+                    this.cursor_default()
                 } else {
                     this.cursor_pointer()
                 }
             })
             .gap(DynamicSpacing::Base06.rems(cx))
             .child(checkbox)
-            .when_some(
-                self.on_click.filter(|_| !self.disabled),
-                |this, on_click| {
-                    this.on_click(move |click, window, cx| {
-                        on_click(&self.toggle_state.inverse(), click, window, cx)
-                    })
-                },
-            )
             .when_some(self.label, |this, label| {
                 this.child(
                     Label::new(label)
@@ -274,6 +276,14 @@ impl RenderOnce for Checkbox {
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| {
+                    this.on_click(move |click, window, cx| {
+                        on_click(&self.toggle_state.inverse(), click, window, cx)
+                    })
+                },
+            )
     }
 }
 
@@ -911,6 +921,15 @@ impl Component for Checkbox {
                             "Default",
                             Checkbox::new("checkbox_with_label", ToggleState::Selected)
                                 .label("Always save on quit")
+                                .into_any_element(),
+                        )],
+                    ),
+                    example_group_with_title(
+                        "Extra",
+                        vec![single_example(
+                            "Visualization-Only",
+                            Checkbox::new("viz_only", ToggleState::Selected)
+                                .visualization_only(true)
                                 .into_any_element(),
                         )],
                     ),
