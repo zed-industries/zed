@@ -7,7 +7,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     runners::Arch,
     steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
-    vars::PathCondition,
+    vars::{self, PathCondition},
 };
 
 use super::{
@@ -226,8 +226,8 @@ fn check_style() -> NamedJob {
         named::uses(
             "crate-ci",
             "typos",
-            "80c8a4945eec0f6d464eaf9e65ed98ef085283d1",
-        ) // v1.38.1
+            "2d0ce569feab1f8752f1dde43cc2f2aa53236e06",
+        ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
     named::job(
@@ -353,7 +353,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
     }
 
     fn bufbuild_setup_action() -> Step<Use> {
-        named::uses("bufbuild", "buf-setup-action", "v1").add_with(("version", "v1.29.0"))
+        named::uses("bufbuild", "buf-setup-action", "v1")
+            .add_with(("version", "v1.29.0"))
+            .add_with(("github_token", vars::GITHUB_TOKEN))
     }
 
     fn bufbuild_breaking_action() -> Step<Use> {

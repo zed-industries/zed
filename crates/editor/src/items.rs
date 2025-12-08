@@ -23,7 +23,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
 use project::{
-    Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
+    File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
 use rpc::proto::{self, update_view};
@@ -455,21 +455,13 @@ async fn update_editor_from_message(
     })??;
 
     // Deserialize the editor state.
-    let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
-        let buffer = editor.buffer.read(cx).read(cx);
-        let selections = message
-            .selections
-            .into_iter()
-            .filter_map(|selection| deserialize_selection(&buffer, selection))
-            .collect::<Vec<_>>();
-        let pending_selection = message
-            .pending_selection
-            .and_then(|selection| deserialize_selection(&buffer, selection));
-        let scroll_top_anchor = message
-            .scroll_top_anchor
-            .and_then(|anchor| deserialize_anchor(&buffer, anchor));
-        anyhow::Ok((selections, pending_selection, scroll_top_anchor))
-    })??;
+    let selections = message
+        .selections
+        .into_iter()
+        .filter_map(deserialize_selection)
+        .collect::<Vec<_>>();
+    let pending_selection = message.pending_selection.and_then(deserialize_selection);
+    let scroll_top_anchor = message.scroll_top_anchor.and_then(deserialize_anchor);
 
     // Wait until the buffer has received all of the operations referenced by
     // the editor's new state.
@@ -563,24 +555,20 @@ fn deserialize_excerpt_range(
     ))
 }
 
-fn deserialize_selection(
-    buffer: &MultiBufferSnapshot,
-    selection: proto::Selection,
-) -> Option<Selection<Anchor>> {
+fn deserialize_selection(selection: proto::Selection) -> Option<Selection<Anchor>> {
     Some(Selection {
         id: selection.id as usize,
-        start: deserialize_anchor(buffer, selection.start?)?,
-        end: deserialize_anchor(buffer, selection.end?)?,
+        start: deserialize_anchor(selection.start?)?,
+        end: deserialize_anchor(selection.end?)?,
         reversed: selection.reversed,
         goal: SelectionGoal::None,
     })
 }
 
-fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
+fn deserialize_anchor(anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
     Some(Anchor::in_buffer(
         excerpt_id,
-        buffer.buffer_id_for_excerpt(excerpt_id)?,
         language::proto::deserialize_anchor(anchor.anchor?)?,
     ))
 }
@@ -645,18 +633,20 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        let file_path = self
-            .buffer()
+        self.buffer()
             .read(cx)
-            .as_singleton()?
-            .read(cx)
-            .file()
-            .and_then(|f| f.as_local())?
-            .abs_path(cx);
-
-        let file_path = file_path.compact().to_string_lossy().into_owned();
-
-        Some(file_path.into())
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| File::from_dyn(Some(file)))
+            .map(|file| {
+                file.worktree
+                    .read(cx)
+                    .absolutize(&file.path)
+                    .compact()
+                    .to_string_lossy()
+                    .into_owned()
+                    .into()
+            })
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -939,7 +929,11 @@ impl Item for Editor {
         })
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1372,7 +1366,7 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
-        if let Some((excerpt_id, buffer_id, snapshot)) =
+        if let Some((excerpt_id, _, snapshot)) =
             editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
             && let Some(restoration_data) = Self::project_item_kind()
@@ -1395,11 +1389,8 @@ impl ProjectItem for Editor {
                 });
             }
             let (top_row, offset) = restoration_data.scroll_position;
-            let anchor = Anchor::in_buffer(
-                *excerpt_id,
-                buffer_id,
-                snapshot.anchor_before(Point::new(top_row, 0)),
-            );
+            let anchor =
+                Anchor::in_buffer(*excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 
@@ -1496,6 +1487,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
+        active_match_index: Option<usize>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1506,7 +1498,13 @@ impl SearchableItem for Editor {
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.colors().search_match_background,
+            move |index, theme| {
+                if active_match_index == Some(*index) {
+                    theme.colors().search_active_match_background
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
             cx,
         );
         if updated {
@@ -1781,11 +1779,7 @@ impl SearchableItem for Editor {
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    Anchor::range_in_buffer(
-                                        excerpt_id,
-                                        search_buffer.remote_id(),
-                                        start..end,
-                                    )
+                                    Anchor::range_in_buffer(excerpt_id, start..end)
                                 }
                             }),
                     );
@@ -1904,15 +1898,20 @@ fn path_for_buffer<'a>(
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
-    path_for_file(file.as_ref(), height, include_filename, cx)
+    path_for_file(file, height, include_filename, cx)
 }
 
 fn path_for_file<'a>(
-    file: &'a dyn language::File,
+    file: &'a Arc<dyn language::File>,
     mut height: usize,
     include_filename: bool,
     cx: &'a App,
 ) -> Option<Cow<'a, str>> {
+    if project::File::from_dyn(Some(file)).is_none() {
+        return None;
+    }
+
+    let file = file.as_ref();
     // Ensure we always render at least the filename.
     height += 1;
 
@@ -1952,18 +1951,18 @@ mod tests {
     use super::*;
     use fs::MTime;
     use gpui::{App, VisualTestContext};
-    use language::{LanguageMatcher, TestFile};
+    use language::TestFile;
     use project::FakeFs;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
-        let file = TestFile {
+        let file: Arc<dyn language::File> = Arc::new(TestFile {
             path: RelPath::empty().into(),
             root_name: String::new(),
             local_root: None,
-        };
+        });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }
 
@@ -1990,20 +1989,6 @@ mod tests {
             })
             .await
             .unwrap()
-    }
-
-    fn rust_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
     }
 
     #[gpui::test]
@@ -2087,7 +2072,9 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.read_with(cx, |project, _| project.languages().add(rust_language()));
+            project.read_with(cx, |project, _| {
+                project.languages().add(languages::rust_lang())
+            });
 
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));

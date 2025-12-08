@@ -280,6 +280,8 @@ impl TextThreadEditor {
             .thought_process_output_sections()
             .to_vec();
         let slash_commands = text_thread.read(cx).slash_commands().clone();
+        let focus_handle = editor.read(cx).focus_handle(cx);
+
         let mut this = Self {
             text_thread,
             slash_commands,
@@ -315,6 +317,7 @@ impl TextThreadEditor {
                         });
                     },
                     true, // Use popover styles for picker
+                    focus_handle,
                     window,
                     cx,
                 )
@@ -2645,7 +2648,11 @@ impl Item for TextThreadEditor {
         Some(self.title(cx).to_string().into())
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -2707,11 +2714,13 @@ impl SearchableItem for TextThreadEditor {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.update_matches(matches, window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.update_matches(matches, active_match_index, window, cx)
+        });
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {

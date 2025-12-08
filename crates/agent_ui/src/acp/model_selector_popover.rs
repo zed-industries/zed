@@ -30,8 +30,18 @@ impl AcpModelSelectorPopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle_clone = focus_handle.clone();
         Self {
-            selector: cx.new(move |cx| acp_model_selector(selector, agent_server, fs, window, cx)),
+            selector: cx.new(move |cx| {
+                acp_model_selector(
+                    selector,
+                    agent_server,
+                    fs,
+                    focus_handle_clone.clone(),
+                    window,
+                    cx,
+                )
+            }),
             menu_handle,
             focus_handle,
         }

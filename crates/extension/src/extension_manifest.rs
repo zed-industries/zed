@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
 use lsp::LanguageServerName;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
@@ -137,7 +137,7 @@ pub fn build_debug_adapter_schema_path(
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LibManifestEntry {
     pub kind: Option<ExtensionLibraryKind>,
-    pub version: Option<SemanticVersion>,
+    pub version: Option<Version>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]

@@ -1359,11 +1359,11 @@ impl WorkspaceDb {
             // If a local workspace points to WSL, this check will cause us to wait for the
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
-            if !has_wsl_path
-                && paths.paths().iter().all(|path| path.exists())
-                && paths.paths().iter().any(|path| path.is_dir())
-            {
-                result.push((id, SerializedWorkspaceLocation::Local, paths));
+            if !has_wsl_path && paths.paths().iter().all(|path| path.exists()) {
+                // Only show directories in recent projects
+                if paths.paths().iter().any(|path| path.is_dir()) {
+                    result.push((id, SerializedWorkspaceLocation::Local, paths));
+                }
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1654,49 +1654,6 @@ impl WorkspaceDb {
             SET session_id = ?2
             WHERE workspace_id = ?1
         }
-    }
-
-    pub async fn toolchain(
-        &self,
-        workspace_id: WorkspaceId,
-        worktree_id: WorktreeId,
-        relative_worktree_path: Arc<RelPath>,
-        language_name: LanguageName,
-    ) -> Result<Option<Toolchain>> {
-        self.write(move |this| {
-            let mut select = this
-                .select_bound(sql!(
-                    SELECT
-                        name, path, raw_json
-                    FROM toolchains
-                    WHERE
-                        workspace_id = ? AND
-                        language_name = ? AND
-                        worktree_id = ? AND
-                        relative_worktree_path = ?
-                ))
-                .context("select toolchain")?;
-
-            let toolchain: Vec<(String, String, String)> = select((
-                workspace_id,
-                language_name.as_ref().to_string(),
-                worktree_id.to_usize(),
-                relative_worktree_path.as_unix_str().to_string(),
-            ))?;
-
-            Ok(toolchain
-                .into_iter()
-                .next()
-                .and_then(|(name, path, raw_json)| {
-                    Some(Toolchain {
-                        name: name.into(),
-                        path: path.into(),
-                        language_name,
-                        as_json: serde_json::Value::from_str(&raw_json).ok()?,
-                    })
-                }))
-        })
-        .await
     }
 
     pub(crate) async fn toolchains(

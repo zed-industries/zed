@@ -2268,17 +2268,13 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
             ..language::ToOffset::to_offset(&range.context.end, buffer);
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
+            let anchor = Anchor::in_buffer(excerpt, text_anchor);
             return anchor.to_display_point(map);
         } else if offset <= excerpt_range.start {
-            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
+            let anchor = Anchor::in_buffer(excerpt, range.context.start);
             return anchor.to_display_point(map);
         } else {
-            last_position = Some(Anchor::in_buffer(
-                excerpt,
-                buffer.remote_id(),
-                range.context.end,
-            ));
+            last_position = Some(Anchor::in_buffer(excerpt, range.context.end));
         }
     }
 
@@ -2392,10 +2388,16 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
 
     if let Some((opening_range, closing_range)) = bracket_ranges {
-        if opening_range.contains(&offset) {
-            return closing_range.start.to_display_point(map);
-        } else if closing_range.contains(&offset) {
-            return opening_range.start.to_display_point(map);
+        let mut chars = map.buffer_snapshot().chars_at(offset);
+        match chars.next() {
+            Some('/') => {}
+            _ => {
+                if opening_range.contains(&offset) {
+                    return closing_range.start.to_display_point(map);
+                } else if closing_range.contains(&offset) {
+                    return opening_range.start.to_display_point(map);
+                }
+            }
         }
     }
 
@@ -3447,6 +3449,23 @@ mod test {
                 test = "test"
             />
         </a>"#});
+
+        // test nested closing tag
+        cx.set_shared_state(indoc! {r#"<html>
+            <bˇody>
+            </body>
+        </html>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <body>
+            <ˇ/body>
+        </html>"#});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<html>
+            <ˇbody>
+            </body>
+        </html>"#});
     }
 
     #[gpui::test]

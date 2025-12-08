@@ -15,8 +15,9 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
-    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, ToOffset,
-    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
+    EditorEvent, EditorMode, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset,
+    MultiBufferSnapshot, ToOffset, actions::Paste, code_context_menus::CodeContextMenu,
+    scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
@@ -38,7 +39,6 @@ use zed_actions::agent::Chat;
 pub struct MessageEditor {
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
-    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -97,7 +97,7 @@ impl PromptCompletionProviderDelegate for Entity<MessageEditor> {
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -123,6 +123,7 @@ impl MessageEditor {
             let mut editor = Editor::new(mode, buffer, None, window, cx);
             editor.set_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
             editor.set_context_menu_options(ContextMenuOptions {
@@ -133,18 +134,11 @@ impl MessageEditor {
             editor.register_addon(MessageEditorAddon::new());
             editor
         });
-        let mention_set = cx.new(|cx| {
-            MentionSet::new(
-                editor.clone(),
-                project.downgrade(),
-                history_store.clone(),
-                prompt_store.clone(),
-                window,
-                cx,
-            )
-        });
+        let mention_set =
+            cx.new(|_cx| MentionSet::new(project, history_store.clone(), prompt_store.clone()));
         let completion_provider = Rc::new(PromptCompletionProvider::new(
             cx.entity(),
+            editor.downgrade(),
             mention_set.clone(),
             history_store.clone(),
             prompt_store.clone(),
@@ -166,14 +160,18 @@ impl MessageEditor {
         let mut has_hint = false;
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe(&editor, {
-            move |this, editor, event, cx| {
+        subscriptions.push(cx.subscribe_in(&editor, window, {
+            move |this, editor, event, window, cx| {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
                     editor.update(cx, |editor, cx| {
+                        let snapshot = editor.snapshot(window, cx);
+                        this.mention_set
+                            .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
+
                         let new_hints = this
-                            .command_hint(editor.buffer(), cx)
+                            .command_hint(snapshot.buffer())
                             .into_iter()
                             .collect::<Vec<_>>();
                         let has_new_hint = !new_hints.is_empty();
@@ -195,7 +193,6 @@ impl MessageEditor {
 
         Self {
             editor,
-            project,
             mention_set,
             workspace,
             prompt_capabilities,
@@ -206,13 +203,12 @@ impl MessageEditor {
         }
     }
 
-    fn command_hint(&self, buffer: &Entity<MultiBuffer>, cx: &App) -> Option<Inlay> {
+    fn command_hint(&self, snapshot: &MultiBufferSnapshot) -> Option<Inlay> {
         let available_commands = self.available_commands.borrow();
         if available_commands.is_empty() {
             return None;
         }
 
-        let snapshot = buffer.read(cx).snapshot(cx);
         let parsed_command = SlashCommandCompletion::try_parse(&snapshot.text(), 0)?;
         if parsed_command.argument.is_some() {
             return None;
@@ -223,8 +219,13 @@ impl MessageEditor {
             .iter()
             .find(|command| command.name == command_name)?;
 
-        let acp::AvailableCommandInput::Unstructured { mut hint } =
-            available_command.input.clone()?;
+        let acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput {
+            mut hint,
+            ..
+        }) = available_command.input.clone()?
+        else {
+            return None;
+        };
 
         let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
@@ -286,6 +287,7 @@ impl MessageEditor {
                     content_len,
                     uri,
                     supports_images,
+                    self.editor.clone(),
                     &workspace,
                     window,
                     cx,
@@ -400,34 +402,27 @@ impl MessageEditor {
                             } => {
                                 all_tracked_buffers.extend(tracked_buffers.iter().cloned());
                                 if supports_embedded_context {
-                                    acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                        annotations: None,
-                                        resource:
-                                            acp::EmbeddedResourceResource::TextResourceContents(
-                                                acp::TextResourceContents {
-                                                    mime_type: None,
-                                                    text: content.clone(),
-                                                    uri: uri.to_uri().to_string(),
-                                                    meta: None,
-                                                },
+                                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                                        acp::EmbeddedResourceResource::TextResourceContents(
+                                            acp::TextResourceContents::new(
+                                                content.clone(),
+                                                uri.to_uri().to_string(),
                                             ),
-                                        meta: None,
-                                    })
+                                        ),
+                                    ))
                                 } else {
-                                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                        name: uri.name(),
-                                        uri: uri.to_uri().to_string(),
-                                        annotations: None,
-                                        description: None,
-                                        mime_type: None,
-                                        size: None,
-                                        title: None,
-                                        meta: None,
-                                    })
+                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                                        uri.name(),
+                                        uri.to_uri().to_string(),
+                                    ))
                                 }
                             }
-                            Mention::Image(mention_image) => {
-                                let uri = match uri {
+                            Mention::Image(mention_image) => acp::ContentBlock::Image(
+                                acp::ImageContent::new(
+                                    mention_image.data.clone(),
+                                    mention_image.format.mime_type(),
+                                )
+                                .uri(match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
                                     MentionUri::PastedImage => None,
                                     other => {
@@ -437,25 +432,11 @@ impl MessageEditor {
                                         );
                                         None
                                     }
-                                };
-                                acp::ContentBlock::Image(acp::ImageContent {
-                                    annotations: None,
-                                    data: mention_image.data.to_string(),
-                                    mime_type: mention_image.format.mime_type().into(),
-                                    uri,
-                                    meta: None,
-                                })
-                            }
-                            Mention::Link => acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                name: uri.name(),
-                                uri: uri.to_uri().to_string(),
-                                annotations: None,
-                                description: None,
-                                mime_type: None,
-                                size: None,
-                                title: None,
-                                meta: None,
-                            }),
+                                }),
+                            ),
+                            Mention::Link => acp::ContentBlock::ResourceLink(
+                                acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
+                            ),
                         };
                         chunks.push(chunk);
                         ix = crease_range.end.0;
@@ -480,7 +461,7 @@ impl MessageEditor {
             editor.remove_creases(
                 self.mention_set.update(cx, |mention_set, _cx| {
                     mention_set
-                        .remove_all()
+                        .clear()
                         .map(|(crease_id, _)| crease_id)
                         .collect::<Vec<_>>()
                 }),
@@ -691,17 +672,18 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let path_style = self.project.read(cx).path_style(cx);
+        let project = workspace.read(cx).project().clone();
+        let path_style = project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
         };
         let mut tasks = Vec::new();
         for path in paths {
-            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+            let Some(entry) = project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
+            let Some(worktree) = project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
             let abs_path = worktree.read(cx).absolutize(&path.path);
@@ -739,6 +721,7 @@ impl MessageEditor {
                     content_len,
                     uri,
                     supports_images,
+                    self.editor.clone(),
                     &workspace,
                     window,
                     cx,
@@ -770,6 +753,7 @@ impl MessageEditor {
             PromptCompletionProvider::<Entity<MessageEditor>>::completion_for_action(
                 PromptContextAction::AddSelections,
                 anchor..anchor,
+                self.editor.downgrade(),
                 self.mention_set.downgrade(),
                 &workspace,
                 cx,
@@ -807,9 +791,13 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
         self.clear(window, cx);
 
-        let path_style = self.project.read(cx).path_style(cx);
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -852,8 +840,7 @@ impl MessageEditor {
                     uri,
                     data,
                     mime_type,
-                    annotations: _,
-                    meta: _,
+                    ..
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri, path_style)
@@ -879,7 +866,7 @@ impl MessageEditor {
                         }),
                     ));
                 }
-                acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) => {}
+                _ => {}
             }
         }
 
@@ -1053,7 +1040,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -1164,7 +1151,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle.clone(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1198,12 +1185,7 @@ mod tests {
         assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
-        available_commands.replace(vec![acp::AvailableCommand {
-            name: "help".to_string(),
-            description: "Get help".to_string(),
-            input: None,
-            meta: None,
-        }]);
+        available_commands.replace(vec![acp::AvailableCommand::new("help", "Get help")]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
         editor.update_in(cx, |editor, window, cx| {
@@ -1317,20 +1299,12 @@ mod tests {
         let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
-            acp::AvailableCommand {
-                name: "quick-math".to_string(),
-                description: "2 + 2 = 4 - 1 = 3".to_string(),
-                input: None,
-                meta: None,
-            },
-            acp::AvailableCommand {
-                name: "say-hello".to_string(),
-                description: "Say hello to whoever you want".to_string(),
-                input: Some(acp::AvailableCommandInput::Unstructured {
-                    hint: "<name>".to_string(),
-                }),
-                meta: None,
-            },
+            acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
+            acp::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
+                acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+                    "<name>",
+                )),
+            ),
         ]));
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1338,7 +1312,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1529,7 +1503,7 @@ mod tests {
             rel_path("b/eight.txt"),
         ];
 
-        let slash = PathStyle::local().separator();
+        let slash = PathStyle::local().primary_separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -1560,7 +1534,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     prompt_capabilities.clone(),
@@ -1610,12 +1584,12 @@ mod tests {
             editor.set_text("", window, cx);
         });
 
-        prompt_capabilities.replace(acp::PromptCapabilities {
-            image: true,
-            audio: true,
-            embedded_context: true,
-            meta: None,
-        });
+        prompt_capabilities.replace(
+            acp::PromptCapabilities::new()
+                .image(true)
+                .audio(true)
+                .embedded_context(true),
+        );
 
         cx.simulate_input("Lorem ");
 
@@ -2051,7 +2025,7 @@ mod tests {
             cx.new(|cx| {
                 let editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2066,11 +2040,9 @@ mod tests {
                     cx,
                 );
                 // Enable embedded context so files are actually included
-                editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                    embedded_context: true,
-                    meta: None,
-                    ..Default::default()
-                });
+                editor
+                    .prompt_capabilities
+                    .replace(acp::PromptCapabilities::new().embedded_context(true));
                 editor
             })
         });
@@ -2149,7 +2121,7 @@ mod tests {
 
         // Create a thread metadata to insert as summary
         let thread_metadata = agent::DbThreadMetadata {
-            id: acp::SessionId("thread-123".into()),
+            id: acp::SessionId::new("thread-123"),
             title: "Previous Conversation".into(),
             updated_at: chrono::Utc::now(),
         };
@@ -2158,7 +2130,7 @@ mod tests {
             cx.new(|cx| {
                 let mut editor = MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2227,7 +2199,7 @@ mod tests {
             cx.new(|cx| {
                 MessageEditor::new(
                     workspace.downgrade(),
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2256,14 +2228,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            content,
-            vec![acp::ContentBlock::Text(acp::TextContent {
-                text: "してhello world".into(),
-                annotations: None,
-                meta: None
-            })]
-        );
+        assert_eq!(content, vec!["してhello world".into()]);
     }
 
     #[gpui::test]
@@ -2297,7 +2262,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),
@@ -2342,38 +2307,24 @@ mod tests {
             .0;
 
         let main_rs_uri = if cfg!(windows) {
-            "file:///C:/project/src/main.rs".to_string()
+            "file:///C:/project/src/main.rs"
         } else {
-            "file:///project/src/main.rs".to_string()
+            "file:///project/src/main.rs"
         };
 
         // When embedded context is `false` we should get a resource link
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    uri: main_rs_uri.clone(),
-                    name: "main.rs".to_string(),
-                    annotations: None,
-                    meta: None,
-                    description: None,
-                    mime_type: None,
-                    size: None,
-                    title: None,
-                })
+                "What is in ".into(),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("main.rs", main_rs_uri))
             ]
         );
 
         message_editor.update(cx, |editor, _cx| {
-            editor.prompt_capabilities.replace(acp::PromptCapabilities {
-                embedded_context: true,
-                ..Default::default()
-            })
+            editor
+                .prompt_capabilities
+                .replace(acp::PromptCapabilities::new().embedded_context(true))
         });
 
         let content = message_editor
@@ -2386,23 +2337,12 @@ mod tests {
         pretty_assertions::assert_eq!(
             content,
             vec![
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: "What is in ".to_string(),
-                    annotations: None,
-                    meta: None
-                }),
-                acp::ContentBlock::Resource(acp::EmbeddedResource {
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            text: file_content.to_string(),
-                            uri: main_rs_uri,
-                            mime_type: None,
-                            meta: None
-                        }
-                    ),
-                    annotations: None,
-                    meta: None
-                })
+                "What is in ".into(),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(file_content, main_rs_uri)
+                    )
+                ))
             ]
         );
     }
@@ -2480,7 +2420,7 @@ mod tests {
             let message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     workspace_handle,
-                    project.clone(),
+                    project.downgrade(),
                     history_store.clone(),
                     None,
                     Default::default(),

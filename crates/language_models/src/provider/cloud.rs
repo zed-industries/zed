@@ -15,9 +15,7 @@ use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
 use google_ai::GoogleModelMode;
-use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
-};
+use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
@@ -30,6 +28,7 @@ use language_model::{
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
@@ -384,7 +383,7 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
-        app_version: Option<SemanticVersion>,
+        app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
@@ -396,7 +395,7 @@ impl CloudLanguageModel {
             let request = http_client::Request::builder()
                 .method(Method::POST)
                 .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
-                .when_some(app_version, |builder, app_version| {
+                .when_some(app_version.as_ref(), |builder, app_version| {
                     builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                 })
                 .header("Content-Type", "application/json")

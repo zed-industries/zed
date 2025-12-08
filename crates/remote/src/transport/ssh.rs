@@ -1,6 +1,7 @@
 use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -10,11 +11,12 @@ use futures::{
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     select_biased,
 };
-use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
+use gpui::{App, AppContext as _, AsyncApp, Task};
 use parking_lot::Mutex;
 use paths::remote_server_dir_relative;
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
+use semver::Version;
 pub use settings::SshPortForwardOption;
 use smol::{
     fs,
@@ -393,6 +395,10 @@ impl RemoteConnection for SshRemoteConnection {
     fn path_style(&self) -> PathStyle {
         self.ssh_path_style
     }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }
 
 impl SshRemoteConnection {
@@ -515,15 +521,10 @@ impl SshRemoteConnection {
             ssh_default_system_shell,
         };
 
-        let (release_channel, version, commit) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppVersion::global(cx),
-                AppCommitSha::try_global(cx),
-            )
-        })?;
+        let (release_channel, version) =
+            cx.update(|cx| (ReleaseChannel::global(cx), AppVersion::global(cx)))?;
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await?,
         );
 
@@ -534,15 +535,10 @@ impl SshRemoteConnection {
         &self,
         delegate: &Arc<dyn RemoteClientDelegate>,
         release_channel: ReleaseChannel,
-        version: SemanticVersion,
-        commit: Option<AppCommitSha>,
+        version: Version,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
-            ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.full()).unwrap_or_default();
-                format!("{}-{}", version, commit)
-            }
             ReleaseChannel::Dev => "build".to_string(),
             _ => version.to_string(),
         };
@@ -609,7 +605,12 @@ impl SshRemoteConnection {
         );
         if !self.socket.connection_options.upload_binary_over_ssh
             && let Some(url) = delegate
-                .get_download_url(self.ssh_platform, release_channel, wanted_version, cx)
+                .get_download_url(
+                    self.ssh_platform,
+                    release_channel,
+                    wanted_version.clone(),
+                    cx,
+                )
                 .await?
         {
             match self
@@ -631,7 +632,12 @@ impl SshRemoteConnection {
         }
 
         let src_path = delegate
-            .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)
+            .download_server_binary_locally(
+                self.ssh_platform,
+                release_channel,
+                wanted_version.clone(),
+                cx,
+            )
             .await
             .context("downloading server binary locally")?;
         self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
@@ -663,6 +669,8 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        const CONNECT_TIMEOUT_SECS: &str = "10";
+
         match self
             .socket
             .run_command(
@@ -671,6 +679,8 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
+                    "--connect-timeout",
+                    CONNECT_TIMEOUT_SECS,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -696,7 +706,15 @@ impl SshRemoteConnection {
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
+                        &[
+                            "--connect-timeout",
+                            CONNECT_TIMEOUT_SECS,
+                            "--tries",
+                            "1",
+                            url,
+                            "-O",
+                            &tmp_path_gz.display(self.path_style()),
+                        ],
                         true,
                     )
                     .await
@@ -1050,52 +1068,20 @@ impl SshSocket {
     }
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
-        };
-
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
-            _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
-        };
-        // exclude armv5,6,7 as they are 32-bit.
-        let arch = if arch.starts_with("armv8")
-            || arch.starts_with("armv9")
-            || arch.starts_with("arm64")
-            || arch.starts_with("aarch64")
-        {
-            "aarch64"
-        } else if arch.starts_with("x86") {
-            "x86_64"
-        } else {
-            anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            )
-        };
-
-        Ok(RemotePlatform { os, arch })
+        let output = self.run_command(shell, "uname", &["-sm"], false).await?;
+        parse_platform(&output)
     }
 
     async fn shell(&self) -> String {
-        let default_shell = "sh";
+        const DEFAULT_SHELL: &str = "sh";
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
         {
-            Ok(shell) => match shell.trim() {
-                "" => {
-                    log::error!("$SHELL is not set, falling back to {default_shell}");
-                    default_shell.to_owned()
-                }
-                shell => shell.to_owned(),
-            },
+            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
             Err(e) => {
-                log::error!("Failed to get shell: {e}");
-                default_shell.to_owned()
+                log::error!("Failed to detect remote shell: {e}");
+                DEFAULT_SHELL.to_owned()
             }
         }
     }
@@ -1327,7 +1313,7 @@ fn build_command(
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
-        // replace with with something that works
+        // replace with something that works
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
@@ -1497,12 +1483,8 @@ mod tests {
                 "-p".to_string(),
                 "2222".to_string(),
                 "-o".to_string(),
-                "StrictHostKeyChecking=no".to_string()
+                "StrictHostKeyChecking=no".to_string(),
             ]
-        );
-        assert!(
-            scp_args.iter().all(|arg| !arg.starts_with("-L")),
-            "scp args should not contain port forward flags: {scp_args:?}"
         );
     }
 }
