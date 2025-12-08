@@ -8854,16 +8854,19 @@ dependencies = [
  "collections",
  "component",
  "convert_case 0.8.0",
+ "copilot",
  "credentials_provider",
  "deepseek",
  "editor",
  "extension",
+ "extension_host",
  "fs",
  "futures 0.3.31",
  "google_ai",
  "gpui",
  "gpui_tokio",
  "http_client",
+ "language",
  "language_model",
  "lmstudio",
  "log",
@@ -8871,6 +8874,8 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "open_router",
+ "partial-json-fixer",
  "project",
  "release_channel",
  "schemars",
@@ -11218,6 +11223,12 @@ checksum = "1c464266693329dd5a8715098c7f86e6c5fd5d985018b8318f53d9c6c2b21a31"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "partial-json-fixer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35ffd90b3f3b6477db7478016b9efb1b7e9d38eafd095f0542fe0ec2ea884a13"
 
 [[package]]
 name = "password-hash"

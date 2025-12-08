@@ -45,7 +45,7 @@ impl AgentPanelOnboarding {
 
     fn has_configured_providers(cx: &App) -> bool {
         LanguageModelRegistry::read_global(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .any(|provider| provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID)
     }

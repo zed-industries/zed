@@ -223,11 +223,25 @@ impl ApiKeyState {
 }
 
 impl ApiKey {
-    fn from_env(env_var_name: SharedString, key: &str) -> Self {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn from_env(env_var_name: SharedString, key: &str) -> Self {
         Self {
             source: ApiKeySource::EnvVar(env_var_name),
             key: key.into(),
         }
+    }
+
+    pub async fn load_from_system_keychain(
+        url: &str,
+        credentials_provider: &dyn CredentialsProvider,
+        cx: &AsyncApp,
+    ) -> Result<Self, AuthenticateError> {
+        Self::load_from_system_keychain_impl(url, credentials_provider, cx)
+            .await
+            .into_authenticate_result()
     }
 
     async fn load_from_system_keychain_impl(

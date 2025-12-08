@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ::extension::ExtensionHostProxy;
 use ::settings::{Settings, SettingsStore};
 use client::{Client, UserStore};
 use collections::HashSet;
@@ -9,20 +8,25 @@ use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod api_key;
-mod extension;
+pub mod extension;
 mod google_ai_api_key;
 pub mod provider;
 mod settings;
 pub mod ui;
 
-pub use google_ai_api_key::api_key_for_gemini_cli;
-
+pub use crate::extension::{extension_for_builtin_provider, is_hideable_builtin_provider};
+pub use crate::google_ai_api_key::api_key_for_gemini_cli;
+use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
+use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
+use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
+use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
+use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -33,11 +37,65 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         register_language_model_providers(registry, user_store, client.clone(), cx);
     });
 
-    // Register the extension language model provider proxy
-    let extension_proxy = ExtensionHostProxy::default_global(cx);
-    extension_proxy.register_language_model_provider_proxy(
-        extension::ExtensionLanguageModelProxy::new(registry.clone()),
-    );
+    // Set up the provider hiding function
+    registry.update(cx, |registry, _cx| {
+        registry.set_builtin_provider_hiding_fn(Box::new(extension_for_builtin_provider));
+    });
+
+    // Subscribe to extension store events to track LLM extension installations
+    if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
+        cx.subscribe(&extension_store, {
+            let registry = registry.clone();
+            move |extension_store, event, cx| {
+                match event {
+                    extension_host::Event::ExtensionInstalled(extension_id) => {
+                        // Check if this extension has language_model_providers
+                        if let Some(manifest) = extension_store
+                            .read(cx)
+                            .extension_manifest_for_id(extension_id)
+                        {
+                            if !manifest.language_model_providers.is_empty() {
+                                registry.update(cx, |registry, cx| {
+                                    registry.extension_installed(extension_id.clone(), cx);
+                                });
+                            }
+                        }
+                    }
+                    extension_host::Event::ExtensionUninstalled(extension_id) => {
+                        registry.update(cx, |registry, cx| {
+                            registry.extension_uninstalled(extension_id, cx);
+                        });
+                    }
+                    extension_host::Event::ExtensionsUpdated => {
+                        // Re-sync installed extensions on bulk updates
+                        let mut new_ids = HashSet::default();
+                        for (extension_id, entry) in extension_store.read(cx).installed_extensions()
+                        {
+                            if !entry.manifest.language_model_providers.is_empty() {
+                                new_ids.insert(extension_id.clone());
+                            }
+                        }
+                        registry.update(cx, |registry, cx| {
+                            registry.sync_installed_llm_extensions(new_ids, cx);
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .detach();
+
+        // Initialize with currently installed extensions
+        registry.update(cx, |registry, cx| {
+            let mut initial_ids = HashSet::default();
+            for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
+                if !entry.manifest.language_model_providers.is_empty() {
+                    initial_ids.insert(extension_id.clone());
+                }
+            }
+            registry.sync_installed_llm_extensions(initial_ids, cx);
+        });
+    }
 
     let mut openai_compatible_providers = AllLanguageModelSettings::get_global(cx)
         .openai_compatible
@@ -118,6 +176,17 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        Arc::new(AnthropicLanguageModelProvider::new(
+            client.http_client(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(OpenAiLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
         Arc::new(OllamaLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
@@ -130,11 +199,22 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        Arc::new(GoogleLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
         MistralLanguageModelProvider::global(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
         Arc::new(BedrockLanguageModelProvider::new(client.http_client(), cx)),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(OpenRouterLanguageModelProvider::new(
+            client.http_client(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
@@ -145,4 +225,5 @@ fn register_language_model_providers(
         Arc::new(XAiLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
+    registry.register_provider(Arc::new(CopilotChatLanguageModelProvider::new(cx)), cx);
 }

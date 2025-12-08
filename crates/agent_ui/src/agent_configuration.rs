@@ -83,13 +83,23 @@ impl AgentConfiguration {
             window,
             |this, _, event: &language_model::Event, window, cx| match event {
                 language_model::Event::AddedProvider(provider_id) => {
-                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
-                    if let Some(provider) = provider {
-                        this.add_provider_configuration_view(&provider, window, cx);
+                    let registry = LanguageModelRegistry::read_global(cx);
+                    // Only add if the provider is visible
+                    if let Some(provider) = registry.provider(provider_id) {
+                        if !registry.should_hide_provider(provider_id) {
+                            this.add_provider_configuration_view(&provider, window, cx);
+                        }
                     }
                 }
                 language_model::Event::RemovedProvider(provider_id) => {
                     this.remove_provider_configuration_view(provider_id);
+                }
+                language_model::Event::ProvidersChanged => {
+                    // Rebuild all provider views when visibility changes
+                    this.configuration_views_by_provider.clear();
+                    this.expanded_provider_configurations.clear();
+                    this.build_provider_configuration_views(window, cx);
+                    cx.notify();
                 }
                 _ => {}
             },
@@ -117,7 +127,7 @@ impl AgentConfiguration {
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -420,7 +430,7 @@ impl AgentConfiguration {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
 
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(

@@ -46,7 +46,9 @@ pub fn language_model_selector(
 }
 
 fn all_models(cx: &App) -> GroupedModels {
-    let providers = LanguageModelRegistry::global(cx).read(cx).providers();
+    let providers = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .visible_providers();
 
     let recommended = providers
         .iter()
@@ -423,7 +425,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let configured_providers = language_model_registry
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
