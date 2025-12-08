@@ -28599,33 +28599,32 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
         3
         "});
 
-    // Edge case scenario: fold all buffers, then try to insert
+    // Test correct folded header is selected upon fold
     cx.update_editor(|editor, _, cx| {
         editor.fold_buffer(buffer_ids[0], cx);
         editor.fold_buffer(buffer_ids[1], cx);
     });
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]
-        ˇ[FOLDED]
-        [EXCERPT]
         [FOLDED]
+        [EXCERPT]
+        ˇ[FOLDED]
         "});
 
-    // Insert should work via default selection
+    // Test selection inside folded buffer unfolds it on type
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("W", window, cx);
     });
     cx.update_editor(|editor, _, cx| {
         editor.unfold_buffer(buffer_ids[0], cx);
-        editor.unfold_buffer(buffer_ids[1], cx);
     });
     cx.assert_excerpts_with_selections(indoc! {"
         [EXCERPT]
-        Wˇ1
+        1
         2
         3
         [EXCERPT]
-        1
+        Wˇ1
         Z
         3
         "});
