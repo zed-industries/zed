@@ -562,9 +562,12 @@ impl MessageEditor {
             });
 
         if has_file_context {
-            if let Some(selections) = editor_clipboard_selections {
+            if let Some((workspace, selections)) =
+                self.workspace.upgrade().zip(editor_clipboard_selections)
+            {
                 cx.stop_propagation();
 
+                let project = workspace.read(cx).project().clone();
                 for selection in selections {
                     if let (Some(file_path), Some(line_range)) =
                         (selection.file_path, selection.line_range)
@@ -608,37 +611,40 @@ impl MessageEditor {
                         };
                         drop(tx);
 
-                        // Create the mention task for Symbol - load the file content
-                        let project = self.project.clone();
                         let mention_task = cx
-                            .spawn(async move |_, cx| {
-                                let project_path = project
-                                    .update(cx, |project, cx| {
-                                        project.project_path_for_absolute_path(&file_path, cx)
-                                    })
-                                    .map_err(|e| e.to_string())?
-                                    .ok_or_else(|| "project path not found".to_string())?;
+                            .spawn({
+                                let project = project.clone();
+                                async move |_, cx| {
+                                    let project_path = project
+                                        .update(cx, |project, cx| {
+                                            project.project_path_for_absolute_path(&file_path, cx)
+                                        })
+                                        .map_err(|e| e.to_string())?
+                                        .ok_or_else(|| "project path not found".to_string())?;
 
-                                let buffer = project
-                                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                                    .map_err(|e| e.to_string())?
-                                    .await
-                                    .map_err(|e| e.to_string())?;
+                                    let buffer = project
+                                        .update(cx, |project, cx| {
+                                            project.open_buffer(project_path, cx)
+                                        })
+                                        .map_err(|e| e.to_string())?
+                                        .await
+                                        .map_err(|e| e.to_string())?;
 
-                                buffer
-                                    .update(cx, |buffer, cx| {
-                                        let start = Point::new(*line_range.start(), 0)
-                                            .min(buffer.max_point());
-                                        let end = Point::new(*line_range.end() + 1, 0)
-                                            .min(buffer.max_point());
-                                        let content = buffer.text_for_range(start..end).collect();
-                                        dbg!(&content, start.row, end.row);
-                                        Mention::Text {
-                                            content,
-                                            tracked_buffers: vec![cx.entity()],
-                                        }
-                                    })
-                                    .map_err(|e| e.to_string())
+                                    buffer
+                                        .update(cx, |buffer, cx| {
+                                            let start = Point::new(*line_range.start(), 0)
+                                                .min(buffer.max_point());
+                                            let end = Point::new(*line_range.end() + 1, 0)
+                                                .min(buffer.max_point());
+                                            let content =
+                                                buffer.text_for_range(start..end).collect();
+                                            Mention::Text {
+                                                content,
+                                                tracked_buffers: vec![cx.entity()],
+                                            }
+                                        })
+                                        .map_err(|e| e.to_string())
+                                }
                             })
                             .shared();
 
@@ -651,9 +657,6 @@ impl MessageEditor {
             }
         }
 
-        if !self.prompt_capabilities.borrow().image {
-            return;
-        }
         if self.prompt_capabilities.borrow().image
             && let Some(task) =
                 paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
