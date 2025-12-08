@@ -28879,10 +28879,8 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
         .unwrap();
 
     assert_eq!(navigated, Navigated::No);
-    
+
     cx.run_until_parked();
-    
+
     cx.assert_editor_state(after);
-    
-    
 }
