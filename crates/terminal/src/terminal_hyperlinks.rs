@@ -225,16 +225,18 @@ fn path_match<T>(
     let mut line = String::with_capacity(
         (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
     );
-    line.push(term.grid()[line_start].c);
+    let first_cell = &term.grid()[line_start];
+    line.push(first_cell.c);
     let mut start_offset = 0;
     let mut hovered_point_byte_offset = None;
-    if hovered == line_start {
-        let cell = &term.grid()[line_start];
-        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
-            start_offset += cell.c.len_utf8();
+
+    if !first_cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        start_offset += first_cell.c.len_utf8();
+        if line_start == hovered {
             hovered_point_byte_offset = Some(0);
         }
     }
+
     for cell in term.grid().iter_from(line_start) {
         if cell.point > line_end {
             break;
@@ -333,8 +335,7 @@ fn path_match<T>(
             let link_range = captures
                 .name("link")
                 .map_or_else(|| match_range.clone(), |link| link.range());
-
-            if !match_range.contains(&hovered_point_byte_offset) {
+            if !(link_range.start..=link_range.end).contains(&hovered_point_byte_offset) {
                 // No match, just skip.
                 continue;
             }
