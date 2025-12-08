@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::{Editor, EditorSettings, SelectionEffects};
 use gpui::{Action, Context, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
@@ -384,6 +384,24 @@ impl Vim {
                     search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let current_selections: Vec<_> = editor
+                                .selections
+                                .all::<Point>(&snapshot.display_snapshot)
+                                .iter()
+                                .map(|s| s.range())
+                                .collect();
+                            if !current_selections.is_empty() {
+                                editor.change_selections(
+                                    SelectionEffects::scroll(editor::scroll::Autoscroll::center()),
+                                    window,
+                                    cx,
+                                    |s| s.select_ranges(current_selections),
+                                );
+                            }
+                        });
+
                         let new_selections = vim.editor_selections(window, cx);
                         vim.search_motion(
                             Motion::ZedSearchResult {
