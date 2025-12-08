@@ -48,7 +48,7 @@ pub struct Checkbox {
     disabled: bool,
     placeholder: bool,
     filled: bool,
-    vizualization: bool,
+    visualization: bool,
     label: Option<SharedString>,
     label_size: LabelSize,
     label_color: Color,
@@ -66,7 +66,7 @@ impl Checkbox {
             disabled: false,
             placeholder: false,
             filled: false,
-            vizualization: false,
+            visualization: false,
             label: None,
             label_size: LabelSize::Default,
             label_color: Color::Muted,
@@ -115,7 +115,7 @@ impl Checkbox {
     /// Makes the checkbox look enabled but without pointer cursor and hover styles.
     /// Primarily used for uninteractive markdown previews.
     pub fn visualization_only(mut self, visualization: bool) -> Self {
-        self.vizualization = visualization;
+        self.visualization = visualization;
         self
     }
 
@@ -238,7 +238,7 @@ impl RenderOnce for Checkbox {
                     .when(self.disabled, |this| {
                         this.bg(cx.theme().colors().element_disabled.opacity(0.6))
                     })
-                    .when(!self.disabled && !self.vizualization, |this| {
+                    .when(!self.disabled && !self.visualization, |this| {
                         this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
                     })
                     .when(self.placeholder, |this| {
@@ -258,7 +258,7 @@ impl RenderOnce for Checkbox {
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
-                } else if self.vizualization {
+                } else if self.visualization {
                     this.cursor_default()
                 } else {
                     this.cursor_pointer()
