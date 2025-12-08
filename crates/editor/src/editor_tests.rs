@@ -22579,7 +22579,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         });
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -22615,7 +22615,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     );
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -22667,7 +22667,7 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         });
     let navigated = cx
         .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences, window, cx)
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
         })
         .unwrap()
         .await
@@ -28915,4 +28915,66 @@ async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
             gpui::Point::new(0., 9.0)
         );
     });
+}
+
+#[gpui::test]
+async fn test_find_references_single_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let before = indoc!(
+        r#"
+        fn main() {
+            let aˇbc = 123;
+            let xyz = abc;
+        }
+        "#
+    );
+    let after = indoc!(
+        r#"
+        fn main() {
+            let abc = 123;
+            let xyz = ˇabc;
+        }
+        "#
+    );
+
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 11)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(2, 14), lsp::Position::new(2, 17)),
+                },
+            ]))
+        });
+
+    cx.set_state(before);
+
+    let action = FindAllReferences {
+        always_open_multibuffer: false,
+    };
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.find_all_references(&action, window, cx))
+        .expect("should have spawned a task")
+        .await
+        .unwrap();
+
+    assert_eq!(navigated, Navigated::No);
+
+    cx.run_until_parked();
+
+    cx.assert_editor_state(after);
 }
