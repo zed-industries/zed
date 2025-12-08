@@ -6,7 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, OnceLock, atomic::Ordering::SeqCst},
+    sync::{Arc, atomic::Ordering::SeqCst},
     time::{Duration, Instant},
 };
 
@@ -120,9 +120,6 @@ impl Drop for AppRefMut<'_> {
     }
 }
 
-/// TEST
-pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
-
 /// A reference to a GPUI application, typically constructed in the `main` function of your app.
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
@@ -133,8 +130,6 @@ impl Application {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        STARTUP_TIME.get_or_init(|| Instant::now());
-
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
