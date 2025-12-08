@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, EventEmitter};
+use gpui::{App, Context, Entity, EventEmitter, SharedString};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId, OffsetRangeExt as _};
 
@@ -92,6 +92,8 @@ impl ConflictSetSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictRegion {
+    pub ours_name: SharedString,
+    pub theirs_name: SharedString,
     pub range: Range<Anchor>,
     pub ours: Range<Anchor>,
     pub theirs: Range<Anchor>,
@@ -179,18 +181,25 @@ impl ConflictSet {
         let mut conflict_start: Option<usize> = None;
         let mut ours_start: Option<usize> = None;
         let mut ours_end: Option<usize> = None;
+        let mut ours_branch_name: Option<SharedString> = None;
         let mut base_start: Option<usize> = None;
         let mut base_end: Option<usize> = None;
         let mut theirs_start: Option<usize> = None;
+        let mut theirs_branch_name: Option<SharedString> = None;
 
         while let Some(line) = lines.next() {
             let line_end = line_pos + line.len();
 
-            if line.starts_with("<<<<<<< ") {
+            if let Some(branch_name) = line.strip_prefix("<<<<<<< ") {
                 // If we see a new conflict marker while already parsing one,
                 // abandon the previous one and start a new one
                 conflict_start = Some(line_pos);
                 ours_start = Some(line_end + 1);
+
+                let branch_name = branch_name.trim();
+                if !branch_name.is_empty() {
+                    ours_branch_name = Some(SharedString::new(branch_name));
+                }
             } else if line.starts_with("||||||| ")
                 && conflict_start.is_some()
                 && ours_start.is_some()
@@ -208,12 +217,17 @@ impl ConflictSet {
                     base_end = Some(line_pos);
                 }
                 theirs_start = Some(line_end + 1);
-            } else if line.starts_with(">>>>>>> ")
+            } else if let Some(branch_name) = line.strip_prefix(">>>>>>> ")
                 && conflict_start.is_some()
                 && ours_start.is_some()
                 && ours_end.is_some()
                 && theirs_start.is_some()
             {
+                let branch_name = branch_name.trim();
+                if !branch_name.is_empty() {
+                    theirs_branch_name = Some(SharedString::new(branch_name));
+                }
+
                 let theirs_end = line_pos;
                 let conflict_end = (line_end + 1).min(buffer_len);
 
@@ -229,6 +243,12 @@ impl ConflictSet {
                     .map(|(start, end)| buffer.anchor_after(start)..buffer.anchor_before(end));
 
                 conflicts.push(ConflictRegion {
+                    ours_name: ours_branch_name
+                        .take()
+                        .unwrap_or_else(|| SharedString::new_static("Head")),
+                    theirs_name: theirs_branch_name
+                        .take()
+                        .unwrap_or_else(|| SharedString::new_static("Origin")),
                     range,
                     ours,
                     theirs,
