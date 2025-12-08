@@ -467,6 +467,7 @@ impl Model {
     }
 }
 
+/// Generate completion with streaming.
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -479,7 +480,8 @@ pub async fn stream_completion(
         .map(|output| output.0)
 }
 
-pub async fn complete(
+/// Generate completion without streaming.
+pub async fn non_streaming_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,

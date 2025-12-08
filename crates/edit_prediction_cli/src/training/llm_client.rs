@@ -1,6 +1,6 @@
 use anthropic::{
     ANTHROPIC_API_URL, Message, Request as AnthropicRequest, RequestContent,
-    Response as AnthropicResponse, Role, complete,
+    Response as AnthropicResponse, Role, non_streaming_completion,
 };
 use anyhow::Result;
 use http_client::HttpClient;
@@ -48,7 +48,7 @@ impl PlainLlmClient {
             top_p: None,
         };
 
-        let response = complete(
+        let response = non_streaming_completion(
             self.http_client.as_ref(),
             ANTHROPIC_API_URL,
             &self.api_key,
@@ -367,7 +367,7 @@ pub enum LlmClient {
     // No batching
     Plain(PlainLlmClient),
     Batch(BatchingLlmClient),
-    Dummy(),
+    Dummy,
 }
 
 impl LlmClient {
@@ -384,7 +384,7 @@ impl LlmClient {
 
     #[allow(dead_code)]
     pub fn dummy() -> Self {
-        Self::Dummy()
+        Self::Dummy
     }
 
     pub async fn generate(
@@ -403,7 +403,7 @@ impl LlmClient {
                     .generate(model, max_tokens, messages)
                     .await
             }
-            LlmClient::Dummy() => panic!("Dummy LLM client is not expected to be used"),
+            LlmClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 
@@ -411,7 +411,7 @@ impl LlmClient {
         match self {
             LlmClient::Plain(_) => Ok(()),
             LlmClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
-            LlmClient::Dummy() => panic!("Dummy LLM client is not expected to be used"),
+            LlmClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 }

@@ -197,11 +197,10 @@ mod tests {
 
     #[test]
     fn test_parse_response() {
-        let http_client = std::sync::Arc::new(http_client::BlockedHttpClient);
         let teacher = TeacherModel::new(
             "test".to_string(),
             ContextType::CurrentFile,
-            LlmClient::plain(http_client).unwrap(),
+            LlmClient::dummy(),
         );
         let response = "This is a test response.";
         let parsed = teacher.parse_response(response);
