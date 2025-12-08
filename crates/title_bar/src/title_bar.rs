@@ -24,7 +24,6 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
-use collections::HashMap;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
@@ -32,12 +31,11 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, WorktreeId, WorktreeSettings, git_store::GitStoreEvent,
-    trusted_worktrees::TrustedWorktrees,
+    Project, WorktreeSettings, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -138,7 +136,6 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
-    restricted_worktrees: HashMap<WorktreeId, Arc<Path>>,
 }
 
 impl Render for TitleBar {
@@ -297,16 +294,6 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
-        TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                subscriptions.push(
-                    cx.subscribe(&trusted_worktrees, move |title_bar, _, _, cx| {
-                        title_bar.refresh_restricted_paths(cx)
-                    }),
-                );
-            })
-            .unwrap_or_default();
-
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "ACP Claude Code Onboarding",
@@ -322,7 +309,7 @@ impl TitleBar {
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
-        let mut this = Self {
+        Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
@@ -331,11 +318,8 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
-            restricted_worktrees: HashMap::default(),
             screen_share_popover_handle: PopoverMenuHandle::default(),
-        };
-        this.refresh_restricted_paths(cx);
-        this
+        }
     }
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -424,7 +408,10 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.restricted_worktrees.is_empty() || TrustedWorktrees::try_get_global(cx).is_none() {
+        if TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| trusted_worktrees.read(cx).has_restricted_worktrees())
+            .unwrap_or(false)
+        {
             return None;
         }
 
@@ -815,20 +802,5 @@ impl TitleBar {
                 }
             })
             .anchor(gpui::Corner::TopRight)
-    }
-
-    fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
-        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-            let new_restricted_worktrees = trusted_worktrees
-                .read(cx)
-                .restricted_worktree_abs_paths(self.project.read(cx).worktree_store().read(cx), cx);
-            if self.restricted_worktrees != new_restricted_worktrees {
-                self.restricted_worktrees = new_restricted_worktrees;
-                cx.notify();
-            }
-        } else if !self.restricted_worktrees.is_empty() {
-            self.restricted_worktrees.clear();
-            cx.notify();
-        }
     }
 }

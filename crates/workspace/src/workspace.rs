@@ -6452,8 +6452,12 @@ impl Workspace {
                 })
                 .unwrap_or(false);
             if has_restricted_worktrees {
-                let worktree_store = self.project().read(cx).worktree_store().downgrade();
-                self.toggle_modal(window, cx, |_, cx| SecurityModal::new(worktree_store, cx));
+                let project = self.project().read(cx);
+                let remote_host = project.remote_connection_options(cx);
+                let worktree_store = project.worktree_store().downgrade();
+                self.toggle_modal(window, cx, |_, cx| {
+                    SecurityModal::new(worktree_store, remote_host, cx)
+                });
             }
         }
     }

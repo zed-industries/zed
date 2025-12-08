@@ -89,9 +89,10 @@ pub struct TrustedWorktreesStorage {
     restricted: HashSet<WorktreeId>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct RemoteHostData {
-    user_name: Option<SharedString>,
-    host_name: SharedString,
+    pub user_name: Option<SharedString>,
+    pub host_name: SharedString,
 }
 
 impl From<RemoteConnectionOptions> for RemoteHostData {
@@ -121,7 +122,7 @@ pub enum PathTrust {
     Worktree(WorktreeId),
     /// A path that may be another worktree yet not loaded into workspace,
     /// or a parent path coming out of the security modal.
-    AbsPath(PathBuf),
+    AbsPath(PathBuf, Option<RemoteHostData>),
 }
 
 #[derive(Debug)]
@@ -143,9 +144,6 @@ impl TrustedWorktreesStorage {
             let trusted_paths = cx
                 .background_spawn(async move {
                     KEY_VALUE_STORE
-                        // TODO kb
-                        // * crate a new db table, FK onto remote_hosts DB table data
-                        // * store abs paths there still, but without odd separators
                         .read_kvp(TRUSTED_WORKSPACES_KEY)
                         .log_err()
                         .flatten()
@@ -162,7 +160,9 @@ impl TrustedWorktreesStorage {
                                     .read_with(cx, |worktree_store, cx| {
                                         find_worktree_in_store(worktree_store, &abs_path, cx)
                                             .map(PathTrust::Worktree)
-                                            .unwrap_or_else(|| PathTrust::AbsPath(abs_path))
+                                            .unwrap_or_else(|| {
+                                                PathTrust::AbsPath(abs_path, remote_host.clone())
+                                            })
                                     })
                                     .ok()
                             })
@@ -176,6 +176,10 @@ impl TrustedWorktreesStorage {
         })
     }
 
+    pub fn has_restricted_worktrees(&self) -> bool {
+        !self.restricted.is_empty()
+    }
+
     /// Adds worktree absolute paths to the trusted list.
     /// This will emit [`TrustedWorktreesEvent::Trusted`] event.
     pub fn trust(&mut self, trusted_paths: HashSet<PathTrust>, cx: &mut Context<'_, Self>) {
@@ -186,50 +190,64 @@ impl TrustedWorktreesStorage {
                     self.restricted.remove(worktree_id);
                     self.trusted_paths.insert(PathTrust::Worktree(*worktree_id));
                 }
-                PathTrust::AbsPath(path) => {
+                PathTrust::AbsPath(path, host) => {
                     debug_assert!(
                         path.is_absolute(),
                         "Cannot trust non-absolute path {path:?}"
                     );
 
                     let mut worktree_found = false;
-                    self.worktree_stores.retain(|worktree_store, _| {
-                        match worktree_store.upgrade() {
-                            Some(worktree_store) => {
-                                if let Some(worktree_id) =
-                                    find_worktree_in_store(worktree_store.read(cx), &path, cx)
-                                {
-                                    self.restricted.remove(&worktree_id);
-                                    self.trusted_paths.insert(PathTrust::Worktree(worktree_id));
-                                    worktree_found = true;
+                    self.worktree_stores
+                        .retain(
+                            |worktree_store, remote_host| match worktree_store.upgrade() {
+                                Some(worktree_store) => {
+                                    if remote_host == host {
+                                        if let Some(worktree_id) = find_worktree_in_store(
+                                            worktree_store.read(cx),
+                                            &path,
+                                            cx,
+                                        ) {
+                                            self.restricted.remove(&worktree_id);
+                                            self.trusted_paths
+                                                .insert(PathTrust::Worktree(worktree_id));
+                                            worktree_found = true;
+                                        }
+                                    }
+
+                                    true
                                 }
-                                true
-                            }
-                            None => false,
-                        }
-                    });
+                                None => false,
+                            },
+                        );
 
                     if !worktree_found {
                         let previous_restricted = std::mem::take(&mut self.restricted);
                         self.restricted = previous_restricted
                             .into_iter()
                             .filter(|restricted_worktree| {
-                                let Some(restricted_worktree_path) =
-                                    self.find_worktree_path(*restricted_worktree, cx)
+                                let Some((restricted_worktree_path, restricted_host)) =
+                                    self.find_worktree_data(*restricted_worktree, cx)
                                 else {
                                     return false;
                                 };
+                                if &restricted_host != host {
+                                    return true;
+                                }
                                 !restricted_worktree_path.starts_with(path)
                             })
                             .collect();
                         self.trusted_paths
                             .retain(|trusted_path| match trusted_path {
                                 PathTrust::Worktree(_) => true,
-                                PathTrust::AbsPath(trusted_abs_path) => {
+                                PathTrust::AbsPath(trusted_abs_path, trusted_host) => {
+                                    if trusted_host != host {
+                                        return true;
+                                    }
                                     !trusted_abs_path.starts_with(path)
                                 }
                             });
-                        self.trusted_paths.insert(PathTrust::AbsPath(path.clone()));
+                        self.trusted_paths
+                            .insert(PathTrust::AbsPath(path.clone(), host.clone()));
                     }
                 }
             }
@@ -240,15 +258,19 @@ impl TrustedWorktreesStorage {
                 .clone()
                 .into_iter()
                 .fold(String::new(), |mut acc, path| {
-                    if let Some(abs_path) = match path {
+                    if let Some((abs_path, remote_host)) = match path {
                         PathTrust::Worktree(worktree_id) => self
-                            .find_worktree_path(worktree_id, cx)
-                            .map(|abs_path| abs_path.to_path_buf()),
-                        PathTrust::AbsPath(abs_path) => Some(abs_path),
+                            .find_worktree_data(worktree_id, cx)
+                            .map(|(abs_path, remote_host)| (abs_path.to_path_buf(), remote_host)),
+                        PathTrust::AbsPath(abs_path, remote_host) => Some((abs_path, remote_host)),
                     } {
                         if !acc.is_empty() {
                             acc.push_str(TRUSTED_WORKSPACES_SEPARATOR);
                         }
+                        // TODO kb
+                        // * crate a new db table, FK onto remote_hosts DB table data
+                        // * store abs paths there still, but without odd separators
+                        dbg!(remote_host);
                         acc.push_str(&abs_path.to_string_lossy())
                     }
 
@@ -288,11 +310,14 @@ impl TrustedWorktreesStorage {
             return false;
         }
 
-        if let Some(worktree_path) = self.find_worktree_path(worktree, cx) {
+        if let Some((worktree_path, remote_host)) = self.find_worktree_data(worktree, cx) {
             for trusted_path in &self.trusted_paths {
-                let PathTrust::AbsPath(trusted_path) = trusted_path else {
+                let PathTrust::AbsPath(trusted_path, trusted_remote_host) = trusted_path else {
                     continue;
                 };
+                if &remote_host != trusted_remote_host {
+                    continue;
+                }
                 if worktree_path.starts_with(trusted_path) {
                     return true;
                 }
@@ -328,27 +353,29 @@ impl TrustedWorktreesStorage {
         self.trust(restricted, cx);
     }
 
-    fn find_worktree_path(
+    fn find_worktree_data(
         &mut self,
         worktree_id: WorktreeId,
         cx: &mut Context<Self>,
-    ) -> Option<Arc<Path>> {
-        let mut worktree_path = None;
-        self.worktree_stores
-            .retain(|worktree_store, _| match worktree_store.upgrade() {
+    ) -> Option<(Arc<Path>, Option<RemoteHostData>)> {
+        let mut worktree_data = None;
+        self.worktree_stores.retain(
+            |worktree_store, remote_host| match worktree_store.upgrade() {
                 Some(worktree_store) => {
-                    if worktree_path.is_none() {
+                    if worktree_data.is_none() {
                         if let Some(worktree) =
                             worktree_store.read(cx).worktree_for_id(worktree_id, cx)
                         {
-                            worktree_path = Some(worktree.read(cx).abs_path());
+                            worktree_data =
+                                Some((worktree.read(cx).abs_path(), remote_host.clone()));
                         }
                     }
                     true
                 }
                 None => false,
-            });
-        worktree_path
+            },
+        );
+        worktree_data
     }
 
     fn add_worktree_store(
@@ -357,19 +384,22 @@ impl TrustedWorktreesStorage {
         remote_host: Option<impl Into<RemoteHostData>>,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_stores.insert(
-            worktree_store.downgrade(),
-            remote_host.map(|host_data| host_data.into()),
-        );
+        let remote_host = remote_host.map(|host_data| host_data.into());
+        self.worktree_stores
+            .insert(worktree_store.downgrade(), remote_host.clone());
         self.trusted_paths = self
             .trusted_paths
             .drain()
             .map(|path_trust| match path_trust {
                 worktree @ PathTrust::Worktree(_) => worktree,
-                PathTrust::AbsPath(abs_path) => {
-                    find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
-                        .map(PathTrust::Worktree)
-                        .unwrap_or_else(|| PathTrust::AbsPath(abs_path))
+                PathTrust::AbsPath(abs_path, trusted_remote_host) => {
+                    if trusted_remote_host != remote_host {
+                        PathTrust::AbsPath(abs_path, trusted_remote_host)
+                    } else {
+                        find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
+                            .map(PathTrust::Worktree)
+                            .unwrap_or_else(|| PathTrust::AbsPath(abs_path, trusted_remote_host))
+                    }
                 }
             })
             .collect();

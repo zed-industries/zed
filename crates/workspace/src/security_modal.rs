@@ -8,7 +8,7 @@ use collections::{HashMap, HashSet};
 use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
 use project::{
     WorktreeId,
-    trusted_worktrees::{PathTrust, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, RemoteHostData, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use theme::ActiveTheme;
@@ -22,11 +22,12 @@ use ui::{
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    restricted_paths: HashMap<WorktreeId, Arc<Path>>,
+    restricted_paths: HashMap<WorktreeId, (Arc<Path>, Option<RemoteHostData>)>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
+    remote_host: Option<RemoteHostData>,
     focus_handle: FocusHandle,
 }
 
@@ -80,12 +81,29 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Headline::new(header_label).size(HeadlineSize::Small)),
                     )
-                    .children(self.restricted_paths.iter().map(|(_, abs_path)| {
-                        h_flex().pl(IconSize::default().rems() + rems(0.5)).child(
-                            Label::new(self.shorten_path(abs_path).display().to_string())
-                                .color(Color::Muted),
-                        )
-                    })),
+                    .children(self.restricted_paths.iter().map(
+                        |(_, (abs_path, remote_host_data))| {
+                            let label = match remote_host_data {
+                                Some(remote_host) => match &remote_host.user_name {
+                                    Some(user_name) => format!(
+                                        "{} ({}@{})",
+                                        self.shorten_path(abs_path).display(),
+                                        user_name,
+                                        remote_host.host_name
+                                    ),
+                                    None => format!(
+                                        "{} ({})",
+                                        self.shorten_path(abs_path).display(),
+                                        remote_host.host_name
+                                    ),
+                                },
+                                None => self.shorten_path(abs_path).display().to_string(),
+                            };
+                            h_flex()
+                                .pl(IconSize::default().rems() + rems(0.5))
+                                .child(Label::new(label).color(Color::Muted))
+                        },
+                    )),
             )
             .child(
                 "Untrusted workspaces are opened in Restricted Mode to protect your system.
@@ -142,9 +160,14 @@ Review .zed/settings.json for any extensions or commands configured by this proj
 }
 
 impl SecurityModal {
-    pub fn new(worktree_store: WeakEntity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        worktree_store: WeakEntity<WorktreeStore>,
+        remote_host: Option<impl Into<RemoteHostData>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
             worktree_store,
+            remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
             dismissed: false,
@@ -158,7 +181,7 @@ impl SecurityModal {
 
     fn build_trust_label(&self) -> Cow<'static, str> {
         if self.restricted_paths.len() == 1 {
-            let Some((_, single_abs_path)) = self.restricted_paths.iter().next() else {
+            let Some((_, (single_abs_path, _))) = self.restricted_paths.iter().next() else {
                 return Cow::Borrowed("Trust all projects in the parent folders");
             };
             match single_abs_path.parent().map(|path| self.shorten_path(path)) {
@@ -190,12 +213,12 @@ impl SecurityModal {
                     .map(|(worktree_id, _)| PathTrust::Worktree(*worktree_id))
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
-                    paths_to_trust.extend(
-                        self.restricted_paths
-                            .iter()
-                            .filter_map(|(_, abs_path)| Some(abs_path.parent()?.to_owned()))
-                            .map(PathTrust::AbsPath),
-                    );
+                    paths_to_trust.extend(self.restricted_paths.iter().filter_map(
+                        |(_, (abs_path, host))| {
+                            let parent_abs_path = abs_path.parent()?.to_owned();
+                            Some(PathTrust::AbsPath(parent_abs_path, host.clone()))
+                        },
+                    ));
                 }
 
                 trusted_worktrees.trust(paths_to_trust, cx);
@@ -215,7 +238,12 @@ impl SecurityModal {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
                 let new_restricted_worktrees = trusted_worktrees
                     .read(cx)
-                    .restricted_worktree_abs_paths(worktree_store.read(cx), cx);
+                    .restricted_worktree_abs_paths(worktree_store.read(cx), cx)
+                    .into_iter()
+                    .map(|(worktree_id, abs_path)| {
+                        (worktree_id, (abs_path, self.remote_host.clone()))
+                    })
+                    .collect();
                 if self.restricted_paths != new_restricted_worktrees {
                     self.restricted_paths = new_restricted_worktrees;
                     cx.notify();
