@@ -670,7 +670,7 @@ impl LspInstaller for TypeScriptLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
-        let should_install_package = self
+        if self
             .node
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
@@ -678,9 +678,12 @@ impl LspInstaller for TypeScriptLspAdapter {
                 container_dir,
                 VersionStrategy::Latest(version.typescript_version.as_str()),
             )
-            .await;
+            .await
+        {
+            return None;
+        }
 
-        let should_install_server = self
+        if self
             .node
             .should_install_npm_package(
                 Self::SERVER_PACKAGE_NAME,
@@ -688,17 +691,16 @@ impl LspInstaller for TypeScriptLspAdapter {
                 container_dir,
                 VersionStrategy::Latest(version.server_version.as_str()),
             )
-            .await;
-
-        if should_install_package || should_install_server {
-            None
-        } else {
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: None,
-                arguments: typescript_server_binary_arguments(&server_path),
-            })
+            .await
+        {
+            return None;
         }
+
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: typescript_server_binary_arguments(&server_path),
+        })
     }
 
     async fn fetch_server_binary(
