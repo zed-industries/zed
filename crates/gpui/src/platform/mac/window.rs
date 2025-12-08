@@ -584,6 +584,7 @@ impl MacWindow {
             tabbing_identifier,
         }: WindowParams,
         executor: ForegroundExecutor,
+        renderer_context: renderer::Context,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -689,6 +690,7 @@ impl MacWindow {
                 blurred_view: None,
                 display_link: None,
                 renderer: renderer::new_renderer(
+                    renderer_context,
                     native_window as *mut _,
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.0),
