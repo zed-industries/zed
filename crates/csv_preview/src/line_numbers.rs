@@ -1,5 +1,27 @@
 use crate::CsvPreviewView;
 
+/// Line number information for CSV rows
+#[derive(Debug, Clone, Copy)]
+pub enum LineNumber {
+    /// Single line row
+    Line(usize),
+    /// Multi-line row spanning from start to end line
+    LineRange(usize, usize),
+}
+
+impl LineNumber {
+    pub fn display_string(&self) -> String {
+        match *self {
+            LineNumber::Line(line) => line.to_string(),
+            LineNumber::LineRange(start, end) => format!("{}\n...\n{}", start, end),
+            // LineNumber::LineRange(start, end) => (start..=end)
+            //     .map(|n| n.to_string())
+            //     .collect::<Vec<_>>()
+            //     .join("\n"),
+        }
+    }
+}
+
 impl CsvPreviewView {
     /// Calculate the optimal width for the line number column based on the total number of rows.
     ///
