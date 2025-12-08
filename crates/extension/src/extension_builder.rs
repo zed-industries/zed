@@ -2,8 +2,9 @@ use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
     parse_wasm_extension_version,
 };
+use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, StreamExt};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -77,8 +78,9 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         extension_manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
+        fs: Arc<dyn Fs>,
     ) -> Result<()> {
-        populate_defaults(extension_manifest, extension_dir)?;
+        populate_defaults(extension_manifest, extension_dir, fs).await?;
 
         if extension_dir.is_relative() {
             bail!(
@@ -546,7 +548,11 @@ impl ExtensionBuilder {
     }
 }
 
-fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) -> Result<()> {
+async fn populate_defaults(
+    manifest: &mut ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
     // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
     // contents of the computed fields, since we don't care what the existing values are.
     if manifest.schema_version.is_v0() {
@@ -561,12 +567,16 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let languages_dir = extension_path.join("languages");
-    if languages_dir.exists() {
-        for entry in fs::read_dir(&languages_dir).context("failed to list languages dir")? {
-            let entry = entry?;
-            let language_dir = entry.path();
+    if fs.is_dir(&languages_dir).await {
+        let mut language_dir_entries = fs
+            .read_dir(&languages_dir)
+            .await
+            .context("failed to list languages dir")?;
+
+        while let Some(language_dir) = language_dir_entries.next().await {
+            let language_dir = language_dir?;
             let config_path = language_dir.join("config.toml");
-            if config_path.exists() {
+            if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.languages.contains(&relative_language_dir) {
@@ -577,10 +587,14 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let themes_dir = extension_path.join("themes");
-    if themes_dir.exists() {
-        for entry in fs::read_dir(&themes_dir).context("failed to list themes dir")? {
-            let entry = entry?;
-            let theme_path = entry.path();
+    if fs.is_dir(&themes_dir).await {
+        let mut theme_dir_entries = fs
+            .read_dir(&themes_dir)
+            .await
+            .context("failed to list themes dir")?;
+
+        while let Some(theme_path) = theme_dir_entries.next().await {
+            let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
                 let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
                 if !manifest.themes.contains(&relative_theme_path) {
@@ -591,10 +605,14 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     let icon_themes_dir = extension_path.join("icon_themes");
-    if icon_themes_dir.exists() {
-        for entry in fs::read_dir(&icon_themes_dir).context("failed to list icon themes dir")? {
-            let entry = entry?;
-            let icon_theme_path = entry.path();
+    if fs.is_dir(&icon_themes_dir).await {
+        let mut icon_theme_dir_entries = fs
+            .read_dir(&icon_themes_dir)
+            .await
+            .context("failed to list icon themes dir")?;
+
+        while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
+            let icon_theme_path = icon_theme_path?;
             if icon_theme_path.extension() == Some("json".as_ref()) {
                 let relative_icon_theme_path =
                     icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
@@ -603,21 +621,26 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                 }
             }
         }
-    }
-
-    let snippets_json_path = extension_path.join("snippets.json");
-    if snippets_json_path.exists() {
-        manifest.snippets = Some(snippets_json_path);
+    };
+    if manifest.snippets.is_none()
+        && let snippets_json_path = extension_path.join("snippets.json")
+        && fs.is_file(&snippets_json_path).await
+    {
+        manifest.snippets = Some("snippets.json".into());
     }
 
     // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
     // the manifest using the contents of the `grammars` directory.
     if manifest.schema_version.is_v0() {
         let grammars_dir = extension_path.join("grammars");
-        if grammars_dir.exists() {
-            for entry in fs::read_dir(&grammars_dir).context("failed to list grammars dir")? {
-                let entry = entry?;
-                let grammar_path = entry.path();
+        if fs.is_dir(&grammars_dir).await {
+            let mut grammar_dir_entries = fs
+                .read_dir(&grammars_dir)
+                .await
+                .context("failed to list grammars dir")?;
+
+            while let Some(grammar_path) = grammar_dir_entries.next().await {
+                let grammar_path = grammar_path?;
                 if grammar_path.extension() == Some("toml".as_ref()) {
                     #[derive(Deserialize)]
                     struct GrammarConfigToml {
@@ -627,7 +650,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                         pub path: Option<String>,
                     }
 
-                    let grammar_config = fs::read_to_string(&grammar_path)?;
+                    let grammar_config = fs.load(&grammar_path).await?;
                     let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
 
                     let grammar_name = grammar_path
@@ -677,9 +700,20 @@ fn file_newer_than_deps(target: &Path, dependencies: &[&Path]) -> Result<bool, s
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{
+        path::{Path, PathBuf},
+        str::FromStr,
+        thread::sleep,
+        time::Duration,
+    };
 
-    use std::{fs, thread::sleep, time::Duration};
+    use gpui::TestAppContext;
+    use indoc::indoc;
+
+    use crate::{
+        ExtensionManifest,
+        extension_builder::{file_newer_than_deps, populate_defaults},
+    };
 
     #[test]
     fn test_file_newer_than_deps() {
@@ -693,13 +727,13 @@ mod tests {
             !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
             "target doesn't exist"
         );
-        fs::write(&target, "foo").unwrap(); // Create target
+        std::fs::write(&target, "foo").unwrap(); // Create target
         assert!(
             file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
             "dependencies don't exist; target is newer"
         );
         sleep(Duration::from_secs(1));
-        fs::write(&dep1, "foo").unwrap(); // Create dep1 (newer than target)
+        std::fs::write(&dep1, "foo").unwrap(); // Create dep1 (newer than target)
         // Dependency is newer
         assert!(
             !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
@@ -708,14 +742,85 @@ mod tests {
             dep1.metadata().unwrap().modified().unwrap(),
         );
         sleep(Duration::from_secs(1));
-        fs::write(&dep2, "foo").unwrap(); // Create dep2
+        std::fs::write(&dep2, "foo").unwrap(); // Create dep2
         sleep(Duration::from_secs(1));
-        fs::write(&target, "foobar").unwrap(); // Update target
+        std::fs::write(&target, "foobar").unwrap(); // Update target
         assert!(
             file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
             "target is newer than dependencies (target {:?}, dep2 {:?})",
             target.metadata().unwrap().modified().unwrap(),
             dep2.metadata().unwrap().modified().unwrap(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_snippet_location_is_kept(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let extension_path = Path::new("/extension");
+
+        fs.insert_tree(
+            extension_path,
+            serde_json::json!({
+                "extension.toml": indoc! {r#"
+                    id = "test-manifest"
+                    name = "Test Manifest"
+                    version = "0.0.1"
+                    schema_version = 1
+
+                    snippets = "./snippets/snippets.json"
+                    "#
+                },
+                "snippets.json": "",
+            }),
+        )
+        .await;
+
+        let mut manifest = ExtensionManifest::load(fs.clone(), extension_path)
+            .await
+            .unwrap();
+
+        populate_defaults(&mut manifest, extension_path, fs.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manifest.snippets,
+            Some(PathBuf::from_str("./snippets/snippets.json").unwrap())
+        )
+    }
+
+    #[gpui::test]
+    async fn test_automatic_snippet_location_is_relative(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let extension_path = Path::new("/extension");
+
+        fs.insert_tree(
+            extension_path,
+            serde_json::json!({
+                "extension.toml": indoc! {r#"
+                    id = "test-manifest"
+                    name = "Test Manifest"
+                    version = "0.0.1"
+                    schema_version = 1
+
+                    "#
+                },
+                "snippets.json": "",
+            }),
+        )
+        .await;
+
+        let mut manifest = ExtensionManifest::load(fs.clone(), extension_path)
+            .await
+            .unwrap();
+
+        populate_defaults(&mut manifest, extension_path, fs.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manifest.snippets,
+            Some(PathBuf::from_str("snippets.json").unwrap())
+        )
     }
 }
