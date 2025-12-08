@@ -697,7 +697,6 @@ impl RemoteConnection for DockerExecConnection {
         self.proxy_process.lock().is_none()
     }
 
-    // This provides a TTY, but normally we can't count on one.
     fn build_command(
         &self,
         program: Option<String>,

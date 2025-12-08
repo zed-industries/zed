@@ -311,7 +311,7 @@ impl ProjectPicker {
                                     {
                                         server.projects.insert(RemoteProject { paths });
                                     };
-                                } // ServerIndex::DevContainer(_) => (),
+                                }
                             }
                         });
                     })
@@ -419,15 +419,6 @@ impl std::fmt::Display for SshServerIndex {
     }
 }
 
-// #[repr(transparent)]
-// #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-// struct DevContainerIndex(usize);
-// impl std::fmt::Display for DevContainerIndex {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.0.fmt(f)
-//     }
-// }
-
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 struct WslServerIndex(usize);
@@ -441,7 +432,6 @@ impl std::fmt::Display for WslServerIndex {
 enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
-    // DevContainer(DevContainerIndex),
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -1068,10 +1058,7 @@ impl RemoteServerProjects {
 
                 self.create_ssh_server(state.address_editor.clone(), window, cx);
             }
-            Mode::CreateRemoteDevContainer(_) => {
-                println!("Confirming");
-                // self.focus_handle.focus(window);
-            }
+            Mode::CreateRemoteDevContainer(_) => {}
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
@@ -1332,7 +1319,6 @@ impl RemoteServerProjects {
             match server_ix {
                 ServerIndex::Ssh(index) => format!("ssh-{index}"),
                 ServerIndex::Wsl(index) => format!("wsl-{index}"),
-                // ServerIndex::DevContainer(index) => format!("dev-container-{index}"),
             }
         ));
         let container_element_id_base =
@@ -1476,9 +1462,7 @@ impl RemoteServerProjects {
             }
             ServerIndex::Wsl(server) => {
                 self.delete_wsl_project(server, project, cx);
-            } // ServerIndex::DevContainer(_) => {
-              //     todo!()
-              // }
+            }
         }
     }
 
