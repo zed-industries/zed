@@ -540,17 +540,19 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         };
 
         if filtered_selections.is_empty() {
-            let default_anchor = self
-                .snapshot
-                .buffer_snapshot()
+            let buffer_snapshot = self.snapshot.buffer_snapshot();
+            let anchor = buffer_snapshot
                 .excerpts()
                 .find(|(_, buffer, _)| buffer.remote_id() == buffer_id)
-                .map(|(excerpt_id, _, range)| Anchor::in_buffer(excerpt_id, range.context.start))
+                .map(|(excerpt_id, _, range)| {
+                    buffer_snapshot.anchor_in_excerpt(excerpt_id, range.context.start)
+                })
+                .flatten()
                 .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
             self.collection.disjoint = Arc::from([Selection {
                 id: post_inc(&mut self.collection.next_selection_id),
-                start: default_anchor,
-                end: default_anchor,
+                start: anchor,
+                end: anchor,
                 reversed: false,
                 goal: SelectionGoal::None,
             }]);
