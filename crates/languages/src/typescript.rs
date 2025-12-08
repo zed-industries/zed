@@ -720,7 +720,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                         latest_version.typescript_version.as_str(),
                     ),
                     (
-                        "typescript-language-server",
+                        Self::SERVER_PACKAGE_NAME,
                         latest_version.server_version.as_str(),
                     ),
                 ],
