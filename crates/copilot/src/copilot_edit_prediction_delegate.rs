@@ -363,7 +363,7 @@ mod tests {
             assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
         });
-(EditPredicti
+
         // Reset editor and only return copilot suggestions
         cx.set_state(indoc! {"
             oneˇ
