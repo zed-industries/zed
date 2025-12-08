@@ -228,21 +228,33 @@ fn path_match<T>(
     line.push(term.grid()[line_start].c);
     let mut start_offset = 0;
     let mut hovered_range = None;
+    if hovered == line_start {
+        let cell = &term.grid()[line_start];
+        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+            start_offset += cell.c.len_utf8();
+            hovered_range = Some(Range {
+                start: 0,
+                end: cell.c.len_utf8(),
+            });
+        }
+    }
     for cell in term.grid().iter_from(line_start) {
         if cell.point > line_end {
             break;
         }
+        let is_spacer = cell.flags.intersects(WIDE_CHAR_SPACERS);
         if cell.point == hovered {
             debug_assert!(hovered_range.is_none());
+
             hovered_range = Some(Range {
                 start: start_offset,
                 end: start_offset + cell.c.len_utf8(),
             });
-        } else if cell.point < hovered {
+        } else if cell.point < hovered && !is_spacer {
             start_offset += cell.c.len_utf8();
         }
 
-        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        if !is_spacer {
             line.push(match cell.c {
                 '\t' => ' ',
                 c @ _ => c,
@@ -250,7 +262,7 @@ fn path_match<T>(
         }
     }
     let line = line.trim_ascii_end();
-    let hovered_range = hovered_range.expect("To find out the exact UTF offset of hovered range");
+    let hovered_range = hovered_range?;
     let found_from_range = |path_range: Range<usize>,
                             link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
@@ -326,16 +338,16 @@ fn path_match<T>(
             };
             let link_range = captures
                 .name("link")
-                .map_or(match_range, |link| link.range());
+                .map_or_else(|| match_range.clone(), |link| link.range());
 
-            if hovered_range.start > path_range.end || path_range.start > hovered_range.end {
+            if hovered_range.start > match_range.end || match_range.start > hovered_range.end {
                 // No match, just skip.
                 continue;
             }
             let found = found_from_range(path_range, link_range, line_column);
 
             path_found = true;
-            debug_assert!(found.1.contains(&hovered));
+
             if found.1.contains(&hovered) {
                 return Some(found);
             }
