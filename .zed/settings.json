@@ -1,4 +1,13 @@
 {
+  "lsp": {
+    "protols": {
+      "initialization_options": {
+        "include_paths": [
+          "crates/proto/proto"
+        ]
+      }
+    }
+  },
   "languages": {
     "Markdown": {
       "tab_size": 2,

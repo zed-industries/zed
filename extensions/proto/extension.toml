@@ -13,3 +13,7 @@ commit = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad"
 [language_servers.protobuf-language-server]
 name = "Protobuf Language Server"
 languages = ["Proto"]
+
+[language_servers.protols]
+name = "Protols"
+languages = ["Proto"]

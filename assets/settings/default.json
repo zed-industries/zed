@@ -1918,6 +1918,9 @@
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width"
     },
+    "Proto": {
+      "language_servers": ["protols", "!protobuf-language-server", "..."]
+    },
     "Python": {
       "code_actions_on_format": {
         "source.organizeImports.ruff": true
