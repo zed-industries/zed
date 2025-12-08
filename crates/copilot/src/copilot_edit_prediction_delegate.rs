@@ -363,7 +363,7 @@ mod tests {
             assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
         });
-
+(EditPredicti
         // Reset editor and only return copilot suggestions
         cx.set_state(indoc! {"
             oneˇ
@@ -644,7 +644,7 @@ mod tests {
             );
 
             // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
-            editor.accept_partial_edit_prediction(EditPredictionGranularity::Whitespace, window, cx);
+            editor.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
             assert_eq!(
