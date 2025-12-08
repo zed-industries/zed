@@ -55,7 +55,7 @@ pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
     in_flight: [Option<usize>; MAXIMUM_DRAWABLE_COUNT],
-    current_frame: usize,
+    in_flight_index: usize,
 }
 
 pub(crate) struct InstanceBuffer {
@@ -74,7 +74,7 @@ impl InstanceBufferPool {
             buffer_size: Self::MIN_BUFFER_SIZE,
             buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device),
             in_flight: [None; MAXIMUM_DRAWABLE_COUNT],
-            current_frame: 0,
+            in_flight_index: 0,
         }
     }
 
@@ -91,30 +91,32 @@ impl InstanceBufferPool {
     }
 
     pub(crate) fn acquire(&mut self) -> Option<InstanceBuffer> {
-        for (index, in_flight_frame) in self.in_flight.iter_mut().enumerate() {
-            let available = match *in_flight_frame {
-                None => true,
-                Some(Self::ACQUIRED_SENTINEL) => false,
-                Some(frame) => self.current_frame.saturating_sub(frame) >= MAXIMUM_DRAWABLE_COUNT,
-            };
+        let index = self.in_flight_index % MAXIMUM_DRAWABLE_COUNT;
+        let in_flight_frame = &mut self.in_flight[index];
 
-            if available {
-                *in_flight_frame = Some(Self::ACQUIRED_SENTINEL);
-                return Some(InstanceBuffer {
-                    pool_index: index,
-                    metal_buffer: self.buffers[index].clone(),
-                    size: self.buffer_size,
-                });
-            }
+        let available = match *in_flight_frame {
+            None => true,
+            Some(Self::ACQUIRED_SENTINEL) => false,
+            Some(frame) => self.in_flight_index.saturating_sub(frame) >= MAXIMUM_DRAWABLE_COUNT,
+        };
+
+        if available {
+            *in_flight_frame = Some(Self::ACQUIRED_SENTINEL);
+            Some(InstanceBuffer {
+                pool_index: index,
+                metal_buffer: self.buffers[index].clone(),
+                size: self.buffer_size,
+            })
+        } else {
+            None
         }
-        None
     }
 
     pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
         if buffer.size == self.buffer_size {
-            self.in_flight[buffer.pool_index] = Some(self.current_frame);
+            self.in_flight[buffer.pool_index] = Some(self.in_flight_index);
         }
-        self.current_frame = self.current_frame.wrapping_add(1);
+        self.in_flight_index = self.in_flight_index.wrapping_add(1);
     }
 
     fn build_buffers(
