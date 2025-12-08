@@ -946,7 +946,7 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_4(), range, markdown_end);
+                            builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
                             let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
@@ -962,7 +962,8 @@ impl Element for MarkdownElement {
                                         ToggleState::Unselected
                                     },
                                 )
-                                .disabled(true)
+                                .fill()
+                                .visualization_only(true)
                                 .into_any_element()
                             } else if let Some(bullet_index) = builder.next_bullet_index() {
                                 div().child(format!("{}.", bullet_index)).into_any_element()
