@@ -196,8 +196,13 @@ impl CsvPreviewView {
 
                             let mut elements = Vec::with_capacity(COLS);
 
-                            // First column: original line number (row_index + 2 because of 0-based indexing + header row)
-                            let line_number: SharedString = (row_index + 2).to_string().into();
+                            // First column: original line number from parsed data
+                            let line_number: SharedString = this
+                                .contents
+                                .line_numbers
+                                .get(row_index)?
+                                .display_string()
+                                .into();
                             elements.push(
                                 div()
                                     .child(line_number)
