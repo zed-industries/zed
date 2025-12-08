@@ -255,6 +255,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+    fn is_read_only(&self, _: &App) -> bool {
+        false
+    }
     fn has_deleted_file(&self, _: &App) -> bool {
         false
     }
@@ -476,6 +479,7 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn is_read_only(&self, cx: &App) -> bool;
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
@@ -947,6 +951,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn is_read_only(&self, cx: &App) -> bool {
+        self.read(cx).is_read_only(cx)
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
