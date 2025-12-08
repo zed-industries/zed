@@ -429,7 +429,6 @@ pub fn parse_refs_to_badges(refs: &[String]) -> Vec<BadgeType> {
     let mut remote_branches: HashSet<String> = HashSet::new();
     let mut current_branch: Option<String> = None;
 
-    // First pass: collect all refs
     for ref_name in refs {
         if ref_name.starts_with("HEAD -> ") {
             if let Some(branch) = ref_name.strip_prefix("HEAD -> ") {
@@ -447,7 +446,6 @@ pub fn parse_refs_to_badges(refs: &[String]) -> Vec<BadgeType> {
         }
     }
 
-    // Build badges: current branch first
     let mut branch_badges = Vec::new();
     if let Some(ref current) = current_branch {
         let has_origin = remote_branches.contains(current);
@@ -456,7 +454,6 @@ pub fn parse_refs_to_badges(refs: &[String]) -> Vec<BadgeType> {
         local_branches.remove(current);
     }
 
-    // Then other local branches
     let mut local_sorted: Vec<_> = local_branches.iter().cloned().collect();
     local_sorted.sort();
     for branch in local_sorted {
@@ -465,14 +462,12 @@ pub fn parse_refs_to_badges(refs: &[String]) -> Vec<BadgeType> {
         remote_branches.remove(&branch);
     }
 
-    // Then remote-only branches
     let mut remote_sorted: Vec<_> = remote_branches.iter().cloned().collect();
     remote_sorted.sort();
     for branch in remote_sorted {
         branch_badges.push(BadgeType::RemoteBranch(format!("origin/{}", branch)));
     }
 
-    // Combine: branches first, then tags
     let tags: Vec<_> = result.into_iter().collect();
     branch_badges.extend(tags);
     branch_badges
