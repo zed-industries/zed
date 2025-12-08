@@ -8,10 +8,7 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 
-use futures::{
-    FutureExt as _,
-    future::{self, BoxFuture},
-};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;

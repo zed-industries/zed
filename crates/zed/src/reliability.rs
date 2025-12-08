@@ -296,7 +296,10 @@ async fn upload_minidump(
 
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
-    let stream = form.into_stream().into_async_read();
+    let stream = form
+        .into_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .into_async_read();
     let body = AsyncBody::from_reader(stream);
     let req = Request::builder().uri(endpoint).body(body)?;
     let mut response_text = String::new();
