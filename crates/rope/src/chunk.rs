@@ -81,17 +81,8 @@ impl Chunk {
 
             for (ix, &b) in chunk.iter().enumerate() {
                 chars |= (util::is_utf8_char_boundary(b) as u8) << ix;
-            }
-
-            for (ix, &b) in chunk.iter().enumerate() {
                 newlines |= ((b == b'\n') as u8) << ix;
-            }
-
-            for (ix, &b) in chunk.iter().enumerate() {
                 tabs |= ((b == b'\t') as u8) << ix;
-            }
-
-            for (ix, &b) in chunk.iter().enumerate() {
                 // b >= 240 when we are at the first byte of the 4 byte encoded
                 // utf-8 code point (U+010000 or greater) it means that it would
                 // be encoded as two 16-bit code units in utf-16
