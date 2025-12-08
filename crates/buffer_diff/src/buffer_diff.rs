@@ -1085,6 +1085,8 @@ impl BufferDiff {
     ) -> Self {
         let mut this = BufferDiff::new(&buffer, cx);
         let executor = cx.background_executor().clone();
+        let mut base_text = base_text.to_owned();
+        text::LineEnding::normalize(&mut base_text);
         let inner = executor.block(this.update_diff(
             buffer.clone(),
             Some(Arc::from(base_text)),
@@ -1092,6 +1094,7 @@ impl BufferDiff {
             None,
             cx,
         ));
+        // FIXME
         this.set_snapshot(inner, &buffer, true, cx);
         this
     }
@@ -1189,8 +1192,14 @@ impl BufferDiff {
                     buffer.clone(),
                     diff_options,
                 );
+                let base_text = base_text.unwrap_or_default();
+                if cfg!(debug_assertions) {
+                    for hunk in hunks.iter() {
+                        base_text.get(hunk.diff_base_byte_range.clone()).unwrap();
+                    }
+                }
                 BufferDiffInner {
-                    base_text: base_text.unwrap_or_default(),
+                    base_text,
                     hunks,
                     base_text_exists,
                     pending_hunks: SumTree::new(&buffer),
@@ -1260,12 +1269,32 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
+        if cfg!(debug_assertions) {
+            for hunk in new_state.hunks.iter() {
+                new_state.base_text.get(hunk.diff_base_byte_range.clone());
+            }
+        }
         if base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
-                base_text.set_text(new_state.base_text, cx);
+                base_text.set_text(dbg!(new_state.base_text.clone()), cx);
             })
         }
         state.hunks = new_state.hunks;
+        if cfg!(debug_assertions) {
+            pretty_assertions::assert_eq!(
+                state.base_text.read(cx).snapshot().text().as_str(),
+                new_state.base_text.as_ref()
+            );
+            for hunk in state.hunks.iter() {
+                state
+                    .base_text
+                    .read(cx)
+                    .snapshot()
+                    .text_summary_for_range::<text::TextSummary, _>(
+                        hunk.diff_base_byte_range.clone(),
+                    );
+            }
+        }
         if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {

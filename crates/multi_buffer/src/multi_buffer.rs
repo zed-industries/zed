@@ -2327,6 +2327,7 @@ impl MultiBuffer {
         let buffer = buffer_state.buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);
 
+        dbg!();
         let new_diff = DiffStateSnapshot {
             diff: diff.snapshot(cx),
             main_buffer: None,
@@ -2375,7 +2376,7 @@ impl MultiBuffer {
             &mut snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
-                base_changed: base_text_changed,
+                base_changed: dbg!(base_text_changed),
             },
         );
         if !edits.is_empty() {
@@ -3177,6 +3178,7 @@ impl MultiBuffer {
             let edit_new_start =
                 MultiBufferOffset((edit_old_start.0 as isize + output_delta) as usize);
 
+            dbg!();
             let changed_diff_hunks = Self::recompute_diff_transforms_for_edit(
                 &edit,
                 &mut excerpts,
@@ -3343,7 +3345,6 @@ impl MultiBuffer {
                             hunk_excerpt_start,
                             *end_of_current_insert,
                         );
-                        // FIXME record that the status for this region should be "deleted"
                         if !hunk_buffer_range.is_empty() {
                             let hunk_info = DiffTransformHunkInfo {
                                 excerpt_id: excerpt.id,
@@ -3419,9 +3420,16 @@ impl MultiBuffer {
                             if !hunk.diff_base_byte_range.is_empty()
                                 && hunk_buffer_range.start >= edit_buffer_start
                                 && hunk_buffer_range.start <= excerpt_buffer_end
-                                && dbg!(snapshot.show_deleted_hunks)
+                                && snapshot.show_deleted_hunks
                             {
+                                dbg!(&hunk.diff_base_byte_range);
                                 let base_text = diff.base_text();
+                                if cfg!(debug_assertions) {
+                                    dbg!();
+                                    base_text.text_summary_for_range::<TextSummary, _>(
+                                        hunk.diff_base_byte_range.clone(),
+                                    );
+                                }
                                 let mut text_cursor =
                                     base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
                                 let mut base_text_summary = text_cursor
@@ -7848,6 +7856,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 has_trailing_newline,
                 ..
             } => {
+                dbg!(&base_text_byte_range);
                 let base_text_start =
                     base_text_byte_range.start + (self.range.start - diff_transform_start);
                 let base_text_end =
@@ -7866,7 +7875,10 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     chunks
                 } else {
                     let base_buffer = &self.diffs.get(buffer_id)?.base_text();
-                    base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
+                    base_buffer.chunks(
+                        dbg!(base_text_start)..dbg!(base_text_end),
+                        self.language_aware,
+                    )
                 };
 
                 let chunk = if let Some(chunk) = chunks.next() {
