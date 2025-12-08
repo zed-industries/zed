@@ -417,13 +417,12 @@ impl MessageEditor {
                                     ))
                                 }
                             }
-                            Mention::Image(mention_image) => {
-                                let mut image = acp::ImageContent::new(
+                            Mention::Image(mention_image) => acp::ContentBlock::Image(
+                                acp::ImageContent::new(
                                     mention_image.data.clone(),
                                     mention_image.format.mime_type(),
-                                );
-
-                                if let Some(uri) = match uri {
+                                )
+                                .uri(match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
                                     MentionUri::PastedImage => None,
                                     other => {
@@ -433,11 +432,8 @@ impl MessageEditor {
                                         );
                                         None
                                     }
-                                } {
-                                    image = image.uri(uri)
-                                };
-                                acp::ContentBlock::Image(image)
-                            }
+                                }),
+                            ),
                             Mention::Link => acp::ContentBlock::ResourceLink(
                                 acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
                             ),

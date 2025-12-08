@@ -121,7 +121,7 @@ fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream)
                             ),
                         ))
                     })
-                    .collect(),
+                    .collect::<Vec<_>>(),
             ),
     );
 }

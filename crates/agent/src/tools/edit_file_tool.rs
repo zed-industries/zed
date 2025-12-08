@@ -384,11 +384,7 @@ impl AgentTool for EditFileTool {
                                 range.start.to_point(&buffer.snapshot()).row
                             }).ok();
                             if let Some(abs_path) = abs_path.clone() {
-                                let mut location = ToolCallLocation::new(abs_path);
-                                if let Some(line) = line {
-                                    location = location.line(line);
-                                }
-                                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![location]));
+                                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
                             }
                             emitted_location = true;
                         }

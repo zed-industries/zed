@@ -561,8 +561,7 @@ mod tests {
     use super::*;
     use gpui::{App, AppContext};
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
-    use std::sync::Arc;
+    use language::Buffer;
 
     #[gpui::test]
     fn test_excerpt_for_cursor_position(cx: &mut App) {
@@ -591,7 +590,7 @@ mod tests {
                 numbers
             }
         "#};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language::rust_lang(), cx));
         let snapshot = buffer.read(cx).snapshot();
 
         // Ensure we try to fit the largest possible syntax scope, resorting to line-based expansion
@@ -648,19 +647,5 @@ mod tests {
                     numbers.push(rng.random_range(1..101));
             ```"#}
         );
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
     }
 }
