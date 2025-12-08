@@ -5167,6 +5167,7 @@ dependencies = [
 name = "edit_prediction_cli"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "chrono",
  "clap",
@@ -5182,6 +5183,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "http_client",
  "indoc",
  "language",
  "language_extension",
@@ -5202,6 +5204,8 @@ dependencies = [
  "settings",
  "shellexpand 2.1.2",
  "smol",
+ "sqlez",
+ "sqlez_macros",
  "terminal_view",
  "toml 0.8.23",
  "util",
