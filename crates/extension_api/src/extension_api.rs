@@ -90,7 +90,7 @@ pub trait Extension: Send + Sync {
         worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
         LspSettings::for_worktree(language_server_id.as_ref(), worktree)
-            .map(|settings| settings.initialization_options.clone())
+            .map(|settings| settings.initialization_options)
     }
 
     /// Returns the workspace configuration options to pass to the language server.
@@ -100,7 +100,7 @@ pub trait Extension: Send + Sync {
         worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
         LspSettings::for_worktree(language_server_id.as_ref(), worktree)
-            .map(|settings| settings.settings.clone())
+            .map(|settings| settings.settings)
     }
 
     /// Returns the initialization options to pass to the other language server.
