@@ -524,6 +524,16 @@ impl Room {
         self.id
     }
 
+    pub fn room_id(&self) -> impl Future<Output = Option<String>> + 'static {
+        let room = self.live_kit.as_ref().map(|lk| lk.room.clone());
+        async move {
+            let room = room?;
+            let sid = room.sid().await;
+            let name = room.name();
+            Some(format!("{} (sid: {sid})", name))
+        }
+    }
+
     pub fn status(&self) -> RoomStatus {
         self.status
     }
@@ -1683,7 +1693,9 @@ impl LiveKitRoom {
     }
 }
 
+#[derive(Default)]
 enum LocalTrack<Stream: ?Sized> {
+    #[default]
     None,
     Pending {
         publish_id: usize,
@@ -1692,12 +1704,6 @@ enum LocalTrack<Stream: ?Sized> {
         track_publication: LocalTrackPublication,
         _stream: Box<Stream>,
     },
-}
-
-impl<T: ?Sized> Default for LocalTrack<T> {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

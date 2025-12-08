@@ -3,7 +3,7 @@ mod convert;
 mod delete;
 mod increment;
 pub(crate) mod mark;
-mod paste;
+pub(crate) mod paste;
 pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
@@ -578,8 +578,21 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
+
+            // If vim is in temporary mode and the motion being used is
+            // `EndOfLine` ($), we'll want to disable clipping at line ends so
+            // that the newline character can be selected so that, when moving
+            // back to visual mode, the cursor will be placed after the last
+            // character and not before it.
+            let clip_at_line_ends = editor.clip_at_line_ends(cx);
+            let should_disable_clip = matches!(motion, Motion::EndOfLine { .. }) && vim.temp_mode;
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(false, cx)
+            };
+
             editor.change_selections(
                 SelectionEffects::default().nav_history(motion.push_to_jump_list()),
                 window,
@@ -591,7 +604,11 @@ impl Vim {
                             .unwrap_or((cursor, goal))
                     })
                 },
-            )
+            );
+
+            if should_disable_clip {
+                editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+            };
         });
     }
 
@@ -671,13 +688,13 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
-                return;
-            };
-
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-            });
+            if let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx)
+                && !marks.is_empty()
+            {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+                });
+            }
         });
     }
 
@@ -2268,5 +2285,36 @@ mod test {
         cx.workspace(|workspace, _, cx| {
             assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
         });
+    }
+
+    #[gpui::test]
+    async fn test_temporary_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test jumping to the end of the line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-o $").await;
+        cx.shared_state().await.assert_eq(indoc! {"lorem ipsumˇ"});
+
+        // Test jumping to the next word.
+        cx.set_shared_state(indoc! {"loremˇ ipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("a").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o w").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ipsum ˇdolor"});
+
+        // Test yanking to end of line ($).
+        cx.set_shared_state(indoc! {"lorem ˇipsum dolor"}).await;
+        cx.simulate_shared_keystrokes("i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("a n d space ctrl-o y $")
+            .await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {"lorem and ˇipsum dolor"});
     }
 }

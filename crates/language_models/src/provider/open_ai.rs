@@ -20,11 +20,12 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ElevationIndex, List, Tooltip, prelude::*};
+use ui::{List, prelude::*};
 use ui_input::InputField;
-use util::{ResultExt, truncate_and_trailoff};
+use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
+use crate::ui::ConfiguredApiCard;
 use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
@@ -225,12 +226,17 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
             let response = request.await?;
             Ok(response)
         });
@@ -271,6 +277,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Five
             | Model::FiveMini
             | Model::FiveNano
+            | Model::FivePointOne
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -431,7 +438,7 @@ pub fn into_open_ai(
         messages,
         stream,
         stop: request.stop,
-        temperature: request.temperature.unwrap_or(1.0),
+        temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
@@ -580,6 +587,7 @@ impl OpenAiEventMapper {
                                 is_input_complete: true,
                                 input,
                                 raw_input: tool_call.arguments.clone(),
+                                thought_signature: None,
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -637,7 +645,6 @@ pub fn count_open_ai_tokens(
 ) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = collect_tiktoken_messages(request);
-
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
@@ -665,11 +672,11 @@ pub fn count_open_ai_tokens(
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
-            Model::Five | Model::FiveMini | Model::FiveNano => {
-                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
-            }
+            | Model::O4Mini
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages), // GPT-5.1 doesn't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::FivePointOne => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
         }
         .map(|tokens| tokens as u64)
     })
@@ -762,6 +769,16 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
+        let configured_card_label = if env_var_set {
+            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
+        } else {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            if api_url == OPEN_AI_API_URL {
+                "API key configured".to_string()
+            } else {
+                format!("API key configured for {}", api_url)
+            }
+        };
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
@@ -795,44 +812,15 @@ impl Render for ConfigurationView {
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
-                .into_any()
+                .into_any_element()
         } else {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
-                        } else {
-                            let api_url = OpenAiLanguageModelProvider::api_url(cx);
-                            if api_url == OPEN_AI_API_URL {
-                                "API key configured".to_string()
-                            } else {
-                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
-                            }
-                        })),
-                )
-                .child(
-                    Button::new("reset-api-key", "Reset API Key")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
-                )
-                .into_any()
+            ConfiguredApiCard::new(configured_card_label)
+                .disabled(env_var_set)
+                .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+                .when(env_var_set, |this| {
+                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
+                })
+                .into_any_element()
         };
 
         let compatible_api_section = h_flex()
@@ -894,6 +882,7 @@ mod tests {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
                 cache: false,
+                reasoning_details: None,
             }],
             tools: vec![],
             tool_choice: None,

@@ -247,26 +247,34 @@ impl ExtensionBuilder {
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
-        log::info!("compiling {grammar_name} parser");
-        let clang_output = util::command::new_smol_command(&clang_path)
-            .args(["-fPIC", "-shared", "-Os"])
-            .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
-            .arg("-o")
-            .arg(&grammar_wasm_path)
-            .arg("-I")
-            .arg(&src_path)
-            .arg(&parser_path)
-            .args(scanner_path.exists().then_some(scanner_path))
-            .output()
-            .await
-            .context("failed to run clang")?;
-
-        if !clang_output.status.success() {
-            bail!(
-                "failed to compile {} parser with clang: {}",
-                grammar_name,
-                String::from_utf8_lossy(&clang_output.stderr),
+        // Skip recompiling if the WASM object is already newer than the source files
+        if file_newer_than_deps(&grammar_wasm_path, &[&parser_path, &scanner_path]).unwrap_or(false)
+        {
+            log::info!(
+                "skipping compilation of {grammar_name} parser because the existing compiled grammar is up to date"
             );
+        } else {
+            log::info!("compiling {grammar_name} parser");
+            let clang_output = util::command::new_smol_command(&clang_path)
+                .args(["-fPIC", "-shared", "-Os"])
+                .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
+                .arg("-o")
+                .arg(&grammar_wasm_path)
+                .arg("-I")
+                .arg(&src_path)
+                .arg(&parser_path)
+                .args(scanner_path.exists().then_some(scanner_path))
+                .output()
+                .await
+                .context("failed to run clang")?;
+
+            if !clang_output.status.success() {
+                bail!(
+                    "failed to compile {} parser with clang: {}",
+                    grammar_name,
+                    String::from_utf8_lossy(&clang_output.stderr),
+                );
+            }
         }
 
         Ok(())
@@ -642,4 +650,72 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
     }
 
     Ok(())
+}
+
+/// Returns `true` if the target exists and its last modified time is greater than that
+/// of each dependency which exists (i.e., dependency paths which do not exist are ignored).
+///
+/// # Errors
+///
+/// Returns `Err` if any of the underlying file I/O operations fail.
+fn file_newer_than_deps(target: &Path, dependencies: &[&Path]) -> Result<bool, std::io::Error> {
+    if !target.try_exists()? {
+        return Ok(false);
+    }
+    let target_modified = target.metadata()?.modified()?;
+    for dependency in dependencies {
+        if !dependency.try_exists()? {
+            continue;
+        }
+        let dep_modified = dependency.metadata()?.modified()?;
+        if target_modified < dep_modified {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{fs, thread::sleep, time::Duration};
+
+    #[test]
+    fn test_file_newer_than_deps() {
+        // Don't use TempTree because we need to guarantee the order
+        let tmpdir = tempfile::tempdir().unwrap();
+        let target = tmpdir.path().join("target.wasm");
+        let dep1 = tmpdir.path().join("parser.c");
+        let dep2 = tmpdir.path().join("scanner.c");
+
+        assert!(
+            !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "target doesn't exist"
+        );
+        fs::write(&target, "foo").unwrap(); // Create target
+        assert!(
+            file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "dependencies don't exist; target is newer"
+        );
+        sleep(Duration::from_secs(1));
+        fs::write(&dep1, "foo").unwrap(); // Create dep1 (newer than target)
+        // Dependency is newer
+        assert!(
+            !file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "a dependency is newer (target {:?}, dep1 {:?})",
+            target.metadata().unwrap().modified().unwrap(),
+            dep1.metadata().unwrap().modified().unwrap(),
+        );
+        sleep(Duration::from_secs(1));
+        fs::write(&dep2, "foo").unwrap(); // Create dep2
+        sleep(Duration::from_secs(1));
+        fs::write(&target, "foobar").unwrap(); // Update target
+        assert!(
+            file_newer_than_deps(&target, &[&dep1, &dep2]).unwrap(),
+            "target is newer than dependencies (target {:?}, dep2 {:?})",
+            target.metadata().unwrap().modified().unwrap(),
+            dep2.metadata().unwrap().modified().unwrap(),
+        );
+    }
 }

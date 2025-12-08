@@ -4,14 +4,13 @@ use std::num;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
-use settings_macros::MergeFrom;
+use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
     DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
 };
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -96,6 +95,10 @@ pub struct EditorSettingsContent {
     /// Default: 4.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
+    /// Settings for sticking scopes to the top of the editor.
+    ///
+    /// Default: sticky scroll is disabled
+    pub sticky_scroll: Option<StickyScrollContent>,
     /// Whether the line numbers on editors gutter are relative or not.
     /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
     /// relative number of display lines.
@@ -250,7 +253,7 @@ impl RelativeLineNumbers {
 }
 
 // Toolbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
@@ -277,7 +280,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
@@ -312,8 +315,18 @@ pub struct ScrollbarContent {
     pub axes: Option<ScrollbarAxesContent>,
 }
 
+/// Sticky scroll related settings
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct StickyScrollContent {
+    /// Whether sticky scroll is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+}
+
 /// Minimap related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
@@ -348,7 +361,7 @@ pub struct MinimapContent {
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
@@ -363,7 +376,7 @@ pub struct ScrollbarAxesContent {
 }
 
 /// Gutter related settings
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
@@ -740,20 +753,24 @@ pub enum SnippetSortOrder {
 }
 
 /// Default options for buffer and project search items.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
+    /// Whether to only match on whole words.
     pub whole_word: Option<bool>,
+    /// Whether to match case sensitively.
     pub case_sensitive: Option<bool>,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: Option<bool>,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
 }
 
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
@@ -769,7 +786,7 @@ pub struct JupyterContent {
 }
 
 /// Whether to allow drag and drop text selection in buffer.
-#[skip_serializing_none]
+#[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct DragAndDropSelectionContent {
     /// When true, enables drag and drop text selection in buffer.

@@ -213,15 +213,6 @@ pub struct ExpandExcerptsDown {
     pub(super) lines: u32,
 }
 
-/// Shows code completion suggestions at the cursor position.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct ShowCompletions {
-    #[serde(default)]
-    pub(super) trigger: Option<String>,
-}
-
 /// Handles text input in the editor.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -462,8 +453,6 @@ actions!(
         CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
-        /// Finds all references to the symbol at cursor.
-        FindAllReferences,
         /// Finds the next match in the search.
         FindNextMatch,
         /// Finds the previous match in the search.
@@ -736,6 +725,8 @@ actions!(
         SelectToStartOfParagraph,
         /// Extends selection up.
         SelectUp,
+        /// Shows code completion suggestions at the cursor position.
+        ShowCompletions,
         /// Shows the system character palette.
         ShowCharacterPalette,
         /// Shows edit prediction at cursor.
@@ -834,3 +825,20 @@ actions!(
         WrapSelectionsInTag
     ]
 );
+
+/// Finds all references to the symbol at cursor.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct FindAllReferences {
+    #[serde(default = "default_true")]
+    pub always_open_multibuffer: bool,
+}
+
+impl Default for FindAllReferences {
+    fn default() -> Self {
+        Self {
+            always_open_multibuffer: true,
+        }
+    }
+}

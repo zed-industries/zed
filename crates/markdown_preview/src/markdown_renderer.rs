@@ -520,7 +520,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .px_2()
                 .py_1()
                 .border_1()
-                .size_full()
                 .border_color(cx.border_color)
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
@@ -551,7 +550,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
             let empty_cell = div()
                 .border_1()
-                .size_full()
                 .border_color(cx.border_color)
                 .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
@@ -560,7 +558,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         }
     }
 
-    cx.with_common_p(div())
+    cx.with_common_p(v_flex().items_start())
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
@@ -679,33 +677,31 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else if region.link.is_some() {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        color: Some(link_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
+                    parsed.regions.iter().filter_map(|(range, region)| {
+                        if region.code {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    background_color: Some(code_span_bg_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else if region.link.is_some() {
+                            Some((
+                                range.clone(),
+                                HighlightStyle {
+                                    color: Some(link_color),
+                                    ..Default::default()
+                                },
+                            ))
+                        } else {
+                            None
+                        }
+                    }),
                 );
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                for (range, region) in parsed.regions.iter() {
                     if let Some(link) = region.link.clone() {
                         links.push(link);
                         link_ranges.push(range.clone());
@@ -927,7 +923,6 @@ mod tests {
             source_range: 0..text.len(),
             contents: SharedString::new(text),
             highlights: Default::default(),
-            region_ranges: Default::default(),
             regions: Default::default(),
         })
     }

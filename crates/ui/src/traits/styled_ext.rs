@@ -18,7 +18,11 @@ fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) 
 }
 
 /// Extends [`gpui::Styled`] with Zed-specific styling methods.
-#[cfg_attr(debug_assertions, gpui_macros::derive_inspector_reflection)]
+// gate on rust-analyzer so rust-analyzer never needs to expand this macro, it takes up to 10 seconds to expand due to inefficiencies in rust-analyzers proc-macro srv
+#[cfg_attr(
+    all(debug_assertions, not(rust_analyzer)),
+    gpui_macros::derive_inspector_reflection
+)]
 pub trait StyledExt: Styled + Sized {
     /// Horizontally stacks elements.
     ///

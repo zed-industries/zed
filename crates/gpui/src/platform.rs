@@ -40,8 +40,8 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, TaskTiming,
+    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -76,7 +76,6 @@ pub use keystroke::*;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
-pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
@@ -562,11 +561,29 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
+#[derive(Debug)]
+pub struct RunnableMeta {
+    /// Location of the runnable
+    pub location: &'static core::panic::Location<'static>,
+}
+
+#[doc(hidden)]
+pub enum RunnableVariant {
+    Meta(Runnable<RunnableMeta>),
+    Compat(Runnable),
+}
+
+/// This type is public so that our test macro can generate and use it, but it should not
+/// be considered part of our public API.
+#[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
+    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
+    fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: Runnable);
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable);
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant);
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -1328,11 +1345,12 @@ pub enum WindowKind {
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
     /// On macOS, this corresponds to the `aqua` appearance.
+    #[default]
     Light,
 
     /// A light appearance with vibrant colors.
@@ -1349,12 +1367,6 @@ pub enum WindowAppearance {
     ///
     /// On macOS, this corresponds to the `NSAppearanceNameVibrantDark` appearance.
     VibrantDark,
-}
-
-impl Default for WindowAppearance {
-    fn default() -> Self {
-        Self::Light
-    }
 }
 
 /// The appearance of the background of the window itself, when there is
@@ -1376,6 +1388,10 @@ pub enum WindowBackgroundAppearance {
     ///
     /// Not always supported.
     Blurred,
+    /// The Mica backdrop material, supported on Windows 11.
+    MicaBackdrop,
+    /// The Mica Alt backdrop material, supported on Windows 11.
+    MicaAltBackdrop,
 }
 
 /// The options that can be configured for a file dialog prompt
@@ -1457,9 +1473,10 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
+    #[default]
     Arrow,
 
     /// A text input cursor
@@ -1546,12 +1563,6 @@ pub enum CursorStyle {
     None,
 }
 
-impl Default for CursorStyle {
-    fn default() -> Self {
-        Self::Arrow
-    }
-}
-
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
@@ -1565,6 +1576,8 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
+    /// A file entry
+    ExternalPaths(crate::ExternalPaths),
 }
 
 impl ClipboardItem {
@@ -1605,16 +1618,29 @@ impl ClipboardItem {
     /// Returns None if there were no ClipboardString entries.
     pub fn text(&self) -> Option<String> {
         let mut answer = String::new();
-        let mut any_entries = false;
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
                 answer.push_str(text);
-                any_entries = true;
             }
         }
 
-        if any_entries { Some(answer) } else { None }
+        if answer.is_empty() {
+            for entry in self.entries.iter() {
+                if let ClipboardEntry::ExternalPaths(paths) = entry {
+                    for path in &paths.0 {
+                        use std::fmt::Write as _;
+                        _ = write!(answer, "{}", path.display());
+                    }
+                }
+            }
+        }
+
+        if !answer.is_empty() {
+            Some(answer)
+        } else {
+            None
+        }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.

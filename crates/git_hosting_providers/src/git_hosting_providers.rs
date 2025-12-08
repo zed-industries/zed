@@ -33,11 +33,11 @@ pub fn init(cx: &mut App) {
 ///
 /// These require information from the Git repository to construct, so their
 /// registration is deferred until we have a Git repository initialized.
-pub fn register_additional_providers(
+pub async fn register_additional_providers(
     provider_registry: Arc<GitHostingProviderRegistry>,
     repository: Arc<dyn GitRepository>,
 ) {
-    let Some(origin_url) = repository.remote_url("origin") else {
+    let Some(origin_url) = repository.remote_url("origin").await else {
         return;
     };
 
@@ -49,6 +49,8 @@ pub fn register_additional_providers(
         provider_registry.register_hosting_provider(Arc::new(forgejo_self_hosted));
     } else if let Ok(gitea_self_hosted) = Gitea::from_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(gitea_self_hosted));
+    } else if let Ok(bitbucket_self_hosted) = Bitbucket::from_remote_url(&origin_url) {
+        provider_registry.register_hosting_provider(Arc::new(bitbucket_self_hosted));
     }
 }
 

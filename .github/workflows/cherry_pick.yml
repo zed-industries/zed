@@ -1,6 +1,7 @@
 # Generated from xtask::workflows::cherry_pick
 # Rebuild with `cargo xtask workflows`.
 name: cherry_pick
+run-name: 'cherry_pick to ${{ inputs.channel }} #${{ inputs.pr_number }}'
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +15,10 @@ on:
         type: string
       channel:
         description: channel
+        required: true
+        type: string
+      pr_number:
+        description: pr_number
         required: true
         type: string
 jobs:

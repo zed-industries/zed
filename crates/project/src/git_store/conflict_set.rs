@@ -264,7 +264,7 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use git::{
-        repository::repo_path,
+        repository::{RepoPath, repo_path},
         status::{UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{BackgroundExecutor, TestAppContext};
@@ -617,7 +617,7 @@ mod tests {
         cx.run_until_parked();
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                rel_path("a.txt").into(),
+                RepoPath::from_rel_path(rel_path("a.txt")),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

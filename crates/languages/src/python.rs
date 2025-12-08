@@ -10,8 +10,8 @@ use language::{ContextLocation, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
+use lsp::{LanguageServerBinary, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
@@ -23,11 +23,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use settings::Settings;
 use smol::lock::OnceCell;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use terminal::terminal_settings::TerminalSettings;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -100,9 +101,41 @@ impl FromStr for TestRunner {
 /// The problem with it is that Pyright adjusts the sort text based on previous resolutions (items for which we've issued `completion/resolve` call have their sortText adjusted),
 /// which - long story short - makes completion items list non-stable. Pyright probably relies on VSCode's implementation detail.
 /// see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
+///
+/// upd 02.12.25:
+/// Decided to ignore Pyright's sortText() completely and to manually sort all entries
 fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     for item in items {
-        item.sort_text.take();
+        let is_dunder = item.label.starts_with("__") && item.label.ends_with("__");
+
+        let visibility_priority = if is_dunder {
+            '3'
+        } else if item.label.starts_with("__") {
+            '2' // private non-dunder
+        } else if item.label.starts_with('_') {
+            '1' // protected
+        } else {
+            '0' // public
+        };
+
+        // Kind priority within same visibility level
+        let kind_priority = match item.kind {
+            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '0',
+            Some(lsp::CompletionItemKind::FIELD) => '1',
+            Some(lsp::CompletionItemKind::PROPERTY) => '2',
+            Some(lsp::CompletionItemKind::VARIABLE) => '3',
+            Some(lsp::CompletionItemKind::CONSTANT) => '4',
+            Some(lsp::CompletionItemKind::METHOD) => '5',
+            Some(lsp::CompletionItemKind::FUNCTION) => '5',
+            Some(lsp::CompletionItemKind::CLASS) => '6',
+            Some(lsp::CompletionItemKind::MODULE) => '7',
+            _ => '8',
+        };
+
+        item.sort_text = Some(format!(
+            "{}{}{}",
+            visibility_priority, kind_priority, item.label
+        ));
     }
 }
 
@@ -163,10 +196,50 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let label_len = label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+            _ => {
+                return None;
+            }
+        };
+
+        let mut text = label.clone();
+        if let Some(completion_details) = item
+            .label_details
+            .as_ref()
+            .and_then(|details| details.detail.as_ref())
+        {
+            write!(&mut text, " {}", completion_details).ok();
+        }
+
+        Some(language::CodeLabel::filtered(
+            text,
+            label_len,
+            item.filter_text.as_deref(),
+            highlight_id
+                .map(|id| (0..label_len, id))
+                .into_iter()
+                .collect(),
+        ))
+    }
+
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut ret = cx
@@ -478,6 +551,7 @@ impl LspAdapter for PyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -843,7 +917,7 @@ impl PythonContextProvider {
         variables: &task::TaskVariables,
     ) -> Option<(VariableName, String)> {
         let python_module_name =
-            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?);
+            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?)?;
 
         let unittest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
@@ -900,9 +974,10 @@ impl PythonContextProvider {
         &self,
         variables: &task::TaskVariables,
     ) -> Result<(VariableName, String)> {
-        let python_module_name = python_module_name_from_relative_path(
-            variables.get(&VariableName::RelativeFile).unwrap_or(""),
-        );
+        let python_module_name = variables
+            .get(&VariableName::RelativeFile)
+            .and_then(|module| python_module_name_from_relative_path(module))
+            .unwrap_or_default();
 
         let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
 
@@ -910,12 +985,15 @@ impl PythonContextProvider {
     }
 }
 
-fn python_module_name_from_relative_path(relative_path: &str) -> String {
-    let path_with_dots = relative_path.replace('/', ".");
-    path_with_dots
-        .strip_suffix(".py")
-        .unwrap_or(&path_with_dots)
-        .to_string()
+fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
+    let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
+    let path_with_dots = rel_path.display(PathStyle::Posix).replace('/', ".");
+    Some(
+        path_with_dots
+            .strip_suffix(".py")
+            .map(ToOwned::to_owned)
+            .unwrap_or(path_with_dots),
+    )
 }
 
 fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
@@ -952,6 +1030,8 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
         PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
+        PythonEnvironmentKind::Uv => "uv",
+        PythonEnvironmentKind::UvWorkspace => "uv (Workspace)",
     }
 }
 
@@ -959,6 +1039,8 @@ pub(crate) struct PythonToolchainProvider;
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
+    PythonEnvironmentKind::UvWorkspace,
+    PythonEnvironmentKind::Uv,
     PythonEnvironmentKind::Poetry,
     PythonEnvironmentKind::Pipenv,
     PythonEnvironmentKind::VirtualEnvWrapper,
@@ -1019,13 +1101,33 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
-fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+// How far is this venv from the root of our current project?
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SubprojectDistance {
+    WithinSubproject(Reverse<usize>),
+    WithinWorktree(Reverse<usize>),
+    NotInWorktree,
+}
+
+fn wr_distance(
+    wr: &PathBuf,
+    subroot_relative_path: &RelPath,
+    venv: Option<&PathBuf>,
+) -> SubprojectDistance {
     if let Some(venv) = venv
         && let Ok(p) = venv.strip_prefix(wr)
     {
-        p.components().count()
+        if subroot_relative_path.components().next().is_some()
+            && let Ok(distance) = p
+                .strip_prefix(subroot_relative_path.as_std_path())
+                .map(|p| p.components().count())
+        {
+            SubprojectDistance::WithinSubproject(Reverse(distance))
+        } else {
+            SubprojectDistance::WithinWorktree(Reverse(p.components().count()))
+        }
     } else {
-        usize::MAX
+        SubprojectDistance::NotInWorktree
     }
 }
 
@@ -1088,11 +1190,14 @@ impl ToolchainLister for PythonToolchainProvider {
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = || {
-                let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
-                let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
-            };
+            let proj_ordering =
+                || {
+                    let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
+                    let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
+                    wr_distance(&wr, &subroot_relative_path, lhs_project.as_ref()).cmp(
+                        &wr_distance(&wr, &subroot_relative_path, rhs_project.as_ref()),
+                    )
+                };
 
             // Compare environment priorities
             let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
@@ -1550,6 +1655,7 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -1841,6 +1947,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         cx.update(move |cx| {
@@ -2264,6 +2371,8 @@ mod tests {
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
+    use crate::python::python_module_name_from_relative_path;
+
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -2391,5 +2500,36 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_python_module_name_from_relative_path() {
+        assert_eq!(
+            python_module_name_from_relative_path("foo/bar.py"),
+            Some("foo.bar".to_string())
+        );
+        assert_eq!(
+            python_module_name_from_relative_path("foo/bar"),
+            Some("foo.bar".to_string())
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar.py"),
+                Some("foo.bar".to_string())
+            );
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar"),
+                Some("foo.bar".to_string())
+            );
+        } else {
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar.py"),
+                Some("foo\\bar".to_string())
+            );
+            assert_eq!(
+                python_module_name_from_relative_path("foo\\bar"),
+                Some("foo\\bar".to_string())
+            );
+        }
     }
 }

@@ -75,11 +75,9 @@ impl Terminal {
 
                     let exit_status = exit_status.map(portable_pty::ExitStatus::from);
 
-                    acp::TerminalExitStatus {
-                        exit_code: exit_status.as_ref().map(|e| e.exit_code()),
-                        signal: exit_status.and_then(|e| e.signal().map(Into::into)),
-                        meta: None,
-                    }
+                    acp::TerminalExitStatus::new()
+                        .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
+                        .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned)))
                 })
                 .shared(),
         }
@@ -103,25 +101,19 @@ impl Terminal {
         if let Some(output) = self.output.as_ref() {
             let exit_status = output.exit_status.map(portable_pty::ExitStatus::from);
 
-            acp::TerminalOutputResponse {
-                output: output.content.clone(),
-                truncated: output.original_content_len > output.content.len(),
-                exit_status: Some(acp::TerminalExitStatus {
-                    exit_code: exit_status.as_ref().map(|e| e.exit_code()),
-                    signal: exit_status.and_then(|e| e.signal().map(Into::into)),
-                    meta: None,
-                }),
-                meta: None,
-            }
+            acp::TerminalOutputResponse::new(
+                output.content.clone(),
+                output.original_content_len > output.content.len(),
+            )
+            .exit_status(
+                acp::TerminalExitStatus::new()
+                    .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
+                    .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned))),
+            )
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
-
-            acp::TerminalOutputResponse {
-                truncated: current_content.len() < original_len,
-                output: current_content,
-                exit_status: None,
-                meta: None,
-            }
+            let truncated = current_content.len() < original_len;
+            acp::TerminalOutputResponse::new(current_content, truncated)
         }
     }
 

@@ -46,7 +46,7 @@ impl Item for PendingOps {
 
     fn summary(&self, _cx: ()) -> Self::Summary {
         PathSummary {
-            max_path: self.repo_path.0.clone(),
+            max_path: self.repo_path.as_ref().clone(),
             item_summary: PendingOpsSummary {
                 staged_count: self.staged() as usize,
                 staging_count: self.staging() as usize,
@@ -73,7 +73,7 @@ impl KeyedItem for PendingOps {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.repo_path.0.clone())
+        PathKey(self.repo_path.as_ref().clone())
     }
 }
 
