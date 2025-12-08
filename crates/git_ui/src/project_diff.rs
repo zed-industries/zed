@@ -5,7 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
@@ -61,6 +61,14 @@ actions!(
     ]
 );
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum DiffFilterMode {
+    #[default]
+    All,
+    StagedOnly,
+    UnstagedOnly,
+}
+
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
@@ -70,8 +78,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
-    show_staged_only: bool,
-    show_unstaged_only: bool,
+    filter_mode: DiffFilterMode,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -322,8 +329,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
-            show_staged_only: false,
-            show_unstaged_only: false,
+            filter_mode: DiffFilterMode::default(),
             _task: task,
             _subscription: branch_diff_subscription,
         }
@@ -334,27 +340,45 @@ impl ProjectDiff {
     }
 
     pub fn show_staged_only(&self) -> bool {
-        self.show_staged_only
+        self.filter_mode == DiffFilterMode::StagedOnly
     }
 
     pub fn toggle_show_staged_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_staged_only = !self.show_staged_only;
-        if self.show_staged_only {
-            self.show_unstaged_only = false;
-        }
+        self.filter_mode = if self.filter_mode == DiffFilterMode::StagedOnly {
+            DiffFilterMode::All
+        } else {
+            DiffFilterMode::StagedOnly
+        };
         self.rebuild_for_filter_change(window, cx);
     }
 
     pub fn show_unstaged_only(&self) -> bool {
-        self.show_unstaged_only
+        self.filter_mode == DiffFilterMode::UnstagedOnly
     }
 
     pub fn toggle_show_unstaged_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_unstaged_only = !self.show_unstaged_only;
-        if self.show_unstaged_only {
-            self.show_staged_only = false;
-        }
+        self.filter_mode = if self.filter_mode == DiffFilterMode::UnstagedOnly {
+            DiffFilterMode::All
+        } else {
+            DiffFilterMode::UnstagedOnly
+        };
         self.rebuild_for_filter_change(window, cx);
+    }
+
+    fn should_include_hunk(&self, hunk: &DiffHunk) -> bool {
+        match self.filter_mode {
+            DiffFilterMode::All => true,
+            DiffFilterMode::StagedOnly => hunk.is_visible_when_staged_only(),
+            DiffFilterMode::UnstagedOnly => hunk.is_visible_when_unstaged_only(),
+        }
+    }
+
+    fn should_include_file(&self, status: &FileStatus) -> bool {
+        match self.filter_mode {
+            DiffFilterMode::All => true,
+            DiffFilterMode::StagedOnly => status.staging() != StageStatus::Unstaged,
+            DiffFilterMode::UnstagedOnly => status.staging() != StageStatus::Staged,
+        }
     }
 
     fn rebuild_for_filter_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -362,9 +386,11 @@ impl ProjectDiff {
         // The MultiBuffer's update_path_excerpts only expands ranges (never contracts),
         // so filtering at render time would leave incorrect context around hidden hunks.
         // Rebuilding ensures context lines are properly recalculated around visible hunks.
+        let show_staged_only = self.filter_mode == DiffFilterMode::StagedOnly;
+        let show_unstaged_only = self.filter_mode == DiffFilterMode::UnstagedOnly;
         self.multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.set_show_only_staged_hunks(self.show_staged_only, cx);
-            multibuffer.set_show_only_unstaged_hunks(self.show_unstaged_only, cx);
+            multibuffer.set_show_only_staged_hunks(show_staged_only, cx);
+            multibuffer.set_show_only_unstaged_hunks(show_unstaged_only, cx);
             let paths: Vec<_> = multibuffer.paths().collect();
             for path in paths {
                 multibuffer.remove_excerpts_for_path(path, cx);
@@ -524,8 +550,6 @@ impl ProjectDiff {
         file_status: FileStatus,
         buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
-        show_staged_only: bool,
-        show_unstaged_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -555,8 +579,7 @@ impl ProjectDiff {
                 &snapshot,
                 cx,
             )
-            .filter(|diff_hunk| !show_staged_only || diff_hunk.is_visible_when_staged_only())
-            .filter(|diff_hunk| !show_unstaged_only || diff_hunk.is_visible_when_unstaged_only())
+            .filter(|diff_hunk| self.should_include_hunk(diff_hunk))
             .map(|diff_hunk| diff_hunk.buffer_range)
             .collect();
         let conflicts = conflict_addon
@@ -629,50 +652,37 @@ impl ProjectDiff {
 
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
-        let (buffers_to_load, show_staged_only, show_unstaged_only) =
-            this.update(cx, |this, cx| {
-                let show_staged_only = this.show_staged_only;
-                let show_unstaged_only = this.show_unstaged_only;
-                let (repo, mut buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                    let load_buffers = branch_diff.load_buffers(cx);
-                    (branch_diff.repo().cloned(), load_buffers)
-                });
+        let buffers_to_load = this.update(cx, |this, cx| {
+            let (repo, mut buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                let load_buffers = branch_diff.load_buffers(cx);
+                (branch_diff.repo().cloned(), load_buffers)
+            });
 
-                if show_staged_only {
-                    buffers_to_load
-                        .retain(|entry| entry.file_status.staging() != StageStatus::Unstaged);
+            buffers_to_load.retain(|entry| this.should_include_file(&entry.file_status));
+
+            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+
+            if let Some(repo) = repo {
+                let repo = repo.read(cx);
+
+                path_keys = Vec::with_capacity(buffers_to_load.len());
+                for entry in buffers_to_load.iter() {
+                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let path_key =
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+                    previous_paths.remove(&path_key);
+                    path_keys.push(path_key)
                 }
-                if show_unstaged_only {
-                    buffers_to_load
-                        .retain(|entry| entry.file_status.staging() != StageStatus::Staged);
+            }
+
+            this.multibuffer.update(cx, |multibuffer, cx| {
+                for path in previous_paths {
+                    this.buffer_diff_subscriptions.remove(&path.path);
+                    multibuffer.remove_excerpts_for_path(path, cx);
                 }
-
-                let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
-
-                if let Some(repo) = repo {
-                    let repo = repo.read(cx);
-
-                    path_keys = Vec::with_capacity(buffers_to_load.len());
-                    for entry in buffers_to_load.iter() {
-                        let sort_prefix =
-                            sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
-                        let path_key = PathKey::with_sort_prefix(
-                            sort_prefix,
-                            entry.repo_path.as_ref().clone(),
-                        );
-                        previous_paths.remove(&path_key);
-                        path_keys.push(path_key)
-                    }
-                }
-
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    for path in previous_paths {
-                        this.buffer_diff_subscriptions.remove(&path.path);
-                        multibuffer.remove_excerpts_for_path(path, cx);
-                    }
-                });
-                (buffers_to_load, show_staged_only, show_unstaged_only)
-            })?;
+            });
+            buffers_to_load
+        })?;
 
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
@@ -682,16 +692,7 @@ impl ProjectDiff {
 
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        this.register_buffer(
-                            path_key,
-                            entry.file_status,
-                            buffer,
-                            diff,
-                            show_staged_only,
-                            show_unstaged_only,
-                            window,
-                            cx,
-                        )
+                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
                     })
                     .ok();
                 })?;
@@ -2529,5 +2530,10 @@ mod tests {
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
         cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
+    }
+
+    #[test]
+    fn test_diff_filter_mode_default() {
+        assert_eq!(DiffFilterMode::default(), DiffFilterMode::All);
     }
 }

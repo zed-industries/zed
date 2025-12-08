@@ -726,6 +726,10 @@ impl BufferDiffInner {
                         } else if secondary_range == (start_point..end_point) {
                             secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                         } else if secondary_range.start <= end_point {
+                            // Overlap but not exact match - mark as overlapping
+                            // Note: Splitting hunks is complex when there may be multiple
+                            // secondary hunks within one main hunk, so we use a single
+                            // status to indicate partial overlap.
                             secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                         }
                     }
@@ -1431,7 +1435,11 @@ impl DiffHunk {
     }
 
     pub fn is_visible_when_staged_only(&self) -> bool {
-        self.secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk
+        matches!(
+            self.secondary_status,
+            DiffHunkSecondaryStatus::NoSecondaryHunk
+                | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+        )
     }
 
     pub fn is_visible_when_unstaged_only(&self) -> bool {
@@ -2481,6 +2489,44 @@ mod tests {
                 diff.row_to_base_text_row(buffer_row, &buffer_snapshot),
                 expected,
                 "{buffer_row}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hunk_visibility_for_filter_modes() {
+        fn make_hunk(status: DiffHunkSecondaryStatus) -> DiffHunk {
+            DiffHunk {
+                range: Point::new(0, 0)..Point::new(1, 0),
+                buffer_range: Anchor::MIN..Anchor::MIN,
+                diff_base_byte_range: 0..1,
+                secondary_status: status,
+                buffer_word_diffs: vec![],
+                base_word_diffs: vec![],
+            }
+        }
+
+        let test_cases = [
+            (DiffHunkSecondaryStatus::NoSecondaryHunk, true, false),
+            (DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk, true, true),
+            (DiffHunkSecondaryStatus::HasSecondaryHunk, false, true),
+            (DiffHunkSecondaryStatus::SecondaryHunkAdditionPending, false, true),
+            (DiffHunkSecondaryStatus::SecondaryHunkRemovalPending, false, true),
+        ];
+
+        for (status, expected_staged, expected_unstaged) in test_cases {
+            let hunk = make_hunk(status);
+            assert_eq!(
+                hunk.is_visible_when_staged_only(),
+                expected_staged,
+                "is_visible_when_staged_only() failed for {:?}",
+                status
+            );
+            assert_eq!(
+                hunk.is_visible_when_unstaged_only(),
+                expected_unstaged,
+                "is_visible_when_unstaged_only() failed for {:?}",
+                status
             );
         }
     }
