@@ -27552,7 +27552,19 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
 
     // Case 3: Test adding a new nested list item preserves indent
     cx.update_editor(|editor, window, cx| {
-        editor.handle_input("- [x] Item 2.c", window, cx);
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        - [ ] Item 1
+            - [ ] Item 1.a
+        - [x] Item 2
+            - [x] Item 2.a
+            - [x] Item 2.b
+            -ˇ
+        "
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(" [x] Item 2.c", window, cx);
     });
     cx.assert_editor_state(indoc! {"
         - [ ] Item 1
@@ -27561,6 +27573,80 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             - [x] Item 2.a
             - [x] Item 2.b
             - [x] Item 2.cˇ
+        "
+    });
+
+    // Case 4: Test adding new line after nested ordered list preserves indent of previous line
+    cx.set_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.bˇ
+        "
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.b
+            ˇ
+        "
+    });
+
+    // Case 5: Adding new ordered list item preserves indent
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("3", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.b
+            3ˇ
+        "
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.b
+            3.ˇ
+        "
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(" Item 2.c", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.b
+            3. Item 2.cˇ
+        "
+    });
+
+    // Case 9: Test blockquote newline preserves something
+    cx.set_state(indoc! {"
+        > Item 1ˇ
+        "
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        > Item 1
+        ˇ
         "
     });
 }
