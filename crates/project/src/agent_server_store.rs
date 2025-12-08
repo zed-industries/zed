@@ -1427,7 +1427,7 @@ impl ExternalAgentServer for LocalCodex {
                         }
                     }
                     local_versions.sort_by(|(a, _), (b, _)| a.cmp(b));
-                    dbg!(local_versions.last().map(|(_, v)| dir.join(v)))
+                    local_versions.last().map(|(_, v)| dir.join(v))
                 };
 
                 let fallback_to_latest_local_version =
