@@ -1,8 +1,9 @@
 use gpui::{Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window, div};
+use settings::Settings;
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
-use crate::{Vim, VimEvent};
+use crate::{Vim, VimEvent, VimGlobals, VimSettings};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -60,32 +61,46 @@ impl ModeIndicator {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
-    fn current_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
+    fn classic_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
+        let recording = Vim::globals(cx)
+            .recording_register
+            .map(|reg| format!("recording @{reg} "))
+            .into_iter();
+
+        let pre_count = cx.global::<VimGlobals>().pre_count;
+        let post_count = cx.global::<VimGlobals>().post_count;
+
+        let vim = vim.read(cx);
+        recording
+            .chain(pre_count.map(|count| format!("{}", count)))
+            .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
+            .chain(vim.operator_stack.iter().map(|item| item.status()))
+            .chain(post_count.map(|count| format!("{}", count)))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    fn friendly_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
         let globals = Vim::globals(cx);
 
-        // Check if recording a macro
         if let Some(reg) = globals.recording_register {
             return format!("Recording @{}", reg);
         }
 
-        // Read counts before releasing the mutable borrow on cx
         let pre_count = globals.pre_count;
         let post_count = globals.post_count;
 
         let vim = vim.read(cx);
 
-        // Get friendly operator names
         let operators: Vec<_> = vim
             .operator_stack
             .iter()
             .map(|item| item.friendly_status())
             .collect();
 
-        // Combine pre_count and post_count
         let count = pre_count.or(post_count);
 
         if operators.is_empty() {
-            // No operators pending - check for count or register selection
             if let Some(c) = count {
                 return format!("{}x...", c);
             }
@@ -107,6 +122,8 @@ impl Render for ModeIndicator {
         let Some(vim) = vim else {
             return div().hidden().into_any_element();
         };
+
+        let friendly_mode = VimSettings::get_global(cx).friendly_mode_indicator;
 
         let vim_readable = vim.read(cx);
         let status_label = vim_readable.status_label.clone();
@@ -131,35 +148,35 @@ impl Render for ModeIndicator {
         let (label, mode): (SharedString, Option<SharedString>) = if let Some(label) = status_label
         {
             (label, None)
-        } else {
+        } else if friendly_mode {
             let mode_str = match mode {
-                crate::state::Mode::Normal => "Vim",
-                crate::state::Mode::Insert => "Insert",
-                crate::state::Mode::Replace => "Replace",
-                crate::state::Mode::Visual => "Visual",
-                crate::state::Mode::VisualLine => "Visual Line",
-                crate::state::Mode::VisualBlock => "Visual Block",
-                crate::state::Mode::HelixNormal => "NORMAL",
-                crate::state::Mode::HelixSelect => "SELECT",
+                crate::state::Mode::Normal => "Vim".to_string(),
+                crate::state::Mode::Insert => "Insert".to_string(),
+                crate::state::Mode::Replace => "Replace".to_string(),
+                crate::state::Mode::Visual => "Visual".to_string(),
+                crate::state::Mode::VisualLine => "Visual Line".to_string(),
+                crate::state::Mode::VisualBlock => "Visual Block".to_string(),
+                crate::state::Mode::HelixNormal | crate::state::Mode::HelixSelect => {
+                    mode.to_string()
+                }
             };
 
             let mode_str = if temp_mode {
                 format!("(insert) {}", mode_str)
             } else {
-                mode_str.to_string()
+                mode_str
             };
 
-            let current_operators_description = self.current_operators_description(vim.clone(), cx);
+            let operators_description = self.friendly_operators_description(vim.clone(), cx);
 
-            // Prefer vim's state when it has content, fall back to raw pending keystrokes
-            // for multi-key bindings like `gg`, `gU`, etc. that vim hasn't processed yet
-            let pending = if !current_operators_description.is_empty() {
-                current_operators_description
+            // Prefer vim's state over pending keystrokes for multi-key bindings
+            // like `gg`, `gU` that vim hasn't fully processed yet
+            let pending = if !operators_description.is_empty() {
+                operators_description
             } else {
                 self.pending_keys.clone().unwrap_or_default()
             };
 
-            // Hide mode label when an operator is pending
             let show_mode = pending.is_empty();
             (
                 pending.into(),
@@ -169,6 +186,25 @@ impl Render for ModeIndicator {
                     None
                 },
             )
+        } else {
+            let mode_str = if temp_mode {
+                format!("(insert) {}", mode)
+            } else {
+                mode.to_string()
+            };
+
+            let operators_description = self.classic_operators_description(vim.clone(), cx);
+            let pending = self
+                .pending_keys
+                .as_ref()
+                .unwrap_or(&operators_description);
+
+            let mode_label = if bg_color != system_transparent {
+                mode_str.into()
+            } else {
+                format!("-- {} --", mode_str).into()
+            };
+            (pending.into(), Some(mode_label))
         };
         h_flex()
             .gap_1()
