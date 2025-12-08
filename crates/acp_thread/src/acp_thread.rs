@@ -2929,7 +2929,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
+        assert_eq!(err.code, acp::ErrorCode::ResourceNotFound);
     }
 
     #[gpui::test]
