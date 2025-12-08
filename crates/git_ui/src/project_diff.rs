@@ -75,6 +75,13 @@ pub struct ProjectDiff {
     _subscription: Subscription,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefreshReason {
+    DiffChanged,
+    StatusesChanged,
+    EditorSaved,
+}
+
 const CONFLICT_SORT_PREFIX: u64 = 1;
 const TRACKED_SORT_PREFIX: u64 = 2;
 const NEW_SORT_PREFIX: u64 = 3;
@@ -279,7 +286,7 @@ impl ProjectDiff {
                 BranchDiffEvent::FileListChanged => {
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
+                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
                     })
                 }
             },
@@ -298,7 +305,7 @@ impl ProjectDiff {
                 this._task = {
                     window.spawn(cx, {
                         let this = cx.weak_entity();
-                        async |cx| Self::refresh(this, cx).await
+                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
                     })
                 }
             }
@@ -309,7 +316,7 @@ impl ProjectDiff {
 
         let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::refresh(this, cx).await
+            async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
         });
 
         Self {
@@ -465,8 +472,9 @@ impl ProjectDiff {
                     .ok();
             }
             EditorEvent::Saved => {
-                self._task =
-                    cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
+                self._task = cx.spawn_in(window, async move |this, cx| {
+                    Self::refresh(this, RefreshReason::EditorSaved, cx).await
+                });
             }
             _ => {}
         }
@@ -490,7 +498,7 @@ impl ProjectDiff {
         let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
             this._task = window.spawn(cx, {
                 let this = cx.weak_entity();
-                async |cx| Self::refresh(this, cx).await
+                async |cx| Self::refresh(this, RefreshReason::DiffChanged, cx).await
             })
         });
         self.buffer_diff_subscriptions
@@ -582,7 +590,11 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn refresh(
+        this: WeakEntity<Self>,
+        reason: RefreshReason,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
         let selected_buffers = this.update_in(cx, |this, window, cx| {
             let primary_editor = this.editor.read(cx).primary_editor().clone();
             primary_editor.update(cx, |editor, cx| {
@@ -624,11 +636,18 @@ impl ProjectDiff {
 
             this.multibuffer.update(cx, |multibuffer, cx| {
                 for path in previous_paths {
-                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx)
-                        && (buffer.read(cx).is_dirty()
-                            || selected_buffers.contains(&buffer.read(cx).remote_id()))
-                    {
-                        continue;
+                    if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
+                        let skip = match reason {
+                            RefreshReason::DiffChanged => {
+                                buffer.read(cx).is_dirty()
+                                    || selected_buffers.contains(&buffer.read(cx).remote_id())
+                            }
+                            RefreshReason::EditorSaved => buffer.read(cx).is_dirty(),
+                            RefreshReason::StatusesChanged => false,
+                        };
+                        if skip {
+                            continue;
+                        }
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
@@ -645,15 +664,20 @@ impl ProjectDiff {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        if let Some(buffer) = this
-                            .multibuffer
-                            .read(cx)
-                            .buffer(buffer.read(cx).remote_id())
-                            && (buffer.read(cx).is_dirty()
-                                || selected_buffers.contains(&buffer.read(cx).remote_id()))
-                        {
-                            // skip
-                        } else {
+                        let multibuffer = this.multibuffer.read(cx);
+                        let skip = multibuffer.buffer(buffer.read(cx).remote_id()).is_some()
+                            && multibuffer
+                                .diff_for(buffer.read(cx).remote_id())
+                                .is_some_and(|prev_diff| prev_diff.entity_id() == diff.entity_id())
+                            && match reason {
+                                RefreshReason::DiffChanged => {
+                                    buffer.read(cx).is_dirty()
+                                        || selected_buffers.contains(&buffer.read(cx).remote_id())
+                                }
+                                RefreshReason::EditorSaved => buffer.read(cx).is_dirty(),
+                                RefreshReason::StatusesChanged => false,
+                            };
+                        if !skip {
                             this.register_buffer(
                                 path_key,
                                 entry.file_status,
@@ -1737,9 +1761,13 @@ mod tests {
             .unindent(),
         );
 
-        editor.update_in(cx, |editor, window, cx| {
-            editor.git_restore(&Default::default(), window, cx);
-        });
+        editor
+            .update_in(cx, |editor, window, cx| {
+                editor.git_restore(&Default::default(), window, cx);
+                editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .unwrap();
         cx.run_until_parked();
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
