@@ -199,7 +199,7 @@ impl PlatformInput {
                                 2 => PressureStage::Force,
                                 _ => PressureStage::Zero,
                             },
-                            pressure: pressure,
+                            pressure,
                             modifiers: read_modifiers(native_event),
                             position: point(
                                 px(native_event.locationInWindow().x as f32),
