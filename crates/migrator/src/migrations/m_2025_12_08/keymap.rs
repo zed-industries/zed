@@ -26,14 +26,8 @@ fn replace_string_action(
 }
 
 static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
-    HashMap::from_iter([
-        (
-            "editor::AcceptWordEditPrediction",
-            "editor::AcceptNextWordEditPrediction",
-        ),
-        (
-            "editor::AcceptLineEditPrediction",
-            "editor::AcceptNextLineEditPrediction",
-        ),
-    ])
+    HashMap::from_iter([(
+        "editor::AcceptPartialEditPrediction",
+        "editor::AcceptNextWordEditPrediction",
+    )])
 });
