@@ -7,8 +7,16 @@ use crate::provider::{
     bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
     google::GoogleSettings, lmstudio::LmStudioSettings, mistral::MistralSettings,
     ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
-    open_router::OpenRouterSettings, vercel::VercelSettings, x_ai::XAiSettings,
+    vercel::VercelSettings, x_ai::XAiSettings,
 };
+
+pub use settings::OpenRouterAvailableModel as AvailableModel;
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct OpenRouterSettings {
+    pub api_url: String,
+    pub available_models: Vec<AvailableModel>,
+}
 
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
@@ -47,9 +55,9 @@ impl settings::Settings for AllLanguageModelSettings {
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
                 region: bedrock.region,
-                endpoint: bedrock.endpoint_url, // todo(should be api_url)
+                endpoint: bedrock.endpoint_url,
                 profile_name: bedrock.profile,
-                role_arn: None, // todo(was never a setting for this...)
+                role_arn: None,
                 authentication_method: bedrock.authentication_method.map(Into::into),
                 allow_global: bedrock.allow_global,
             },

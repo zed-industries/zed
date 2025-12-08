@@ -10,20 +10,19 @@ use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod api_key;
 mod extension;
+mod google_ai_api_key;
 pub mod provider;
 mod settings;
 pub mod ui;
 
+pub use google_ai_api_key::api_key_for_gemini_cli;
+
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
-use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
-use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
-use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
-use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -119,10 +118,6 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
-        Arc::new(OpenAiLanguageModelProvider::new(client.http_client(), cx)),
-        cx,
-    );
-    registry.register_provider(
         Arc::new(OllamaLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
@@ -135,22 +130,11 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
-        Arc::new(GoogleLanguageModelProvider::new(client.http_client(), cx)),
-        cx,
-    );
-    registry.register_provider(
         MistralLanguageModelProvider::global(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
         Arc::new(BedrockLanguageModelProvider::new(client.http_client(), cx)),
-        cx,
-    );
-    registry.register_provider(
-        Arc::new(OpenRouterLanguageModelProvider::new(
-            client.http_client(),
-            cx,
-        )),
         cx,
     );
     registry.register_provider(
@@ -161,5 +145,4 @@ fn register_language_model_providers(
         Arc::new(XAiLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
-    registry.register_provider(Arc::new(CopilotChatLanguageModelProvider::new(cx)), cx);
 }

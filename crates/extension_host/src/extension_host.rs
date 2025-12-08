@@ -4,6 +4,8 @@ mod copilot_migration;
 pub mod extension_settings;
 mod google_ai_migration;
 pub mod headless_host;
+mod open_router_migration;
+mod openai_migration;
 pub mod wasm_host;
 
 #[cfg(test)]
@@ -893,6 +895,11 @@ impl ExtensionStore {
                     copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
                     anthropic_migration::migrate_anthropic_credentials_if_needed(&extension_id, cx);
                     google_ai_migration::migrate_google_ai_credentials_if_needed(&extension_id, cx);
+                    openai_migration::migrate_openai_credentials_if_needed(&extension_id, cx);
+                    open_router_migration::migrate_open_router_credentials_if_needed(
+                        &extension_id,
+                        cx,
+                    );
                 })
                 .ok();
             }
