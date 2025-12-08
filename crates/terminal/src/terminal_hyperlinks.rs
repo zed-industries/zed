@@ -314,7 +314,7 @@ fn path_match<T>(
                     continue;
                 }
             };
-
+            path_found = true;
             let match_range = captures.get(0).unwrap().range();
             let (path_range, line_column) = if let Some(path) = captures.name("path") {
                 let parse = |name: &str| {
@@ -339,8 +339,6 @@ fn path_match<T>(
                 continue;
             }
             let found = found_from_range(path_range, link_range, line_column);
-
-            path_found = true;
 
             if found.1.contains(&hovered) {
                 return Some(found);
