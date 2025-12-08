@@ -6998,6 +6998,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "git_graph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "git",
+ "git_ui",
+ "gpui",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "git_hosting_providers"
 version = "0.1.0"
 dependencies = [
