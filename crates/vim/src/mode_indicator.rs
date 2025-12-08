@@ -150,10 +150,14 @@ impl Render for ModeIndicator {
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
-            let pending = self
-                .pending_keys
-                .as_ref()
-                .unwrap_or(&current_operators_description);
+
+            // Prefer vim's state when it has content, fall back to raw pending keystrokes
+            // for multi-key bindings like `gg`, `gU`, etc. that vim hasn't processed yet
+            let pending = if !current_operators_description.is_empty() {
+                current_operators_description
+            } else {
+                self.pending_keys.clone().unwrap_or_default()
+            };
 
             // Hide mode label when an operator is pending
             let show_mode = pending.is_empty();
