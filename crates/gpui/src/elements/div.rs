@@ -166,6 +166,38 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to the mouse pressure event, during the bubble phase
+    /// the imperative API equivalent to [`InteractiveElement::on_mouse_pressure`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_mouse_pressure(
+        &mut self,
+        listener: impl Fn(&MousePressureEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.mouse_pressure_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx)
+                }
+            }));
+    }
+
+    /// Bind the given callback to the mouse pressure event, during the capture phase
+    /// the imperative API equivalent to [`InteractiveElement::on_mouse_pressure`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn capture_mouse_pressure(
+        &mut self,
+        listener: impl Fn(&MousePressureEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.mouse_pressure_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx)
+                }
+            }));
+    }
+
     /// Bind the given callback to the mouse up event for the given button, during the bubble phase.
     /// The imperative API equivalent to [`InteractiveElement::on_mouse_up`].
     ///
@@ -186,21 +218,6 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to the mouse pressure event for the given button, during the bubble phase
-    /// the imperative API equivalent to [`InteractiveElement::on_mouse_pressure`].
-    ///
-    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_mouse_pressure(
-        &mut self,
-        listener: impl Fn(&MousePressureEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.mouse_pressure_listeners
-            .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                    (listener)(event, window, cx)
-                }
-            }));
-    }
     /// Bind the given callback to the mouse up event for any button, during the capture phase.
     /// The imperative API equivalent to [`InteractiveElement::capture_any_mouse_up`].
     ///
@@ -771,7 +788,20 @@ pub trait InteractiveElement: Sized {
         self.interactivity().on_mouse_up(button, listener);
         self
     }
-    /// Bind the given callback to the mouse pressure event for the given button, during the bubble phase
+
+    /// Bind the given callback to the mouse up event for any button, during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_any_mouse_up`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn capture_any_mouse_up(
+        mut self,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_any_mouse_up(listener);
+        self
+    }
+
+    /// Bind the given callback to the mouse pressure event, during the bubble phase
     /// the fluent API equivalent to [`Interactivity::on_mouse_pressure`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -783,15 +813,15 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to the mouse up event for any button, during the capture phase.
-    /// The fluent API equivalent to [`Interactivity::capture_any_mouse_up`].
+    /// Bind the given callback to the mouse pressure event, during the capture phase
+    /// the fluent API equivalent to [`Interactivity::on_mouse_pressure`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    fn capture_any_mouse_up(
+    fn capture_mouse_pressure(
         mut self,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&MousePressureEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.interactivity().capture_any_mouse_up(listener);
+        self.interactivity().capture_mouse_pressure(listener);
         self
     }
 
