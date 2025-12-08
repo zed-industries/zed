@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Styled, Task, WeakEntity,
-    Window, actions, canvas, div, img, point, px,
+    Window, actions, canvas, div, img, opaque_grey, point, px, size,
 };
 use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
@@ -479,13 +479,13 @@ impl Render for ImageView {
         let zoom_level = self.zoom_level;
         let pan_offset = self.pan_offset;
 
-        let zoom_percentage = format!("{}%", (self.zoom_level * 100.0).round() as i32);
-
         let entity = cx.entity().downgrade();
 
         let scaled_size = self
             .image_size
             .map(|(w, h)| (px(w as f32 * zoom_level), px(h as f32 * zoom_level)));
+
+        let border_color = cx.theme().colors().border;
 
         div()
             .track_focus(&self.focus_handle(cx))
@@ -504,7 +504,6 @@ impl Render for ImageView {
                     .justify_center()
                     .items_center()
                     .w_full()
-                    // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
                     .h_full()
                     .overflow_hidden()
                     .bg(cx.theme().colors().editor_background)
@@ -542,9 +541,74 @@ impl Render for ImageView {
                             })
                             .ml(pan_offset.x)
                             .mt(pan_offset.y)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().editor_background)
+                            .child({
+                                // draw checkerboard pattern behind the image for transparency
+                                canvas(
+                                    |_, _, _| {},
+                                    move |bounds, _, window, _cx| {
+                                        let square_size: f32 = 12.0;
+
+                                        let bounds_x: f32 = bounds.origin.x.into();
+                                        let bounds_y: f32 = bounds.origin.y.into();
+                                        let bounds_width: f32 = bounds.size.width.into();
+                                        let bounds_height: f32 = bounds.size.height.into();
+
+                                        let start_col =
+                                            ((0.0_f32).max(-bounds_x) / square_size).floor() as i32;
+                                        let end_col = ((bounds_width / square_size).ceil() as i32)
+                                            .min(((bounds_width) / square_size).ceil() as i32 + 1);
+                                        let start_row =
+                                            ((0.0_f32).max(-bounds_y) / square_size).floor() as i32;
+                                        let end_row = ((bounds_height / square_size).ceil() as i32)
+                                            .min(((bounds_height) / square_size).ceil() as i32 + 1);
+
+                                        for row in start_row..end_row {
+                                            for col in start_col..end_col {
+                                                let x = bounds_x + col as f32 * square_size;
+                                                let y = bounds_y + row as f32 * square_size;
+
+                                                let square_width =
+                                                    square_size.min(bounds_x + bounds_width - x);
+                                                let square_height =
+                                                    square_size.min(bounds_y + bounds_height - y);
+
+                                                if square_width <= 0.0 || square_height <= 0.0 {
+                                                    continue;
+                                                }
+
+                                                let rect = Bounds::new(
+                                                    point(px(x), px(y)),
+                                                    size(px(square_width), px(square_height)),
+                                                );
+
+                                                let is_light = (row + col) % 2 == 0;
+                                                let color = if is_light {
+                                                    opaque_grey(0.8, 1.0)
+                                                } else {
+                                                    opaque_grey(0.6, 1.0)
+                                                };
+
+                                                window.paint_quad(gpui::fill(rect, color));
+                                            }
+                                        }
+
+                                        // draw border
+                                        let border_rect = Bounds::new(
+                                            point(px(bounds_x), px(bounds_y)),
+                                            size(px(bounds_width), px(bounds_height)),
+                                        );
+                                        window.paint_quad(gpui::outline(
+                                            border_rect,
+                                            border_color,
+                                            gpui::BorderStyle::default(),
+                                        ));
+                                    },
+                                )
+                                .size_full()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                            })
                             .child({
                                 let image_element = img(image).id("img");
 
@@ -555,18 +619,6 @@ impl Render for ImageView {
                                 }
                             }),
                     ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .bottom_2()
-                    .right_2()
-                    .px_2()
-                    .py_1()
-                    .bg(cx.theme().colors().element_background.opacity(0.8))
-                    .rounded_md()
-                    .text_sm()
-                    .child(zoom_percentage),
             )
             .child({
                 canvas(
