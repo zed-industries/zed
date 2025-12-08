@@ -1,10 +1,8 @@
-use language::{BufferSnapshot, LanguageId};
+use cloud_llm_client::predict_edits_v3::Line;
+use language::{BufferSnapshot, LanguageId, Point, ToOffset as _, ToPoint as _};
 use std::ops::Range;
-use text::{Point, ToOffset as _, ToPoint as _};
 use tree_sitter::{Node, TreeCursor};
 use util::RangeExt;
-
-use crate::{BufferDeclaration, Line, declaration::DeclarationId, syntax_index::SyntaxIndexState};
 
 // TODO:
 //
@@ -31,19 +29,16 @@ pub struct EditPredictionExcerptOptions {
     pub target_before_cursor_over_total_bytes: f32,
 }
 
-// TODO: consider merging these
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
     pub line_range: Range<Line>,
-    pub parent_declarations: Vec<(DeclarationId, Range<usize>)>,
     pub size: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerptText {
     pub body: String,
-    pub parent_signatures: Vec<String>,
     pub language_id: Option<LanguageId>,
 }
 
@@ -52,17 +47,8 @@ impl EditPredictionExcerpt {
         let body = buffer
             .text_for_range(self.range.clone())
             .collect::<String>();
-        let parent_signatures = self
-            .parent_declarations
-            .iter()
-            .map(|(_, range)| buffer.text_for_range(range.clone()).collect::<String>())
-            .collect();
         let language_id = buffer.language().map(|l| l.id());
-        EditPredictionExcerptText {
-            body,
-            parent_signatures,
-            language_id,
-        }
+        EditPredictionExcerptText { body, language_id }
     }
 
     /// Selects an excerpt around a buffer position, attempting to choose logical boundaries based
@@ -79,7 +65,6 @@ impl EditPredictionExcerpt {
         query_point: Point,
         buffer: &BufferSnapshot,
         options: &EditPredictionExcerptOptions,
-        syntax_index: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         if buffer.len() <= options.max_bytes {
             log::debug!(
@@ -89,11 +74,7 @@ impl EditPredictionExcerpt {
             );
             let offset_range = 0..buffer.len();
             let line_range = Line(0)..Line(buffer.max_point().row);
-            return Some(EditPredictionExcerpt::new(
-                offset_range,
-                line_range,
-                Vec::new(),
-            ));
+            return Some(EditPredictionExcerpt::new(offset_range, line_range));
         }
 
         let query_offset = query_point.to_offset(buffer);
@@ -104,19 +85,10 @@ impl EditPredictionExcerpt {
             return None;
         }
 
-        let parent_declarations = if let Some(syntax_index) = syntax_index {
-            syntax_index
-                .buffer_declarations_containing_range(buffer.remote_id(), query_range.clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         let excerpt_selector = ExcerptSelector {
             query_offset,
             query_range,
             query_line_range: Line(query_line_range.start)..Line(query_line_range.end),
-            parent_declarations: &parent_declarations,
             buffer,
             options,
         };
@@ -139,20 +111,10 @@ impl EditPredictionExcerpt {
         excerpt_selector.select_lines()
     }
 
-    fn new(
-        range: Range<usize>,
-        line_range: Range<Line>,
-        parent_declarations: Vec<(DeclarationId, Range<usize>)>,
-    ) -> Self {
-        let size = range.len()
-            + parent_declarations
-                .iter()
-                .map(|(_, range)| range.len())
-                .sum::<usize>();
+    fn new(range: Range<usize>, line_range: Range<Line>) -> Self {
         Self {
+            size: range.len(),
             range,
-            parent_declarations,
-            size,
             line_range,
         }
     }
@@ -162,14 +124,7 @@ impl EditPredictionExcerpt {
             // this is an issue because parent_signature_ranges may be incorrect
             log::error!("bug: with_expanded_range called with disjoint range");
         }
-        let mut parent_declarations = Vec::with_capacity(self.parent_declarations.len());
-        for (declaration_id, range) in &self.parent_declarations {
-            if !range.contains_inclusive(&new_range) {
-                break;
-            }
-            parent_declarations.push((*declaration_id, range.clone()));
-        }
-        Self::new(new_range, new_line_range, parent_declarations)
+        Self::new(new_range, new_line_range)
     }
 
     fn parent_signatures_size(&self) -> usize {
@@ -181,7 +136,6 @@ struct ExcerptSelector<'a> {
     query_offset: usize,
     query_range: Range<usize>,
     query_line_range: Range<Line>,
-    parent_declarations: &'a [(DeclarationId, &'a BufferDeclaration)],
     buffer: &'a BufferSnapshot,
     options: &'a EditPredictionExcerptOptions,
 }
@@ -409,13 +363,7 @@ impl<'a> ExcerptSelector<'a> {
     }
 
     fn make_excerpt(&self, range: Range<usize>, line_range: Range<Line>) -> EditPredictionExcerpt {
-        let parent_declarations = self
-            .parent_declarations
-            .iter()
-            .filter(|(_, declaration)| declaration.item_range.contains_inclusive(&range))
-            .map(|(id, declaration)| (*id, declaration.signature_range.clone()))
-            .collect();
-        EditPredictionExcerpt::new(range, line_range, parent_declarations)
+        EditPredictionExcerpt::new(range, line_range)
     }
 
     /// Returns `true` if the `forward` excerpt is a better choice than the `backward` excerpt.
@@ -471,28 +419,12 @@ fn node_line_end(node: Node) -> Point {
 mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext};
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::Buffer;
     use util::test::{generate_marked_text, marked_text_offsets_by};
 
     fn create_buffer(text: &str, cx: &mut TestAppContext) -> BufferSnapshot {
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang().into(), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language::rust_lang(), cx));
         buffer.read_with(cx, |buffer, _| buffer.snapshot())
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap()
     }
 
     fn cursor_and_excerpt_range(text: &str) -> (String, usize, Range<usize>) {
@@ -506,9 +438,8 @@ mod tests {
         let buffer = create_buffer(&text, cx);
         let cursor_point = cursor.to_point(&buffer);
 
-        let excerpt =
-            EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options, None)
-                .expect("Should select an excerpt");
+        let excerpt = EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options)
+            .expect("Should select an excerpt");
         pretty_assertions::assert_eq!(
             generate_marked_text(&text, std::slice::from_ref(&excerpt.range), false),
             generate_marked_text(&text, &[expected_excerpt], false)

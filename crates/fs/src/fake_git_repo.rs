@@ -381,11 +381,18 @@ impl GitRepository for FakeGitRepository {
             Ok(state
                 .branches
                 .iter()
-                .map(|branch_name| Branch {
-                    is_head: Some(branch_name) == current_branch.as_ref(),
-                    ref_name: branch_name.into(),
-                    most_recent_commit: None,
-                    upstream: None,
+                .map(|branch_name| {
+                    let ref_name = if branch_name.starts_with("refs/") {
+                        branch_name.into()
+                    } else {
+                        format!("refs/heads/{branch_name}").into()
+                    };
+                    Branch {
+                        is_head: Some(branch_name) == current_branch.as_ref(),
+                        ref_name,
+                        most_recent_commit: None,
+                        upstream: None,
+                    }
                 })
                 .collect())
         })

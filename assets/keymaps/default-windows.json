@@ -24,7 +24,8 @@
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "ctrl-o": "workspace::Open",
+      "ctrl-o": "workspace::OpenFiles",
+      "ctrl-k ctrl-o": "workspace::Open",
       "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
@@ -608,8 +609,8 @@
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
-      "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
+      "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-e": "file_finder::Toggle",
       "f1": "command_palette::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
@@ -1128,6 +1129,8 @@
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"],
+      "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "ctrl-shift-f": "buffer_search::Deploy",
@@ -1341,25 +1344,18 @@
     }
   },
   {
-    "context": "Zeta2Feedback > Editor",
+    "context": "EditPredictionContext > Editor",
     "bindings": {
-      "enter": "editor::Newline",
-      "ctrl-enter up": "dev::Zeta2RatePredictionPositive",
-      "ctrl-enter down": "dev::Zeta2RatePredictionNegative"
-    }
-  },
-  {
-    "context": "Zeta2Context > Editor",
-    "bindings": {
-      "alt-left": "dev::Zeta2ContextGoBack",
-      "alt-right": "dev::Zeta2ContextGoForward"
+      "alt-left": "dev::EditPredictionContextGoBack",
+      "alt-right": "dev::EditPredictionContextGoForward"
     }
   },
   {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "branch_picker::DeleteBranch"
+      "ctrl-shift-backspace": "branch_picker::DeleteBranch",
+      "ctrl-shift-i": "branch_picker::FilterRemotes"
     }
   }
 ]

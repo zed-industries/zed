@@ -138,7 +138,7 @@ impl AgentTool for FindPathTool {
                                     )),
                                 ))
                             })
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     ),
             );
 

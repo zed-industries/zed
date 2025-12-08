@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
+use ztracing::instrument;
 
 pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
@@ -428,6 +429,7 @@ impl Rope {
             })
     }
 
+    #[instrument(skip_all)]
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;

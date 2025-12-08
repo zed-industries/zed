@@ -29,8 +29,8 @@ use std::{
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Banner, ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape,
-    KeyBinding, KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem,
-    WithScrollbar, prelude::*,
+    KeyBinding, KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar,
+    prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -3501,7 +3501,6 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 
     Switch::new("toggle_button", toggle_state)
         .tab_index(0_isize)
-        .color(SwitchColor::Accent)
         .on_click({
             move |state, _window, cx| {
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());

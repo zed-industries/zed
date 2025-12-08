@@ -109,7 +109,7 @@ pub fn into_open_ai(
         messages,
         stream,
         stop: request.stop,
-        temperature: request.temperature.unwrap_or(1.0),
+        temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             Some(false)

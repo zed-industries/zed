@@ -1,6 +1,7 @@
 use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
+    transport::{parse_platform, parse_shell},
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -668,6 +669,8 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        const CONNECT_TIMEOUT_SECS: &str = "10";
+
         match self
             .socket
             .run_command(
@@ -676,6 +679,8 @@ impl SshRemoteConnection {
                 &[
                     "-f",
                     "-L",
+                    "--connect-timeout",
+                    CONNECT_TIMEOUT_SECS,
                     url,
                     "-o",
                     &tmp_path_gz.display(self.path_style()),
@@ -701,7 +706,15 @@ impl SshRemoteConnection {
                     .run_command(
                         self.ssh_shell_kind,
                         "wget",
-                        &[url, "-O", &tmp_path_gz.display(self.path_style())],
+                        &[
+                            "--connect-timeout",
+                            CONNECT_TIMEOUT_SECS,
+                            "--tries",
+                            "1",
+                            url,
+                            "-O",
+                            &tmp_path_gz.display(self.path_style()),
+                        ],
                         true,
                     )
                     .await
@@ -1055,52 +1068,20 @@ impl SshSocket {
     }
 
     async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
-        let uname = self.run_command(shell, "uname", &["-sm"], false).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
-        };
-
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
-            _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
-        };
-        // exclude armv5,6,7 as they are 32-bit.
-        let arch = if arch.starts_with("armv8")
-            || arch.starts_with("armv9")
-            || arch.starts_with("arm64")
-            || arch.starts_with("aarch64")
-        {
-            "aarch64"
-        } else if arch.starts_with("x86") {
-            "x86_64"
-        } else {
-            anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            )
-        };
-
-        Ok(RemotePlatform { os, arch })
+        let output = self.run_command(shell, "uname", &["-sm"], false).await?;
+        parse_platform(&output)
     }
 
     async fn shell(&self) -> String {
-        let default_shell = "sh";
+        const DEFAULT_SHELL: &str = "sh";
         match self
             .run_command(ShellKind::Posix, "sh", &["-c", "echo $SHELL"], false)
             .await
         {
-            Ok(shell) => match shell.trim() {
-                "" => {
-                    log::error!("$SHELL is not set, falling back to {default_shell}");
-                    default_shell.to_owned()
-                }
-                shell => shell.to_owned(),
-            },
+            Ok(output) => parse_shell(&output, DEFAULT_SHELL),
             Err(e) => {
-                log::error!("Failed to get shell: {e}");
-                default_shell.to_owned()
+                log::error!("Failed to detect remote shell: {e}");
+                DEFAULT_SHELL.to_owned()
             }
         }
     }
@@ -1502,12 +1483,8 @@ mod tests {
                 "-p".to_string(),
                 "2222".to_string(),
                 "-o".to_string(),
-                "StrictHostKeyChecking=no".to_string()
+                "StrictHostKeyChecking=no".to_string(),
             ]
-        );
-        assert!(
-            scp_args.iter().all(|arg| !arg.starts_with("-L")),
-            "scp args should not contain port forward flags: {scp_args:?}"
         );
     }
 }

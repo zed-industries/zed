@@ -7,6 +7,7 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use ui::Checkbox;
 
 use std::borrow::Cow;
 use std::iter;
@@ -795,7 +796,7 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
-        for (range, event) in parsed_markdown.events.iter() {
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -945,13 +946,29 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_4(), range, markdown_end);
+                            builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
-                                format!("{}.", bullet_index)
+                            let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
+                                parsed_markdown.events.get(index.saturating_add(1))
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+
+                                Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    if *checked {
+                                        ToggleState::Selected
+                                    } else {
+                                        ToggleState::Unselected
+                                    },
+                                )
+                                .fill()
+                                .visualization_only(true)
+                                .into_any_element()
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
                             } else {
-                                "•".to_string()
+                                div().child("•").into_any_element()
                             };
                             builder.push_div(
                                 div()
@@ -1226,6 +1243,9 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::TaskListMarker(_) => {
+                    // handled inside the `MarkdownTag::Item` case
+                }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }
         }

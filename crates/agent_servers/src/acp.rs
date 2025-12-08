@@ -173,10 +173,6 @@ impl AcpConnection {
             });
         })?;
 
-        let mut client_info = acp::Implementation::new("zed", version);
-        if let Some(release_channel) = release_channel {
-            client_info = client_info.title(release_channel);
-        }
         let response = connection
             .initialize(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
@@ -192,7 +188,10 @@ impl AcpConnection {
                                 ("terminal-auth".into(), true.into()),
                             ])),
                     )
-                    .client_info(client_info),
+                    .client_info(
+                        acp::Implementation::new("zed", version)
+                            .title(release_channel.map(ToOwned::to_owned)),
+                    ),
             )
             .await?;
 
@@ -302,10 +301,10 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
                 .await
                 .map_err(|err| {
-                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AuthRequired {
                         let mut error = AuthRequired::new();
 
-                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                        if err.message != acp::ErrorCode::AuthRequired.to_string() {
                             error = error.with_description(err.message);
                         }
 
@@ -467,11 +466,11 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AuthRequired {
                         return Err(anyhow!(acp::Error::auth_required()));
                     }
 
-                    if err.code != ErrorCode::INTERNAL_ERROR.code {
+                    if err.code != ErrorCode::InternalError {
                         anyhow::bail!(err)
                     }
 
@@ -838,13 +837,18 @@ impl acp::Client for ClientDelegate {
                 if let Some(term_exit) = meta.get("terminal_exit") {
                     if let Some(id_str) = term_exit.get("terminal_id").and_then(|v| v.as_str()) {
                         let terminal_id = acp::TerminalId::new(id_str);
-                        let mut status = acp::TerminalExitStatus::new();
-                        if let Some(code) = term_exit.get("exit_code").and_then(|v| v.as_u64()) {
-                            status = status.exit_code(code as u32)
-                        }
-                        if let Some(signal) = term_exit.get("signal").and_then(|v| v.as_str()) {
-                            status = status.signal(signal);
-                        }
+                        let status = acp::TerminalExitStatus::new()
+                            .exit_code(
+                                term_exit
+                                    .get("exit_code")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|i| i as u32),
+                            )
+                            .signal(
+                                term_exit
+                                    .get("signal")
+                                    .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            );
 
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                             thread.on_terminal_provider_event(

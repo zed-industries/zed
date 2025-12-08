@@ -245,7 +245,7 @@ impl LspAdapter for ExtensionLspAdapter {
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
         if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([(LanguageName::new("PHP"), "php".into())]);
+            return HashMap::from_iter([(LanguageName::new_static("PHP"), "php".into())]);
         }
 
         self.extension
