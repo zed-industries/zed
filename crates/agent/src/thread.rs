@@ -766,20 +766,22 @@ impl Thread {
                 .log_err();
         }
 
-        let mut fields = acp::ToolCallUpdateFields::new().status(tool_result.as_ref().map_or(
-            acp::ToolCallStatus::Failed,
-            |result| {
-                if result.is_error {
-                    acp::ToolCallStatus::Failed
-                } else {
-                    acp::ToolCallStatus::Completed
-                }
-            },
-        ));
-        if let Some(output) = output {
-            fields = fields.raw_output(output);
-        }
-        stream.update_tool_call_fields(&tool_use.id, fields);
+        stream.update_tool_call_fields(
+            &tool_use.id,
+            acp::ToolCallUpdateFields::new()
+                .status(
+                    tool_result
+                        .as_ref()
+                        .map_or(acp::ToolCallStatus::Failed, |result| {
+                            if result.is_error {
+                                acp::ToolCallStatus::Failed
+                            } else {
+                                acp::ToolCallStatus::Completed
+                            }
+                        }),
+                )
+                .raw_output(output),
+        );
     }
 
     pub fn from_db(
@@ -1259,15 +1261,16 @@ impl Thread {
             while let Some(tool_result) = tool_results.next().await {
                 log::debug!("Tool finished {:?}", tool_result);
 
-                let mut fields = acp::ToolCallUpdateFields::new().status(if tool_result.is_error {
-                    acp::ToolCallStatus::Failed
-                } else {
-                    acp::ToolCallStatus::Completed
-                });
-                if let Some(output) = &tool_result.output {
-                    fields = fields.raw_output(output.clone());
-                }
-                event_stream.update_tool_call_fields(&tool_result.tool_use_id, fields);
+                event_stream.update_tool_call_fields(
+                    &tool_result.tool_use_id,
+                    acp::ToolCallUpdateFields::new()
+                        .status(if tool_result.is_error {
+                            acp::ToolCallStatus::Failed
+                        } else {
+                            acp::ToolCallStatus::Completed
+                        })
+                        .raw_output(tool_result.output.clone()),
+                );
                 this.update(cx, |this, _cx| {
                     this.pending_message()
                         .tool_results
@@ -1545,7 +1548,7 @@ impl Thread {
             event_stream.update_tool_call_fields(
                 &tool_use.id,
                 acp::ToolCallUpdateFields::new()
-                    .title(title)
+                    .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.clone()),
             );
@@ -2461,7 +2464,7 @@ impl ToolCallEventStream {
                 ToolCallAuthorization {
                     tool_call: acp::ToolCallUpdate::new(
                         self.tool_use_id.to_string(),
-                        acp::ToolCallUpdateFields::new().title(title),
+                        acp::ToolCallUpdateFields::new().title(title.into()),
                     ),
                     options: vec![
                         acp::PermissionOption::new(
