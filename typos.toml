@@ -11,16 +11,12 @@ extend-exclude = [
     "crates/theme/src/icon_theme.rs",
     "crates/extensions_ui/src/extension_suggest.rs",
 
-    # Some countries codes are flagged as typos.
-    "crates/anthropic/src/supported_countries.rs",
-    "crates/google_ai/src/supported_countries.rs",
-    "crates/open_ai/src/supported_countries.rs",
-
     # Some mock data is flagged as typos.
     "crates/assistant_tools/src/web_search_tool.rs",
 
-    # Stripe IDs are flagged as typos.
-    "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
+    # Suppress false positives in database schema.
+    "crates/collab/migrations/20251208000000_test_schema.sql",
+
     # Not our typos.
     "crates/livekit_api/",
     # Vim makes heavy use of partial typing tables.
@@ -63,8 +59,6 @@ extend-ignore-re = [
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',
-    # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
-    "COLUMN enviroment",
     "doas",
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols",
