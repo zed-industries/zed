@@ -189,6 +189,8 @@ impl MetalRenderer {
             output
         }
 
+        // Shared memory can be used only if CPU and GPU share the same memory space.
+        // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
         let unified_memory = device.has_unified_memory();
 
         let unit_vertices = [
