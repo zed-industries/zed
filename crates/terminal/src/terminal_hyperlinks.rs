@@ -227,15 +227,12 @@ fn path_match<T>(
     );
     line.push(term.grid()[line_start].c);
     let mut start_offset = 0;
-    let mut hovered_range = None;
+    let mut hovered_point_byte_offset = None;
     if hovered == line_start {
         let cell = &term.grid()[line_start];
         if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
             start_offset += cell.c.len_utf8();
-            hovered_range = Some(Range {
-                start: 0,
-                end: cell.c.len_utf8(),
-            });
+            hovered_point_byte_offset = Some(0);
         }
     }
     for cell in term.grid().iter_from(line_start) {
@@ -244,12 +241,9 @@ fn path_match<T>(
         }
         let is_spacer = cell.flags.intersects(WIDE_CHAR_SPACERS);
         if cell.point == hovered {
-            debug_assert!(hovered_range.is_none());
+            debug_assert!(hovered_point_byte_offset.is_none());
 
-            hovered_range = Some(Range {
-                start: start_offset,
-                end: start_offset + cell.c.len_utf8(),
-            });
+            hovered_point_byte_offset = Some(start_offset);
         } else if cell.point < hovered && !is_spacer {
             start_offset += cell.c.len_utf8();
         }
@@ -262,7 +256,7 @@ fn path_match<T>(
         }
     }
     let line = line.trim_ascii_end();
-    let hovered_range = hovered_range?;
+    let hovered_point_byte_offset = hovered_point_byte_offset?;
     let found_from_range = |path_range: Range<usize>,
                             link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
@@ -340,7 +334,7 @@ fn path_match<T>(
                 .name("link")
                 .map_or_else(|| match_range.clone(), |link| link.range());
 
-            if hovered_range.start > match_range.end || match_range.start > hovered_range.end {
+            if !match_range.contains(&hovered_point_byte_offset) {
                 // No match, just skip.
                 continue;
             }
