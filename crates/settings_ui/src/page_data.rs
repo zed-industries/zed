@@ -141,7 +141,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Security"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Trust all worktrees by default",
-                    description: r#"When opening a directory in Zed, whether to require confirmation to read and apply project settings"#,
+                    description: r#"When opening Zed, avoid restricted mode and start all features without a confirmation."#,
                     field: Box::new(SettingField {
                         json_path: Some("session.trust_all_worktrees"),
                         pick: |settings_content| {
