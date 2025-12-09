@@ -1,3 +1,4 @@
+use lsp::VersionedTextDocumentIdentifier;
 use serde::{Deserialize, Serialize};
 
 pub enum CheckStatus {}
@@ -222,4 +223,37 @@ impl lsp::request::Request for NotifyRejected {
     type Params = NotifyRejectedParams;
     type Result = String;
     const METHOD: &'static str = "notifyRejected";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestions;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestionsParams {
+    pub(crate) text_document: VersionedTextDocumentIdentifier,
+    pub(crate) position: lsp::Position,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestion {
+    pub text: String,
+    pub text_document: VersionedTextDocumentIdentifier,
+    pub range: lsp::Range,
+    pub command: Option<lsp::Command>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestionsResult {
+    pub edits: Vec<NextEditSuggestion>,
+}
+
+impl lsp::request::Request for NextEditSuggestions {
+    type Params = NextEditSuggestionsParams;
+    type Result = NextEditSuggestionsResult;
+
+    const METHOD: &'static str = "textDocument/copilotInlineEdit";
 }

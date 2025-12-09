@@ -1,17 +1,16 @@
-use crate::{Completion, Copilot};
+use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use gpui::{App, Context, Entity, EntityId, Task};
-use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
-use settings::Settings;
-use std::{path::Path, time::Duration};
+use language::{Buffer, OffsetRangeExt, ToOffset};
+use std::{path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct CopilotEditPredictionDelegate {
     cycled: bool,
     buffer_id: Option<EntityId>,
-    completions: Vec<Completion>,
+    completions: Vec<CopilotEditPrediction>,
     active_completion_index: usize,
     file_extension: Option<String>,
     pending_refresh: Option<Task<Result<()>>>,
@@ -33,11 +32,11 @@ impl CopilotEditPredictionDelegate {
         }
     }
 
-    fn active_completion(&self) -> Option<&Completion> {
+    fn active_completion(&self) -> Option<&CopilotEditPrediction> {
         self.completions.get(self.active_completion_index)
     }
 
-    fn push_completion(&mut self, new_completion: Completion) {
+    fn push_completion(&mut self, new_completion: CopilotEditPrediction) {
         for completion in &self.completions {
             if completion.text == new_completion.text && completion.range == new_completion.range {
                 return;
@@ -138,26 +137,12 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         }
     }
 
-    fn discard(&mut self, cx: &mut Context<Self>) {
-        let settings = AllLanguageSettings::get_global(cx);
-
-        let copilot_enabled = settings.show_edit_predictions(None, cx);
-
-        if !copilot_enabled {
-            return;
-        }
-
-        self.copilot
-            .update(cx, |copilot, cx| {
-                copilot.discard_completions(&self.completions, cx)
-            })
-            .detach_and_log_err(cx);
-    }
+    fn discard(&mut self, _: &mut Context<Self>) {}
 
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
+        _: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
@@ -181,23 +166,19 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             completion.text[prefix_len..].chars().rev(),
         );
         completion_range.end = completion_range.end.saturating_sub(suffix_len);
-
-        if completion_range.is_empty()
-            && completion_range.start == cursor_position.to_offset(buffer)
-        {
-            let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-            if completion_text.trim().is_empty() {
-                None
-            } else {
-                let position = cursor_position.bias_right(buffer);
-                Some(EditPrediction::Local {
-                    id: None,
-                    edits: vec![(position..position, completion_text.into())],
-                    edit_preview: None,
-                })
-            }
-        } else {
+        let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+        if completion_text.trim().is_empty() {
+            dbg!(":(");
             None
+        } else {
+            let completion_range = buffer.anchor_before(completion_range.start)
+                ..buffer.anchor_after(completion_range.end);
+            dbg!(&completion_text);
+            Some(EditPrediction::Local {
+                id: None,
+                edits: vec![(completion_range, Arc::from(completion_text))],
+                edit_preview: None,
+            })
         }
     }
 }
