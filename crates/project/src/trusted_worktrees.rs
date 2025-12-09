@@ -5,7 +5,6 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
 };
@@ -13,14 +12,13 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings as _, WorktreeId};
 use util::ResultExt as _;
 
-use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
-
-const TRUSTED_WORKSPACES_KEY: &str = "trusted_workspaces";
-const TRUSTED_WORKSPACES_SEPARATOR: &str = "<|>";
+use crate::{
+    persistence::PROJECT_DB, project_settings::ProjectSettings, worktree_store::WorktreeStore,
+};
 
 pub fn init_global(
     worktree_store: Entity<WorktreeStore>,
-    remote_host: Option<impl Into<RemoteHostData> + 'static>,
+    remote_host: Option<impl Into<RemoteHostLocation> + 'static>,
     cx: &mut App,
 ) {
     match TrustedWorktrees::try_get_global(cx) {
@@ -83,19 +81,19 @@ impl TrustedWorktrees {
 /// Emits an event each time the worktree was checked and found not trusted,
 /// or a certain worktree had been trusted.
 pub struct TrustedWorktreesStorage {
-    worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostData>>,
+    worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
     trusted_paths: HashSet<PathTrust>,
     serialization_task: Task<()>,
     restricted: HashSet<WorktreeId>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct RemoteHostData {
+pub struct RemoteHostLocation {
     pub user_name: Option<SharedString>,
     pub host_name: SharedString,
 }
 
-impl From<RemoteConnectionOptions> for RemoteHostData {
+impl From<RemoteConnectionOptions> for RemoteHostLocation {
     fn from(options: RemoteConnectionOptions) -> Self {
         let (user_name, host_name) = match options {
             RemoteConnectionOptions::Ssh(ssh) => (
@@ -107,7 +105,7 @@ impl From<RemoteConnectionOptions> for RemoteHostData {
                 SharedString::new(wsl.distro_name),
             ),
         };
-        RemoteHostData {
+        RemoteHostLocation {
             user_name,
             host_name,
         }
@@ -122,7 +120,7 @@ pub enum PathTrust {
     Worktree(WorktreeId),
     /// A path that may be another worktree yet not loaded into workspace,
     /// or a parent path coming out of the security modal.
-    AbsPath(PathBuf, Option<RemoteHostData>),
+    AbsPath(PathBuf, Option<RemoteHostLocation>),
 }
 
 #[derive(Debug)]
@@ -136,39 +134,25 @@ impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStorage {}
 impl TrustedWorktreesStorage {
     fn new(
         worktree_store: Entity<WorktreeStore>,
-        remote_host: Option<impl Into<RemoteHostData>>,
+        remote_host: Option<impl Into<RemoteHostLocation>>,
         cx: &App,
     ) -> Task<Self> {
         let remote_host = remote_host.map(|remote_host| remote_host.into());
         cx.spawn(async move |cx| {
-            let trusted_paths = cx
-                .background_spawn(async move {
-                    KEY_VALUE_STORE
-                        .read_kvp(TRUSTED_WORKSPACES_KEY)
-                        .log_err()
-                        .flatten()
-                })
-                .await;
+            let trusted_paths = match cx.update(|cx| {
+                PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), remote_host.clone(), cx)
+            }) {
+                Ok(trusted_paths) => match trusted_paths.await {
+                    Ok(trusted_paths) => trusted_paths,
+                    Err(e) => {
+                        log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                        HashSet::default()
+                    }
+                },
+                Err(_window_closed) => HashSet::default(),
+            };
             Self {
-                trusted_paths: trusted_paths
-                    .map(|workspaces| {
-                        workspaces
-                            .split(TRUSTED_WORKSPACES_SEPARATOR)
-                            .map(|workspace_path| PathBuf::from(workspace_path))
-                            .filter_map(|abs_path| {
-                                worktree_store
-                                    .read_with(cx, |worktree_store, cx| {
-                                        find_worktree_in_store(worktree_store, &abs_path, cx)
-                                            .map(PathTrust::Worktree)
-                                            .unwrap_or_else(|| {
-                                                PathTrust::AbsPath(abs_path, remote_host.clone())
-                                            })
-                                    })
-                                    .ok()
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                trusted_paths,
                 restricted: HashSet::default(),
                 serialization_task: Task::ready(()),
                 worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
@@ -182,7 +166,7 @@ impl TrustedWorktreesStorage {
 
     /// Adds worktree absolute paths to the trusted list.
     /// This will emit [`TrustedWorktreesEvent::Trusted`] event.
-    pub fn trust(&mut self, trusted_paths: HashSet<PathTrust>, cx: &mut Context<'_, Self>) {
+    pub fn trust(&mut self, trusted_paths: HashSet<PathTrust>, cx: &mut Context<Self>) {
         // TODO kb unit test all this logic
         for trusted_path in &trusted_paths {
             match trusted_path {
@@ -253,32 +237,24 @@ impl TrustedWorktreesStorage {
             }
         }
 
-        let new_worktree_roots =
+        let new_trusted_worktrees =
             self.trusted_paths
                 .clone()
                 .into_iter()
-                .fold(String::new(), |mut acc, path| {
+                .fold(HashMap::default(), |mut acc, path| {
                     if let Some((abs_path, remote_host)) = match path {
                         PathTrust::Worktree(worktree_id) => self
                             .find_worktree_data(worktree_id, cx)
                             .map(|(abs_path, remote_host)| (abs_path.to_path_buf(), remote_host)),
                         PathTrust::AbsPath(abs_path, remote_host) => Some((abs_path, remote_host)),
                     } {
-                        if !acc.is_empty() {
-                            acc.push_str(TRUSTED_WORKSPACES_SEPARATOR);
-                        }
-                        // TODO kb
-                        // * crate a new db table, FK onto remote_hosts DB table data
-                        // * store abs paths there still, but without odd separators
-                        dbg!(remote_host);
-                        acc.push_str(&abs_path.to_string_lossy())
+                        acc.insert(abs_path, remote_host);
                     }
-
                     acc
                 });
         self.serialization_task = cx.background_spawn(async move {
-            KEY_VALUE_STORE
-                .write_kvp(TRUSTED_WORKSPACES_KEY.to_string(), new_worktree_roots)
+            PROJECT_DB
+                .save_trusted_worktrees(new_trusted_worktrees)
                 .await
                 .log_err();
         });
@@ -289,10 +265,7 @@ impl TrustedWorktreesStorage {
         self.trusted_paths.clear();
         let (tx, rx) = smol::channel::bounded(1);
         self.serialization_task = cx.background_spawn(async move {
-            KEY_VALUE_STORE
-                .delete_kvp(TRUSTED_WORKSPACES_KEY.to_string())
-                .await
-                .log_err();
+            PROJECT_DB.clear_worktrees().await.log_err();
             tx.send(()).await.ok();
         });
         cx.background_spawn(async move {
@@ -357,7 +330,7 @@ impl TrustedWorktreesStorage {
         &mut self,
         worktree_id: WorktreeId,
         cx: &mut Context<Self>,
-    ) -> Option<(Arc<Path>, Option<RemoteHostData>)> {
+    ) -> Option<(Arc<Path>, Option<RemoteHostLocation>)> {
         let mut worktree_data = None;
         self.worktree_stores.retain(
             |worktree_store, remote_host| match worktree_store.upgrade() {
@@ -381,7 +354,7 @@ impl TrustedWorktreesStorage {
     fn add_worktree_store(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
-        remote_host: Option<impl Into<RemoteHostData>>,
+        remote_host: Option<impl Into<RemoteHostLocation>>,
         cx: &mut Context<Self>,
     ) {
         let remote_host = remote_host.map(|host_data| host_data.into());
@@ -406,7 +379,7 @@ impl TrustedWorktreesStorage {
     }
 }
 
-fn find_worktree_in_store(
+pub fn find_worktree_in_store(
     worktree_store: &WorktreeStore,
     abs_path: &Path,
     cx: &App,
