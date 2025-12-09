@@ -846,6 +846,7 @@ impl RemoteServerProjects {
                 connection_options.distro_name.clone(),
                 None,
                 true,
+                false,
                 window,
                 cx,
             )
