@@ -2286,7 +2286,6 @@ impl MultiBuffer {
             diff: diff.snapshot(cx),
             main_buffer: None,
         };
-        dbg!();
         self.snapshot.get_mut().diffs.insert(buffer_id, diff);
     }
 
@@ -2321,6 +2320,9 @@ impl MultiBuffer {
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
 
+        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
+            return;
+        };
         let new_diff = DiffStateSnapshot {
             diff: diff.snapshot(cx),
             main_buffer: None,
@@ -2330,11 +2332,7 @@ impl MultiBuffer {
             .diffs
             .get(&buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_eq(old_diff));
-        snapshot.diffs.insert_or_replace(dbg!(buffer_id), new_diff);
-
-        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
-            return;
-        };
+        snapshot.diffs.insert_or_replace(buffer_id, new_diff);
         self.buffer_changed_since_sync.replace(true);
 
         let buffer = buffer_state.buffer.read(cx);
@@ -3069,7 +3067,7 @@ impl MultiBuffer {
 
         for (id, diff) in diffs.iter() {
             if buffer_diff.get(id).is_none() {
-                buffer_diff.insert(dbg!(*id), diff.snapshot(cx));
+                buffer_diff.insert(*id, diff.snapshot(cx));
             }
         }
 
@@ -3283,8 +3281,6 @@ impl MultiBuffer {
             edit.new.start..edit.new.end
         );
 
-        dbg!(&change_kind);
-
         // Record which hunks were previously expanded.
         while let Some(item) = old_diff_transforms.item() {
             if let Some(hunk_info) = item.hunk_info() {
@@ -3314,7 +3310,7 @@ impl MultiBuffer {
         while let Some(excerpt) = excerpts.item() {
             // Recompute the expanded hunks in the portion of the excerpt that
             // intersects the edit.
-            if let Some(diff) = snapshot.diffs.get(dbg!(&excerpt.buffer_id)) {
+            if let Some(diff) = snapshot.diffs.get(&excerpt.buffer_id) {
                 let buffer = &excerpt.buffer;
                 let excerpt_start = *excerpts.start();
                 let excerpt_end = excerpt_start + excerpt.text_summary.len;
@@ -3358,9 +3354,6 @@ impl MultiBuffer {
                         }
                     }
                 } else {
-                    dbg!(buffer.remote_id());
-                    dbg!(diff.hunks(buffer).collect::<Vec<_>>());
-
                     let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
                         ..buffer.anchor_after(edit_buffer_end);
                     for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
@@ -3421,13 +3414,11 @@ impl MultiBuffer {
                                 excerpt.id
                             );
 
-                            dbg!(&hunk);
                             if !hunk.diff_base_byte_range.is_empty()
                                 && hunk_buffer_range.start >= edit_buffer_start
                                 && hunk_buffer_range.start <= excerpt_buffer_end
-                                && dbg!(snapshot.show_deleted_hunks)
+                                && snapshot.show_deleted_hunks
                             {
-                                dbg!();
                                 let base_text = diff.base_text();
                                 let mut text_cursor =
                                     base_text.as_rope().cursor(hunk.diff_base_byte_range.start);

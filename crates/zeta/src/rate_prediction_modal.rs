@@ -1,5 +1,5 @@
 use crate::{EditPrediction, EditPredictionRating, Zeta};
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::{BufferDiff};
 use cloud_zeta2_prompt::write_codeblock;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{

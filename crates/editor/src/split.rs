@@ -140,9 +140,6 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
 
-        // FIXME
-        // - have to subscribe to the diffs to update the base text buffers (and handle language changed I think?)
-
         let secondary_editor = cx.new(|cx| {
             let multibuffer = cx.new(|cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
@@ -196,6 +193,13 @@ impl SplittableEditor {
                 primary_multibuffer.set_show_deleted_hunks(false, cx);
                 let paths = primary_multibuffer.paths().collect::<Vec<_>>();
                 for path in paths {
+                    let Some(excerpt_id) = primary_multibuffer.excerpts_for_path(&path).next()
+                    else {
+                        continue;
+                    };
+                    let snapshot = primary_multibuffer.snapshot(cx);
+                    let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
+                    let diff = primary_multibuffer.diff_for(buffer.remote_id()).unwrap();
                     secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
                 }
             })
@@ -257,17 +261,8 @@ impl SplittableEditor {
                     context_line_count,
                     cx,
                 );
-                // - we just added some excerpts for a specific buffer to the primary (RHS)
-                // - but the diff for that buffer doesn't get attached to the primary multibuffer until slightly later
-                // - however, for sync_path_excerpts we require that we have a diff for the buffer
-                if let Some(secondary) = &mut self.secondary
-                    && let Some(languages) = self
-                        .workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.project().read(cx).languages().clone()
-                        })
-                        .ok()
-                {
+                primary_multibuffer.add_diff(diff.clone(), cx);
+                if let Some(secondary) = &mut self.secondary {
                     secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
                 }
                 (anchors, added_a_new_excerpt)
@@ -329,17 +324,18 @@ impl SecondaryEditor {
             .buffer_for_excerpt(excerpt_id)
             .unwrap();
         let base_text_buffer = diff.read(cx).base_text_buffer();
-        let diff = diff.read(cx).snapshot(cx);
+        let diff_snapshot = diff.read(cx).snapshot(cx);
         let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
         let new = primary_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), cx)
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let start_row = diff.row_to_base_text_row(range.start.row, main_buffer);
+                    let start_row =
+                        diff_snapshot.row_to_base_text_row(range.start.row, main_buffer);
                     let start_column = 0;
-                    let end_row = diff.row_to_base_text_row(range.end.row, main_buffer);
-                    let end_column = diff.base_text().line_len(end_row);
+                    let end_row = diff_snapshot.row_to_base_text_row(range.end.row, main_buffer);
+                    let end_column = diff_snapshot.base_text().line_len(end_row);
                     Point::new(start_row, start_column)..Point::new(end_row, end_column)
                 };
                 let primary = excerpt_range.primary.to_point(main_buffer);

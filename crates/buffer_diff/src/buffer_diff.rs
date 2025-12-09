@@ -1252,7 +1252,6 @@ impl BufferDiff {
     ) -> Option<Range<Anchor>> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
-        dbg!(base_text_changed);
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let (mut changed_range, mut base_text_changed_range) =
@@ -1296,7 +1295,6 @@ impl BufferDiff {
             })
         }
         state.hunks = new_state.hunks;
-        dbg!(self.buffer_id, state.hunks.iter().collect::<Vec<_>>());
         if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
@@ -1319,7 +1317,6 @@ impl BufferDiff {
             state.pending_hunks = SumTree::new(buffer);
         }
 
-        dbg!("EMIT");
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range: changed_range.clone(),
             base_text_changed_range,

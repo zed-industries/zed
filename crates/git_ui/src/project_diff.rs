@@ -516,15 +516,7 @@ impl ProjectDiff {
                 .map(|range| range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-        // FIXME should have an add diff api for the splittable editor directly
-        // if self.branch_diff.read(cx).diff_base().is_merge_base() {
-        self.multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.add_diff(diff.clone(), cx);
-        });
-        // }
-
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
-            // FIXME should go through the splittable editor
             let was_empty = editor
                 .primary_editor()
                 .read(cx)
@@ -536,6 +528,7 @@ impl ProjectDiff {
                 buffer,
                 excerpt_ranges,
                 multibuffer_context_lines(cx),
+                diff,
                 cx,
             );
             (was_empty, is_newly_added)
