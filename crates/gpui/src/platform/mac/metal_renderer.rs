@@ -4,9 +4,11 @@ use crate::{
     MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, ShaderInstance, Shadow, Size, Surface, Underline,
     platform::shader::{CustomShaderGlobalParams, naga_validate_custom_shader},
-    point, size,
+    point,
+    shader::CustomShaderInfo,
+    size,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -116,7 +118,7 @@ pub(crate) struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
-    custom_shader_ids: HashMap<String, CustomShaderId>,
+    custom_shader_ids: HashMap<CustomShaderInfo, Result<CustomShaderId, String>>,
     custom_shaders_pipeline_states: Vec<(metal::RenderPipelineState, usize, usize)>,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
@@ -440,96 +442,93 @@ impl MetalRenderer {
 
     pub fn register_custom_shader(
         &mut self,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
-    ) -> anyhow::Result<crate::CustomShaderId> {
-        if let Some(id) = self.custom_shader_ids.get(source).cloned() {
-            return Ok(id);
+        info: CustomShaderInfo,
+    ) -> Result<CustomShaderId, (String, bool)> {
+        if let Some(id) = self.custom_shader_ids.get(&info).cloned() {
+            return id.map_err(|err| (err, false));
         }
 
         let id = CustomShaderId(self.custom_shaders_pipeline_states.len() as u32);
+        let source = info.to_string();
 
-        let (mut module, module_info, _) = naga_validate_custom_shader(
-            source,
-            instance_data_name,
-            instance_data_size,
-            instance_data_align,
-        )?;
+        let result: Result<CustomShaderId, String> = (|| {
+            let (mut module, module_info, _) = naga_validate_custom_shader(
+                &source,
+                info.data_definition.map(|_| info.data_name),
+                info.data_size,
+                info.data_align,
+            )?;
 
-        let mut bindings = BTreeMap::new();
-        for (_handle, global) in module.global_variables.iter_mut() {
-            assert!(global.binding.is_none()); // Blade doesn't like implicit bindings, so we will assign them here instead of in WGSL
+            let mut bindings = BTreeMap::new();
+            for (_handle, global) in module.global_variables.iter_mut() {
+                assert!(global.binding.is_none()); // Blade doesn't like implicit bindings, so we will assign them here instead of in WGSL
 
-            let binding = match global.name.as_ref().unwrap().as_str() {
-                "globals" => ShaderInputIndex::Globals,
-                "b_instances" => ShaderInputIndex::Instances,
-                _ => unreachable!(),
-            };
+                let binding = match global.name.as_ref().unwrap().as_str() {
+                    "globals" => ShaderInputIndex::Globals,
+                    "b_instances" => ShaderInputIndex::Instances,
+                    _ => unreachable!(),
+                };
 
-            global.binding = Some(naga::ResourceBinding {
-                group: 0,
-                binding: binding as u32,
-            });
-            bindings.insert(
-                global.binding.unwrap(),
-                naga::back::msl::BindTarget {
-                    buffer: Some(binding as u8),
-                    texture: None,
-                    sampler: None,
-                    mutable: false,
-                },
+                global.binding = Some(naga::ResourceBinding {
+                    group: 0,
+                    binding: binding as u32,
+                });
+                bindings.insert(
+                    global.binding.unwrap(),
+                    naga::back::msl::BindTarget {
+                        buffer: Some(binding as u8),
+                        texture: None,
+                        sampler: None,
+                        mutable: false,
+                    },
+                );
+            }
+
+            let mut msl = String::new();
+            naga::back::msl::Writer::new(&mut msl)
+                .write(
+                    &module,
+                    &module_info,
+                    &naga::back::msl::Options {
+                        lang_version: (2, 0),
+                        per_entry_point_map: ["vs", "fs"]
+                            .into_iter()
+                            .map(|entry| {
+                                (
+                                    entry.to_string(),
+                                    naga::back::msl::EntryPointResources {
+                                        resources: bindings.clone(),
+                                        push_constant_buffer: None,
+                                        sizes_buffer: Some(ShaderInputIndex::BufferSizes as u8),
+                                    },
+                                )
+                            })
+                            .collect(),
+                        fake_missing_bindings: false,
+                        ..Default::default()
+                    },
+                    &naga::back::msl::PipelineOptions::default(),
+                )
+                .map_err(|err| format!("Translation of WGSL to MSL failed: {err}"))?;
+
+            let library = self
+                .device
+                .new_library_with_source(&msl, &metal::CompileOptions::new())?;
+
+            let pipeline = build_pipeline_state(
+                &self.device,
+                &library,
+                &format!("custom{}", id.0),
+                "vs",
+                "fs",
+                MTLPixelFormat::BGRA8Unorm,
             );
-        }
-
-        let mut msl = String::new();
-        naga::back::msl::Writer::new(&mut msl)
-            .write(
-                &module,
-                &module_info,
-                &naga::back::msl::Options {
-                    lang_version: (2, 0),
-                    per_entry_point_map: ["vs", "fs"]
-                        .into_iter()
-                        .map(|entry| {
-                            (
-                                entry.to_string(),
-                                naga::back::msl::EntryPointResources {
-                                    resources: bindings.clone(),
-                                    push_constant_buffer: None,
-                                    sizes_buffer: Some(ShaderInputIndex::BufferSizes as u8),
-                                },
-                            )
-                        })
-                        .collect(),
-                    fake_missing_bindings: false,
-                    ..Default::default()
-                },
-                &naga::back::msl::PipelineOptions::default(),
-            )
-            .context("Translation of WGSL to MSL failed")?;
-
-        let library = self
-            .device
-            .new_library_with_source(&msl, &metal::CompileOptions::new())
-            .map_err(|err| anyhow::anyhow!(err))?;
-
-        let pipeline = build_pipeline_state(
-            &self.device,
-            &library,
-            &format!("custom{}", id.0),
-            "vs",
-            "fs",
-            MTLPixelFormat::BGRA8Unorm,
-        );
-        self.custom_shaders_pipeline_states.push((
-            pipeline,
-            instance_data_size,
-            instance_data_align,
-        ));
-        self.custom_shader_ids.insert(source.to_string(), id);
-        Ok(id)
+            self.custom_shaders_pipeline_states
+                .push((pipeline, info.data_size, info.data_align));
+            Ok(id)
+        })();
+        self.custom_shader_ids.insert(info, result.clone());
+        result.map_err(|err| (err, true))
     }
 
     fn draw_primitives(
