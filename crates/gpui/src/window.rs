@@ -3274,8 +3274,8 @@ impl Window {
     pub fn paint_shader<T: ShaderUniform>(
         &mut self,
         bounds: Bounds<Pixels>,
-        main_body: &'static str,
-        extra_items: SmallVec<[&'static str; 4]>,
+        main_body: SharedString,
+        extra_items: SmallVec<[SharedString; 4]>,
         instance_data: &T,
     ) -> Result<(), (String, bool)> {
         self.invalidator.debug_assert_paint();

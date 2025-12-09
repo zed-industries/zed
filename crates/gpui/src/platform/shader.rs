@@ -1,12 +1,13 @@
 use std::{fmt::Display, hash::Hash};
 
+use crate::SharedString;
 use bytemuck::{Pod, Zeroable};
 use smallvec::SmallVec;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CustomShaderInfo {
-    pub main_body: &'static str,
-    pub extra_items: SmallVec<[&'static str; 4]>,
+    pub main_body: SharedString,
+    pub extra_items: SmallVec<[SharedString; 4]>,
     pub data_name: &'static str,
     pub data_definition: Option<&'static str>,
     pub data_size: usize,
@@ -16,7 +17,7 @@ pub(crate) struct CustomShaderInfo {
 impl Display for CustomShaderInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let instance_data_definition = self.data_definition.unwrap_or("");
-        let main_body = self.main_body;
+        let main_body = &self.main_body;
         let extra_items = self.extra_items.join("");
 
         let (instance_data_field, instance_data_param, instance_data_arg) = if self.data_size != 0 {

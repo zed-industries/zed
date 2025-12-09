@@ -4,15 +4,15 @@ use smallvec::SmallVec;
 
 use crate::{
     App, Bounds, CursorStyle, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Window,
-    fill, point, rgb,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, SharedString,
+    StyleRefinement, Window, fill, point, rgb,
 };
 
 /// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
 #[derive(Clone)]
 pub struct FragmentShader<T: ShaderUniform> {
-    main_body: &'static str,
-    extra_items: SmallVec<[&'static str; 4]>,
+    main_body: SharedString,
+    extra_items: SmallVec<[SharedString; 4]>,
     _marker: PhantomData<T>,
 }
 
@@ -20,7 +20,7 @@ impl<T: ShaderUniform> FragmentShader<T> {
     /// Create a new fragment shader
     pub fn new(main_body: &'static str) -> Self {
         Self {
-            main_body,
+            main_body: SharedString::new_static(main_body),
             extra_items: SmallVec::new(),
             _marker: PhantomData,
         }
@@ -28,7 +28,7 @@ impl<T: ShaderUniform> FragmentShader<T> {
 
     /// Adds an extra item (struct, function, etc.) to the WGSL source code
     pub fn with_item(mut self, item: &'static str) -> Self {
-        self.extra_items.push(item);
+        self.extra_items.push(SharedString::new_static(item));
         self
     }
 }
@@ -169,7 +169,7 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
             cx,
             |_style, window, _cx| match window.paint_shader(
                 bounds,
-                self.shader.main_body,
+                self.shader.main_body.clone(),
                 self.shader.extra_items.clone(),
                 &self.instance_data,
             ) {
