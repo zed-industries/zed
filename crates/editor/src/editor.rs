@@ -22007,8 +22007,10 @@ impl Editor {
             multi_buffer::Event::DiffHunksToggled => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
             }
-            multi_buffer::Event::LanguageChanged(buffer_id) => {
-                self.registered_buffers.remove(&buffer_id);
+            multi_buffer::Event::LanguageChanged(buffer_id, is_fresh_language) => {
+                if !is_fresh_language {
+                    self.registered_buffers.remove(&buffer_id);
+                }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
