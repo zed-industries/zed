@@ -6,8 +6,9 @@ use std::{
 };
 
 use cloud_llm_client::EditPredictionRejectReason;
+use edit_prediction_types::interpolate_edits;
 use gpui::{AsyncApp, Entity, SharedString};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
 use serde::Serialize;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -53,7 +54,7 @@ impl EditPredictionResult {
             .read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
-                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits)?.into();
+                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)?.into();
 
                 Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
             })
@@ -109,7 +110,7 @@ impl EditPrediction {
         &self,
         new_snapshot: &TextBufferSnapshot,
     ) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-        interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
+        interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 
     pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
@@ -128,52 +129,6 @@ impl std::fmt::Debug for EditPrediction {
             .field("edits", &self.edits)
             .finish()
     }
-}
-
-pub fn interpolate_edits(
-    old_snapshot: &TextBufferSnapshot,
-    new_snapshot: &TextBufferSnapshot,
-    current_edits: Arc<[(Range<Anchor>, Arc<str>)]>,
-) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-    let mut edits = Vec::new();
-
-    let mut model_edits = current_edits.iter().peekable();
-    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
-        while let Some((model_old_range, _)) = model_edits.peek() {
-            let model_old_range = model_old_range.to_offset(old_snapshot);
-            if model_old_range.end < user_edit.old.start {
-                let (model_old_range, model_new_text) = model_edits.next().unwrap();
-                edits.push((model_old_range.clone(), model_new_text.clone()));
-            } else {
-                break;
-            }
-        }
-
-        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
-            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
-            if user_edit.old == model_old_offset_range {
-                let user_new_text = new_snapshot
-                    .text_for_range(user_edit.new.clone())
-                    .collect::<String>();
-
-                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                    if !model_suffix.is_empty() {
-                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
-                        edits.push((anchor..anchor, model_suffix.into()));
-                    }
-
-                    model_edits.next();
-                    continue;
-                }
-            }
-        }
-
-        return None;
-    }
-
-    edits.extend(model_edits.cloned());
-
-    if edits.is_empty() { None } else { Some(edits) }
 }
 
 #[cfg(test)]
