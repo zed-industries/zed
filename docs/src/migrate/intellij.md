@@ -131,7 +131,7 @@ This opens a list of all available bindings. You can override individual shortcu
 
 Zed also supports key sequences (multi-key shortcuts).
 
-## Differences in User Experience
+## Differences in User Interfaces
 
 ### No Indexing
 
@@ -142,8 +142,7 @@ Zed doesn't index. You open a folder and start working immediately. File search 
 The trade-off is real: IntelliJ's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting dead code. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
 
 **How to adapt:**
-- For project-wide symbol search, use `Cmd+O` / Go to Symbol (relies on your language server)
-- For finding files by name, use `Cmd+Shift+O` / Go to File
+- For project-wide symbol search, use `Cmd+O` (relies on your language server)
 - For text search across files, use `Cmd+Shift+F`—this is fast even on large codebases
 - If you need deep static analysis for JVM code, consider running IntelliJ's inspections as a separate step or using standalone tools like Checkstyle, PMD, or SpotBugs
 
