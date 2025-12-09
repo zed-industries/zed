@@ -1,48 +1,30 @@
 use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
-use gpui::{App, Context, Entity, EntityId, Task};
-use language::{Buffer, OffsetRangeExt, ToOffset};
-use std::{path::Path, sync::Arc, time::Duration};
+use gpui::{App, AsyncApp, Context, Entity, Task};
+use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct CopilotEditPredictionDelegate {
-    cycled: bool,
-    buffer_id: Option<EntityId>,
-    completions: Vec<CopilotEditPrediction>,
-    active_completion_index: usize,
-    file_extension: Option<String>,
+    completion: Option<(CopilotEditPrediction, EditPreview)>,
     pending_refresh: Option<Task<Result<()>>>,
-    pending_cycling_refresh: Option<Task<Result<()>>>,
     copilot: Entity<Copilot>,
 }
 
 impl CopilotEditPredictionDelegate {
     pub fn new(copilot: Entity<Copilot>) -> Self {
         Self {
-            cycled: false,
-            buffer_id: None,
-            completions: Vec::new(),
-            active_completion_index: 0,
-            file_extension: None,
+            completion: None,
+
             pending_refresh: None,
-            pending_cycling_refresh: None,
             copilot,
         }
     }
 
-    fn active_completion(&self) -> Option<&CopilotEditPrediction> {
-        self.completions.get(self.active_completion_index)
-    }
-
-    fn push_completion(&mut self, new_completion: CopilotEditPrediction) {
-        for completion in &self.completions {
-            if completion.text == new_completion.text && completion.range == new_completion.range {
-                return;
-            }
-        }
-        self.completions.push(new_completion);
+    fn active_completion(&self) -> Option<&(CopilotEditPrediction, EditPreview)> {
+        self.completion.as_ref()
     }
 }
 
@@ -63,12 +45,8 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         true
     }
 
-    fn supports_jump_to_edit() -> bool {
-        false
-    }
-
     fn is_refreshing(&self, _cx: &App) -> bool {
-        self.pending_refresh.is_some() && self.completions.is_empty()
+        self.pending_refresh.is_some() && self.completion.is_none()
     }
 
     fn is_enabled(
@@ -101,36 +79,34 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
                 })?
                 .await?;
 
-            this.update(cx, |this, cx| {
-                if !completions.is_empty() {
-                    this.cycled = false;
+            if let Some(mut completion) = completions.into_iter().next()
+                && let Some(trimmed_completion) = cx
+                    .update(|cx| trim_completion(&completion, cx))
+                    .ok()
+                    .flatten()
+            {
+                let preview = buffer
+                    .update(cx, |this, cx| {
+                        this.preview_edits(Arc::from(std::slice::from_ref(&trimmed_completion)), cx)
+                    })?
+                    .await;
+                this.update(cx, |this, cx| {
                     this.pending_refresh = None;
-                    this.pending_cycling_refresh = None;
-                    this.completions.clear();
-                    this.active_completion_index = 0;
-                    this.buffer_id = Some(buffer.entity_id());
-                    this.file_extension = buffer.read(cx).file().and_then(|file| {
-                        Some(
-                            Path::new(file.file_name(cx))
-                                .extension()?
-                                .to_str()?
-                                .to_string(),
-                        )
-                    });
+                    completion.range = trimmed_completion.0;
+                    completion.text = trimmed_completion.1.to_string();
+                    dbg!(&completion.text);
+                    this.completion = Some((completion, preview));
 
-                    for completion in completions {
-                        this.push_completion(completion);
-                    }
                     cx.notify();
-                }
-            })?;
+                })?;
+            }
 
             Ok(())
         }));
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
-        if let Some(completion) = self.active_completion() {
+        if let Some((completion, _)) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                 .detach_and_log_err(cx);
@@ -147,42 +123,51 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
     ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
-        let completion = self.active_completion()?;
-        if Some(buffer_id) != self.buffer_id
+        let (completion, edit_preview) = self.active_completion()?;
+        if Some(buffer_id) != Some(completion.buffer.entity_id())
             || !completion.range.start.is_valid(buffer)
             || !completion.range.end.is_valid(buffer)
         {
+            dbg!("Bail");
             return None;
         }
-
-        let mut completion_range = completion.range.to_offset(buffer);
-        let prefix_len = common_prefix(
-            buffer.chars_for_range(completion_range.clone()),
-            completion.text.chars(),
-        );
-        completion_range.start += prefix_len;
-        let suffix_len = common_prefix(
-            buffer.reversed_chars_for_range(completion_range.clone()),
-            completion.text[prefix_len..].chars().rev(),
-        );
-        completion_range.end = completion_range.end.saturating_sub(suffix_len);
-        let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-        if completion_text.trim().is_empty() {
-            dbg!(":(");
-            None
-        } else {
-            let completion_range = buffer.anchor_before(completion_range.start)
-                ..buffer.anchor_after(completion_range.end);
-            dbg!(&completion_text);
-            Some(EditPrediction::Local {
-                id: None,
-                edits: vec![(completion_range, Arc::from(completion_text))],
-                edit_preview: None,
-            })
-        }
+        Some(EditPrediction::Local {
+            id: None,
+            edits: vec![(
+                completion.range.clone(),
+                Arc::from(completion.text.as_ref()),
+            )],
+            edit_preview: Some(edit_preview.clone()),
+        })
     }
 }
 
+fn trim_completion(
+    completion: &CopilotEditPrediction,
+    cx: &mut App,
+) -> Option<(Range<Anchor>, Arc<str>)> {
+    let buffer = completion.buffer.read(cx);
+    let mut completion_range = completion.range.to_offset(buffer);
+    let prefix_len = common_prefix(
+        buffer.chars_for_range(completion_range.clone()),
+        completion.text.chars(),
+    );
+    completion_range.start += prefix_len;
+    let suffix_len = common_prefix(
+        buffer.reversed_chars_for_range(completion_range.clone()),
+        completion.text[prefix_len..].chars().rev(),
+    );
+    completion_range.end = completion_range.end.saturating_sub(suffix_len);
+    let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
+    if completion_text.trim().is_empty() {
+        None
+    } else {
+        let completion_range =
+            buffer.anchor_before(completion_range.start)..buffer.anchor_after(completion_range.end);
+
+        Some((completion_range, Arc::from(completion_text)))
+    }
+}
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
     a.zip(b)
         .take_while(|(a, b)| a == b)

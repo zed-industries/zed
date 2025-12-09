@@ -324,6 +324,7 @@ struct GlobalCopilot(Entity<Copilot>);
 impl Global for GlobalCopilot {}
 
 /// Copilot's NextEditSuggestion response, with coordinates converted to Anchors.
+#[derive(Debug)]
 struct CopilotEditPrediction {
     buffer: Entity<Buffer>,
     range: Range<Anchor>,
@@ -936,7 +937,7 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-
+        dbg!(&completion);
         if let Some(command) = &completion.command {
             let request = server
                 .lsp
