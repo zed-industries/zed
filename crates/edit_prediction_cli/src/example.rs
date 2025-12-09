@@ -493,7 +493,7 @@ impl NamedExample {
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> Result<OpenedBuffers<'_>> {
+    ) -> Result<OpenedBuffers> {
         edit_prediction::udiff::apply_diff(&self.example.edit_history, project, cx).await
     }
 }

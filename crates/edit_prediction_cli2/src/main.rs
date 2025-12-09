@@ -1,0 +1,146 @@
+mod example;
+mod format_prompt;
+mod headless;
+mod load_project;
+mod paths;
+mod predict;
+mod report;
+mod retrieve_context;
+mod score;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use gpui::Application;
+use reqwest_client::ReqwestClient;
+use serde::{Deserialize, Serialize};
+use std::{path::PathBuf, sync::Arc};
+
+use crate::example::{read_examples, write_examples};
+use crate::format_prompt::run_format_prompt;
+use crate::load_project::run_load_project;
+use crate::predict::run_predictions;
+use crate::retrieve_context::run_context_retrieval;
+use crate::score::run_scoring;
+
+#[derive(Parser, Debug)]
+#[command(name = "ep")]
+struct EpArgs {
+    #[arg(long, default_value_t = false)]
+    printenv: bool,
+    #[clap(long, default_value_t = 10)]
+    max_parallelism: usize,
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[clap(global = true)]
+    inputs: Vec<PathBuf>,
+    #[arg(long, short, global = true)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Parse markdown examples and output a combined .jsonl file
+    ParseExample,
+    /// Create git worktrees for each example and load file contents
+    LoadBuffer,
+    /// Retrieve context for input examples.
+    Context,
+    /// Generate a prompt string for a specific model
+    FormatPrompt(FormatPromptArgs),
+    /// Runs edit prediction
+    Predict(PredictArgs),
+    /// Computes a score based on actual and expected patches
+    Score(ScoreArgs),
+    /// Print aggregated scores
+    Eval(ScoreArgs),
+}
+
+#[derive(Debug, Args)]
+struct FormatPromptArgs {
+    prompt_format: PromptFormat,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
+enum PromptFormat {
+    Teacher,
+    Zeta2,
+}
+
+#[derive(Debug, Args)]
+struct PredictArgs {
+    provider: PredictionProvider,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
+enum PredictionProvider {
+    SweepAi,
+    Mercury,
+    Zeta2,
+    AnthropicBatched,
+}
+
+#[derive(Debug, Args)]
+struct ScoreArgs {
+    provider: Option<PredictionProvider>,
+}
+
+fn main() {
+    zlog::init();
+    zlog::init_output_stderr();
+    let args = EpArgs::parse();
+
+    if args.printenv {
+        ::util::shell_env::print_env();
+        return;
+    }
+
+    let command = args.command.unwrap();
+    let mut examples = read_examples(&args.inputs);
+
+    let http_client = Arc::new(ReqwestClient::new());
+    let app = Application::headless().with_http_client(http_client);
+
+    app.run(move |cx| {
+        let app_state = Arc::new(headless::init(cx));
+        cx.spawn(async move |cx| {
+            for data in examples.chunks_mut(args.max_parallelism) {
+                let mut futures = Vec::new();
+                for example in data.iter_mut() {
+                    let cx = cx.clone();
+                    let app_state = app_state.clone();
+                    futures.push(async {
+                        match &command {
+                            Command::ParseExample => {}
+                            Command::LoadBuffer => {
+                                run_load_project(example, app_state.clone(), cx).await;
+                            }
+                            Command::Context => {
+                                run_context_retrieval(example, app_state, cx).await;
+                            }
+                            Command::FormatPrompt(args) => {
+                                run_format_prompt(example, args.prompt_format).await;
+                            }
+                            Command::Predict(args) => {
+                                run_predictions(
+                                    example,
+                                    Some(args.provider),
+                                    app_state.clone(),
+                                    cx,
+                                )
+                                .await;
+                            }
+                            Command::Score(args) | Command::Eval(args) => {
+                                run_scoring(example, &args).await;
+                            }
+                        }
+                    });
+                }
+                futures::future::join_all(futures).await;
+            }
+
+            write_examples(&examples, args.output.as_ref());
+
+            let _ = cx.update(|cx| cx.quit());
+        })
+        .detach();
+    });
+}

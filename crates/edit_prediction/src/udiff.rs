@@ -1,3 +1,4 @@
+// todo! move to cli crate
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -67,15 +68,15 @@ pub async fn parse_diff<'a>(
     Err(anyhow::anyhow!("No EOF"))
 }
 
-#[derive(Debug)]
-pub struct OpenedBuffers<'a>(#[allow(unused)] HashMap<Cow<'a, str>, Entity<Buffer>>);
+#[derive(Clone, Debug)]
+pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
 
 #[must_use]
 pub async fn apply_diff<'a>(
     diff_str: &'a str,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
-) -> Result<OpenedBuffers<'a>> {
+) -> Result<OpenedBuffers> {
     let mut included_files = HashMap::default();
 
     for line in diff_str.lines() {
@@ -94,7 +95,7 @@ pub async fn apply_diff<'a>(
                 })??
                 .await?;
 
-            included_files.insert(path, buffer);
+            included_files.insert(path.to_string(), buffer);
         }
     }
 
@@ -113,7 +114,7 @@ pub async fn apply_diff<'a>(
                 let (buffer, ranges) = match current_file {
                     None => {
                         let buffer = included_files
-                            .get_mut(&file_path)
+                            .get_mut(file_path.as_ref())
                             .expect("Opened all files in diff");
 
                         current_file = Some((buffer, ranges.as_slice()));
