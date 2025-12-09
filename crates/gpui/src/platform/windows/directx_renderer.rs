@@ -934,7 +934,7 @@ impl DirectXRenderPipelines {
             naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
                 .write(&module, &module_info, None)
                 .map_err(|err| err.to_string())?;
-            let id = CustomShaderId(self.custom_ids.len() as u32);
+            let id = CustomShaderId(self.custom.len() as u32);
             self.custom.push((
                 PipelineState::new_custom(
                     device,
