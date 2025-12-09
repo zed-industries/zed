@@ -874,18 +874,6 @@ impl Copilot {
         self.request_completions::<request::GetCompletions, _>(buffer, position, cx)
     }
 
-    pub fn completions_cycling<T>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>>
-    where
-        T: ToPointUtf16,
-    {
-        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
-    }
-
     pub fn accept_completion(
         &mut self,
         completion: &Completion,
@@ -895,6 +883,7 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
+
         let request =
             server
                 .lsp

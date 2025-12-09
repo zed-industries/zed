@@ -1,6 +1,6 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use settings::Settings;
@@ -128,63 +128,6 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
 
             Ok(())
         }));
-    }
-
-    fn cycle(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cursor_position: language::Anchor,
-        direction: Direction,
-        cx: &mut Context<Self>,
-    ) {
-        if self.cycled {
-            match direction {
-                Direction::Prev => {
-                    self.active_completion_index = if self.active_completion_index == 0 {
-                        self.completions.len().saturating_sub(1)
-                    } else {
-                        self.active_completion_index - 1
-                    };
-                }
-                Direction::Next => {
-                    if self.completions.is_empty() {
-                        self.active_completion_index = 0
-                    } else {
-                        self.active_completion_index =
-                            (self.active_completion_index + 1) % self.completions.len();
-                    }
-                }
-            }
-
-            cx.notify();
-        } else {
-            let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = Some(cx.spawn(async move |this, cx| {
-                let completions = copilot
-                    .update(cx, |copilot, cx| {
-                        copilot.completions_cycling(&buffer, cursor_position, cx)
-                    })?
-                    .await?;
-
-                this.update(cx, |this, cx| {
-                    this.cycled = true;
-                    this.file_extension = buffer.read(cx).file().and_then(|file| {
-                        Some(
-                            Path::new(file.file_name(cx))
-                                .extension()?
-                                .to_str()?
-                                .to_string(),
-                        )
-                    });
-                    for completion in completions {
-                        this.push_completion(completion);
-                    }
-                    this.cycle(buffer, cursor_position, direction, cx);
-                })?;
-
-                Ok(())
-            }));
-        }
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
