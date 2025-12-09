@@ -20619,57 +20619,21 @@ impl Editor {
                 buffer_ranges.last()
             }?;
 
+            let start_row_in_buffer = text::ToPoint::to_point(&range.start, buffer).row;
+            let end_row_in_buffer = text::ToPoint::to_point(&range.end, buffer).row;
+
             let Some(buffer_diff) = multi_buffer.diff_for(buffer.remote_id()) else {
-                let selection = text::ToPoint::to_point(&range.start, buffer).row
-                    ..text::ToPoint::to_point(&range.end, buffer).row;
+                let selection = start_row_in_buffer..end_row_in_buffer;
 
                 return Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection));
             };
 
             let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
 
-            let beginning_anchor = buffer.anchor_before(Point::new(0, 0));
-            let start_anchor = buffer.anchor_before(&range.start);
-            let end_anchor = buffer.anchor_before(&range.end);
-
-            struct Offsets {
-                start: isize,
-                end: isize,
-            }
-
-            let mut delta = Offsets { start: 0, end: 0 };
-
-            for hunk in
-                buffer_diff_snapshot.hunks_intersecting_range(beginning_anchor..end_anchor, buffer)
-            {
-                let initial_size = hunk.diff_base_byte_range.end as isize
-                    - hunk.diff_base_byte_range.start as isize;
-
-                let buffer_range = hunk.buffer_range.to_offset(&buffer);
-                let changed_size =
-                    (cmp::min(buffer_range.end, range.end) as isize) - buffer_range.start as isize;
-
-                if hunk.buffer_range.start.cmp(&start_anchor, buffer).is_le() {
-                    delta.start += initial_size;
-                    delta.start -= changed_size;
-                }
-
-                delta.end += initial_size;
-                delta.end -= changed_size;
-            }
-
-            let start_row_in_base_buffer = buffer_diff_snapshot
-                .base_text()
-                .offset_to_point((range.start as isize + delta.start) as usize)
-                .row;
-            let end_row_in_base_buffer = buffer_diff_snapshot
-                .base_text()
-                .offset_to_point((range.end as isize + delta.end) as usize)
-                .row;
-
             Some((
                 multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                start_row_in_base_buffer..end_row_in_base_buffer,
+                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, buffer)
+                    ..buffer_diff_snapshot.row_to_base_text_row(end_row_in_buffer, buffer),
             ))
         });
 
