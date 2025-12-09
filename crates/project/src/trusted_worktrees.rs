@@ -8,6 +8,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
 };
 use remote::RemoteConnectionOptions;
+use rpc::AnyProtoClient;
 use settings::{Settings as _, WorktreeId};
 use util::ResultExt as _;
 
@@ -18,6 +19,7 @@ use crate::{
 pub fn init_global(
     worktree_store: Entity<WorktreeStore>,
     remote_host: Option<impl Into<RemoteHostLocation> + 'static>,
+    downstream_client: Option<AnyProtoClient>,
     cx: &mut App,
 ) {
     match TrustedWorktrees::try_get_global(cx) {
@@ -27,39 +29,15 @@ pub fn init_global(
             });
         }
         None => {
-            cx.spawn(async move |cx| {
-                let Ok(trusted_worktrees) = cx.update(|cx| TrustedWorktrees::try_get_global(cx))
-                else {
-                    return;
-                };
-                match trusted_worktrees {
-                    Some(trusted_worktrees) => {
-                        trusted_worktrees
-                            .update(cx, |trusted_worktrees, cx| {
-                                trusted_worktrees.add_worktree_store(
-                                    worktree_store,
-                                    remote_host,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                    None => {
-                        cx.update(|cx| {
-                            let trusted_worktrees = cx.new(|cx| {
-                                TrustedWorktreesStorage::new(
-                                    worktree_store.clone(),
-                                    remote_host,
-                                    cx,
-                                )
-                            });
-                            cx.set_global(TrustedWorktrees(trusted_worktrees))
-                        })
-                        .ok();
-                    }
-                }
-            })
-            .detach();
+            let trusted_worktrees = cx.new(|cx| {
+                TrustedWorktreesStorage::new(
+                    worktree_store.clone(),
+                    remote_host,
+                    downstream_client,
+                    cx,
+                )
+            });
+            cx.set_global(TrustedWorktrees(trusted_worktrees))
         }
     }
 }
@@ -171,18 +149,23 @@ impl TrustedWorktreesStorage {
     fn new(
         worktree_store: Entity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
+        downstream_client: Option<AnyProtoClient>,
         cx: &App,
     ) -> Self {
         let remote_host = remote_host.map(|remote_host| remote_host.into());
-        let trusted_paths = match PROJECT_DB.fetch_trusted_worktrees(
-            worktree_store.clone(),
-            remote_host.clone(),
-            cx,
-        ) {
-            Ok(trusted_paths) => trusted_paths,
-            Err(e) => {
-                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
-                HashSet::default()
+        let trusted_paths = if downstream_client.is_some() {
+            HashSet::default()
+        } else {
+            match PROJECT_DB.fetch_trusted_worktrees(
+                worktree_store.clone(),
+                remote_host.clone(),
+                cx,
+            ) {
+                Ok(trusted_paths) => trusted_paths,
+                Err(e) => {
+                    log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                    HashSet::default()
+                }
             }
         };
         let restricted_globals = if trusted_paths.contains(&PathTrust::Global(remote_host.clone()))
@@ -333,7 +316,7 @@ impl TrustedWorktreesStorage {
         self.trusted_paths.clear();
         let (tx, rx) = smol::channel::bounded(1);
         self.serialization_task = cx.background_spawn(async move {
-            PROJECT_DB.clear_worktrees().await.log_err();
+            PROJECT_DB.clear_trusted_worktrees().await.log_err();
             tx.send(()).await.ok();
         });
         cx.background_spawn(async move {

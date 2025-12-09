@@ -1063,6 +1063,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1071,11 +1072,14 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            trusted_worktrees::init_global(
-                worktree_store.clone(),
-                None::<RemoteConnectionOptions>,
-                cx,
-            );
+            if init_worktree_trust {
+                trusted_worktrees::init_global(
+                    worktree_store.clone(),
+                    None::<RemoteConnectionOptions>,
+                    None,
+                    cx,
+                );
+            }
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1273,7 +1277,12 @@ impl Project {
                     path_style,
                 )
             });
-            trusted_worktrees::init_global(worktree_store.clone(), Some(connection_options), cx);
+            trusted_worktrees::init_global(
+                worktree_store.clone(),
+                Some(connection_options),
+                None,
+                cx,
+            );
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1816,6 +1825,7 @@ impl Project {
                     Arc::new(languages),
                     fs,
                     None,
+                    false,
                     cx,
                 )
             })
@@ -1856,6 +1866,7 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
+                false,
                 cx,
             )
         });
