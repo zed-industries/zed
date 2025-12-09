@@ -1,0 +1,1047 @@
+use editor::Editor;
+use file_icons::FileIcons;
+use futures::StreamExt;
+use gpui::{
+    App, Bounds, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseButton, Pixels, Render, SharedString, Subscription, Task, WeakEntity, Window,
+    actions, canvas, prelude::*,
+};
+use language::Buffer;
+use picker::{Picker, PickerDelegate};
+use project::{Project, ProjectPath, search::SearchQuery};
+use std::{fmt::Write as _, path::Path, pin::pin, sync::Arc, time::Duration};
+use text::ToPoint as _;
+use ui::{Color, Icon, IconName, Label, ListItem, ListItemSpacing, prelude::*};
+use util::{ResultExt, paths::PathMatcher};
+use workspace::{ModalView, Workspace};
+
+use crate::SearchOptions;
+
+const DEFAULT_WIDTH: Pixels = px(1100.);
+const DEFAULT_HEIGHT: Pixels = px(650.);
+const MIN_WIDTH: Pixels = px(600.);
+const MIN_HEIGHT: Pixels = px(300.);
+const MAX_WIDTH: Pixels = px(1800.);
+const MAX_HEIGHT: Pixels = px(1000.);
+const LEFT_PANEL_WIDTH: Pixels = px(350.);
+const RESIZE_HANDLE_SIZE: Pixels = px(6.);
+
+actions!(search, [QuickSearch]);
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(QuickSearchModal::register).detach();
+}
+
+#[derive(Clone)]
+struct DragResizeHandle {
+    axis: ResizeAxis,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ResizeAxis {
+    Horizontal,
+    Vertical,
+    Both,
+}
+
+impl Render for DragResizeHandle {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+enum QuickSearchItem {
+    FileHeader {
+        file_name: SharedString,
+        parent_path: SharedString,
+    },
+    LineMatch {
+        project_path: ProjectPath,
+        buffer: Entity<Buffer>,
+        line: u32,
+        line_label: SharedString,
+        preview_text: SharedString,
+    },
+}
+
+pub struct QuickSearchDelegate {
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    search_options: SearchOptions,
+    items: Vec<QuickSearchItem>,
+    selected_index: usize,
+    pending_search_id: usize,
+    quick_search: WeakEntity<QuickSearchModal>,
+}
+
+pub struct QuickSearchModal {
+    picker: Entity<Picker<QuickSearchDelegate>>,
+    preview_editor: Option<Entity<Editor>>,
+    preview_buffer: Option<Entity<Buffer>>,
+    width: Pixels,
+    height: Pixels,
+    bounds: Bounds<Pixels>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl ModalView for QuickSearchModal {}
+
+impl EventEmitter<DismissEvent> for QuickSearchModal {}
+
+impl Focusable for QuickSearchModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for QuickSearchModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let preview_editor = self.preview_editor.clone();
+        let width = self.width;
+        let height = self.height;
+        let entity = cx.entity();
+
+        let picker = self.picker.clone();
+
+        div()
+            .id("quick-search-modal")
+            .relative()
+            .w(width)
+            .h(height)
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |this, _| {
+                            this.bounds = bounds;
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                v_flex()
+                    .elevation_3(cx)
+                    .size_full()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .on_mouse_down_out(cx.listener(|_, _, _, cx| {
+                        cx.emit(DismissEvent);
+                    }))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_3()
+                            .py_2()
+                            .bg(cx.theme().colors().title_bar_background)
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                Label::new("Quick Search")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(
+                                v_flex()
+                                    .w(LEFT_PANEL_WIDTH)
+                                    .h_full()
+                                    .border_r_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(self.picker.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id("quick-search-preview")
+                                    .relative()
+                                    .flex_1()
+                                    .h_full()
+                                    .overflow_hidden()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .on_click(move |_, window, cx| {
+                                        window.focus(&picker.focus_handle(cx));
+                                    })
+                                    .when_some(preview_editor, |this, editor| {
+                                        this.child(div().size_full().child(editor))
+                                    })
+                                    .when(self.preview_editor.is_none(), |this| {
+                                        this.child(
+                                            div()
+                                                .size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    Label::new("Select a result to preview")
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                    })
+                                    .child(self.render_resize_handle_right(cx))
+                                    .child(self.render_resize_handle_bottom(cx))
+                                    .child(self.render_resize_handle_corner(cx)),
+                            ),
+                    ),
+            )
+    }
+}
+
+impl QuickSearchModal {
+    fn render_resize_handle_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("resize-handle-right")
+            .absolute()
+            .top_0()
+            .right_0()
+            .w(RESIZE_HANDLE_SIZE)
+            .h(self.height - RESIZE_HANDLE_SIZE)
+            .cursor_e_resize()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_drag(
+                DragResizeHandle {
+                    axis: ResizeAxis::Horizontal,
+                },
+                |drag, _, _, cx| cx.new(|_| drag.clone()),
+            )
+            .on_drag_move(cx.listener(Self::handle_resize))
+    }
+
+    fn render_resize_handle_bottom(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("resize-handle-bottom")
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .w_full()
+            .h(RESIZE_HANDLE_SIZE)
+            .cursor_s_resize()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_drag(
+                DragResizeHandle {
+                    axis: ResizeAxis::Vertical,
+                },
+                |drag, _, _, cx| cx.new(|_| drag.clone()),
+            )
+            .on_drag_move(cx.listener(Self::handle_resize))
+    }
+
+    fn render_resize_handle_corner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("resize-handle-corner")
+            .absolute()
+            .bottom_0()
+            .right_0()
+            .w(RESIZE_HANDLE_SIZE * 2.)
+            .h(RESIZE_HANDLE_SIZE * 2.)
+            .cursor_nwse_resize()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_drag(
+                DragResizeHandle {
+                    axis: ResizeAxis::Both,
+                },
+                |drag, _, _, cx| cx.new(|_| drag.clone()),
+            )
+            .on_drag_move(cx.listener(Self::handle_resize))
+    }
+
+    fn handle_resize(
+        &mut self,
+        event: &DragMoveEvent<DragResizeHandle>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let drag = event.drag(cx);
+        let position = event.event.position;
+
+        let new_width = match drag.axis {
+            ResizeAxis::Horizontal | ResizeAxis::Both => (position.x - self.bounds.origin.x)
+                .max(MIN_WIDTH)
+                .min(MAX_WIDTH),
+            ResizeAxis::Vertical => self.width,
+        };
+
+        let new_height = match drag.axis {
+            ResizeAxis::Vertical | ResizeAxis::Both => (position.y - self.bounds.origin.y)
+                .max(MIN_HEIGHT)
+                .min(MAX_HEIGHT),
+            ResizeAxis::Horizontal => self.height,
+        };
+
+        if new_width != self.width || new_height != self.height {
+            self.width = new_width;
+            self.height = new_height;
+            cx.notify();
+        }
+    }
+}
+
+impl QuickSearchModal {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _cx: &mut Context<Workspace>,
+    ) {
+        workspace.register_action(|workspace, _: &QuickSearch, window, cx| {
+            let project = workspace.project().clone();
+            let weak_workspace = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                QuickSearchModal::new(weak_workspace, project, window, cx)
+            });
+        });
+    }
+
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let weak_self = cx.entity().downgrade();
+
+        let delegate = QuickSearchDelegate {
+            workspace,
+            project,
+            search_options: SearchOptions::NONE,
+            items: Vec::new(),
+            selected_index: 0,
+            pending_search_id: 0,
+            quick_search: weak_self,
+        };
+
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .modal(false)
+                .max_height(None)
+                .show_scrollbar(true)
+        });
+
+        let subscriptions = vec![cx.subscribe_in(&picker, window, Self::on_picker_event)];
+
+        Self {
+            picker,
+            preview_editor: None,
+            preview_buffer: None,
+            width: DEFAULT_WIDTH,
+            height: DEFAULT_HEIGHT,
+            bounds: Bounds::default(),
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn on_picker_event(
+        &mut self,
+        _picker: &Entity<Picker<QuickSearchDelegate>>,
+        _event: &DismissEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DismissEvent);
+    }
+
+    fn update_preview(
+        &mut self,
+        buffer: Option<(Entity<Buffer>, u32)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((buffer, line)) = buffer else {
+            self.preview_editor = None;
+            self.preview_buffer = None;
+            cx.notify();
+            return;
+        };
+
+        let same_buffer = self
+            .preview_buffer
+            .as_ref()
+            .map_or(false, |b| b.entity_id() == buffer.entity_id());
+
+        if same_buffer {
+            if let Some(editor) = &self.preview_editor {
+                editor.update(cx, |editor, cx| {
+                    let point = text::Point::new(line, 0);
+                    editor.go_to_singleton_buffer_point(point, window, cx);
+                });
+            }
+        } else {
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+                editor.set_read_only(true);
+                editor.set_show_gutter(true, cx);
+                editor
+            });
+
+            editor.update(cx, |editor, cx| {
+                let point = text::Point::new(line, 0);
+                editor.go_to_singleton_buffer_point(point, window, cx);
+            });
+
+            self.preview_editor = Some(editor);
+            self.preview_buffer = Some(buffer);
+        }
+        cx.notify();
+    }
+}
+
+impl PickerDelegate for QuickSearchDelegate {
+    type ListItem = ListItem;
+
+    fn match_count(&self) -> usize {
+        self.items.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        if self.items.is_empty() {
+            self.selected_index = 0;
+            return;
+        }
+
+        let ix = ix.min(self.items.len().saturating_sub(1));
+
+        if matches!(self.items.get(ix), Some(QuickSearchItem::LineMatch { .. })) {
+            self.selected_index = ix;
+            return;
+        }
+
+        let going_down = ix >= self.selected_index;
+
+        if going_down {
+            if let Some(next) = self
+                .items
+                .iter()
+                .skip(ix)
+                .position(|item| matches!(item, QuickSearchItem::LineMatch { .. }))
+            {
+                self.selected_index = ix + next;
+                return;
+            }
+        }
+
+        let upper_bound = ix.min(self.items.len().saturating_sub(1));
+        if let Some(prev) = self.items[..=upper_bound]
+            .iter()
+            .rposition(|item| matches!(item, QuickSearchItem::LineMatch { .. }))
+        {
+            self.selected_index = prev;
+        } else if let Some(next) = self
+            .items
+            .iter()
+            .position(|item| matches!(item, QuickSearchItem::LineMatch { .. }))
+        {
+            self.selected_index = next;
+        }
+    }
+
+    fn selected_index_changed(
+        &self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Box<dyn Fn(&mut Window, &mut App) + 'static>> {
+        let quick_search = self.quick_search.clone();
+        let preview_data = match self.items.get(self.selected_index) {
+            Some(QuickSearchItem::LineMatch { buffer, line, .. }) => Some((buffer.clone(), *line)),
+            _ => None,
+        };
+
+        Some(Box::new(move |window, cx| {
+            if let Some(quick_search) = quick_search.upgrade() {
+                quick_search.update(cx, |qs, cx| {
+                    qs.update_preview(preview_data.clone(), window, cx);
+                });
+            }
+        }))
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search in project...".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        if query.is_empty() {
+            self.items.clear();
+            self.pending_search_id = 0;
+            let quick_search = self.quick_search.clone();
+            cx.defer_in(window, move |_, window, cx| {
+                if let Some(quick_search) = quick_search.upgrade() {
+                    quick_search.update(cx, |qs, cx| {
+                        qs.preview_editor = None;
+                        qs.preview_buffer = None;
+                        cx.notify();
+                    });
+                }
+                let _ = window;
+            });
+            cx.notify();
+            return Task::ready(());
+        }
+
+        self.pending_search_id += 1;
+        let search_id = self.pending_search_id;
+        let project = self.project.clone();
+        let search_options = self.search_options;
+        let quick_search = self.quick_search.clone();
+
+        cx.spawn_in(window, async move |picker, cx| {
+            smol::Timer::after(Duration::from_millis(100)).await;
+
+            let is_stale = picker
+                .update(cx, |picker, _| {
+                    picker.delegate.pending_search_id != search_id
+                })
+                .unwrap_or(true);
+            if is_stale {
+                return;
+            }
+
+            let search_query = match SearchQuery::text(
+                &query,
+                search_options.contains(SearchOptions::WHOLE_WORD),
+                search_options.contains(SearchOptions::CASE_SENSITIVE),
+                search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                PathMatcher::default(),
+                PathMatcher::default(),
+                false,
+                None,
+            ) {
+                Ok(q) => q,
+                Err(err) => {
+                    log::warn!("Quick search: invalid query '{}': {}", query, err);
+                    return;
+                }
+            };
+
+            let search_results = project
+                .update(cx, |project, cx| project.search(search_query, cx))
+                .ok();
+
+            let Some(search_results) = search_results else {
+                return;
+            };
+
+            let mut items = Vec::new();
+            let max_line_matches = 200;
+            let mut line_match_count = 0;
+
+            let mut search_results = pin!(search_results);
+            while let Some(result) = search_results.next().await {
+                match result {
+                    project::search::SearchResult::Buffer { buffer, ranges } => {
+                        if ranges.is_empty() {
+                            continue;
+                        }
+
+                        let match_data_list = cx
+                            .read_entity(&buffer, |buf, cx| {
+                                let snapshot = buf.snapshot();
+                                let file = buf.file();
+                                let project_path = file.map(|f| ProjectPath {
+                                    worktree_id: f.worktree_id(cx),
+                                    path: f.path().clone(),
+                                });
+
+                                let Some(project_path) = project_path else {
+                                    return Vec::new();
+                                };
+
+                                let file_name: SharedString = project_path
+                                    .path
+                                    .file_name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_default()
+                                    .into();
+                                let parent_path: SharedString = project_path
+                                    .path
+                                    .parent()
+                                    .map(|p| p.as_unix_str().to_string())
+                                    .unwrap_or_default()
+                                    .into();
+
+                                let mut seen_lines = std::collections::HashSet::new();
+                                let mut results = Vec::new();
+
+                                for range in &ranges {
+                                    let start_point = range.start.to_point(&snapshot);
+                                    let line = start_point.row;
+
+                                    if !seen_lines.insert(line) {
+                                        continue;
+                                    }
+
+                                    let line_start =
+                                        snapshot.point_to_offset(text::Point::new(line, 0));
+                                    let line_end_col = snapshot.line_len(line);
+                                    let line_end = snapshot
+                                        .point_to_offset(text::Point::new(line, line_end_col));
+
+                                    const MAX_PREVIEW_CHARS: usize = 200;
+                                    let mut preview_text = String::with_capacity(MAX_PREVIEW_CHARS);
+                                    let mut chars_remaining = MAX_PREVIEW_CHARS;
+                                    let mut started = false;
+
+                                    for chunk in snapshot.chunks(line_start..line_end, false) {
+                                        let text = if !started {
+                                            started = true;
+                                            chunk.text.trim_start()
+                                        } else {
+                                            chunk.text
+                                        };
+
+                                        if text.len() <= chars_remaining {
+                                            preview_text.push_str(text);
+                                            chars_remaining -= text.len();
+                                        } else {
+                                            for ch in text.chars() {
+                                                if chars_remaining == 0 {
+                                                    break;
+                                                }
+                                                preview_text.push(ch);
+                                                chars_remaining -= 1;
+                                            }
+                                            preview_text.push('…');
+                                            break;
+                                        }
+                                    }
+
+                                    let preview_text: SharedString =
+                                        preview_text.trim_end().to_string().into();
+
+                                    let mut line_label = String::with_capacity(8);
+                                    let _ = write!(line_label, "{}", line + 1);
+                                    let line_label: SharedString = line_label.into();
+
+                                    results.push((
+                                        project_path.clone(),
+                                        line,
+                                        line_label,
+                                        preview_text,
+                                        file_name.clone(),
+                                        parent_path.clone(),
+                                    ));
+                                }
+
+                                results
+                            })
+                            .log_err()
+                            .unwrap_or_default();
+
+                        if !match_data_list.is_empty() {
+                            let first = &match_data_list[0];
+                            items.push(QuickSearchItem::FileHeader {
+                                file_name: first.4.clone(),
+                                parent_path: first.5.clone(),
+                            });
+
+                            for (
+                                project_path,
+                                line,
+                                line_label,
+                                preview,
+                                _file_name,
+                                _parent_path,
+                            ) in match_data_list
+                            {
+                                items.push(QuickSearchItem::LineMatch {
+                                    project_path,
+                                    buffer: buffer.clone(),
+                                    line,
+                                    line_label,
+                                    preview_text: preview,
+                                });
+
+                                line_match_count += 1;
+                                if line_match_count >= max_line_matches {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if line_match_count >= max_line_matches {
+                            break;
+                        }
+                    }
+                    project::search::SearchResult::LimitReached => break,
+                }
+            }
+
+            let first_line_match = items.iter().find_map(|item| {
+                if let QuickSearchItem::LineMatch { buffer, line, .. } = item {
+                    Some((buffer.clone(), *line))
+                } else {
+                    None
+                }
+            });
+
+            let first_selectable = items
+                .iter()
+                .position(|item| matches!(item, QuickSearchItem::LineMatch { .. }))
+                .unwrap_or(0);
+
+            picker
+                .update_in(cx, |picker, window, cx| {
+                    if picker.delegate.pending_search_id == search_id {
+                        picker.delegate.items = items;
+                        picker.delegate.selected_index = first_selectable;
+                        cx.notify();
+
+                        if let Some(quick_search) = quick_search.upgrade() {
+                            quick_search.update(cx, |qs, cx| {
+                                qs.update_preview(first_line_match, window, cx);
+                            });
+                        }
+                    }
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(QuickSearchItem::LineMatch {
+            project_path, line, ..
+        }) = self.items.get(self.selected_index)
+        else {
+            return;
+        };
+
+        let project_path = project_path.clone();
+        let line = *line;
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                let task = workspace.open_path(project_path, None, true, window, cx);
+                cx.spawn_in(window, async move |_, cx| {
+                    if let Some(item) = task.await.log_err() {
+                        if let Some(editor) = item.downcast::<Editor>() {
+                            editor
+                                .update_in(cx, |editor, window, cx| {
+                                    let point = text::Point::new(line, 0);
+                                    editor.go_to_singleton_buffer_point(point, window, cx);
+                                })
+                                .ok();
+                        }
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            });
+        }
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let item = self.items.get(ix)?;
+
+        match item {
+            QuickSearchItem::FileHeader {
+                file_name,
+                parent_path,
+            } => {
+                let icon = FileIcons::get_icon(Path::new(file_name.as_ref()), cx)
+                    .map(Icon::from_path)
+                    .unwrap_or_else(|| Icon::new(IconName::File));
+
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .disabled(true)
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(icon.color(Color::Muted).size(ui::IconSize::Small))
+                                .child(Label::new(file_name.clone()).size(ui::LabelSize::Small))
+                                .when(!parent_path.is_empty(), |this| {
+                                    this.child(
+                                        Label::new(parent_path.clone())
+                                            .size(ui::LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        ),
+                )
+            }
+            QuickSearchItem::LineMatch {
+                line_label,
+                preview_text,
+                ..
+            } => Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .pl(px(20.))
+                            .child(
+                                Label::new(line_label.clone())
+                                    .size(ui::LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(preview_text.clone())
+                                    .size(ui::LabelSize::Small)
+                                    .color(Color::Default)
+                                    .truncate(),
+                            ),
+                    ),
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::ops::Deref;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_modal_creation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let quick_search = cx.new_window_entity({
+            let workspace = workspace.downgrade();
+            |window, cx| QuickSearchModal::new(workspace, project, window, cx)
+        });
+
+        quick_search.update(&mut cx, |modal, cx| {
+            assert!(modal.preview_editor.is_none());
+            assert!(modal.preview_buffer.is_none());
+            assert_eq!(modal.picker.read(cx).delegate.items.len(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_empty_query_clears_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.rs": "fn test() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let quick_search = cx.new_window_entity({
+            let workspace = workspace.downgrade();
+            |window, cx| QuickSearchModal::new(workspace, project, window, cx)
+        });
+
+        quick_search.update_in(&mut cx, |modal, window, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.set_query("test", window, cx);
+            });
+        });
+
+        quick_search.update(&mut cx, |modal, cx| {
+            assert_eq!(modal.picker.read(cx).delegate.pending_search_id, 1);
+        });
+
+        quick_search.update_in(&mut cx, |modal, window, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.set_query("", window, cx);
+            });
+        });
+
+        cx.background_executor.run_until_parked();
+
+        quick_search.update(&mut cx, |modal, cx| {
+            let delegate = &modal.picker.read(cx).delegate;
+            assert_eq!(delegate.items.len(), 0, "Empty query should clear results");
+            assert_eq!(
+                delegate.pending_search_id, 0,
+                "Empty query should reset search id"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_quick_search_item_types(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let header = QuickSearchItem::FileHeader {
+            file_name: "test.rs".into(),
+            parent_path: "src".into(),
+        };
+        assert!(matches!(header, QuickSearchItem::FileHeader { .. }));
+
+        cx.update(|cx| {
+            let buffer = cx.new(|cx| language::Buffer::local("fn test() {}", cx));
+            let line_match = QuickSearchItem::LineMatch {
+                project_path: ProjectPath {
+                    worktree_id: project::WorktreeId::from_usize(0),
+                    path: util::rel_path::rel_path("src/test.rs").into(),
+                },
+                buffer,
+                line: 0,
+                line_label: "1".into(),
+                preview_text: "fn test()".into(),
+            };
+            assert!(matches!(line_match, QuickSearchItem::LineMatch { .. }));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_no_results_for_nonexistent_query(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let quick_search = cx.new_window_entity({
+            let workspace = workspace.downgrade();
+            |window, cx| QuickSearchModal::new(workspace, project, window, cx)
+        });
+
+        quick_search.update_in(&mut cx, |modal, window, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.set_query("nonexistent_string_xyz_123", window, cx);
+            });
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(150));
+        cx.background_executor.run_until_parked();
+
+        quick_search.update(&mut cx, |modal, cx| {
+            let delegate = &modal.picker.read(cx).delegate;
+            assert_eq!(
+                delegate.items.len(),
+                0,
+                "Should have no results for non-matching query"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_query_updates_search_id(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "file.rs": "fn hello() {}\nfn world() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let quick_search = cx.new_window_entity({
+            let workspace = workspace.downgrade();
+            |window, cx| QuickSearchModal::new(workspace, project, window, cx)
+        });
+
+        quick_search.update(&mut cx, |modal, cx| {
+            assert_eq!(modal.picker.read(cx).delegate.pending_search_id, 0);
+        });
+
+        quick_search.update_in(&mut cx, |modal, window, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.set_query("hello", window, cx);
+            });
+        });
+
+        quick_search.update(&mut cx, |modal, cx| {
+            assert_eq!(
+                modal.picker.read(cx).delegate.pending_search_id,
+                1,
+                "First search should have id 1"
+            );
+        });
+
+        quick_search.update_in(&mut cx, |modal, window, cx| {
+            modal.picker.update(cx, |picker, cx| {
+                picker.set_query("world", window, cx);
+            });
+        });
+
+        quick_search.update(&mut cx, |modal, cx| {
+            assert_eq!(
+                modal.picker.read(cx).delegate.pending_search_id,
+                2,
+                "Second search should have id 2"
+            );
+        });
+    }
+}
