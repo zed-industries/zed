@@ -21,6 +21,7 @@ use project::{
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
+    trusted_worktrees::RemoteHostLocation,
     worktree_store::WorktreeStore,
 };
 use rpc::{
@@ -97,6 +98,13 @@ impl HeadlessProject {
             store
         });
 
+        project::trusted_worktrees::init_global(
+            worktree_store.clone(),
+            None::<RemoteHostLocation>,
+            Some(session.clone()),
+            cx,
+        );
+
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
@@ -169,7 +177,6 @@ impl HeadlessProject {
             task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             task_store
         });
-        // TODO kb we should also check for trust on the headless host side?
         let settings_observer = cx.new(|cx| {
             let mut observer = SettingsObserver::new_local(
                 fs.clone(),

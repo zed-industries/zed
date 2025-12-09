@@ -44,7 +44,7 @@ impl ProjectDb {
         trusted_globals: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         PROJECT_DB
-            .clear_worktrees()
+            .clear_trusted_worktrees()
             .await
             .context("clearing previous trust state")?;
 
@@ -153,7 +153,7 @@ VALUES {placeholders};"#
     }
 
     query! {
-        pub async fn clear_worktrees() -> Result<()> {
+        pub async fn clear_trusted_worktrees() -> Result<()> {
             DELETE FROM trusted_worktrees
         }
     }
