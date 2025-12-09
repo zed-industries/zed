@@ -318,6 +318,7 @@ impl SecurityModal {
                 }
 
                 if self.restricted_paths != new_restricted_worktrees {
+                    self.trust_parents = false;
                     self.restricted_paths = new_restricted_worktrees;
                     cx.notify();
                 }
