@@ -6,6 +6,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    trusted_worktrees::wait_for_worktree_trust,
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -220,6 +221,7 @@ enum ActiveView {
     },
     History,
     Configuration,
+    Message(SharedString),
 }
 
 enum WhichFontSize {
@@ -284,6 +286,7 @@ impl ActiveView {
             }
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
+            ActiveView::Message(_) => WhichFontSize::AgentFont,
         }
     }
 
@@ -442,6 +445,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
+    new_agent_thread_task: Task<()>,
 }
 
 impl AgentPanel {
@@ -687,6 +691,7 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
+            new_agent_thread_task: Task::ready(()),
             onboarding,
             acp_history,
             history_store,
@@ -747,7 +752,10 @@ impl AgentPanel {
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration
+            | ActiveView::Message(_) => None,
         }
     }
 
@@ -1035,7 +1043,9 @@ impl AgentPanel {
                         } => {
                             text_thread_editor.focus_handle(cx).focus(window);
                         }
-                        ActiveView::History | ActiveView::Configuration => {}
+                        ActiveView::History
+                        | ActiveView::Configuration
+                        | ActiveView::Message(_) => {}
                     }
                 }
                 cx.notify();
@@ -1203,7 +1213,10 @@ impl AgentPanel {
                     })
                     .detach_and_log_err(cx);
             }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration
+            | ActiveView::Message(_) => {}
         }
     }
 
@@ -1302,7 +1315,7 @@ impl AgentPanel {
                 }
             }),
             ActiveView::ExternalAgentThread { .. } => {}
-            ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
         }
 
         if current_is_special && !new_is_special {
@@ -1423,6 +1436,33 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let wait_task = self.project.update(cx, |project, cx| {
+            let remote_host = project.remote_connection_options(cx);
+            wait_for_worktree_trust(remote_host, cx)
+        });
+        if let Some(wait_task) = wait_task {
+            self.set_active_view(
+                ActiveView::Message(SharedString::new(
+                    "Waiting for global startup to be trusted before starting context servers",
+                )),
+                false,
+                window,
+                cx,
+            );
+            self.new_agent_thread_task = cx.spawn_in(window, async move |agent_panel, cx| {
+                wait_task.await;
+                agent_panel
+                    .update_in(cx, |agent_panel, window, cx| {
+                        agent_panel._new_agent_thread(agent, window, cx);
+                    })
+                    .ok();
+            });
+        } else {
+            self._new_agent_thread(agent, window, cx);
+        }
+    }
+
+    fn _new_agent_thread(&mut self, agent: AgentType, window: &mut Window, cx: &mut Context<Self>) {
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -1494,6 +1534,7 @@ impl Focusable for AgentPanel {
                     cx.focus_handle()
                 }
             }
+            ActiveView::Message(_) => cx.focus_handle(),
         }
     }
 }
@@ -1671,6 +1712,7 @@ impl AgentPanel {
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
+            ActiveView::Message(_) => Label::new("Restricted mode").truncate().into_any_element(),
         };
 
         h_flex()
@@ -1865,7 +1907,10 @@ impl AgentPanel {
             ActiveView::ExternalAgentThread { thread_view } => {
                 thread_view.read(cx).as_native_thread(cx)
             }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration
+            | ActiveView::Message(_) => None,
         };
 
         let new_thread_menu = PopoverMenu::new("new_thread_menu")
@@ -2250,7 +2295,8 @@ impl AgentPanel {
             }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
-            | ActiveView::Configuration => return false,
+            | ActiveView::Configuration
+            | ActiveView::Message(_) => return false,
         }
 
         let plan = self.user_store.read(cx).plan();
@@ -2552,7 +2598,7 @@ impl AgentPanel {
                     );
                 });
             }
-            ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
         }
     }
 
@@ -2562,7 +2608,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::ExternalAgentThread { .. } => key_context.add("acp_thread"),
             ActiveView::TextThread { .. } => key_context.add("text_thread"),
-            ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
         }
         key_context
     }
@@ -2645,6 +2691,10 @@ impl Render for AgentPanel {
                         ))
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
+                ActiveView::Message(message) => {
+                    // TODO kb better design
+                    parent.child(v_flex().size_full().justify_center().child(message.clone()))
+                }
             })
             .children(self.render_trial_end_upsell(window, cx));
 

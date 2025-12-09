@@ -6711,6 +6711,7 @@ fn adjust_open_docks_size_by_px(
 
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        // TODO kb something steals focus still (db restoration?)
         if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
             security_modal.focus_handle(cx)
         } else {
