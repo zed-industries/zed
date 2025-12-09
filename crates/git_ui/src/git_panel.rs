@@ -2964,10 +2964,11 @@ impl GitPanel {
                 .detach();
         }
 
-        if let Some(worktree) = worktrees.first() {
-            let path = worktree.read(cx).abs_path();
-            // TODO!: Remove the `unwrap()` call.
-            let path_arg = String::from(path.to_str().unwrap());
+        if let Some(worktree) = worktrees.first()
+            && let path = worktree.read(cx).abs_path()
+            && let Some(path_str) = path.to_str()
+        {
+            let path_arg = String::from(path_str);
             let args = vec![
                 String::from("--global"),
                 String::from("--add"),
