@@ -4433,7 +4433,9 @@ impl GitPanel {
     fn render_empty_state_button(&self, cx: &mut Context<Self>) -> Option<Div> {
         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
 
-        if matches!(self.git_access, GitAccess::Yes) || worktree_count == 0 {
+        if (matches!(self.git_access, GitAccess::Yes) && self.active_repository.is_some())
+            || worktree_count == 0
+        {
             return None;
         };
 

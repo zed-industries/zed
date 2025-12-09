@@ -151,7 +151,7 @@ pub trait Fs: Send + Sync {
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
-    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<()>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<Vec<u8>>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1084,20 +1084,21 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        // TODO!: Refactor to use new `git_config` method below, once
-        // implementation has been finalized and it starts returning the output
-        // of the command, as this caller would need it in order to extract the
-        // default branch name.
-        let config = new_smol_command("git")
-            .current_dir(abs_work_directory_path)
-            .args(&["config", "--global", "--get", "init.defaultBranch"])
-            .output()
+        let stdout = self
+            .git_config(
+                abs_work_directory_path,
+                vec![
+                    String::from("--global"),
+                    String::from("--get"),
+                    String::from("init.defaultBranch"),
+                ],
+            )
             .await?;
 
         let branch_name;
 
-        if config.status.success() && !config.stdout.is_empty() {
-            branch_name = String::from_utf8_lossy(&config.stdout);
+        if !stdout.is_empty() {
+            branch_name = String::from_utf8_lossy(&stdout);
         } else {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
@@ -1138,7 +1139,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<()> {
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<Vec<u8>> {
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
             .args(
@@ -1157,7 +1158,7 @@ impl Fs for RealFs {
             );
         }
 
-        Ok(())
+        Ok(output.stdout)
     }
 
     fn is_fake(&self) -> bool {
@@ -2780,7 +2781,7 @@ impl Fs for FakeFs {
         anyhow::bail!("Git clone is not supported in fake Fs")
     }
 
-    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<()> {
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<Vec<u8>> {
         anyhow::bail!("Git config is not supported in fake Fs")
     }
 
