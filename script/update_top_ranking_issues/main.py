@@ -85,7 +85,7 @@ def get_section_to_issues(
         ]
 
         if start_date:
-            query_parts.append(f"created:<={start_date.strftime('%Y-%m-%d')}")
+            query_parts.append(f"created:>={start_date.strftime('%Y-%m-%d')}")
 
         query = " ".join(query_parts)
         url = f"{GITHUB_API_BASE_URL}/search/issues"
