@@ -1451,7 +1451,7 @@ impl GitStore {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 cx.subscribe(buffer, |this, buffer, event, cx| {
-                    if let BufferEvent::LanguageChanged = event {
+                    if let BufferEvent::LanguageChanged(_) = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
                             diff_state.update(cx, |diff_state, cx| {

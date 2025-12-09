@@ -219,7 +219,7 @@ struct UnifiedLanguageServer {
     project_roots: HashSet<Arc<RelPath>>,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct LanguageServerSeed {
     worktree_id: WorktreeId,
     name: LanguageServerName,
