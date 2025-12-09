@@ -16,4 +16,8 @@ pub struct InlineAssistantV2FeatureFlag;
 
 impl FeatureFlag for InlineAssistantV2FeatureFlag {
     const NAME: &'static str = "inline-assistant-v2";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
