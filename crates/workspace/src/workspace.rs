@@ -275,11 +275,10 @@ actions!(
         ToggleZoom,
         /// If any worktrees are in restricted mode, shows a modal with possible actions.
         /// If the modal is shown already, closes it without trusting any worktree.
-        /// TODO kb docs
+        /// TODO kb docs for this and the one below
         ToggleWorktreeSecurity,
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
-        /// TODO kb docs
         ClearTrustedWorktrees,
         /// Stops following a collaborator.
         Unfollow,
@@ -6447,7 +6446,7 @@ impl Workspace {
             }
         } else {
             let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .map(|trusted_worktrees| !trusted_worktrees.read(cx).has_restricted_worktrees())
+                .map(|trusted_worktrees| trusted_worktrees.read(cx).has_restricted_worktrees())
                 .unwrap_or(false);
             if has_restricted_worktrees {
                 let project = self.project().read(cx);

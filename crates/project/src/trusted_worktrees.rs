@@ -1,4 +1,3 @@
-//! TODO kb check for other vulnerabilities
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -307,6 +306,9 @@ impl TrustedWorktreesStorage {
         if self.restricted.contains(&worktree) {
             return false;
         }
+        if self.trusted_paths.contains(&PathTrust::Worktree(worktree)) {
+            return true;
+        }
 
         if let Some((worktree_path, remote_host)) = self.find_worktree_data(worktree, cx) {
             for trusted_path in &self.trusted_paths {
@@ -325,6 +327,32 @@ impl TrustedWorktreesStorage {
         self.restricted.insert(worktree);
         cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
             PathTrust::Worktree(worktree),
+        ])));
+        false
+    }
+
+    pub fn can_trust_global(
+        &mut self,
+        remote_host: Option<impl Into<RemoteHostLocation>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+            return true;
+        }
+        let remote_host = remote_host.map(|remote_host| remote_host.into());
+        if self.restricted_globals.contains(&remote_host) {
+            return false;
+        }
+        if self
+            .trusted_paths
+            .contains(&PathTrust::Global(remote_host.clone()))
+        {
+            return true;
+        }
+
+        self.restricted_globals.insert(remote_host.clone());
+        cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
+            PathTrust::Global(remote_host),
         ])));
         false
     }
