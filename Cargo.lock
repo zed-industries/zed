@@ -5259,6 +5259,7 @@ dependencies = [
  "terminal_view",
  "toml 0.8.23",
  "util",
+ "wasmtime",
  "watch",
  "zlog",
 ]
