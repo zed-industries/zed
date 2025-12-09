@@ -2150,8 +2150,11 @@ impl OutlinePanel {
             .contains(&CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id));
         let color = entry_label_color(is_active);
         let icon = if has_outlines {
-            FileIcons::get_chevron_icon(is_expanded, cx)
-                .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
+            FileIcons::get_chevron_icon(is_expanded, cx).map(|icon_path| {
+                Icon::from_embedded(icon_path)
+                    .color(color)
+                    .into_any_element()
+            })
         } else {
             None
         }
@@ -2237,7 +2240,7 @@ impl OutlinePanel {
         let icon = if has_children {
             FileIcons::get_chevron_icon(is_expanded, cx)
                 .map(|icon_path| {
-                    Icon::from_path(icon_path)
+                    Icon::from_embedded(icon_path)
                         .color(entry_label_color(is_active))
                         .into_any_element()
                 })
@@ -2279,8 +2282,11 @@ impl OutlinePanel {
                 let color =
                     entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
-                        .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
+                    FileIcons::get_icon(entry.path.as_std_path(), cx).map(|icon_path| {
+                        Icon::from_embedded(icon_path)
+                            .color(color)
+                            .into_any_element()
+                    })
                 } else {
                     None
                 };
@@ -2314,7 +2320,7 @@ impl OutlinePanel {
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
-                .map(Icon::from_path)
+                .map(Icon::from_embedded)
                 .map(|icon| icon.color(color).into_any_element());
                 (
                     ElementId::from(directory.entry.id.to_proto() as usize),
@@ -2340,7 +2346,7 @@ impl OutlinePanel {
                             } else {
                                 None
                             }
-                            .map(Icon::from_path)
+                            .map(Icon::from_embedded)
                             .map(|icon| icon.color(color).into_any_element());
                             (icon, file_name(path.as_std_path()))
                         }
@@ -2411,7 +2417,7 @@ impl OutlinePanel {
             } else {
                 FileIcons::get_chevron_icon(is_expanded, cx)
             }
-            .map(Icon::from_path)
+            .map(Icon::from_embedded)
             .map(|icon| icon.color(color).into_any_element());
             (
                 ElementId::from(

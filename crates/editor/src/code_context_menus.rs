@@ -904,7 +904,7 @@ impl CompletionsMenu {
                             })
                             .or_else(|| {
                                 completion.icon_path.as_ref().map(|path| {
-                                    Icon::from_path(path)
+                                    Icon::from_embedded(path)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted)
                                         .into_any_element()

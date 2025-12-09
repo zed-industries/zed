@@ -674,7 +674,7 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
             })
             .flatten()
-            .map(Icon::from_path)
+            .map(Icon::from_embedded)
     }
 
     fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {

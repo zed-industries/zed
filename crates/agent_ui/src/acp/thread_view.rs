@@ -2539,7 +2539,7 @@ impl AcpThreadView {
 
         let tool_icon = if tool_call.kind == acp::ToolKind::Edit && has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
-                .map(Icon::from_path)
+                .map(Icon::from_embedded)
                 .unwrap_or(Icon::new(IconName::ToolPencil))
         } else {
             Icon::new(match tool_call.kind {
@@ -4034,7 +4034,7 @@ impl AcpThreadView {
                         });
 
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
-                            .map(Icon::from_path)
+                            .map(Icon::from_embedded)
                             .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                             .unwrap_or_else(|| {
                                 Icon::new(IconName::File)

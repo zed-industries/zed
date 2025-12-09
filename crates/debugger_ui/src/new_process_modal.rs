@@ -1487,7 +1487,7 @@ impl PickerDelegate for DebugDelegate {
         let language_icon = language_name.as_ref().and_then(|lang| {
             file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&lang.0.to_lowercase(), cx)
-                .map(Icon::from_path)
+                .map(Icon::from_embedded)
         });
 
         let (icon, indicator) = match task_kind {
@@ -1497,7 +1497,7 @@ impl PickerDelegate for DebugDelegate {
             Some(TaskSourceKind::Lsp { language_name, .. }) => (
                 file_icons::FileIcons::get(cx)
                     .get_icon_for_type(&language_name.to_lowercase(), cx)
-                    .map(Icon::from_path),
+                    .map(Icon::from_embedded),
                 Some(Indicator::icon(
                     Icon::new(IconName::BoltFilled)
                         .color(Color::Muted)
@@ -1507,7 +1507,7 @@ impl PickerDelegate for DebugDelegate {
             Some(TaskSourceKind::Language { name }) => (
                 file_icons::FileIcons::get(cx)
                     .get_icon_for_type(&name.to_lowercase(), cx)
-                    .map(Icon::from_path),
+                    .map(Icon::from_embedded),
                 None,
             ),
             None => (Some(Icon::new(IconName::HistoryRerun)), None),

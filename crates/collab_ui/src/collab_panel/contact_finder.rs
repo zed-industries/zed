@@ -165,7 +165,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
                 .child(Label::new(user.github_login.clone()))
-                .end_slot::<Icon>(icon_path.map(Icon::from_path)),
+                .end_slot::<Icon>(icon_path.map(Icon::from_embedded)),
         )
     }
 }

@@ -762,7 +762,7 @@ fn render_fold_icon_button(
                     h_flex()
                         .gap_1()
                         .child(
-                            Icon::from_path(icon_path.clone())
+                            Icon::from_embedded(icon_path.clone())
                                 .size(IconSize::XSmall)
                                 .color(Color::Muted),
                         )
@@ -975,7 +975,7 @@ impl Render for LoadingContext {
                 h_flex()
                     .gap_1()
                     .child(
-                        Icon::from_path(self.icon.clone())
+                        Icon::from_embedded(self.icon.clone())
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )

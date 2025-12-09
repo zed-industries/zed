@@ -3989,7 +3989,7 @@ impl EditorElement {
                         let editor = self.editor.clone();
                         let buffer_id = for_excerpt.buffer_id;
                         let toggle_chevron_icon =
-                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
+                            FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_embedded);
                         let button_size = rems_from_px(28.);
 
                         header.child(
@@ -4089,7 +4089,7 @@ impl EditorElement {
                                         let icon =
                                             FileIcons::get_icon(path, cx).unwrap_or_default();
 
-                                        el.child(Icon::from_path(icon).color(Color::Muted))
+                                        el.child(Icon::from_embedded(icon).color(Color::Muted))
                                     })
                                     .child(
                                         ButtonLike::new("filename-button")

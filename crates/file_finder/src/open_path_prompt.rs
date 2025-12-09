@@ -711,7 +711,7 @@ impl PickerDelegate for OpenPathDelegate {
             } else {
                 FileIcons::get_icon(path, cx)?
             };
-            Some(Icon::from_path(icon).color(Color::Muted))
+            Some(Icon::from_embedded(icon).color(Color::Muted))
         });
 
         match &self.directory_state {

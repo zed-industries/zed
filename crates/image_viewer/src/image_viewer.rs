@@ -151,7 +151,7 @@ impl Item for ImageView {
             .file_icons
             .then(|| FileIcons::get_icon(&path, cx))
             .flatten()
-            .map(Icon::from_path)
+            .map(Icon::from_embedded)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {

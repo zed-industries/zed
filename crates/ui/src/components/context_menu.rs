@@ -981,7 +981,7 @@ impl ContextMenu {
                     *icon_position == IconPosition::Start && toggle.is_none(),
                     |flex| {
                         flex.child(
-                            Icon::from_path(custom_path.clone())
+                            Icon::from_embedded(custom_path.clone())
                                 .size(*icon_size)
                                 .color(icon_color),
                         )
@@ -990,7 +990,7 @@ impl ContextMenu {
                 .child(Label::new(label.clone()).color(label_color).truncate())
                 .when(*icon_position == IconPosition::End, |flex| {
                     flex.child(
-                        Icon::from_path(custom_path.clone())
+                        Icon::from_embedded(custom_path.clone())
                             .size(*icon_size)
                             .color(icon_color),
                     )

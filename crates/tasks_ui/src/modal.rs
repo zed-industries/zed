@@ -495,7 +495,7 @@ impl PickerDelegate for TasksModalDelegate {
             }
             | TaskSourceKind::Language { name, .. } => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
-                .map(Icon::from_path),
+                .map(Icon::from_embedded),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let indicator = if matches!(source_kind, TaskSourceKind::Lsp { .. }) {

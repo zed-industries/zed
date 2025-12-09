@@ -2427,7 +2427,7 @@ fn render_fold_icon_button(
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::from_path(icon_path.clone()))
+            .child(Icon::from_embedded(icon_path.clone()))
             .child(Label::new(label.clone()).single_line())
             .on_click(move |_, window, cx| {
                 editor
