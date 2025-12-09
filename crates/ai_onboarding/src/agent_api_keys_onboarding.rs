@@ -44,7 +44,7 @@ impl ApiKeysWithProviders {
 
     fn compute_configured_providers(cx: &App) -> Vec<(ProviderIcon, SharedString)> {
         LanguageModelRegistry::read_global(cx)
-            .visible_providers()
+            .providers()
             .iter()
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
@@ -68,14 +68,14 @@ impl Render for ApiKeysWithProviders {
                 .map(|(icon, name)| {
                     h_flex()
                         .gap_1p5()
-                        .child(
-                            match icon {
-                                ProviderIcon::Name(icon_name) => Icon::new(icon_name),
-                                ProviderIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
-                            }
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                        )
+                        .child(match icon {
+                            ProviderIcon::Name(icon_name) => Icon::new(icon_name)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                            ProviderIcon::Path(icon_path) => Icon::from_external_svg(icon_path)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        })
                         .child(Label::new(name))
                 });
         div()

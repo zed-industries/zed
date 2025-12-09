@@ -1,13 +1,86 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use zed_extension_api::http_client::{HttpMethod, HttpRequest, HttpResponseStream, RedirectPolicy};
 use zed_extension_api::{self as zed, *};
 
+const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
+const GITHUB_ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const GITHUB_COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
+struct DeviceFlowState {
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+#[derive(Clone)]
+struct ApiToken {
+    api_key: String,
+    api_endpoint: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct CopilotModel {
+    id: String,
+    name: String,
+    #[serde(default)]
+    is_chat_default: bool,
+    #[serde(default)]
+    is_chat_fallback: bool,
+    #[serde(default)]
+    model_picker_enabled: bool,
+    #[serde(default)]
+    capabilities: ModelCapabilities,
+    #[serde(default)]
+    policy: Option<ModelPolicy>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct ModelCapabilities {
+    #[serde(default)]
+    family: String,
+    #[serde(default)]
+    limits: ModelLimits,
+    #[serde(default)]
+    supports: ModelSupportedFeatures,
+    #[serde(rename = "type", default)]
+    model_type: String,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct ModelLimits {
+    #[serde(default)]
+    max_context_window_tokens: u64,
+    #[serde(default)]
+    max_output_tokens: u64,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct ModelSupportedFeatures {
+    #[serde(default)]
+    streaming: bool,
+    #[serde(default)]
+    tool_calls: bool,
+    #[serde(default)]
+    vision: bool,
+}
+
+#[derive(Clone, Deserialize)]
+struct ModelPolicy {
+    state: String,
+}
+
 struct CopilotChatProvider {
     streams: Mutex<HashMap<String, StreamState>>,
     next_stream_id: Mutex<u64>,
+    device_flow_state: Mutex<Option<DeviceFlowState>>,
+    api_token: Mutex<Option<ApiToken>>,
+    cached_models: Mutex<Option<Vec<CopilotModel>>>,
 }
 
 struct StreamState {
@@ -23,95 +96,6 @@ struct AccumulatedToolCall {
     id: String,
     name: String,
     arguments: String,
-}
-
-struct ModelDefinition {
-    id: &'static str,
-    display_name: &'static str,
-    max_tokens: u64,
-    max_output_tokens: Option<u64>,
-    supports_images: bool,
-    is_default: bool,
-    is_default_fast: bool,
-}
-
-const MODELS: &[ModelDefinition] = &[
-    ModelDefinition {
-        id: "gpt-4o",
-        display_name: "GPT-4o",
-        max_tokens: 128_000,
-        max_output_tokens: Some(16_384),
-        supports_images: true,
-        is_default: true,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "gpt-4o-mini",
-        display_name: "GPT-4o Mini",
-        max_tokens: 128_000,
-        max_output_tokens: Some(16_384),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: true,
-    },
-    ModelDefinition {
-        id: "gpt-4.1",
-        display_name: "GPT-4.1",
-        max_tokens: 1_000_000,
-        max_output_tokens: Some(32_768),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "o1",
-        display_name: "o1",
-        max_tokens: 200_000,
-        max_output_tokens: Some(100_000),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "o3-mini",
-        display_name: "o3-mini",
-        max_tokens: 200_000,
-        max_output_tokens: Some(100_000),
-        supports_images: false,
-        is_default: false,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "claude-3.5-sonnet",
-        display_name: "Claude 3.5 Sonnet",
-        max_tokens: 200_000,
-        max_output_tokens: Some(8_192),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "claude-3.7-sonnet",
-        display_name: "Claude 3.7 Sonnet",
-        max_tokens: 200_000,
-        max_output_tokens: Some(8_192),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: false,
-    },
-    ModelDefinition {
-        id: "gemini-2.0-flash-001",
-        display_name: "Gemini 2.0 Flash",
-        max_tokens: 1_000_000,
-        max_output_tokens: Some(8_192),
-        supports_images: true,
-        is_default: false,
-        is_default_fast: false,
-    },
-];
-
-fn get_model_definition(model_id: &str) -> Option<&'static ModelDefinition> {
-    MODELS.iter().find(|m| m.id == model_id)
 }
 
 #[derive(Serialize)]
@@ -389,10 +373,7 @@ fn convert_request(
         LlmToolChoice::None => "none".to_string(),
     });
 
-    let model_def = get_model_definition(model_id);
-    let max_tokens = request
-        .max_tokens
-        .or(model_def.and_then(|m| m.max_output_tokens));
+    let max_tokens = request.max_tokens;
 
     Ok(OpenAiRequest {
         model: model_id.to_string(),
@@ -422,42 +403,46 @@ impl zed::Extension for CopilotChatProvider {
         Self {
             streams: Mutex::new(HashMap::new()),
             next_stream_id: Mutex::new(0),
+            device_flow_state: Mutex::new(None),
+            api_token: Mutex::new(None),
+            cached_models: Mutex::new(None),
         }
     }
 
     fn llm_providers(&self) -> Vec<LlmProviderInfo> {
         vec![LlmProviderInfo {
-            id: "copilot_chat".into(),
+            id: "copilot-chat".into(),
             name: "Copilot Chat".into(),
             icon: Some("icons/copilot.svg".into()),
         }]
     }
 
     fn llm_provider_models(&self, _provider_id: &str) -> Result<Vec<LlmModelInfo>, String> {
-        Ok(MODELS
-            .iter()
-            .map(|m| LlmModelInfo {
-                id: m.id.to_string(),
-                name: m.display_name.to_string(),
-                max_token_count: m.max_tokens,
-                max_output_tokens: m.max_output_tokens,
-                capabilities: LlmModelCapabilities {
-                    supports_images: m.supports_images,
-                    supports_tools: true,
-                    supports_tool_choice_auto: true,
-                    supports_tool_choice_any: true,
-                    supports_tool_choice_none: true,
-                    supports_thinking: false,
-                    tool_input_format: LlmToolInputFormat::JsonSchema,
-                },
-                is_default: m.is_default,
-                is_default_fast: m.is_default_fast,
-            })
-            .collect())
+        // Try to get models from cache first
+        if let Some(models) = self.cached_models.lock().unwrap().as_ref() {
+            return Ok(convert_models_to_llm_info(models));
+        }
+
+        // Need to fetch models - requires authentication
+        let oauth_token = match llm_get_credential("copilot-chat") {
+            Some(token) => token,
+            None => return Ok(Vec::new()), // Not authenticated, return empty
+        };
+
+        // Get API token
+        let api_token = self.get_api_token(&oauth_token)?;
+
+        // Fetch models from API
+        let models = self.fetch_models(&api_token)?;
+
+        // Cache the models
+        *self.cached_models.lock().unwrap() = Some(models.clone());
+
+        Ok(convert_models_to_llm_info(&models))
     }
 
     fn llm_provider_is_authenticated(&self, _provider_id: &str) -> bool {
-        llm_get_credential("copilot_chat").is_some()
+        llm_get_credential("copilot-chat").is_some()
     }
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
@@ -466,13 +451,11 @@ impl zed::Extension for CopilotChatProvider {
 
 Welcome to **Copilot Chat**! This extension provides access to GitHub Copilot's chat models.
 
-## Configuration
+## Authentication
 
-Enter your GitHub Copilot token below. You need an active GitHub Copilot subscription.
+Click **Sign in with GitHub** to authenticate with your GitHub account. You'll be redirected to GitHub to authorize access. This requires an active GitHub Copilot subscription.
 
-To get your token:
-1. Ensure you have a GitHub Copilot subscription
-2. Generate a token from your GitHub Copilot settings
+Alternatively, you can set the `GH_COPILOT_TOKEN` environment variable with your token.
 
 ## Available Models
 
@@ -502,8 +485,156 @@ This extension requires an active GitHub Copilot subscription.
         )
     }
 
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        // Check if we have existing credentials
+        if llm_get_credential("copilot-chat").is_some() {
+            return Ok(());
+        }
+
+        // No credentials found - return error for background auth checks.
+        // The device flow will be triggered by the host when the user clicks
+        // the "Sign in with GitHub" button, which calls llm_provider_start_device_flow_sign_in.
+        Err("CredentialsNotFound".to_string())
+    }
+
+    fn llm_provider_start_device_flow_sign_in(
+        &mut self,
+        _provider_id: &str,
+    ) -> Result<String, String> {
+        // Step 1: Request device and user verification codes
+        let device_code_response = llm_oauth_http_request(&LlmOauthHttpRequest {
+            url: GITHUB_DEVICE_CODE_URL.to_string(),
+            method: "POST".to_string(),
+            headers: vec![
+                ("Accept".to_string(), "application/json".to_string()),
+                (
+                    "Content-Type".to_string(),
+                    "application/x-www-form-urlencoded".to_string(),
+                ),
+            ],
+            body: format!("client_id={}&scope=read:user", GITHUB_COPILOT_CLIENT_ID),
+        })?;
+
+        if device_code_response.status != 200 {
+            return Err(format!(
+                "Failed to get device code: HTTP {}",
+                device_code_response.status
+            ));
+        }
+
+        #[derive(Deserialize)]
+        struct DeviceCodeResponse {
+            device_code: String,
+            user_code: String,
+            verification_uri: String,
+            #[serde(default)]
+            verification_uri_complete: Option<String>,
+            expires_in: u64,
+            interval: u64,
+        }
+
+        let device_info: DeviceCodeResponse = serde_json::from_str(&device_code_response.body)
+            .map_err(|e| format!("Failed to parse device code response: {}", e))?;
+
+        // Store device flow state for polling
+        *self.device_flow_state.lock().unwrap() = Some(DeviceFlowState {
+            device_code: device_info.device_code,
+            interval: device_info.interval,
+            expires_in: device_info.expires_in,
+        });
+
+        // Step 2: Open browser to verification URL
+        // Use verification_uri_complete if available (has code pre-filled), otherwise construct URL
+        let verification_url = device_info.verification_uri_complete.unwrap_or_else(|| {
+            format!(
+                "{}?user_code={}",
+                device_info.verification_uri, &device_info.user_code
+            )
+        });
+        llm_oauth_open_browser(&verification_url)?;
+
+        // Return the user code for the host to display
+        Ok(device_info.user_code)
+    }
+
+    fn llm_provider_poll_device_flow_sign_in(&mut self, _provider_id: &str) -> Result<(), String> {
+        let state = self
+            .device_flow_state
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("No device flow in progress")?;
+
+        let poll_interval = Duration::from_secs(state.interval.max(5));
+        let max_attempts = (state.expires_in / state.interval.max(5)) as usize;
+
+        for _ in 0..max_attempts {
+            thread::sleep(poll_interval);
+
+            let token_response = llm_oauth_http_request(&LlmOauthHttpRequest {
+                url: GITHUB_ACCESS_TOKEN_URL.to_string(),
+                method: "POST".to_string(),
+                headers: vec![
+                    ("Accept".to_string(), "application/json".to_string()),
+                    (
+                        "Content-Type".to_string(),
+                        "application/x-www-form-urlencoded".to_string(),
+                    ),
+                ],
+                body: format!(
+                    "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+                    GITHUB_COPILOT_CLIENT_ID, state.device_code
+                ),
+            })?;
+
+            #[derive(Deserialize)]
+            struct TokenResponse {
+                access_token: Option<String>,
+                error: Option<String>,
+                error_description: Option<String>,
+            }
+
+            let token_json: TokenResponse = serde_json::from_str(&token_response.body)
+                .map_err(|e| format!("Failed to parse token response: {}", e))?;
+
+            if let Some(access_token) = token_json.access_token {
+                llm_store_credential("copilot-chat", &access_token)?;
+                return Ok(());
+            }
+
+            if let Some(error) = &token_json.error {
+                match error.as_str() {
+                    "authorization_pending" => {
+                        // User hasn't authorized yet, keep polling
+                        continue;
+                    }
+                    "slow_down" => {
+                        // Need to slow down polling
+                        thread::sleep(Duration::from_secs(5));
+                        continue;
+                    }
+                    "expired_token" => {
+                        return Err("Device code expired. Please try again.".to_string());
+                    }
+                    "access_denied" => {
+                        return Err("Authorization was denied.".to_string());
+                    }
+                    _ => {
+                        let description = token_json.error_description.unwrap_or_default();
+                        return Err(format!("OAuth error: {} - {}", error, description));
+                    }
+                }
+            }
+        }
+
+        Err("Authorization timed out. Please try again.".to_string())
+    }
+
     fn llm_provider_reset_credentials(&mut self, _provider_id: &str) -> Result<(), String> {
-        llm_delete_credential("copilot_chat")
+        // Clear cached API token and models
+        *self.api_token.lock().unwrap() = None;
+        *self.cached_models.lock().unwrap() = None;
+        llm_delete_credential("copilot-chat")
     }
 
     fn llm_stream_completion_start(
@@ -512,21 +643,29 @@ This extension requires an active GitHub Copilot subscription.
         model_id: &str,
         request: &LlmCompletionRequest,
     ) -> Result<String, String> {
-        let api_key = llm_get_credential("copilot_chat").ok_or_else(|| {
+        let oauth_token = llm_get_credential("copilot-chat").ok_or_else(|| {
             "No token configured. Please add your GitHub Copilot token in settings.".to_string()
         })?;
+
+        // Get or refresh API token
+        let api_token = self.get_api_token(&oauth_token)?;
 
         let openai_request = convert_request(model_id, request)?;
 
         let body = serde_json::to_vec(&openai_request)
             .map_err(|e| format!("Failed to serialize request: {}", e))?;
 
+        let completions_url = format!("{}/chat/completions", api_token.api_endpoint);
+
         let http_request = HttpRequest {
             method: HttpMethod::Post,
-            url: "https://api.githubcopilot.com/chat/completions".to_string(),
+            url: completions_url,
             headers: vec![
                 ("Content-Type".to_string(), "application/json".to_string()),
-                ("Authorization".to_string(), format!("Bearer {}", api_key)),
+                (
+                    "Authorization".to_string(),
+                    format!("Bearer {}", api_token.api_key),
+                ),
                 (
                     "Copilot-Integration-Id".to_string(),
                     "vscode-chat".to_string(),
@@ -676,6 +815,189 @@ This extension requires an active GitHub Copilot subscription.
 
     fn llm_stream_completion_close(&mut self, stream_id: &str) {
         self.streams.lock().unwrap().remove(stream_id);
+    }
+}
+
+impl CopilotChatProvider {
+    fn get_api_token(&self, oauth_token: &str) -> Result<ApiToken, String> {
+        // Check if we have a cached token
+        if let Some(token) = self.api_token.lock().unwrap().clone() {
+            return Ok(token);
+        }
+
+        // Request a new API token
+        let http_request = HttpRequest {
+            method: HttpMethod::Get,
+            url: GITHUB_COPILOT_TOKEN_URL.to_string(),
+            headers: vec![
+                (
+                    "Authorization".to_string(),
+                    format!("token {}", oauth_token),
+                ),
+                ("Accept".to_string(), "application/json".to_string()),
+            ],
+            body: None,
+            redirect_policy: RedirectPolicy::FollowAll,
+        };
+
+        let response = http_request
+            .fetch()
+            .map_err(|e| format!("Failed to request API token: {}", e))?;
+
+        #[derive(Deserialize)]
+        struct ApiTokenResponse {
+            token: String,
+            endpoints: ApiEndpoints,
+        }
+
+        #[derive(Deserialize)]
+        struct ApiEndpoints {
+            api: String,
+        }
+
+        let token_response: ApiTokenResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                format!(
+                    "Failed to parse API token response: {} - body: {}",
+                    e,
+                    String::from_utf8_lossy(&response.body)
+                )
+            })?;
+
+        let api_token = ApiToken {
+            api_key: token_response.token,
+            api_endpoint: token_response.endpoints.api,
+        };
+
+        // Cache the token
+        *self.api_token.lock().unwrap() = Some(api_token.clone());
+
+        Ok(api_token)
+    }
+
+    fn fetch_models(&self, api_token: &ApiToken) -> Result<Vec<CopilotModel>, String> {
+        let models_url = format!("{}/models", api_token.api_endpoint);
+
+        let http_request = HttpRequest {
+            method: HttpMethod::Get,
+            url: models_url,
+            headers: vec![
+                (
+                    "Authorization".to_string(),
+                    format!("Bearer {}", api_token.api_key),
+                ),
+                ("Content-Type".to_string(), "application/json".to_string()),
+                (
+                    "Copilot-Integration-Id".to_string(),
+                    "vscode-chat".to_string(),
+                ),
+                ("Editor-Version".to_string(), "Zed/1.0.0".to_string()),
+                ("x-github-api-version".to_string(), "2025-05-01".to_string()),
+            ],
+            body: None,
+            redirect_policy: RedirectPolicy::FollowAll,
+        };
+
+        let response = http_request
+            .fetch()
+            .map_err(|e| format!("Failed to fetch models: {}", e))?;
+
+        #[derive(Deserialize)]
+        struct ModelsResponse {
+            data: Vec<CopilotModel>,
+        }
+
+        let models_response: ModelsResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                format!(
+                    "Failed to parse models response: {} - body: {}",
+                    e,
+                    String::from_utf8_lossy(&response.body)
+                )
+            })?;
+
+        // Filter models like the built-in Copilot Chat does
+        let mut models: Vec<CopilotModel> = models_response
+            .data
+            .into_iter()
+            .filter(|model| {
+                model.model_picker_enabled
+                    && model.capabilities.model_type == "chat"
+                    && model
+                        .policy
+                        .as_ref()
+                        .map(|p| p.state == "enabled")
+                        .unwrap_or(true)
+            })
+            .collect();
+
+        // Sort so default model is first
+        if let Some(pos) = models.iter().position(|m| m.is_chat_default) {
+            let default_model = models.remove(pos);
+            models.insert(0, default_model);
+        }
+
+        Ok(models)
+    }
+}
+
+fn convert_models_to_llm_info(models: &[CopilotModel]) -> Vec<LlmModelInfo> {
+    models
+        .iter()
+        .map(|m| {
+            let max_tokens = if m.capabilities.limits.max_context_window_tokens > 0 {
+                m.capabilities.limits.max_context_window_tokens
+            } else {
+                128_000 // Default fallback
+            };
+            let max_output = if m.capabilities.limits.max_output_tokens > 0 {
+                Some(m.capabilities.limits.max_output_tokens)
+            } else {
+                None
+            };
+
+            LlmModelInfo {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                max_token_count: max_tokens,
+                max_output_tokens: max_output,
+                capabilities: LlmModelCapabilities {
+                    supports_images: m.capabilities.supports.vision,
+                    supports_tools: m.capabilities.supports.tool_calls,
+                    supports_tool_choice_auto: m.capabilities.supports.tool_calls,
+                    supports_tool_choice_any: m.capabilities.supports.tool_calls,
+                    supports_tool_choice_none: m.capabilities.supports.tool_calls,
+                    supports_thinking: false,
+                    tool_input_format: LlmToolInputFormat::JsonSchema,
+                },
+                is_default: m.is_chat_default,
+                is_default_fast: m.is_chat_fallback,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_flow_request_body() {
+        let body = format!("client_id={}&scope=read:user", GITHUB_COPILOT_CLIENT_ID);
+        assert!(body.contains("client_id=Iv1.b507a08c87ecfe98"));
+        assert!(body.contains("scope=read:user"));
+    }
+
+    #[test]
+    fn test_token_poll_request_body() {
+        let device_code = "test_device_code_123";
+        let body = format!(
+            "client_id={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+            GITHUB_COPILOT_CLIENT_ID, device_code
+        );
+        assert!(body.contains("client_id=Iv1.b507a08c87ecfe98"));
+        assert!(body.contains("device_code=test_device_code_123"));
+        assert!(body.contains("grant_type=urn:ietf:params:oauth:grant-type:device_code"));
     }
 }
 

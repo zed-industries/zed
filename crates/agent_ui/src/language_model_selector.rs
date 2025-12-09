@@ -46,9 +46,7 @@ pub fn language_model_selector(
 }
 
 fn all_models(cx: &App) -> GroupedModels {
-    let providers = LanguageModelRegistry::global(cx)
-        .read(cx)
-        .visible_providers();
+    let providers = LanguageModelRegistry::global(cx).read(cx).providers();
 
     let recommended = providers
         .iter()
@@ -140,9 +138,13 @@ impl LanguageModelPickerDelegate {
                 // Subscribe to registry events and send refresh signals through the channel
                 let registry = LanguageModelRegistry::global(cx);
                 cx.subscribe(&registry, move |_picker, _, event, _cx| match event {
-                    language_model::Event::ProviderStateChanged(_)
-                    | language_model::Event::AddedProvider(_)
-                    | language_model::Event::RemovedProvider(_) => {
+                    language_model::Event::ProviderStateChanged(_) => {
+                        refresh_tx.unbounded_send(()).ok();
+                    }
+                    language_model::Event::AddedProvider(_) => {
+                        refresh_tx.unbounded_send(()).ok();
+                    }
+                    language_model::Event::RemovedProvider(_) => {
                         refresh_tx.unbounded_send(()).ok();
                     }
                     _ => {}
@@ -421,7 +423,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let configured_providers = language_model_registry
             .read(cx)
-            .visible_providers()
+            .providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();

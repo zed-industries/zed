@@ -35,15 +35,16 @@ pub use latest::{
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::llm_provider::{
         CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
-        CompletionRequest as LlmCompletionRequest, ImageData as LlmImageData,
-        MessageContent as LlmMessageContent, MessageRole as LlmMessageRole,
-        ModelCapabilities as LlmModelCapabilities, ModelInfo as LlmModelInfo,
-        ProviderInfo as LlmProviderInfo, RequestMessage as LlmRequestMessage,
-        StopReason as LlmStopReason, ThinkingContent as LlmThinkingContent,
-        TokenUsage as LlmTokenUsage, ToolChoice as LlmToolChoice,
-        ToolDefinition as LlmToolDefinition, ToolInputFormat as LlmToolInputFormat,
-        ToolResult as LlmToolResult, ToolResultContent as LlmToolResultContent,
-        ToolUse as LlmToolUse, ToolUseJsonParseError as LlmToolUseJsonParseError,
+        CompletionRequest as LlmCompletionRequest, CredentialType as LlmCredentialType,
+        ImageData as LlmImageData, MessageContent as LlmMessageContent,
+        MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
+        ModelInfo as LlmModelInfo, ProviderInfo as LlmProviderInfo,
+        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
+        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
+        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
+        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
+        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
+        ToolUseJsonParseError as LlmToolUseJsonParseError,
     },
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
@@ -1226,6 +1227,53 @@ impl Extension {
                     .await
             }
             _ => Ok(false),
+        }
+    }
+
+    pub async fn call_llm_provider_authenticate(
+        &self,
+        store: &mut Store<WasmState>,
+        provider_id: &str,
+    ) -> Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_llm_provider_authenticate(store, provider_id).await,
+            _ => anyhow::bail!("`llm_provider_authenticate` not available prior to v0.8.0"),
+        }
+    }
+
+    pub async fn call_llm_provider_start_device_flow_sign_in(
+        &self,
+        store: &mut Store<WasmState>,
+        provider_id: &str,
+    ) -> Result<Result<String, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_llm_provider_start_device_flow_sign_in(store, provider_id)
+                    .await
+            }
+            _ => {
+                anyhow::bail!(
+                    "`llm_provider_start_device_flow_sign_in` not available prior to v0.8.0"
+                )
+            }
+        }
+    }
+
+    pub async fn call_llm_provider_poll_device_flow_sign_in(
+        &self,
+        store: &mut Store<WasmState>,
+        provider_id: &str,
+    ) -> Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_llm_provider_poll_device_flow_sign_in(store, provider_id)
+                    .await
+            }
+            _ => {
+                anyhow::bail!(
+                    "`llm_provider_poll_device_flow_sign_in` not available prior to v0.8.0"
+                )
+            }
         }
     }
 

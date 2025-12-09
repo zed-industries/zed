@@ -339,6 +339,17 @@ pub struct LanguageModelAuthConfig {
     /// Human-readable name for the credential shown in the UI input field (e.g., "API Key", "Access Token").
     #[serde(default)]
     pub credential_label: Option<String>,
+    /// OAuth configuration for web-based authentication flows.
+    #[serde(default)]
+    pub oauth: Option<OAuthConfig>,
+}
+
+/// OAuth configuration for web-based authentication.
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct OAuthConfig {
+    /// The text to display on the sign-in button (e.g., "Sign in with GitHub").
+    #[serde(default)]
+    pub sign_in_button_label: Option<String>,
 }
 
 impl ExtensionManifest {

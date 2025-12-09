@@ -11,3 +11,6 @@ name = "Copilot Chat"
 
 [language_model_providers.copilot-chat.auth]
 env_var = "GH_COPILOT_TOKEN"
+
+[language_model_providers.copilot-chat.auth.oauth]
+sign_in_button_label = "Sign in with GitHub"

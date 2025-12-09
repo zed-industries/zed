@@ -1112,6 +1112,20 @@ impl ExtensionImports for WasmState {
 }
 
 impl llm_provider::Host for WasmState {
+    async fn request_credential(
+        &mut self,
+        _provider_id: String,
+        _credential_type: llm_provider::CredentialType,
+        _label: String,
+        _placeholder: String,
+    ) -> wasmtime::Result<Result<bool, String>> {
+        // For now, credential requests return false (not provided)
+        // Extensions should use get_env_var to check for env vars first,
+        // then store_credential/get_credential for manual storage
+        // Full UI credential prompting will be added in a future phase
+        Ok(Ok(false))
+    }
+
     async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
 
@@ -1288,8 +1302,9 @@ impl llm_provider::Host for WasmState {
                     .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
                     .port();
 
+                let auth_url_with_port = auth_url.replace("{port}", &port.to_string());
                 cx.update(|cx| {
-                    cx.open_url(&auth_url);
+                    cx.open_url(&auth_url_with_port);
                 })?;
 
                 let accept_future = async {

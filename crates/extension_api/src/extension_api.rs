@@ -31,20 +31,22 @@ pub use wit::{
     },
     zed::extension::llm_provider::{
         CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
-        CompletionRequest as LlmCompletionRequest, ImageData as LlmImageData,
-        MessageContent as LlmMessageContent, MessageRole as LlmMessageRole,
-        ModelCapabilities as LlmModelCapabilities, ModelInfo as LlmModelInfo,
-        OauthHttpRequest as LlmOauthHttpRequest, OauthHttpResponse as LlmOauthHttpResponse,
-        OauthWebAuthConfig as LlmOauthWebAuthConfig, OauthWebAuthResult as LlmOauthWebAuthResult,
-        ProviderInfo as LlmProviderInfo, RequestMessage as LlmRequestMessage,
-        StopReason as LlmStopReason, ThinkingContent as LlmThinkingContent,
-        TokenUsage as LlmTokenUsage, ToolChoice as LlmToolChoice,
-        ToolDefinition as LlmToolDefinition, ToolInputFormat as LlmToolInputFormat,
-        ToolResult as LlmToolResult, ToolResultContent as LlmToolResultContent,
-        ToolUse as LlmToolUse, ToolUseJsonParseError as LlmToolUseJsonParseError,
+        CompletionRequest as LlmCompletionRequest, CredentialType as LlmCredentialType,
+        ImageData as LlmImageData, MessageContent as LlmMessageContent,
+        MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
+        ModelInfo as LlmModelInfo, OauthHttpRequest as LlmOauthHttpRequest,
+        OauthHttpResponse as LlmOauthHttpResponse, OauthWebAuthConfig as LlmOauthWebAuthConfig,
+        OauthWebAuthResult as LlmOauthWebAuthResult, ProviderInfo as LlmProviderInfo,
+        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
+        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
+        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
+        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
+        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
+        ToolUseJsonParseError as LlmToolUseJsonParseError,
         delete_credential as llm_delete_credential, get_credential as llm_get_credential,
         get_env_var as llm_get_env_var, oauth_open_browser as llm_oauth_open_browser,
         oauth_start_web_auth as llm_oauth_start_web_auth,
+        request_credential as llm_request_credential,
         send_oauth_http_request as llm_oauth_http_request,
         store_credential as llm_store_credential,
     },
@@ -298,6 +300,31 @@ pub trait Extension: Send + Sync {
     /// Check if the provider is authenticated.
     fn llm_provider_is_authenticated(&self, _provider_id: &str) -> bool {
         false
+    }
+
+    /// Attempt to authenticate the provider.
+    /// This is called for background credential checks - it should check for
+    /// existing credentials and return Ok if found, or an error if not.
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        Err("`llm_provider_authenticate` not implemented".to_string())
+    }
+
+    /// Start an OAuth device flow sign-in.
+    /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
+    /// Opens the browser to the verification URL and returns the user code that should
+    /// be displayed to the user.
+    fn llm_provider_start_device_flow_sign_in(
+        &mut self,
+        _provider_id: &str,
+    ) -> Result<String, String> {
+        Err("`llm_provider_start_device_flow_sign_in` not implemented".to_string())
+    }
+
+    /// Poll for device flow sign-in completion.
+    /// This is called after llm_provider_start_device_flow_sign_in returns the user code.
+    /// The extension should poll the OAuth provider until the user authorizes or the flow times out.
+    fn llm_provider_poll_device_flow_sign_in(&mut self, _provider_id: &str) -> Result<(), String> {
+        Err("`llm_provider_poll_device_flow_sign_in` not implemented".to_string())
     }
 
     /// Reset credentials for the provider.
@@ -622,6 +649,18 @@ impl wit::Guest for Component {
 
     fn llm_provider_is_authenticated(provider_id: String) -> bool {
         extension().llm_provider_is_authenticated(&provider_id)
+    }
+
+    fn llm_provider_authenticate(provider_id: String) -> Result<(), String> {
+        extension().llm_provider_authenticate(&provider_id)
+    }
+
+    fn llm_provider_start_device_flow_sign_in(provider_id: String) -> Result<String, String> {
+        extension().llm_provider_start_device_flow_sign_in(&provider_id)
+    }
+
+    fn llm_provider_poll_device_flow_sign_in(provider_id: String) -> Result<(), String> {
+        extension().llm_provider_poll_device_flow_sign_in(&provider_id)
     }
 
     fn llm_provider_reset_credentials(provider_id: String) -> Result<(), String> {

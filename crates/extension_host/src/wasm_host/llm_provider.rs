@@ -10,14 +10,14 @@ use crate::wasm_host::wit::{
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use editor::Editor;
-use extension::LanguageModelAuthConfig;
+use extension::{LanguageModelAuthConfig, OAuthConfig};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::Focusable;
 use gpui::{
-    AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
-    TextStyleRefinement, UnderlineStyle, Window, px,
+    AnyView, App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
+    MouseButton, Subscription, Task, TextStyleRefinement, UnderlineStyle, Window, px,
 };
 use language_model::tool_schema::LanguageModelToolSchemaFormat;
 use language_model::{
@@ -182,9 +182,37 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
         self.state.read(cx).is_authenticated
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        // Authentication is handled via the configuration view UI
-        Task::ready(Ok(()))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        let extension = self.extension.clone();
+        let provider_id = self.provider_info.id.clone();
+        let state = self.state.clone();
+
+        cx.spawn(async move |cx| {
+            let result = extension
+                .call(|extension, store| {
+                    async move {
+                        extension
+                            .call_llm_provider_authenticate(store, &provider_id)
+                            .await
+                    }
+                    .boxed()
+                })
+                .await;
+
+            match result {
+                Ok(Ok(Ok(()))) => {
+                    cx.update(|cx| {
+                        state.update(cx, |state, _| {
+                            state.is_authenticated = true;
+                        });
+                    })?;
+                    Ok(())
+                }
+                Ok(Ok(Err(e))) => Err(AuthenticateError::Other(anyhow!("{}", e))),
+                Ok(Err(e)) => Err(AuthenticateError::Other(e)),
+                Err(e) => Err(AuthenticateError::Other(e)),
+            }
+        })
     }
 
     fn configuration_view(
@@ -287,6 +315,9 @@ struct ExtensionProviderConfigurationView {
     api_key_editor: Entity<Editor>,
     loading_settings: bool,
     loading_credentials: bool,
+    oauth_in_progress: bool,
+    oauth_error: Option<String>,
+    device_user_code: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -324,6 +355,9 @@ impl ExtensionProviderConfigurationView {
             api_key_editor,
             loading_settings: true,
             loading_credentials: true,
+            oauth_in_progress: false,
+            oauth_error: None,
+            device_user_code: None,
             _subscriptions: vec![state_subscription],
         };
 
@@ -572,8 +606,129 @@ impl ExtensionProviderConfigurationView {
         .detach();
     }
 
+    fn start_oauth_sign_in(&mut self, cx: &mut Context<Self>) {
+        if self.oauth_in_progress {
+            return;
+        }
+
+        self.oauth_in_progress = true;
+        self.oauth_error = None;
+        self.device_user_code = None;
+        cx.notify();
+
+        let extension = self.extension.clone();
+        let provider_id = self.extension_provider_id.clone();
+        let state = self.state.clone();
+
+        cx.spawn(async move |this, cx| {
+            // Step 1: Start device flow - opens browser and returns user code
+            let start_result = extension
+                .call({
+                    let provider_id = provider_id.clone();
+                    |ext, store| {
+                        async move {
+                            ext.call_llm_provider_start_device_flow_sign_in(store, &provider_id)
+                                .await
+                        }
+                        .boxed()
+                    }
+                })
+                .await;
+
+            let user_code = match start_result {
+                Ok(Ok(Ok(code))) => code,
+                Ok(Ok(Err(e))) => {
+                    log::error!("Device flow start failed: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.oauth_in_progress = false;
+                        this.oauth_error = Some(e);
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+                Ok(Err(e)) | Err(e) => {
+                    log::error!("Device flow start error: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.oauth_in_progress = false;
+                        this.oauth_error = Some(e.to_string());
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+
+            // Update UI to show the user code before polling
+            this.update(cx, |this, cx| {
+                this.device_user_code = Some(user_code);
+                cx.notify();
+            })
+            .log_err();
+
+            // Step 2: Poll for authentication completion
+            let poll_result = extension
+                .call({
+                    let provider_id = provider_id.clone();
+                    |ext, store| {
+                        async move {
+                            ext.call_llm_provider_poll_device_flow_sign_in(store, &provider_id)
+                                .await
+                        }
+                        .boxed()
+                    }
+                })
+                .await;
+
+            let error_message = match poll_result {
+                Ok(Ok(Ok(()))) => {
+                    let _ = cx.update(|cx| {
+                        state.update(cx, |state, cx| {
+                            state.is_authenticated = true;
+                            cx.notify();
+                        });
+                    });
+                    None
+                }
+                Ok(Ok(Err(e))) => {
+                    log::error!("Device flow poll failed: {}", e);
+                    Some(e)
+                }
+                Ok(Err(e)) | Err(e) => {
+                    log::error!("Device flow poll error: {}", e);
+                    Some(e.to_string())
+                }
+            };
+
+            this.update(cx, |this, cx| {
+                this.oauth_in_progress = false;
+                this.oauth_error = error_message;
+                this.device_user_code = None;
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     fn is_authenticated(&self, cx: &Context<Self>) -> bool {
         self.state.read(cx).is_authenticated
+    }
+
+    fn has_oauth_config(&self) -> bool {
+        self.auth_config.as_ref().is_some_and(|c| c.oauth.is_some())
+    }
+
+    fn oauth_config(&self) -> Option<&OAuthConfig> {
+        self.auth_config.as_ref().and_then(|c| c.oauth.as_ref())
+    }
+
+    fn has_api_key_config(&self) -> bool {
+        // API key is available if there's a credential_label or no oauth-only config
+        self.auth_config
+            .as_ref()
+            .map(|c| c.credential_label.is_some() || c.oauth.is_none())
+            .unwrap_or(true)
     }
 }
 
@@ -583,6 +738,8 @@ impl gpui::Render for ExtensionProviderConfigurationView {
         let is_authenticated = self.is_authenticated(cx);
         let env_var_allowed = self.state.read(cx).env_var_allowed;
         let api_key_from_env = self.state.read(cx).api_key_from_env;
+        let has_oauth = self.has_oauth_config();
+        let has_api_key = self.has_api_key_config();
 
         if is_loading {
             return v_flex()
@@ -652,7 +809,7 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                                 )
                                 .child(
                                     Label::new(format!(
-                                        "{} is not set or empty. You can set it and restart Zed, or enter an API key below.",
+                                        "{} is not set or empty. You can set it and restart Zed, or use another authentication method below.",
                                         env_var_name
                                     ))
                                     .color(Color::Warning)
@@ -664,8 +821,20 @@ impl gpui::Render for ExtensionProviderConfigurationView {
             }
         }
 
-        // Render API key section
+        // If authenticated, show success state with sign out option
         if is_authenticated && !api_key_from_env {
+            let reset_label = if has_oauth && !has_api_key {
+                "Sign Out"
+            } else {
+                "Reset Credentials"
+            };
+
+            let status_label = if has_oauth && !has_api_key {
+                "Signed in"
+            } else {
+                "Authenticated"
+            };
+
             content = content.child(
                 v_flex()
                     .gap_2()
@@ -677,39 +846,176 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                                     .color(Color::Success)
                                     .size(ui::IconSize::Small),
                             )
-                            .child(Label::new("API key configured").color(Color::Success)),
+                            .child(Label::new(status_label).color(Color::Success)),
                     )
                     .child(
-                        ui::Button::new("reset-api-key", "Reset API Key")
+                        ui::Button::new("reset-credentials", reset_label)
                             .style(ui::ButtonStyle::Subtle)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.reset_api_key(window, cx);
                             })),
                     ),
             );
-        } else if !api_key_from_env {
-            let credential_label = self
-                .auth_config
-                .as_ref()
-                .and_then(|c| c.credential_label.clone())
-                .unwrap_or_else(|| "API Key".to_string());
 
-            content = content.child(
-                v_flex()
-                    .gap_2()
-                    .on_action(cx.listener(Self::save_api_key))
-                    .child(
-                        Label::new(credential_label)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(self.api_key_editor.clone())
-                    .child(
-                        Label::new("Enter your API key and press Enter to save")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            );
+            return content.into_any_element();
+        }
+
+        // Not authenticated - show available auth options
+        if !api_key_from_env {
+            // Render OAuth sign-in button if configured
+            if has_oauth {
+                let oauth_config = self.oauth_config();
+                let button_label = oauth_config
+                    .and_then(|c| c.sign_in_button_label.clone())
+                    .unwrap_or_else(|| "Sign In".to_string());
+
+                let oauth_in_progress = self.oauth_in_progress;
+
+                let oauth_error = self.oauth_error.clone();
+
+                content = content.child(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            ui::Button::new("oauth-sign-in", button_label)
+                                .style(ui::ButtonStyle::Filled)
+                                .disabled(oauth_in_progress)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.start_oauth_sign_in(cx);
+                                })),
+                        )
+                        .when(oauth_in_progress, |this| {
+                            let user_code = self.device_user_code.clone();
+                            this.child(
+                                v_flex()
+                                    .gap_1()
+                                    .when_some(user_code, |this, code| {
+                                        let copied = cx
+                                            .read_from_clipboard()
+                                            .map(|item| item.text().as_ref() == Some(&code))
+                                            .unwrap_or(false);
+                                        let code_for_click = code.clone();
+                                        this.child(
+                                            h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Label::new("Enter code:")
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .px_1()
+                                                        .border_1()
+                                                        .border_color(cx.theme().colors().border)
+                                                        .rounded_sm()
+                                                        .cursor_pointer()
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            move |_, window, cx| {
+                                                                cx.write_to_clipboard(
+                                                                    ClipboardItem::new_string(
+                                                                        code_for_click.clone(),
+                                                                    ),
+                                                                );
+                                                                window.refresh();
+                                                            },
+                                                        )
+                                                        .child(
+                                                            Label::new(code)
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Accent),
+                                                        )
+                                                        .child(
+                                                            ui::Icon::new(if copied {
+                                                                ui::IconName::Check
+                                                            } else {
+                                                                ui::IconName::Copy
+                                                            })
+                                                            .size(ui::IconSize::Small)
+                                                            .color(if copied {
+                                                                Color::Success
+                                                            } else {
+                                                                Color::Muted
+                                                            }),
+                                                        ),
+                                                ),
+                                        )
+                                    })
+                                    .child(
+                                        Label::new("Waiting for authorization in browser...")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        })
+                        .when_some(oauth_error, |this, error| {
+                            this.child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                ui::Icon::new(ui::IconName::Warning)
+                                                    .color(Color::Error)
+                                                    .size(ui::IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("Authentication failed")
+                                                    .color(Color::Error)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                    )
+                                    .child(
+                                        div().pl_6().child(
+                                            Label::new(error)
+                                                .color(Color::Error)
+                                                .size(LabelSize::Small),
+                                        ),
+                                    ),
+                            )
+                        }),
+                );
+            }
+
+            // Render API key input if configured (and we have both options, show a separator)
+            if has_api_key {
+                if has_oauth {
+                    content = content.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().h_px().flex_1().bg(cx.theme().colors().border))
+                            .child(Label::new("or").size(LabelSize::Small).color(Color::Muted))
+                            .child(div().h_px().flex_1().bg(cx.theme().colors().border)),
+                    );
+                }
+
+                let credential_label = self
+                    .auth_config
+                    .as_ref()
+                    .and_then(|c| c.credential_label.clone())
+                    .unwrap_or_else(|| "API Key".to_string());
+
+                content = content.child(
+                    v_flex()
+                        .gap_2()
+                        .on_action(cx.listener(Self::save_api_key))
+                        .child(
+                            Label::new(credential_label)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(self.api_key_editor.clone())
+                        .child(
+                            Label::new("Enter your API key and press Enter to save")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                );
+            }
         }
 
         content.into_any_element()
@@ -770,8 +1076,7 @@ impl LanguageModel for ExtensionLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        // HACK: Add "(Extension)" prefix to help distinguish extension models during debugging
-        LanguageModelName::from(format!("(Extension) {}", self.model_info.name))
+        LanguageModelName::from(self.model_info.name.clone())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {

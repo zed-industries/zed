@@ -18,7 +18,7 @@ world extension {
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
     use llm-provider.{
         provider-info, model-info, completion-request,
-        cache-configuration, completion-event, token-usage
+        credential-type, cache-configuration, completion-event, token-usage
     };
 
     /// Initializes the extension.
@@ -182,6 +182,33 @@ world extension {
 
     /// Check if the provider is authenticated.
     export llm-provider-is-authenticated: func(provider-id: string) -> bool;
+
+    /// Attempt to authenticate the provider.
+    /// This is called for background credential checks - it should check for
+    /// existing credentials and return Ok if found, or an error if not.
+    /// For interactive OAuth flows, use the device flow functions instead.
+    export llm-provider-authenticate: func(provider-id: string) -> result<_, string>;
+
+    /// Start an OAuth device flow sign-in.
+    /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
+    ///
+    /// The device flow works as follows:
+    /// 1. Extension requests a device code from the OAuth provider
+    /// 2. Extension opens the verification URL in the browser
+    /// 3. Extension returns the user code to display to the user
+    /// 4. Host displays the user code and calls llm-provider-poll-device-flow-sign-in
+    /// 5. Extension polls for the access token while user authorizes in browser
+    /// 6. Once authorized, extension stores the credential and returns success
+    ///
+    /// Returns the user code that should be displayed to the user while they
+    /// complete authorization in the browser.
+    export llm-provider-start-device-flow-sign-in: func(provider-id: string) -> result<string, string>;
+
+    /// Poll for device flow sign-in completion.
+    /// This is called after llm-provider-start-device-flow-sign-in returns the user code.
+    /// The extension should poll the OAuth provider until the user authorizes or the flow times out.
+    /// Returns Ok(()) on successful authentication, or an error message on failure.
+    export llm-provider-poll-device-flow-sign-in: func(provider-id: string) -> result<_, string>;
 
     /// Reset credentials for the provider.
     export llm-provider-reset-credentials: func(provider-id: string) -> result<_, string>;
