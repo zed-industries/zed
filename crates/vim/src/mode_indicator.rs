@@ -145,26 +145,34 @@ impl Render for ModeIndicator {
             crate::state::Mode::HelixSelect => colors.vim_helix_select_background,
         };
 
+        let is_vim_mode = matches!(
+            mode,
+            crate::state::Mode::Normal
+                | crate::state::Mode::Insert
+                | crate::state::Mode::Replace
+                | crate::state::Mode::Visual
+                | crate::state::Mode::VisualLine
+                | crate::state::Mode::VisualBlock
+        );
+
         let (label, mode): (SharedString, Option<SharedString>) = if let Some(label) = status_label
         {
             (label, None)
-        } else if friendly_mode {
+        } else if friendly_mode && is_vim_mode {
             let mode_str = match mode {
-                crate::state::Mode::Normal => "Vim".to_string(),
-                crate::state::Mode::Insert => "Insert".to_string(),
-                crate::state::Mode::Replace => "Replace".to_string(),
-                crate::state::Mode::Visual => "Visual".to_string(),
-                crate::state::Mode::VisualLine => "Visual Line".to_string(),
-                crate::state::Mode::VisualBlock => "Visual Block".to_string(),
-                crate::state::Mode::HelixNormal | crate::state::Mode::HelixSelect => {
-                    mode.to_string()
-                }
+                crate::state::Mode::Normal => "Vim",
+                crate::state::Mode::Insert => "Insert",
+                crate::state::Mode::Replace => "Replace",
+                crate::state::Mode::Visual => "Visual",
+                crate::state::Mode::VisualLine => "Visual Line",
+                crate::state::Mode::VisualBlock => "Visual Block",
+                _ => unreachable!(),
             };
 
             let mode_str = if temp_mode {
                 format!("(insert) {}", mode_str)
             } else {
-                mode_str
+                mode_str.to_string()
             };
 
             let operators_description = self.friendly_operators_description(vim.clone(), cx);

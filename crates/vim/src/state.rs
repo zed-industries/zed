@@ -1100,9 +1100,9 @@ impl Operator {
             Operator::ToggleComments => "Toggle comments",
             Operator::ReplaceWithRegister => "Replace with register",
             Operator::Exchange => "Exchange",
-            Operator::HelixMatch => "Match",
-            Operator::HelixNext { .. } => "Next",
-            Operator::HelixPrevious { .. } => "Previous",
+            Operator::HelixMatch | Operator::HelixNext { .. } | Operator::HelixPrevious { .. } => {
+                unreachable!()
+            }
         }
     }
 
