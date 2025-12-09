@@ -6705,7 +6705,11 @@ fn adjust_open_docks_size_by_px(
 
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.active_pane.focus_handle(cx)
+        if let Some(security_modal) = self.active_modal::<SecurityModal>(cx) {
+            security_modal.focus_handle(cx)
+        } else {
+            self.active_pane.focus_handle(cx)
+        }
     }
 }
 
