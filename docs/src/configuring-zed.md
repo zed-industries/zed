@@ -4310,6 +4310,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "show_onboarding_banner": true,
   "show_user_picture": true,
   "show_sign_in": true,
+  "show_app_menu": true,
   "show_menus": false
 }
 ```
@@ -4322,6 +4323,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
 - `show_sign_in`: Whether to show the sign in button in the titlebar
+- `show_app_menu`: Whether to show the app menu button in the titlebar (the dropdown with Settings, Keymap, Themes, etc.)
 - `show_menus`: Whether to show the menus in the titlebar
 
 ## Vim

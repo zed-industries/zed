@@ -438,6 +438,8 @@
     "show_user_picture": true,
     // Whether to show the sign in button in the titlebar.
     "show_sign_in": true,
+    // Whether to show the app menu in the titlebar.
+    "show_app_menu": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false
   },
