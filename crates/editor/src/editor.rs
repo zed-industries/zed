@@ -11092,6 +11092,21 @@ impl Editor {
         });
     }
 
+    pub fn toggle_read_only(&mut self, _: &ToggleReadOnly, _: &mut Window, cx: &mut Context<Self>) {
+        // todo(lw): We should not allow toggling every editor to read-write. Some we want to keep read-only, always as they might be read-only replicated etc.
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_capability(
+                    match buffer.capability() {
+                        Capability::ReadWrite => Capability::ReadOnly,
+                        Capability::ReadOnly => Capability::ReadWrite,
+                    },
+                    cx,
+                );
+            })
+        }
+    }
+
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
