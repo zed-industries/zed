@@ -40,6 +40,8 @@ pub enum InputStateEvent {
     Undo,
     /// Emitted when a redo operation is performed.
     Redo,
+    /// Emitted when the user types "enter".
+    Enter,
 }
 
 impl EventEmitter<InputStateEvent> for InputState {}
@@ -587,6 +589,7 @@ impl InputState {
         if self.multiline {
             self.replace_text_in_range(None, "\n", window, cx);
         }
+        cx.emit(InputStateEvent::Enter);
     }
 
     pub(crate) fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
