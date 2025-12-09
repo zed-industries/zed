@@ -4084,6 +4084,25 @@ impl Repository {
         })
     }
 
+    pub fn show_file(
+        &mut self,
+        commit: String,
+        path: RepoPath,
+    ) -> oneshot::Receiver<Result<Option<String>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.show_file(commit, path).await
+                }
+                RepositoryState::Remote(_) => {
+                    Err(anyhow::anyhow!(
+                        "show_file is not supported for remote repositories"
+                    ))
+                }
+            }
+        })
+    }
+
     pub fn load_commit_diff(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
         let id = self.id;
         self.send_job(None, move |git_repo, cx| async move {

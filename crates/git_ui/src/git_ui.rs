@@ -31,6 +31,7 @@ use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
+pub mod commit_diff_picker;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
@@ -265,8 +266,85 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
+        workspace.register_action(|workspace, _: &git::DiffWithCommit, window, cx| {
+            let Some(active_item) = workspace.active_item(cx) else {
+                return;
+            };
+            let Some(editor) = active_item.downcast::<Editor>() else {
+                return;
+            };
+            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
+                return;
+            };
+            let Some(file) = buffer.read(cx).file() else {
+                return;
+            };
+            let worktree_id = file.worktree_id(cx);
+            let project_path = ProjectPath {
+                worktree_id,
+                path: file.path().clone(),
+            };
+            let project = workspace.project().clone();
+            let git_store = project.read(cx).git_store();
+            let Some((repo, repo_path)) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)
+            else {
+                return;
+            };
+            open_commit_diff_picker(
+                repo_path,
+                buffer.clone(),
+                git_store.clone(),
+                repo,
+                workspace,
+                project,
+                window,
+                cx,
+            );
+        });
     })
     .detach();
+}
+
+fn open_commit_diff_picker(
+    repo_path: git::repository::RepoPath,
+    buffer: Entity<language::Buffer>,
+    git_store: Entity<project::git_store::GitStore>,
+    repo: Entity<Repository>,
+    workspace: &mut Workspace,
+    project: Entity<project::Project>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let file_history_task = git_store
+        .update(cx, |git_store, cx| {
+            git_store.file_history_paginated(&repo, repo_path.clone(), 0, Some(50), cx)
+        });
+
+    let workspace_weak = workspace.weak_handle();
+    let repo_weak = repo.downgrade();
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        let file_history = file_history_task.await?;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                commit_diff_picker::CommitDiffPicker::new(
+                    file_history,
+                    buffer,
+                    repo_weak,
+                    workspace_weak,
+                    project,
+                    window,
+                    cx,
+                )
+            });
+        })?;
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_modified_files(

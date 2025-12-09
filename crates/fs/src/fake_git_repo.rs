@@ -206,6 +206,14 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn show_file(
+        &self,
+        _commit: String,
+        _path: RepoPath,
+    ) -> BoxFuture<'_, Result<Option<String>>> {
+        async { Ok(None) }.boxed()
+    }
+
     fn reset(
         &self,
         _commit: String,

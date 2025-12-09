@@ -486,6 +486,8 @@ pub trait GitRepository: Send + Sync {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
+    fn show_file(&self, commit: String, path: RepoPath) -> BoxFuture<'_, Result<Option<String>>>;
+
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
@@ -782,6 +784,36 @@ impl GitRepository for RealGitRepository {
                     author_email,
                     author_name,
                 })
+            })
+            .boxed()
+    }
+
+    fn show_file(&self, commit: String, path: RepoPath) -> BoxFuture<'_, Result<Option<String>>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let path_str = path.as_unix_str().to_string();
+                let output = new_smol_command(git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["--no-optional-locks", "show", &format!("{}:{}", commit, path_str)])
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let is_file_not_found = stderr.contains("does not exist")
+                        || stderr.contains("bad revision")
+                        || stderr.contains("invalid object name")
+                        || stderr.contains("Not a valid object name");
+                    if is_file_not_found {
+                        Ok(None)
+                    } else {
+                        bail!("git show failed: {}", stderr)
+                    }
+                }
             })
             .boxed()
     }
@@ -3061,6 +3093,167 @@ mod tests {
                 }
             ]
         )
+    }
+
+    #[gpui::test]
+    async fn test_show_file_returns_content_for_existing_file(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let file_path = repo_dir.path().join("test.txt");
+        smol::fs::write(&file_path, "initial content").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let content = repo.show_file("HEAD".into(), repo_path("test.txt")).await.unwrap();
+        assert_eq!(content, Some("initial content".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_show_file_returns_none_for_nonexistent_file(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let file_path = repo_dir.path().join("test.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let content = repo.show_file("HEAD".into(), repo_path("nonexistent.txt")).await.unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[gpui::test]
+    async fn test_show_file_returns_none_for_invalid_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let file_path = repo_dir.path().join("test.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let content = repo.show_file("invalid_commit_sha".into(), repo_path("test.txt")).await.unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[gpui::test]
+    async fn test_show_file_returns_content_at_specific_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let file_path = repo_dir.path().join("test.txt");
+        smol::fs::write(&file_path, "version 1").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "First commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(&file_path, "version 2").await.unwrap();
+        repo.stage_paths(vec![repo_path("test.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Second commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let content_head = repo.show_file("HEAD".into(), repo_path("test.txt")).await.unwrap();
+        assert_eq!(content_head, Some("version 2".to_string()));
+
+        let content_parent = repo.show_file("HEAD~1".into(), repo_path("test.txt")).await.unwrap();
+        assert_eq!(content_parent, Some("version 1".to_string()));
     }
 
     impl RealGitRepository {
