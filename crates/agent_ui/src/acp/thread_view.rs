@@ -3509,7 +3509,7 @@ impl AcpThreadView {
                                         (method.id.0.clone(), method.name.clone())
                                     };
 
-                                    Button::new(SharedString::from(method_id.clone()), name)
+                                    Button::new(method_id.clone(), name)
                                         .label_size(LabelSize::Small)
                                         .map(|this| {
                                             if ix == 0 {

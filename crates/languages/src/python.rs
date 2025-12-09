@@ -903,7 +903,7 @@ impl ContextProvider for PythonContextProvider {
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new("Python")), location, cx)
+    language_settings(Some(LanguageName::new_static("Python")), location, cx)
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1397,7 +1397,7 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
             .to_str()?
             .to_owned()
             .into(),
-        language_name: LanguageName::new("Python"),
+        language_name: LanguageName::new_static("Python"),
         as_json: serde_json::to_value(data).ok()?,
     })
 }

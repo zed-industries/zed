@@ -1,4 +1,5 @@
 use crate::{
+    RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer, read_message_with_len, write_message},
 };
@@ -13,6 +14,54 @@ use smol::process::Child;
 
 pub mod ssh;
 pub mod wsl;
+
+/// Parses the output of `uname -sm` to determine the remote platform.
+/// Takes the last line to skip possible shell initialization output.
+fn parse_platform(output: &str) -> Result<RemotePlatform> {
+    let output = output.trim();
+    let uname = output.rsplit_once('\n').map_or(output, |(_, last)| last);
+    let Some((os, arch)) = uname.split_once(" ") else {
+        anyhow::bail!("unknown uname: {uname:?}")
+    };
+
+    let os = match os {
+        "Darwin" => "macos",
+        "Linux" => "linux",
+        _ => anyhow::bail!(
+            "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+        ),
+    };
+
+    // exclude armv5,6,7 as they are 32-bit.
+    let arch = if arch.starts_with("armv8")
+        || arch.starts_with("armv9")
+        || arch.starts_with("arm64")
+        || arch.starts_with("aarch64")
+    {
+        "aarch64"
+    } else if arch.starts_with("x86") {
+        "x86_64"
+    } else {
+        anyhow::bail!(
+            "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+        )
+    };
+
+    Ok(RemotePlatform { os, arch })
+}
+
+/// Parses the output of `echo $SHELL` to determine the remote shell.
+/// Takes the last line to skip possible shell initialization output.
+fn parse_shell(output: &str, fallback_shell: &str) -> String {
+    let output = output.trim();
+    let shell = output.rsplit_once('\n').map_or(output, |(_, last)| last);
+    if shell.is_empty() {
+        log::error!("$SHELL is not set, falling back to {fallback_shell}");
+        fallback_shell.to_owned()
+    } else {
+        shell.to_owned()
+    }
+}
 
 fn handle_rpc_messages_over_child_process_stdio(
     mut ssh_proxy_process: Child,
@@ -314,5 +363,65 @@ async fn which(
         Err(err) => Err(anyhow::anyhow!(
             "Failed to run 'which' to find the binary '{binary_name}': {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_platform() {
+        let result = parse_platform("Linux x86_64\n").unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "x86_64");
+
+        let result = parse_platform("Darwin arm64\n").unwrap();
+        assert_eq!(result.os, "macos");
+        assert_eq!(result.arch, "aarch64");
+
+        let result = parse_platform("Linux x86_64").unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "x86_64");
+
+        let result = parse_platform("some shell init output\nLinux aarch64\n").unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "aarch64");
+
+        let result = parse_platform("some shell init output\nLinux aarch64").unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "aarch64");
+
+        assert_eq!(parse_platform("Linux armv8l\n").unwrap().arch, "aarch64");
+        assert_eq!(parse_platform("Linux aarch64\n").unwrap().arch, "aarch64");
+        assert_eq!(parse_platform("Linux x86_64\n").unwrap().arch, "x86_64");
+
+        let result = parse_platform(
+            r#"Linux x86_64 - What you're referring to as Linux, is in fact, GNU/Linux...\n"#,
+        )
+        .unwrap();
+        assert_eq!(result.os, "linux");
+        assert_eq!(result.arch, "x86_64");
+
+        assert!(parse_platform("Windows x86_64\n").is_err());
+        assert!(parse_platform("Linux armv7l\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_shell() {
+        assert_eq!(parse_shell("/bin/bash\n", "sh"), "/bin/bash");
+        assert_eq!(parse_shell("/bin/zsh\n", "sh"), "/bin/zsh");
+
+        assert_eq!(parse_shell("/bin/bash", "sh"), "/bin/bash");
+        assert_eq!(
+            parse_shell("some shell init output\n/bin/bash\n", "sh"),
+            "/bin/bash"
+        );
+        assert_eq!(
+            parse_shell("some shell init output\n/bin/bash", "sh"),
+            "/bin/bash"
+        );
+        assert_eq!(parse_shell("", "sh"), "sh");
+        assert_eq!(parse_shell("\n", "sh"), "sh");
     }
 }

@@ -1682,6 +1682,98 @@ impl TextThreadEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let editor_clipboard_selections = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| match entry {
+                ClipboardEntry::String(text) => {
+                    text.metadata_json::<Vec<editor::ClipboardSelection>>()
+                }
+                _ => None,
+            });
+
+        let has_file_context = editor_clipboard_selections
+            .as_ref()
+            .is_some_and(|selections| {
+                selections
+                    .iter()
+                    .any(|sel| sel.file_path.is_some() && sel.line_range.is_some())
+            });
+
+        if has_file_context {
+            if let Some(clipboard_item) = cx.read_from_clipboard() {
+                if let Some(ClipboardEntry::String(clipboard_text)) =
+                    clipboard_item.entries().first()
+                {
+                    if let Some(selections) = editor_clipboard_selections {
+                        cx.stop_propagation();
+
+                        let text = clipboard_text.text();
+                        self.editor.update(cx, |editor, cx| {
+                            let mut current_offset = 0;
+                            let weak_editor = cx.entity().downgrade();
+
+                            for selection in selections {
+                                if let (Some(file_path), Some(line_range)) =
+                                    (selection.file_path, selection.line_range)
+                                {
+                                    let selected_text =
+                                        &text[current_offset..current_offset + selection.len];
+                                    let fence = assistant_slash_commands::codeblock_fence_for_path(
+                                        file_path.to_str(),
+                                        Some(line_range.clone()),
+                                    );
+                                    let formatted_text = format!("{fence}{selected_text}\n```");
+
+                                    let insert_point = editor
+                                        .selections
+                                        .newest::<Point>(&editor.display_snapshot(cx))
+                                        .head();
+                                    let start_row = MultiBufferRow(insert_point.row);
+
+                                    editor.insert(&formatted_text, window, cx);
+
+                                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                    let anchor_before = snapshot.anchor_after(insert_point);
+                                    let anchor_after = editor
+                                        .selections
+                                        .newest_anchor()
+                                        .head()
+                                        .bias_left(&snapshot);
+
+                                    editor.insert("\n", window, cx);
+
+                                    let crease_text = acp_thread::selection_name(
+                                        Some(file_path.as_ref()),
+                                        &line_range,
+                                    );
+
+                                    let fold_placeholder = quote_selection_fold_placeholder(
+                                        crease_text,
+                                        weak_editor.clone(),
+                                    );
+                                    let crease = Crease::inline(
+                                        anchor_before..anchor_after,
+                                        fold_placeholder,
+                                        render_quote_selection_output_toggle,
+                                        |_, _, _, _| Empty.into_any(),
+                                    );
+                                    editor.insert_creases(vec![crease], cx);
+                                    editor.fold_at(start_row, window, cx);
+
+                                    current_offset += selection.len;
+                                    if !selection.is_entire_line && current_offset < text.len() {
+                                        current_offset += 1;
+                                    }
+                                }
+                            }
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+
         cx.stop_propagation();
 
         let mut images = if let Some(item) = cx.read_from_clipboard() {

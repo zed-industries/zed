@@ -327,6 +327,23 @@ pub struct AddSelectionBelow {
     pub skip_soft_wrap: bool,
 }
 
+/// Inserts a snippet at the cursor.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct InsertSnippet {
+    /// Language name if using a named snippet, or `None` for a global snippet
+    ///
+    /// This is typically lowercase and matches the filename containing the snippet, without the `.json` extension.
+    pub language: Option<String>,
+    /// Name if using a named snippet
+    pub name: Option<String>,
+
+    /// Snippet body, if not using a named snippet
+    // todo(andrew): use `ListOrDirect` or similar for multiline snippet body
+    pub snippet: Option<String>,
+}
+
 actions!(
     debugger,
     [
@@ -453,8 +470,6 @@ actions!(
         CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
-        /// Finds all references to the symbol at cursor.
-        FindAllReferences,
         /// Finds the next match in the search.
         FindNextMatch,
         /// Finds the previous match in the search.
@@ -827,3 +842,20 @@ actions!(
         WrapSelectionsInTag
     ]
 );
+
+/// Finds all references to the symbol at cursor.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct FindAllReferences {
+    #[serde(default = "default_true")]
+    pub always_open_multibuffer: bool,
+}
+
+impl Default for FindAllReferences {
+    fn default() -> Self {
+        Self {
+            always_open_multibuffer: true,
+        }
+    }
+}

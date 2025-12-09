@@ -620,9 +620,21 @@ impl LocalBufferStore {
         let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
         cx.spawn(async move |this, cx| {
             let path = path.clone();
-            let buffer = match load_file.await.with_context(|| {
-                format!("Could not open path: {}", path.display(PathStyle::local()))
-            }) {
+            let single_file_path = cx.update(|cx| {
+                if worktree.read(cx).is_single_file() {
+                    Some(worktree.read(cx).abs_path())
+                } else {
+                    None
+                }
+            })?;
+            let path_string = single_file_path
+                .as_ref()
+                .map(|path| path.to_string_lossy())
+                .unwrap_or_else(|| path.display(PathStyle::local()));
+            let buffer = match load_file
+                .await
+                .with_context(|| format!("Opening path \"{path_string}\""))
+            {
                 Ok(loaded) => {
                     let reservation = cx.reserve_entity::<Buffer>()?;
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());

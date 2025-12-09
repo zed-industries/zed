@@ -36,7 +36,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
     Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
-    PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
+    PopoverMenu, Switch, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -838,7 +838,7 @@ impl AgentConfiguration {
                             .min_w_0()
                             .child(
                                 h_flex()
-                                    .id(SharedString::from(format!("tooltip-{}", item_id)))
+                                    .id(format!("tooltip-{}", item_id))
                                     .h_full()
                                     .w_3()
                                     .mr_2()
@@ -879,7 +879,6 @@ impl AgentConfiguration {
                             .child(context_server_configuration_menu)
                             .child(
                             Switch::new("context-server-switch", is_running.into())
-                                .color(SwitchColor::Accent)
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();
