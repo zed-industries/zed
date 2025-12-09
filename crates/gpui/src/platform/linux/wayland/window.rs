@@ -1216,7 +1216,7 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.draw(scene);
     }
 
-    fn register_shader(&self, info: CustomShaderInfo) -> anyhow::Result<CustomShaderId> {
+    fn register_shader(&self, info: CustomShaderInfo) -> Result<CustomShaderId, (String, bool)> {
         let mut state = self.borrow_mut();
         state.renderer.register_custom_shader(info)
     }

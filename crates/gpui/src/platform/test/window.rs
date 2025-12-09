@@ -269,7 +269,10 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, _scene: &crate::Scene) {}
 
-    fn register_shader(&self, _info: CustomShaderInfo) -> anyhow::Result<crate::CustomShaderId> {
+    fn register_shader(
+        &self,
+        _info: CustomShaderInfo,
+    ) -> Result<crate::CustomShaderId, (String, bool)> {
         unimplemented!()
     }
 

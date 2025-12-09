@@ -504,7 +504,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
-    fn register_shader(&self, info: CustomShaderInfo) -> anyhow::Result<CustomShaderId>;
+    fn register_shader(&self, info: CustomShaderInfo) -> Result<CustomShaderId, (String, bool)>;
 
     // macOS specific methods
     fn get_title(&self) -> String {

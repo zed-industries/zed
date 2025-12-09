@@ -1477,7 +1477,7 @@ impl PlatformWindow for X11Window {
         inner.renderer.draw(scene);
     }
 
-    fn register_shader(&self, info: CustomShaderInfo) -> anyhow::Result<CustomShaderId> {
+    fn register_shader(&self, info: CustomShaderInfo) -> Result<CustomShaderId, (String, bool)> {
         let mut inner = self.0.state.borrow_mut();
         inner.renderer.register_custom_shader(info)
     }

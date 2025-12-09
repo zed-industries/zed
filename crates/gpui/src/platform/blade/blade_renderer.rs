@@ -143,7 +143,7 @@ struct BladePipelines {
     surfaces: gpu::RenderPipeline,
 
     custom: Vec<(gpu::RenderPipeline, usize, usize)>,
-    custom_ids: HashMap<CustomShaderInfo, CustomShaderId>,
+    custom_ids: HashMap<CustomShaderInfo, Result<CustomShaderId, String>>,
 }
 
 impl BladePipelines {
@@ -323,16 +323,23 @@ impl BladePipelines {
         gpu: &gpu::Context,
         surface_info: gpu::SurfaceInfo,
         info: CustomShaderInfo,
-    ) -> anyhow::Result<CustomShaderId> {
-        if let Some(id) = self.custom_ids.get(&info).cloned() {
-            return Ok(id);
+    ) -> Result<CustomShaderId, (String, bool)> {
+        if let Some(id) = self.custom_ids.get(&info) {
+            return id.clone().map_err(|err| (err, false));
         }
 
         let id = CustomShaderId(self.custom.len() as u32);
         let source = info.to_string();
-        let shader = gpu
+        let shader = match gpu
             .try_create_shader(gpu::ShaderDesc { source: &source })
-            .map_err(|err| anyhow::anyhow!(err))?;
+            .map_err(|err| err.to_string())
+        {
+            Ok(shader) => shader,
+            Err(err) => {
+                self.custom_ids.insert(info, Err(err.clone()));
+                return Err((err, true));
+            }
+        };
         shader.check_struct_size::<GlobalParams>();
 
         if info.data_definition.is_some() {
@@ -374,7 +381,8 @@ impl BladePipelines {
             info.data_size,
             info.data_align,
         ));
-        self.custom_ids.insert(info, id);
+
+        self.custom_ids.insert(info, Ok(id));
         Ok(id)
     }
 
@@ -1038,7 +1046,7 @@ impl BladeRenderer {
     pub fn register_custom_shader(
         &mut self,
         info: CustomShaderInfo,
-    ) -> anyhow::Result<CustomShaderId> {
+    ) -> Result<CustomShaderId, (String, bool)> {
         self.pipelines
             .register_custom_shader(&self.gpu, self.surface.info(), info)
     }

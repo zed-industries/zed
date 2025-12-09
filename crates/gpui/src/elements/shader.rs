@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     App, Bounds, CursorStyle, Element, ElementId, GlobalElementId, Hitbox, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, StyleRefinement, Window,
+    fill, point, rgb,
 };
 
 /// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
@@ -166,15 +167,38 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
             hitbox.as_ref(),
             window,
             cx,
-            |_style, window, _cx| {
-                window
-                    .paint_shader(
-                        bounds,
-                        self.shader.main_body,
-                        self.shader.extra_items.clone(),
-                        &self.instance_data,
-                    )
-                    .unwrap();
+            |_style, window, _cx| match window.paint_shader(
+                bounds,
+                self.shader.main_body,
+                self.shader.extra_items.clone(),
+                &self.instance_data,
+            ) {
+                Ok(_) => {}
+                Err((msg, first_err)) => {
+                    for x in 0..5 {
+                        for y in 0..5 {
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: bounds.origin
+                                        + point(
+                                            bounds.size.width / 5.0 * x,
+                                            bounds.size.height / 5.0 * y,
+                                        ),
+                                    size: bounds.size / 5.0,
+                                },
+                                if (x + y) & 1 == 0 {
+                                    rgb(0xff00ff)
+                                } else {
+                                    rgb(0x000000)
+                                },
+                            ));
+                        }
+                    }
+
+                    if first_err {
+                        eprintln!("Shader compile error: {msg}");
+                    }
+                }
             },
         );
     }

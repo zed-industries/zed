@@ -3277,7 +3277,7 @@ impl Window {
         main_body: &'static str,
         extra_items: SmallVec<[&'static str; 4]>,
         instance_data: &T,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), (String, bool)> {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
