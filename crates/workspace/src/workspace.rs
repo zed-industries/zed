@@ -675,6 +675,7 @@ impl ProjectItemRegistry {
                             Ok((project_entry_id, build_workspace_item))
                         }
                         Err(e) => {
+                            log::warn!("Failed to open a project item: {e:#}");
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
