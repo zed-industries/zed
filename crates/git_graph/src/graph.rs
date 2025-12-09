@@ -1,10 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use git::{
     Oid,
     libgit::{Repository, Sort},
 };
+use gpui::{AsyncApp, Entity};
+use project::Project;
+use util::command::new_smol_command;
+
+/// %H - Full commit hash
+/// %aN - Author name
+/// %aE - Author email
+/// %at - Author timestamp
+/// %ct - Commit timestamp
+/// %P - Parent hashes
+/// %D - Ref names
+const COMMIT_FORMAT: &str = "--format=%H%n%aN%n%aE%n%at%n%ct%n%P%n%D%n";
 
 /// Commit data needed for the graph
 pub struct GraphCommit {
@@ -428,16 +440,24 @@ fn insert_commit_near(
     }
 }
 
-pub fn load_commits(repo: &Repository, limit: Option<usize>) -> Result<Vec<GraphCommit>> {
-    let mut revwalk = repo.revwalk()?;
+pub async fn load_commits(project: Entity<Project>, cx: &mut AsyncApp) -> Result<Vec<GraphCommit>> {
+    // todo!: Is this the best worktree to use?
+    let first_visible_worktree = project
+        .read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        })?
+        .context("Can't show git graph in non projects")?;
 
-    // Configure the walk order - topological ensures parents come after children
-    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
-
-    // Start from all references (branches, tags, etc.)
-    revwalk.push_glob("refs/heads/*")?; // All local branches
-    revwalk.push_glob("refs/remotes/*")?; // All remote branches
-    revwalk.push_glob("refs/tags/*")?; // All tags
+    let git_log_output = new_smol_command("git")
+        .current_dir(first_visible_worktree)
+        .arg("log")
+        .arg(COMMIT_FORMAT)
+        .arg("--date-order")
+        .output()
+        .await?;
 
     let mut commits = Vec::new();
 

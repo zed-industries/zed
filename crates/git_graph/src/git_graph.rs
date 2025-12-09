@@ -1,4 +1,5 @@
 mod commit_data;
+mod graph;
 mod graph_layout;
 mod graph_rendering;
 
