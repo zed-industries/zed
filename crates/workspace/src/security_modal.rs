@@ -22,7 +22,7 @@ use ui::{
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    restricted_paths: HashMap<WorktreeId, (Arc<Path>, Option<RemoteHostLocation>)>,
+    restricted_paths: HashMap<Option<WorktreeId>, (Arc<Path>, Option<RemoteHostLocation>)>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
@@ -82,22 +82,44 @@ impl Render for SecurityModal {
                             .child(Headline::new(header_label).size(HeadlineSize::Small)),
                     )
                     .children(self.restricted_paths.iter().map(
-                        |(_, (abs_path, remote_host_data))| {
+                        |(worktree, (abs_path, remote_host_data))| {
+                            let is_global = worktree.is_none();
                             let label = match remote_host_data {
                                 Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => format!(
-                                        "{} ({}@{})",
-                                        self.shorten_path(abs_path).display(),
-                                        user_name,
-                                        remote_host.host_name
-                                    ),
-                                    None => format!(
-                                        "{} ({})",
-                                        self.shorten_path(abs_path).display(),
-                                        remote_host.host_name
-                                    ),
+                                    Some(user_name) => {
+                                        if is_global {
+                                            format!(
+                                                "Global actions ({}@{})",
+                                                user_name, remote_host.host_name
+                                            )
+                                        } else {
+                                            format!(
+                                                "{} ({}@{})",
+                                                self.shorten_path(abs_path).display(),
+                                                user_name,
+                                                remote_host.host_name
+                                            )
+                                        }
+                                    }
+                                    None => {
+                                        if is_global {
+                                            format!("Global actions ({})", remote_host.host_name)
+                                        } else {
+                                            format!(
+                                                "{} ({})",
+                                                self.shorten_path(abs_path).display(),
+                                                remote_host.host_name
+                                            )
+                                        }
+                                    }
                                 },
-                                None => self.shorten_path(abs_path).display().to_string(),
+                                None => {
+                                    if is_global {
+                                        "Global actions".to_string()
+                                    } else {
+                                        self.shorten_path(abs_path).display().to_string()
+                                    }
+                                }
                             };
                             h_flex()
                                 .pl(IconSize::default().rems() + rems(0.5))
@@ -210,7 +232,10 @@ impl SecurityModal {
                 let mut paths_to_trust = self
                     .restricted_paths
                     .iter()
-                    .map(|(worktree_id, _)| PathTrust::Worktree(*worktree_id))
+                    .map(|(worktree_id, _)| match worktree_id {
+                        Some(worktree_id) => PathTrust::Worktree(*worktree_id),
+                        None => PathTrust::Global(self.remote_host.clone()),
+                    })
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
                     paths_to_trust.extend(self.restricted_paths.iter().filter_map(
@@ -238,10 +263,13 @@ impl SecurityModal {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
                 let new_restricted_worktrees = trusted_worktrees
                     .read(cx)
-                    .restricted_worktree_abs_paths(worktree_store.read(cx), cx)
+                    .restricted_paths(worktree_store.read(cx), self.remote_host.clone(), cx)
                     .into_iter()
-                    .map(|(worktree_id, abs_path)| {
-                        (worktree_id, (abs_path, self.remote_host.clone()))
+                    .map(|restricted_path| match restricted_path {
+                        Some((worktree_id, abs_path)) => {
+                            (Some(worktree_id), (abs_path, self.remote_host.clone()))
+                        }
+                        None => (None, (Arc::from(Path::new("")), self.remote_host.clone())),
                     })
                     .collect();
                 if self.restricted_paths != new_restricted_worktrees {

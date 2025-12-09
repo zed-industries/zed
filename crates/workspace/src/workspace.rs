@@ -6447,15 +6447,7 @@ impl Workspace {
             }
         } else {
             let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .map(|trusted_worktrees| {
-                    !trusted_worktrees
-                        .read(cx)
-                        .restricted_worktree_abs_paths(
-                            self.project().read(cx).worktree_store().read(cx),
-                            cx,
-                        )
-                        .is_empty()
-                })
+                .map(|trusted_worktrees| !trusted_worktrees.read(cx).has_restricted_worktrees())
                 .unwrap_or(false);
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
