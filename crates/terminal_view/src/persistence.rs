@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::future::join_all;
+use futures::{StreamExt as _, stream::FuturesOrdered};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -308,13 +308,12 @@ fn deserialize_terminal_views(
             })
             .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
         })
-        .collect::<Vec<_>>();
+        .collect::<FuturesOrdered<_>>();
     async move {
-        join_all(deserialized_items)
-            .await
-            .into_iter()
-            .filter_map(|item| item.log_err())
+        deserialized_items
+            .filter_map(|item| async { item.log_err() })
             .collect()
+            .await
     }
 }
 
