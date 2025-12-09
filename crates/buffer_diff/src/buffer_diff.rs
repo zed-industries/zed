@@ -295,6 +295,7 @@ impl BufferDiffSnapshot {
         }
         let left = &self.inner.base_text;
         let right = &other.inner.base_text;
+        // FIXME this is wrong
         let (old_id, old_empty) = (left.remote_id(), left.is_empty());
         let (new_id, new_empty) = (right.remote_id(), right.is_empty());
         new_id == old_id || (new_empty && old_empty)
@@ -1295,6 +1296,7 @@ impl BufferDiff {
             })
         }
         state.hunks = new_state.hunks;
+        dbg!(self.buffer_id, state.hunks.iter().collect::<Vec<_>>());
         if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
@@ -1317,6 +1319,7 @@ impl BufferDiff {
             state.pending_hunks = SumTree::new(buffer);
         }
 
+        dbg!("EMIT");
         cx.emit(BufferDiffEvent::DiffChanged {
             changed_range: changed_range.clone(),
             base_text_changed_range,
@@ -1392,6 +1395,10 @@ impl BufferDiff {
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
         let snapshot = cx.background_executor().block(fut);
         self.set_snapshot(snapshot, &buffer, false, cx);
+    }
+
+    pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
+        self.inner.base_text.clone()
     }
 }
 

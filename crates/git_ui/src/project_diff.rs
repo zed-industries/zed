@@ -516,8 +516,8 @@ impl ProjectDiff {
                 .map(|range| range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-        // if self.branch_diff.read(cx).diff_base().is_merge_base() {
         // FIXME should have an add diff api for the splittable editor directly
+        // if self.branch_diff.read(cx).diff_base().is_merge_base() {
         self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.add_diff(diff.clone(), cx);
         });

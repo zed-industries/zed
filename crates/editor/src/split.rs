@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use buffer_diff::BufferDiff;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
@@ -195,12 +196,7 @@ impl SplittableEditor {
                 primary_multibuffer.set_show_deleted_hunks(false, cx);
                 let paths = primary_multibuffer.paths().collect::<Vec<_>>();
                 for path in paths {
-                    secondary.sync_path_excerpts(
-                        path,
-                        primary_multibuffer,
-                        project.read(cx).languages().clone(),
-                        cx,
-                    );
+                    secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
                 }
             })
         });
@@ -243,14 +239,13 @@ impl SplittableEditor {
         }
     }
 
-    // FIXME need add_diff management in here too
-
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
         ranges: impl IntoIterator<Item = Range<Point>>,
         context_line_count: u32,
+        diff: Entity<BufferDiff>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         self.primary_editor.update(cx, |editor, cx| {
@@ -273,7 +268,7 @@ impl SplittableEditor {
                         })
                         .ok()
                 {
-                    secondary.sync_path_excerpts(path, primary_multibuffer, languages, cx);
+                    secondary.sync_path_excerpts(path, primary_multibuffer, diff, cx);
                 }
                 (anchors, added_a_new_excerpt)
             })
@@ -322,7 +317,7 @@ impl SecondaryEditor {
         &mut self,
         path_key: PathKey,
         primary_multibuffer: &mut MultiBuffer,
-        languages: Arc<LanguageRegistry>,
+        diff: Entity<BufferDiff>,
         cx: &mut App,
     ) {
         let excerpt_id = primary_multibuffer
@@ -333,37 +328,8 @@ impl SecondaryEditor {
         let main_buffer = primary_multibuffer_snapshot
             .buffer_for_excerpt(excerpt_id)
             .unwrap();
-        let diff = primary_multibuffer
-            .diff_for(main_buffer.remote_id())
-            .unwrap();
+        let base_text_buffer = diff.read(cx).base_text_buffer();
         let diff = diff.read(cx).snapshot(cx);
-        let base_text_buffer = self
-            .editor
-            .update(cx, |editor, cx| {
-                editor.buffer().update(cx, |secondary_multibuffer, cx| {
-                    let excerpt_id = secondary_multibuffer.excerpts_for_path(&path_key).next()?;
-                    let secondary_buffer_snapshot = secondary_multibuffer.snapshot(cx);
-                    let buffer = secondary_buffer_snapshot
-                        .buffer_for_excerpt(excerpt_id)
-                        .unwrap();
-                    Some(secondary_multibuffer.buffer(buffer.remote_id()).unwrap())
-                })
-            })
-            .unwrap_or_else(|| {
-                cx.new(|cx| {
-                    // FIXME we might not have a language at this point for the base text;
-                    // need to handle the case where the language comes in afterward
-                    let base_text = diff.base_text();
-                    let mut buffer = Buffer::local_normalized(
-                        base_text.as_rope().clone(),
-                        base_text.line_ending(),
-                        cx,
-                    );
-                    buffer.set_language(base_text.language().cloned(), cx);
-                    buffer.set_language_registry(languages);
-                    buffer
-                })
-            });
         let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
         let new = primary_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), cx)
@@ -385,9 +351,6 @@ impl SecondaryEditor {
             })
             .collect();
 
-        let diff = primary_multibuffer
-            .diff_for(main_buffer.remote_id())
-            .unwrap();
         let main_buffer = primary_multibuffer.buffer(main_buffer.remote_id()).unwrap();
 
         self.editor.update(cx, |editor, cx| {
