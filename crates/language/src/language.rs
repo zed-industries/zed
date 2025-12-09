@@ -170,7 +170,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                         newline: false,
                     },
                 ],
-                disabled_scopes_by_bracket_ix: vec![vec![]; 5],
+                disabled_scopes_by_bracket_ix: Default::default(),
             },
             ..Default::default()
         },
