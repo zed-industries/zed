@@ -1234,7 +1234,7 @@ impl Workspace {
                         }
                     }
                     TrustedWorktreesEvent::Restricted(_) => {
-                        workspace.show_worktree_security_modal(false, window, cx)
+                        workspace.show_worktree_trust_security_modal(false, window, cx)
                     }
                 },
             )
@@ -1512,7 +1512,17 @@ impl Workspace {
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.update_window_title(window, cx);
             workspace.show_initial_notifications(cx);
-            workspace.show_worktree_security_modal(false, window, cx);
+            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                let can_trust_global = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust_global(
+                        workspace.project().read(cx).remote_connection_options(cx),
+                        cx,
+                    )
+                });
+                if !can_trust_global {
+                    workspace.show_worktree_trust_security_modal(false, window, cx);
+                }
+            };
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -5968,7 +5978,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleWorktreeSecurity, window, cx| {
-                    workspace.show_worktree_security_modal(true, window, cx);
+                    workspace.show_worktree_trust_security_modal(true, window, cx);
                 },
             ))
             .on_action(
@@ -6428,7 +6438,7 @@ impl Workspace {
         });
     }
 
-    pub fn show_worktree_security_modal(
+    pub fn show_worktree_trust_security_modal(
         &mut self,
         toggle: bool,
         window: &mut Window,

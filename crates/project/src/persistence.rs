@@ -1,6 +1,6 @@
 use anyhow::Context;
 use collections::{HashMap, HashSet};
-use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString};
 use itertools::Itertools as _;
 use std::path::PathBuf;
 
@@ -111,47 +111,42 @@ VALUES {placeholders};"#
         &self,
         worktree_store: Entity<WorktreeStore>,
         host: Option<RemoteHostLocation>,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<HashSet<PathTrust>>> {
-        let trusted_worktrees = cx.background_spawn(PROJECT_DB.trusted_worktrees());
-        cx.spawn(async move |cx| {
-            let trusted_worktrees = trusted_worktrees.await?;
-            worktree_store.read_with(cx, |worktree_store, cx| {
-                Ok(trusted_worktrees
-                    .into_iter()
-                    .map(|(abs_path, user_name, host_name)| {
-                        let db_host = match (user_name, host_name) {
-                            (_, None) => None,
-                            (None, Some(host_name)) => Some(RemoteHostLocation {
-                                user_name: None,
-                                host_name: SharedString::new(host_name),
-                            }),
-                            (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
-                                user_name: Some(SharedString::new(user_name)),
-                                host_name: SharedString::new(host_name),
-                            }),
-                        };
+        cx: &App,
+    ) -> anyhow::Result<HashSet<PathTrust>> {
+        let trusted_worktrees = PROJECT_DB.trusted_worktrees()?;
+        Ok(trusted_worktrees
+            .into_iter()
+            .map(|(abs_path, user_name, host_name)| {
+                let db_host = match (user_name, host_name) {
+                    (_, None) => None,
+                    (None, Some(host_name)) => Some(RemoteHostLocation {
+                        user_name: None,
+                        host_name: SharedString::new(host_name),
+                    }),
+                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
+                        user_name: Some(SharedString::new(user_name)),
+                        host_name: SharedString::new(host_name),
+                    }),
+                };
 
-                        match abs_path {
-                            Some(abs_path) => {
-                                if db_host != host {
-                                    PathTrust::AbsPath(abs_path, db_host)
-                                } else {
-                                    find_worktree_in_store(worktree_store, &abs_path, cx)
-                                        .map(PathTrust::Worktree)
-                                        .unwrap_or_else(|| PathTrust::AbsPath(abs_path, db_host))
-                                }
-                            }
-                            None => PathTrust::Global(db_host),
+                match abs_path {
+                    Some(abs_path) => {
+                        if db_host != host {
+                            PathTrust::AbsPath(abs_path, db_host)
+                        } else {
+                            find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
+                                .map(PathTrust::Worktree)
+                                .unwrap_or_else(|| PathTrust::AbsPath(abs_path, db_host))
                         }
-                    })
-                    .collect())
-            })?
-        })
+                    }
+                    None => PathTrust::Global(db_host),
+                }
+            })
+            .collect())
     }
 
     query! {
-        async fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
+        fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
             SELECT absolute_path, user_name, host_name
             FROM trusted_worktrees
         }

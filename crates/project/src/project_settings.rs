@@ -630,8 +630,8 @@ impl SettingsObserver {
             .detach();
 
         let _trusted_worktrees_watcher =
-            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
-                let watcher = cx.subscribe(
+            TrustedWorktrees::try_get_global(cx).map(|trusted_worktrees| {
+                cx.subscribe(
                     &trusted_worktrees,
                     move |settings_observer, _, e, cx| match e {
                         TrustedWorktreesEvent::Trusted(trusted_paths) => {
@@ -674,8 +674,7 @@ impl SettingsObserver {
                         }
                         TrustedWorktreesEvent::Restricted(_) => {}
                     },
-                );
-                Some(watcher)
+                )
             });
 
         Self {
