@@ -409,7 +409,20 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
         });
+
+        // for _ in 0..random() {
+        //     editor.update(cx, |editor, cx| {
+        //         randomly_mutate(primary_multibuffer);
+        //         editor.primary_editor().update(cx, |editor, cx| {
+        //             editor.edit(vec![(random()..random(), "...")], cx);
+        //         })
+        //     });
+        // }
+
+        // editor.read(cx).primary_editor().read(cx).display_map.read(cx)
     }
+
+    // MultiB
 
     // FIXME restore these tests in some form
     // #[gpui::test]

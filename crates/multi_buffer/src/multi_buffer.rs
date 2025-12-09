@@ -3601,6 +3601,7 @@ impl MultiBuffer {
         let max_excerpts = env::var("MAX_EXCERPTS")
             .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
             .unwrap_or(5);
+        let use_path_excerpts = !self.excerpts_by_path.is_empty();
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
