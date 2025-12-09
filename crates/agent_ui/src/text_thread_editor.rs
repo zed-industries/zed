@@ -2204,13 +2204,11 @@ impl TextThreadEditor {
 
         let provider_icon_element = if let Some(icon_path) = provider_icon_path {
             Icon::from_external_svg(icon_path)
-                .color(color)
-                .size(IconSize::XSmall)
         } else {
             Icon::new(provider_icon_name)
-                .color(color)
-                .size(IconSize::XSmall)
-        };
+        }
+        .color(color)
+        .size(IconSize::XSmall);
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
