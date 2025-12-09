@@ -40,6 +40,11 @@ impl RenderOnce for EditPredictionSetupPage {
                 cx,
             )
             .into_any_element(),
+            // render_api_key_provider(
+            //     "Codestral",
+            //     "todo!",
+            //     "
+            // )
         ];
 
         v_flex()
@@ -121,3 +126,57 @@ fn render_api_key_provider(
         )
         .child(configuration_block)
 }
+
+// todo! github copilot
+
+// todo! codestral
+// fn render_codestral_api_key_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
+//     let key_state = &self.state.read(cx).codestral_api_key_state;
+//     let should_show_editor = !key_state.has_key();
+//     let env_var_set = key_state.is_from_env_var();
+//     let configured_card_label = if env_var_set {
+//         format!("API key set in {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable")
+//     } else {
+//         "Codestral API key configured".to_string()
+//     };
+
+//     if should_show_editor {
+//         v_flex()
+//                 .id("codestral")
+//                 .size_full()
+//                 .mt_2()
+//                 .on_action(cx.listener(Self::save_codestral_api_key))
+//                 .child(Label::new(
+//                     "To use Codestral as an edit prediction provider, \
+//                     you need to add a Codestral-specific API key. Follow these steps:",
+//                 ))
+//                 .child(
+//                     List::new()
+//                         .child(InstructionListItem::new(
+//                             "Create one by visiting",
+//                             Some("the Codestral section of Mistral's console"),
+//                             Some("https://console.mistral.ai/codestral"),
+//                         ))
+//                         .child(InstructionListItem::text_only("Paste your API key below and hit enter")),
+//                 )
+//                 .child(self.codestral_api_key_editor.clone())
+//                 .child(
+//                     Label::new(
+//                         format!("You can also assign the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+//                     )
+//                     .size(LabelSize::Small).color(Color::Muted),
+//                 ).into_any()
+//     } else {
+//         ConfiguredApiCard::new(configured_card_label)
+//             .disabled(env_var_set)
+//             .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
+//             .when(env_var_set, |this| {
+//                 this.tooltip_label(format!(
+//                     "To reset your API key, \
+//                             unset the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable."
+//                 ))
+//             })
+//             .on_click(cx.listener(|this, _, window, cx| this.reset_codestral_api_key(window, cx)))
+//             .into_any_element()
+//     }
+// }
