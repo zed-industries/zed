@@ -130,6 +130,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
