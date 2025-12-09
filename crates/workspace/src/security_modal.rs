@@ -11,24 +11,32 @@ use project::{
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
+use smallvec::SmallVec;
 use theme::ActiveTheme;
 use ui::{
     AlertModal, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color, Context,
-    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding, Label,
-    LabelCommon as _, ListBulletItem, ParentElement as _, Render, Styled, ToggleState, Window,
-    h_flex, rems, v_flex,
+    FluentBuilder, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding,
+    Label, LabelCommon as _, ListBulletItem, ParentElement as _, Render, Styled, ToggleState,
+    Window, h_flex, rems, v_flex,
 };
 
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    restricted_paths: HashMap<Option<WorktreeId>, (Arc<Path>, Option<RemoteHostLocation>)>,
+    restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RestrictedPath {
+    abs_path: Option<Arc<Path>>,
+    is_file: bool,
+    host: Option<RemoteHostLocation>,
 }
 
 impl Focusable for SecurityModal {
@@ -81,51 +89,49 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Headline::new(header_label).size(HeadlineSize::Small)),
                     )
-                    .children(self.restricted_paths.iter().map(
-                        |(worktree, (abs_path, remote_host_data))| {
-                            let is_global = worktree.is_none();
-                            let label = match remote_host_data {
+                    .children(self.restricted_paths.values().map(|restricted_path| {
+                        let abs_path = restricted_path.abs_path.as_ref().and_then(|abs_path| {
+                            if restricted_path.is_file {
+                                abs_path.parent()
+                            } else {
+                                Some(abs_path.as_ref())
+                            }
+                        });
+
+                        let label = match abs_path {
+                            Some(abs_path) => match &restricted_path.host {
                                 Some(remote_host) => match &remote_host.user_name {
-                                    Some(user_name) => {
-                                        if is_global {
-                                            format!(
-                                                "Global actions ({}@{})",
-                                                user_name, remote_host.host_name
-                                            )
-                                        } else {
-                                            format!(
-                                                "{} ({}@{})",
-                                                self.shorten_path(abs_path).display(),
-                                                user_name,
-                                                remote_host.host_name
-                                            )
-                                        }
-                                    }
+                                    Some(user_name) => format!(
+                                        "{} ({}@{})",
+                                        self.shorten_path(abs_path).display(),
+                                        user_name,
+                                        remote_host.host_name
+                                    ),
+                                    None => format!(
+                                        "{} ({})",
+                                        self.shorten_path(abs_path).display(),
+                                        remote_host.host_name
+                                    ),
+                                },
+                                None => self.shorten_path(abs_path).display().to_string(),
+                            },
+                            None => match &restricted_path.host {
+                                Some(remote_host) => match &remote_host.user_name {
+                                    Some(user_name) => format!(
+                                        "Project-level trust ({}@{})",
+                                        user_name, remote_host.host_name
+                                    ),
                                     None => {
-                                        if is_global {
-                                            format!("Global actions ({})", remote_host.host_name)
-                                        } else {
-                                            format!(
-                                                "{} ({})",
-                                                self.shorten_path(abs_path).display(),
-                                                remote_host.host_name
-                                            )
-                                        }
+                                        format!("Project-level trust ({})", remote_host.host_name)
                                     }
                                 },
-                                None => {
-                                    if is_global {
-                                        "Global actions".to_string()
-                                    } else {
-                                        self.shorten_path(abs_path).display().to_string()
-                                    }
-                                }
-                            };
-                            h_flex()
-                                .pl(IconSize::default().rems() + rems(0.5))
-                                .child(Label::new(label).color(Color::Muted))
-                        },
-                    )),
+                                None => "Project-level trust".to_string(),
+                            },
+                        };
+                        h_flex()
+                            .pl(IconSize::default().rems() + rems(0.5))
+                            .child(Label::new(label).color(Color::Muted))
+                    })),
             )
             .child(
                 "Untrusted workspaces are opened in Restricted Mode to protect your system.
@@ -143,14 +149,18 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                 h_flex()
                     .p_3()
                     .justify_between()
-                    .child(
-                        Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
-                            .label(trust_label)
-                            .on_click(cx.listener(|security_modal, state: &ToggleState, _, cx| {
-                                security_modal.trust_parents = state.selected();
-                                cx.notify();
-                            })),
-                    )
+                    .when_some(trust_label, |div, trust_label| {
+                        div.child(
+                            Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
+                                .label(trust_label)
+                                .on_click(cx.listener(
+                                    |security_modal, state: &ToggleState, _, cx| {
+                                        security_modal.trust_parents = state.selected();
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                    })
                     .child(
                         h_flex()
                             .gap_1()
@@ -201,17 +211,20 @@ impl SecurityModal {
         this
     }
 
-    fn build_trust_label(&self) -> Cow<'static, str> {
-        if self.restricted_paths.len() == 1 {
-            let Some((_, (single_abs_path, _))) = self.restricted_paths.iter().next() else {
-                return Cow::Borrowed("Trust all projects in the parent folders");
-            };
-            match single_abs_path.parent().map(|path| self.shorten_path(path)) {
-                Some(parent) => Cow::Owned(format!("Trust all projects in the {parent:?} folder")),
-                None => Cow::Borrowed("Trust all projects in the parent folders"),
-            }
-        } else {
-            Cow::Borrowed("Trust all projects in the parent folders")
+    fn build_trust_label(&self) -> Option<Cow<'static, str>> {
+        let available_parents = self
+            .restricted_paths
+            .values()
+            .filter(|restricted_path| !restricted_path.is_file)
+            .filter_map(|restricted_path| restricted_path.abs_path.as_ref()?.parent())
+            .collect::<SmallVec<[_; 2]>>();
+        match available_parents.len() {
+            0 => None,
+            1 => Some(Cow::Owned(format!(
+                "Trust all projects in the {:?} folder",
+                available_parents[0]
+            ))),
+            _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
     }
 
@@ -238,10 +251,17 @@ impl SecurityModal {
                     })
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
-                    paths_to_trust.extend(self.restricted_paths.iter().filter_map(
-                        |(_, (abs_path, host))| {
-                            let parent_abs_path = abs_path.parent()?.to_owned();
-                            Some(PathTrust::AbsPath(parent_abs_path, host.clone()))
+                    paths_to_trust.extend(self.restricted_paths.values().filter_map(
+                        |restricted_paths| {
+                            if restricted_paths.is_file {
+                                return None;
+                            }
+                            let parent_abs_path =
+                                restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
+                            Some(PathTrust::AbsPath(
+                                parent_abs_path,
+                                restricted_paths.host.clone(),
+                            ))
                         },
                     ));
                 }
@@ -261,17 +281,41 @@ impl SecurityModal {
     pub fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
-                let new_restricted_worktrees = trusted_worktrees
+                let mut new_restricted_worktrees = trusted_worktrees
                     .read(cx)
                     .restricted_paths(worktree_store.read(cx), self.remote_host.clone(), cx)
                     .into_iter()
-                    .map(|restricted_path| match restricted_path {
-                        Some((worktree_id, abs_path)) => {
-                            (Some(worktree_id), (abs_path, self.remote_host.clone()))
-                        }
-                        None => (None, (Arc::from(Path::new("")), self.remote_host.clone())),
+                    .filter_map(|restricted_path| {
+                        let restricted_path = match restricted_path {
+                            Some((worktree_id, abs_path)) => {
+                                let worktree =
+                                    worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
+                                (
+                                    Some(worktree_id),
+                                    RestrictedPath {
+                                        abs_path: Some(abs_path),
+                                        is_file: worktree.read(cx).is_single_file(),
+                                        host: self.remote_host.clone(),
+                                    },
+                                )
+                            }
+                            None => (
+                                None,
+                                RestrictedPath {
+                                    abs_path: None,
+                                    is_file: false,
+                                    host: self.remote_host.clone(),
+                                },
+                            ),
+                        };
+                        Some(restricted_path)
                     })
-                    .collect();
+                    .collect::<HashMap<_, _>>();
+                // Do not clutter the UI: agreeing on local events assumes the global are agreed to either, on the same host.
+                if new_restricted_worktrees.len() > 1 {
+                    new_restricted_worktrees.remove(&None);
+                }
+
                 if self.restricted_paths != new_restricted_worktrees {
                     self.restricted_paths = new_restricted_worktrees;
                     cx.notify();
