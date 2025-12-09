@@ -26895,6 +26895,82 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_insert_snippet(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec![], // no prefix needed!
+                    body: "an Unspecified".to_string(),
+                    description: Some("shhhh it's a secret".to_string()),
+                    name: "super secret snippet".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec![], // no prefix needed!
+                    body: " Location".to_string(),
+                    description: Some("the word 'location'".to_string()),
+                    name: "location word".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    Some("Markdown".to_string()),
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+            });
+        })
+    });
+
+    cx.set_state(indoc!(r#"First cursor at ˇ and second cursor at ˇ"#));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: Some("super secret snippet".to_string()),
+                snippet: None,
+            },
+            window,
+            cx,
+        );
+
+        // Language is specified in the action,
+        // so the buffer language does not need to match
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: Some("Markdown".to_string()),
+                name: Some("location word".to_string()),
+                snippet: None,
+            },
+            window,
+            cx,
+        );
+
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("$0 after".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(
+        r#"First cursor at an Unspecified Locationˇ after and second cursor at an Unspecified Locationˇ after"#,
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {

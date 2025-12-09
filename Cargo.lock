@@ -5799,6 +5799,7 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "http_client",
+ "indoc",
  "language",
  "log",
  "lsp",
