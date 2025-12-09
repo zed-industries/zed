@@ -330,7 +330,7 @@ impl TitleBar {
                 IconName::Server,
             ),
             RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
-            RemoteConnectionOptions::DockerExec(_dev_container_connection) => {
+            RemoteConnectionOptions::Docker(_dev_container_connection) => {
                 (None, "Dev Container", IconName::Box)
             }
         };

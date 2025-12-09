@@ -21,8 +21,7 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
 use remote::{
-    DockerExecConnectionOptions, RemoteConnectionOptions, SshConnectionOptions,
-    WslConnectionOptions,
+    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1148,8 +1147,8 @@ impl WorkspaceDb {
                 distro = Some(options.distro_name);
                 user = options.user;
             }
-            RemoteConnectionOptions::DockerExec(options) => {
-                kind = RemoteConnectionKind::DockerExec;
+            RemoteConnectionOptions::Docker(options) => {
+                kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
                 working_directory = Some(options.working_directory);
@@ -1378,14 +1377,14 @@ impl WorkspaceDb {
                 username: user,
                 ..Default::default()
             })),
-            RemoteConnectionKind::DockerExec => Some(RemoteConnectionOptions::DockerExec(
-                DockerExecConnectionOptions {
+            RemoteConnectionKind::Docker => {
+                Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
                     upload_binary_over_docker_exec: false, // TODO
                     working_directory: working_directory?,
-                },
-            )),
+                }))
+            }
         }
     }
 

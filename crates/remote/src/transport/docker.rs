@@ -29,7 +29,7 @@ use crate::{
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct DockerExecConnectionOptions {
+pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub upload_binary_over_docker_exec: bool,
@@ -40,7 +40,7 @@ pub(crate) struct DockerExecConnection {
     proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,
     remote_binary_relpath: Option<Arc<RelPath>>,
-    connection_options: DockerExecConnectionOptions,
+    connection_options: DockerConnectionOptions,
     remote_platform: Option<RemotePlatform>,
     path_style: Option<PathStyle>,
     shell: Option<String>,
@@ -48,7 +48,7 @@ pub(crate) struct DockerExecConnection {
 
 impl DockerExecConnection {
     pub async fn new(
-        connection_options: DockerExecConnectionOptions,
+        connection_options: DockerConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
@@ -755,7 +755,7 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
-        RemoteConnectionOptions::DockerExec(self.connection_options.clone())
+        RemoteConnectionOptions::Docker(self.connection_options.clone())
     }
 
     fn path_style(&self) -> PathStyle {

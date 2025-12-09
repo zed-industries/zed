@@ -78,7 +78,7 @@ pub fn suggest_on_worktree_updated(
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new(move |cx| {
                 MessageNotification::new(
-                    "This project contains a Dev Container configuration file. Would you like to re-open it on a container?",
+                    "This project contains a Dev Container configuration file. Would you like to re-open it in a container?",
                     cx,
                 )
                 .primary_message("Yes, Open in Container")

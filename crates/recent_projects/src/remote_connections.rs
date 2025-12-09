@@ -18,7 +18,7 @@ use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, DockerExecConnectionOptions, RemoteClient, RemoteConnection,
+    ConnectionIdentifier, DockerConnectionOptions, RemoteClient, RemoteConnection,
     RemoteConnectionOptions, RemotePlatform, SshConnectionOptions,
 };
 use semver::Version;
@@ -94,7 +94,7 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
             Connection::DevContainer(conn) => {
-                RemoteConnectionOptions::DockerExec(DockerExecConnectionOptions {
+                RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     name: conn.name.to_string(),
                     container_id: conn.container_id.to_string(),
                     upload_binary_over_docker_exec: false,
@@ -308,9 +308,7 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Wsl(options) => {
                 (options.distro_name.clone(), None, true, false)
             }
-            RemoteConnectionOptions::DockerExec(options) => {
-                (options.name.clone(), None, false, true)
-            }
+            RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
         };
         Self {
             prompt: cx.new(|cx| {
@@ -718,7 +716,7 @@ pub async fn open_remote_project(
                                 match connection_options {
                                     RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                     RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                    RemoteConnectionOptions::DockerExec(_) => {
+                                    RemoteConnectionOptions::Docker(_) => {
                                         "Failed to connect to Dev Container"
                                     }
                                 },
@@ -777,7 +775,7 @@ pub async fn open_remote_project(
                             match connection_options {
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::DockerExec(_) => {
+                                RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
                             },
