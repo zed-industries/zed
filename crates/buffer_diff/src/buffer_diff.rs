@@ -193,10 +193,6 @@ impl std::fmt::Debug for BufferDiffInner {
 }
 
 impl BufferDiffSnapshot {
-    pub fn buffer_diff_id(&self) -> BufferId {
-        self.inner.base_text.remote_id()
-    }
-
     #[cfg(test)]
     fn new_sync(
         buffer: text::BufferSnapshot,
@@ -289,16 +285,22 @@ impl BufferDiffSnapshot {
         &self.inner.base_text
     }
 
-    pub fn base_texts_eq(&self, other: &Self) -> bool {
+    /// If this function returns `true`, the base texts are equal. If this
+    /// function returns `false`, they might be equal, but might not. This
+    /// result is used to avoid recalculating diffs in situations where we know
+    /// nothing has changed.
+    ///
+    /// todo! better name
+    pub fn base_texts_definitely_eq(&self, other: &Self) -> bool {
         if self.inner.base_text_exists != other.inner.base_text_exists {
             return false;
         }
         let left = &self.inner.base_text;
         let right = &other.inner.base_text;
-        // FIXME this is wrong
-        let (old_id, old_empty) = (left.remote_id(), left.is_empty());
-        let (new_id, new_empty) = (right.remote_id(), right.is_empty());
-        new_id == old_id || (new_empty && old_empty)
+        let (old_id, old_version, old_empty) = (left.remote_id(), left.version(), left.is_empty());
+        let (new_id, new_version, new_empty) =
+            (right.remote_id(), right.version(), right.is_empty());
+        (new_id == old_id && new_version == old_version) || (new_empty && old_empty)
     }
 
     pub fn row_to_base_text_row(&self, row: BufferRow, buffer: &text::BufferSnapshot) -> u32 {
@@ -1106,7 +1108,6 @@ impl BufferDiff {
             None,
             cx,
         ));
-        // FIXME
         this.set_snapshot(inner, &buffer, true, cx);
         this
     }

@@ -624,8 +624,7 @@ pub struct MultiBufferSnapshot {
     replaced_excerpts: TreeMap<ExcerptId, ExcerptId>,
     trailing_excerpt_update_count: usize,
     all_diff_hunks_expanded: bool,
-    // FIXME
-    pub show_deleted_hunks: bool,
+    show_deleted_hunks: bool,
     show_headers: bool,
 }
 
@@ -2331,45 +2330,14 @@ impl MultiBuffer {
         let base_text_changed = snapshot
             .diffs
             .get(&buffer_id)
-            .is_none_or(|old_diff| !new_diff.base_texts_eq(old_diff));
+            .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(buffer_id, new_diff);
         self.buffer_changed_since_sync.replace(true);
 
         let buffer = buffer_state.buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);
 
-        let mut excerpt_edits = Vec::new();
-        for locator in &buffer_state.excerpts {
-            let mut cursor = snapshot
-                .excerpts
-                .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
-            cursor.seek_forward(&Some(locator), Bias::Left);
-            if let Some(excerpt) = cursor.item()
-                && excerpt.locator == *locator
-            {
-                let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                if diff_change_range.end < excerpt_buffer_range.start
-                    || diff_change_range.start > excerpt_buffer_range.end
-                {
-                    continue;
-                }
-                let excerpt_start = cursor.start().1;
-                let excerpt_len = excerpt.text_summary.len;
-                let diff_change_start_in_excerpt = diff_change_range
-                    .start
-                    .saturating_sub(excerpt_buffer_range.start);
-                let diff_change_end_in_excerpt = diff_change_range
-                    .end
-                    .saturating_sub(excerpt_buffer_range.start);
-                let edit_start = excerpt_start + diff_change_start_in_excerpt.min(excerpt_len);
-                let edit_end = excerpt_start + diff_change_end_in_excerpt.min(excerpt_len);
-                excerpt_edits.push(Edit {
-                    old: edit_start..edit_end,
-                    new: edit_start..edit_end,
-                });
-            }
-        }
-
+        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
         let edits = Self::sync_diff_transforms(
             &mut snapshot,
             excerpt_edits,
@@ -2408,52 +2376,17 @@ impl MultiBuffer {
                 .ok(),
         };
         let mut snapshot = self.snapshot.get_mut();
-        let base_text_changed = snapshot
-            .diffs
-            .get(&base_text_buffer_id)
-            .is_none_or(|old_diff| !new_diff.base_texts_eq(old_diff));
-
         snapshot
             .diffs
             .insert_or_replace(base_text_buffer_id, new_diff);
 
-        let mut excerpt_edits = Vec::new();
-        for locator in &buffer_state.excerpts {
-            let mut cursor = snapshot
-                .excerpts
-                .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
-            cursor.seek_forward(&Some(locator), Bias::Left);
-            if let Some(excerpt) = cursor.item()
-                && excerpt.locator == *locator
-            {
-                let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                if diff_change_range.end < excerpt_buffer_range.start
-                    || diff_change_range.start > excerpt_buffer_range.end
-                {
-                    continue;
-                }
-                let excerpt_start = cursor.start().1;
-                let excerpt_len = excerpt.text_summary.len;
-                let diff_change_start_in_excerpt = diff_change_range
-                    .start
-                    .saturating_sub(excerpt_buffer_range.start);
-                let diff_change_end_in_excerpt = diff_change_range
-                    .end
-                    .saturating_sub(excerpt_buffer_range.start);
-                let edit_start = excerpt_start + diff_change_start_in_excerpt.min(excerpt_len);
-                let edit_end = excerpt_start + diff_change_end_in_excerpt.min(excerpt_len);
-                excerpt_edits.push(Edit {
-                    old: edit_start..edit_end,
-                    new: edit_start..edit_end,
-                });
-            }
-        }
-
+        let excerpt_edits = snapshot.excerpt_edits_for_diff_change(buffer_state, diff_change_range);
         let edits = Self::sync_diff_transforms(
             &mut snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
-                base_changed: base_text_changed,
+                // We don't use read this field for inverted diffs.
+                base_changed: false,
             },
         );
         if !edits.is_empty() {
@@ -6628,6 +6561,45 @@ impl MultiBufferSnapshot {
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
+    }
+
+    fn excerpt_edits_for_diff_change(
+        &self,
+        buffer_state: &BufferState,
+        diff_change_range: Range<usize>,
+    ) -> Vec<Edit<ExcerptDimension<MultiBufferOffset>>> {
+        let mut excerpt_edits = Vec::new();
+        for locator in &buffer_state.excerpts {
+            let mut cursor = self
+                .excerpts
+                .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(());
+            cursor.seek_forward(&Some(locator), Bias::Left);
+            if let Some(excerpt) = cursor.item()
+                && excerpt.locator == *locator
+            {
+                let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
+                if diff_change_range.end < excerpt_buffer_range.start
+                    || diff_change_range.start > excerpt_buffer_range.end
+                {
+                    continue;
+                }
+                let excerpt_start = cursor.start().1;
+                let excerpt_len = excerpt.text_summary.len;
+                let diff_change_start_in_excerpt = diff_change_range
+                    .start
+                    .saturating_sub(excerpt_buffer_range.start);
+                let diff_change_end_in_excerpt = diff_change_range
+                    .end
+                    .saturating_sub(excerpt_buffer_range.start);
+                let edit_start = excerpt_start + diff_change_start_in_excerpt.min(excerpt_len);
+                let edit_end = excerpt_start + diff_change_end_in_excerpt.min(excerpt_len);
+                excerpt_edits.push(Edit {
+                    old: edit_start..edit_end,
+                    new: edit_start..edit_end,
+                });
+            }
+        }
+        excerpt_edits
     }
 }
 

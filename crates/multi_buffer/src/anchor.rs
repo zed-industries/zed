@@ -146,7 +146,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_left(base_text);
                     }
@@ -169,7 +169,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_right(base_text);
                     }
