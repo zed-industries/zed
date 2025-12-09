@@ -65,11 +65,11 @@ pub enum Priority {
 }
 
 impl Priority {
-    pub(crate) fn ticket_percentage(&self) -> f32 {
+    pub(crate) const fn ticket_count(&self) -> u32 {
         match self {
-            Priority::High => 0.6f32,
-            Priority::Medium => 0.3f32,
-            Priority::Low => 0.1f32,
+            Priority::High => 60,
+            Priority::Medium => 30,
+            Priority::Low => 10,
         }
     }
 }
