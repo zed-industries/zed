@@ -1,8 +1,10 @@
 # Dev Containers
 
-Zed can open a project inside a development container when the repository includes a `.devcontainer/devcontainer.json` file. This allows Zed to build and connect to a containerized environment automatically.
+Dev containers provide a consistent, reproducible development environment by defining your project's dependencies, tools, and settings in a container configuration.
 
-## Prerequisites
+If your repository includes a `.devcontainer/devcontainer.json` file, Zed can open a project inside a development container.
+
+## Requirements
 
 - Docker (or a compatible CLI such as Podman) must be installed and available in your `PATH`.
 - Your project must contain a `.devcontainer/devcontainer.json` file.
@@ -14,8 +16,8 @@ Zed can open a project inside a development container when the repository includ
 When you open a folder that contains a `.devcontainer/devcontainer.json`, Zed will display a prompt asking whether to open the project inside the dev container. Choosing "Open in Container" will:
 
 1. Build the dev container image (if needed).
-1. Launch the container.
-1. Reopen the project connected to the container environment.
+2. Launch the container.
+3. Reopen the project connected to the container environment.
 
 ### Manual open
 
@@ -25,8 +27,8 @@ If you dismiss the prompt or want to reopen the project inside a container later
 
 If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild or reload the container automatically. After changing configuration:
 
-1. Stop or kill the existing container manually (e.g., via `docker kill <container>`).
-1. Reopen the project in the container.
+- Stop or kill the existing container manually (e.g., via `docker kill <container>`).
+- Reopen the project in the container.
 
 ## Working in a dev container
 
