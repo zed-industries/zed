@@ -42,6 +42,7 @@
 - [Diagnostics](./diagnostics.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+  - [Dev Containers](./dev-containers.md)
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
