@@ -8,9 +8,9 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
 };
 use remote::RemoteConnectionOptions;
-use rpc::AnyProtoClient;
+use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 
 use crate::{
     persistence::PROJECT_DB, project_settings::ProjectSettings, worktree_store::WorktreeStore,
@@ -19,7 +19,8 @@ use crate::{
 pub fn init_global(
     worktree_store: Entity<WorktreeStore>,
     remote_host: Option<impl Into<RemoteHostLocation> + 'static>,
-    downstream_client: Option<AnyProtoClient>,
+    downstream_client: Option<(AnyProtoClient, u64)>,
+    upstream_client: Option<(AnyProtoClient, u64)>,
     cx: &mut App,
 ) {
     match TrustedWorktrees::try_get_global(cx) {
@@ -34,6 +35,7 @@ pub fn init_global(
                     worktree_store.clone(),
                     remote_host,
                     downstream_client,
+                    upstream_client,
                     cx,
                 )
             });
@@ -92,10 +94,13 @@ impl TrustedWorktrees {
 /// Emits an event each time the worktree was checked and found not trusted,
 /// or a certain worktree had been trusted.
 pub struct TrustedWorktreesStorage {
+    downstream_client: Option<(AnyProtoClient, u64)>,
+    upstream_client: Option<(AnyProtoClient, u64)>,
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
     trusted_paths: HashSet<PathTrust>,
     serialization_task: Task<()>,
     restricted: HashSet<WorktreeId>,
+    remote_host: Option<RemoteHostLocation>,
     restricted_globals: HashSet<Option<RemoteHostLocation>>,
 }
 
@@ -137,6 +142,53 @@ pub enum PathTrust {
     AbsPath(PathBuf, Option<RemoteHostLocation>),
 }
 
+impl PathTrust {
+    fn to_proto(&self, remote_host: Option<&RemoteHostLocation>) -> Option<proto::PathTrust> {
+        match self {
+            Self::Global(host) => {
+                if host.as_ref() == remote_host {
+                    Some(proto::PathTrust {
+                        content: Some(proto::path_trust::Content::Global(0)),
+                    })
+                } else {
+                    None
+                }
+            }
+            Self::Worktree(worktree_id) => Some(proto::PathTrust {
+                content: Some(proto::path_trust::Content::WorktreeId(
+                    worktree_id.to_proto(),
+                )),
+            }),
+            Self::AbsPath(path_buf, host) => {
+                if host.as_ref() == remote_host {
+                    Some(proto::PathTrust {
+                        content: Some(proto::path_trust::Content::AbsPath(
+                            path_buf.to_string_lossy().to_string(),
+                        )),
+                    })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn from_proto(
+        proto: proto::PathTrust,
+        remote_host: Option<&RemoteHostLocation>,
+    ) -> Option<Self> {
+        Some(match proto.content? {
+            proto::path_trust::Content::WorktreeId(id) => {
+                Self::Worktree(WorktreeId::from_proto(id))
+            }
+            proto::path_trust::Content::AbsPath(path) => {
+                Self::AbsPath(PathBuf::from(path), remote_host.cloned())
+            }
+            proto::path_trust::Content::Global(_) => Self::Global(remote_host.cloned()),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum TrustedWorktreesEvent {
     Trusted(HashSet<PathTrust>),
@@ -149,13 +201,12 @@ impl TrustedWorktreesStorage {
     fn new(
         worktree_store: Entity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
-        downstream_client: Option<AnyProtoClient>,
+        downstream_client: Option<(AnyProtoClient, u64)>,
+        upstream_client: Option<(AnyProtoClient, u64)>,
         cx: &App,
     ) -> Self {
         let remote_host = remote_host.map(|remote_host| remote_host.into());
-        let trusted_paths = if downstream_client.is_some() {
-            HashSet::default()
-        } else {
+        let trusted_paths = if downstream_client.is_none() {
             match PROJECT_DB.fetch_trusted_worktrees(
                 worktree_store.clone(),
                 remote_host.clone(),
@@ -167,6 +218,8 @@ impl TrustedWorktreesStorage {
                     HashSet::default()
                 }
             }
+        } else {
+            HashSet::default()
         };
         let restricted_globals = if trusted_paths.contains(&PathTrust::Global(remote_host.clone()))
         {
@@ -175,10 +228,38 @@ impl TrustedWorktreesStorage {
             HashSet::from_iter([remote_host.clone()])
         };
 
+        if let Some((upstream_client, upstream_project_id)) = &upstream_client {
+            let trusted_paths = trusted_paths
+                .iter()
+                .filter_map(|trusted_path| trusted_path.to_proto(remote_host.as_ref()))
+                .collect::<Vec<_>>();
+            if !trusted_paths.is_empty() {
+                upstream_client
+                    .send(proto::TrustWorktrees {
+                        project_id: *upstream_project_id,
+                        trusted_paths,
+                    })
+                    .ok();
+            }
+
+            if restricted_globals.contains(&remote_host) {
+                upstream_client
+                    .send(proto::RestrictWorktrees {
+                        project_id: *upstream_project_id,
+                        restrict_global: true,
+                        worktree_ids: Vec::new(),
+                    })
+                    .ok();
+            }
+        }
+
         Self {
             trusted_paths,
-            restricted: HashSet::default(),
             restricted_globals,
+            downstream_client,
+            upstream_client,
+            remote_host: remote_host.clone(),
+            restricted: HashSet::default(),
             serialization_task: Task::ready(()),
             worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
         }
@@ -186,11 +267,6 @@ impl TrustedWorktreesStorage {
 
     pub fn has_restricted_worktrees(&self) -> bool {
         !self.restricted.is_empty() || !self.restricted_globals.is_empty()
-    }
-
-    pub fn has_global_trust(&self, remote_host: Option<impl Into<RemoteHostLocation>>) -> bool {
-        let remote_host = remote_host.map(|remote_host| remote_host.into());
-        self.trusted_paths.contains(&PathTrust::Global(remote_host))
     }
 
     /// Adds worktree absolute paths to the trusted list.
@@ -299,45 +375,94 @@ impl TrustedWorktreesStorage {
                     acc
                 });
 
-        let closure_new_trusted_globals = new_trusted_globals.clone();
-        self.serialization_task = cx.background_spawn(async move {
-            PROJECT_DB
-                .save_trusted_worktrees(new_trusted_worktrees, closure_new_trusted_globals)
-                .await
-                .log_err();
-        });
-
         // Trusting a local worktree means trusting the global cases around it too.
-        trusted_paths.extend(new_trusted_globals.into_iter().map(PathTrust::Global));
-        cx.emit(TrustedWorktreesEvent::Trusted(trusted_paths));
+        trusted_paths.extend(
+            new_trusted_globals
+                .clone()
+                .into_iter()
+                .map(PathTrust::Global),
+        );
+        cx.emit(TrustedWorktreesEvent::Trusted(trusted_paths.clone()));
+
+        if self.downstream_client.is_none() {
+            self.serialization_task = cx.background_spawn(async move {
+                PROJECT_DB
+                    .save_trusted_worktrees(new_trusted_worktrees, new_trusted_globals)
+                    .await
+                    .log_err();
+            });
+            if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
+                let trusted_paths = trusted_paths
+                    .iter()
+                    .filter_map(|trusted_path| trusted_path.to_proto(self.remote_host.as_ref()))
+                    .collect::<Vec<_>>();
+                if !trusted_paths.is_empty() {
+                    upstream_client
+                        .send(proto::TrustWorktrees {
+                            project_id: *upstream_project_id,
+                            trusted_paths,
+                        })
+                        .ok();
+                }
+            }
+        }
+    }
+
+    pub fn restrict(&mut self, restricted_paths: HashSet<PathTrust>, cx: &mut Context<Self>) {
+        for restricted_path in restricted_paths {
+            match restricted_path {
+                PathTrust::Global(remote_host_location) => {
+                    self.restricted_globals.insert(remote_host_location.clone());
+                    cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
+                        PathTrust::Global(remote_host_location),
+                    ])));
+                }
+                PathTrust::Worktree(worktree_id) => {
+                    self.restricted.insert(worktree_id);
+                    cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
+                        PathTrust::Worktree(worktree_id),
+                    ])));
+                }
+                PathTrust::AbsPath(..) => debug_panic!("Unexpected: cannot restrict an abs path"),
+            }
+        }
     }
 
     pub fn clear_trusted_paths(&mut self, cx: &App) -> Task<()> {
-        self.trusted_paths.clear();
-        let (tx, rx) = smol::channel::bounded(1);
-        self.serialization_task = cx.background_spawn(async move {
-            PROJECT_DB.clear_trusted_worktrees().await.log_err();
-            tx.send(()).await.ok();
-        });
-        cx.background_spawn(async move {
-            rx.recv().await.ok();
-        })
+        if self.downstream_client.is_none() {
+            self.trusted_paths.clear();
+            let (tx, rx) = smol::channel::bounded(1);
+
+            self.serialization_task = cx.background_spawn(async move {
+                PROJECT_DB.clear_trusted_worktrees().await.log_err();
+                tx.send(()).await.ok();
+            });
+
+            cx.background_spawn(async move {
+                rx.recv().await.ok();
+            })
+        } else {
+            Task::ready(())
+        }
     }
 
     /// Checks whether a certain worktree is trusted.
     /// If not, emits [`TrustedWorktreesEvent::Restricted`] event.
-    pub fn can_trust(&mut self, worktree: WorktreeId, cx: &mut Context<Self>) -> bool {
+    pub fn can_trust(&mut self, worktree_id: WorktreeId, cx: &mut Context<Self>) -> bool {
         if ProjectSettings::get_global(cx).session.trust_all_worktrees {
             return true;
         }
-        if self.restricted.contains(&worktree) {
+        if self.restricted.contains(&worktree_id) {
             return false;
         }
-        if self.trusted_paths.contains(&PathTrust::Worktree(worktree)) {
+        if self
+            .trusted_paths
+            .contains(&PathTrust::Worktree(worktree_id))
+        {
             return true;
         }
 
-        if let Some((worktree_path, _, remote_host)) = self.find_worktree_data(worktree, cx) {
+        if let Some((worktree_path, _, remote_host)) = self.find_worktree_data(worktree_id, cx) {
             for trusted_path in &self.trusted_paths {
                 let PathTrust::AbsPath(trusted_path, trusted_remote_host) = trusted_path else {
                     continue;
@@ -351,10 +476,28 @@ impl TrustedWorktreesStorage {
             }
         }
 
-        self.restricted.insert(worktree);
+        self.restricted.insert(worktree_id);
         cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
-            PathTrust::Worktree(worktree),
+            PathTrust::Worktree(worktree_id),
         ])));
+        if let Some((downstream_client, downstream_project_id)) = &self.downstream_client {
+            downstream_client
+                .send(proto::RestrictWorktrees {
+                    project_id: *downstream_project_id,
+                    restrict_global: false,
+                    worktree_ids: vec![worktree_id.to_proto()],
+                })
+                .ok();
+        }
+        if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
+            upstream_client
+                .send(proto::RestrictWorktrees {
+                    project_id: *upstream_project_id,
+                    restrict_global: false,
+                    worktree_ids: vec![worktree_id.to_proto()],
+                })
+                .ok();
+        }
         false
     }
 
@@ -379,8 +522,29 @@ impl TrustedWorktreesStorage {
 
         self.restricted_globals.insert(remote_host.clone());
         cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
-            PathTrust::Global(remote_host),
+            PathTrust::Global(remote_host.clone()),
         ])));
+
+        if remote_host == self.remote_host {
+            if let Some((downstream_client, downstream_project_id)) = &self.downstream_client {
+                downstream_client
+                    .send(proto::RestrictWorktrees {
+                        project_id: *downstream_project_id,
+                        restrict_global: true,
+                        worktree_ids: Vec::new(),
+                    })
+                    .ok();
+            }
+            if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
+                upstream_client
+                    .send(proto::RestrictWorktrees {
+                        project_id: *upstream_project_id,
+                        restrict_global: true,
+                        worktree_ids: Vec::new(),
+                    })
+                    .ok();
+            }
+        }
         false
     }
 
