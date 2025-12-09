@@ -123,7 +123,13 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn icon_path(&self) -> Option<SharedString> {
-        self.icon_path.clone()
+        let path = self.icon_path.clone();
+        log::info!(
+            "LLM provider {} icon_path() returning: {:?}",
+            self.provider_info.id,
+            path
+        );
+        path
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {

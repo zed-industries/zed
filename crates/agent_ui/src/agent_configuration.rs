@@ -261,10 +261,20 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(if let Some(icon_path) = provider.icon_path() {
+                                        log::info!(
+                                            "Rendering LLM provider icon with from_external_svg: provider={}, path={}",
+                                            provider.id(),
+                                            icon_path
+                                        );
                                         Icon::from_external_svg(icon_path)
                                             .size(IconSize::Small)
                                             .color(Color::Muted)
                                     } else {
+                                        log::info!(
+                                            "Rendering LLM provider icon with Icon::new: provider={}, icon={:?}",
+                                            provider.id(),
+                                            provider.icon()
+                                        );
                                         Icon::new(provider.icon())
                                             .size(IconSize::Small)
                                             .color(Color::Muted)

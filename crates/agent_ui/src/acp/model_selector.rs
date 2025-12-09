@@ -294,7 +294,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                         .gap_1p5()
                                         .map(|this| match &model_info.icon {
                                             Some(AgentModelIcon::Path(path)) => this.child(
-                                                Icon::from_path(path.clone())
+                                                Icon::from_external_svg(path.clone())
                                                     .color(model_icon_color)
                                                     .size(IconSize::Small),
                                             ),

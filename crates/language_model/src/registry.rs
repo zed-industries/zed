@@ -203,14 +203,14 @@ impl LanguageModelRegistry {
     pub fn visible_providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
         let all = self.providers();
         log::info!(
-            "LanguageModelRegistry::visible_providers called, all_providers={}, installed_llm_extension_ids={:?}",
+            "ICON_DEBUG visible_providers: all_providers={}, installed_llm_extension_ids={:?}",
             all.len(),
             self.installed_llm_extension_ids
         );
         for p in &all {
             let hidden = self.should_hide_provider(&p.id());
             log::info!(
-                "  provider {} (id: {}): hidden={}",
+                "ICON_DEBUG   provider {} (id: {}): hidden={}",
                 p.name(),
                 p.id(),
                 hidden
