@@ -1041,6 +1041,11 @@ impl PlatformWindow for WaylandWindow {
             .detach();
     }
 
+    fn set_position(&mut self, _position: Point<Pixels>) {
+        // Wayland does not allow clients to set their own window position.
+        // Window positioning is controlled by the compositor.
+    }
+
     fn scale_factor(&self) -> f32 {
         self.borrow().scale
     }

@@ -579,7 +579,9 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_position(&mut self, position: Point<Pixels>) {
         let hwnd = self.0.hwnd;
-        let position = position.to_device_pixels(self.scale_factor());
+        let scale_factor = self.scale_factor();
+        let x = (position.x.0 * scale_factor).round() as i32;
+        let y = (position.y.0 * scale_factor).round() as i32;
 
         self.0
             .executor
@@ -588,8 +590,8 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowPos(
                         hwnd,
                         None,
-                        position.x.0,
-                        position.y.0,
+                        x,
+                        y,
                         0,
                         0,
                         SWP_NOSIZE | SWP_NOZORDER,
