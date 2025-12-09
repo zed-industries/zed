@@ -230,14 +230,6 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
-        workspace.register_action(|workspace, _action: &git::AddSafeDirectory, window, cx| {
-            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
-                return;
-            };
-            panel.update(cx, |panel, cx| {
-                panel.add_safe_directory(window, cx);
-            });
-        });
         workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return;

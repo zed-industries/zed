@@ -100,9 +100,6 @@ actions!(
         Clone,
         /// Adds a file to .gitignore.
         AddToGitignore,
-        /// Updates git's configuration, adding a directory to the list of safe
-        /// directories.
-        AddSafeDirectory,
     ]
 );
 
