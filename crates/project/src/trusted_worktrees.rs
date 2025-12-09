@@ -218,7 +218,7 @@ impl TrustedWorktreesStorage {
                         self.restricted = previous_restricted
                             .into_iter()
                             .filter(|restricted_worktree| {
-                                let Some((restricted_worktree_path, restricted_host)) =
+                                let Some((restricted_worktree_path, _, restricted_host)) =
                                     self.find_worktree_data(*restricted_worktree, cx)
                                 else {
                                     return false;
@@ -259,7 +259,13 @@ impl TrustedWorktreesStorage {
                     if let Some((abs_path, remote_host)) = match path {
                         PathTrust::Worktree(worktree_id) => self
                             .find_worktree_data(worktree_id, cx)
-                            .map(|(abs_path, remote_host)| (abs_path.to_path_buf(), remote_host)),
+                            .and_then(|(abs_path, is_file, remote_host)| {
+                                Some(if is_file {
+                                    (abs_path.parent()?.to_path_buf(), remote_host)
+                                } else {
+                                    (abs_path.to_path_buf(), remote_host)
+                                })
+                            }),
                         PathTrust::AbsPath(abs_path, remote_host) => Some((abs_path, remote_host)),
                         PathTrust::Global(host) => {
                             new_trusted_globals.insert(host);
@@ -310,7 +316,7 @@ impl TrustedWorktreesStorage {
             return true;
         }
 
-        if let Some((worktree_path, remote_host)) = self.find_worktree_data(worktree, cx) {
+        if let Some((worktree_path, _, remote_host)) = self.find_worktree_data(worktree, cx) {
             for trusted_path in &self.trusted_paths {
                 let PathTrust::AbsPath(trusted_path, trusted_remote_host) = trusted_path else {
                     continue;
@@ -398,7 +404,7 @@ impl TrustedWorktreesStorage {
         &mut self,
         worktree_id: WorktreeId,
         cx: &mut Context<Self>,
-    ) -> Option<(Arc<Path>, Option<RemoteHostLocation>)> {
+    ) -> Option<(Arc<Path>, bool, Option<RemoteHostLocation>)> {
         let mut worktree_data = None;
         self.worktree_stores.retain(
             |worktree_store, remote_host| match worktree_store.upgrade() {
@@ -407,8 +413,11 @@ impl TrustedWorktreesStorage {
                         if let Some(worktree) =
                             worktree_store.read(cx).worktree_for_id(worktree_id, cx)
                         {
-                            worktree_data =
-                                Some((worktree.read(cx).abs_path(), remote_host.clone()));
+                            worktree_data = Some((
+                                worktree.read(cx).abs_path(),
+                                worktree.read(cx).is_single_file(),
+                                remote_host.clone(),
+                            ));
                         }
                     }
                     true
