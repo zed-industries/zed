@@ -150,7 +150,6 @@ pub trait Fs: Send + Sync {
     ) -> Option<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
-    // TODO!: Move `abs_work_directory` to first argument, to keep it consistent with `git_init` and all the "wrappers" in `GitStore` and `Project`?
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<()>;
     fn is_fake(&self) -> bool;

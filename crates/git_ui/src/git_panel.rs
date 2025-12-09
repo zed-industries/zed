@@ -4404,7 +4404,7 @@ impl GitPanel {
                     workspace.root_paths(cx).first().cloned()
                 }) {
                     format!(
-                        "Detected dubious ownership in repository at {}",
+                        "Detected dubious ownership in repository at {}. This happens when the .git/ directory is not owned by the current user. If you want to learn more about safe directories, visit git's documentation.",
                         path.display()
                     )
                 } else {
@@ -4418,7 +4418,15 @@ impl GitPanel {
         h_flex().h_full().flex_grow().justify_center().child(
             v_flex()
                 .gap_2()
-                .child(h_flex().w_full().justify_around().child(panel_text))
+                .max_w_full()
+                .px_4()
+                .child(
+                    div()
+                        .w_full()
+                        .whitespace_normal()
+                        .text_center()
+                        .child(panel_text),
+                )
                 .children(self.render_empty_state_button(cx))
                 .text_ui_sm(cx)
                 .mx_auto()
@@ -4427,12 +4435,12 @@ impl GitPanel {
     }
 
     fn render_empty_state_button(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let mut button: Option<Button> = None;
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
 
-        // When working within an unsafe repository, we'll show the user the
-        // button to trust this directory so that they can read the repository's
-        // contents.
-        //
+        if matches!(self.git_access, GitAccess::Yes) || worktree_count == 0 {
+            return None;
+        };
+
         // TODO!: What if there's more than one root path? When can that
         // actually happen? Maybe take a look at `git_init` to see how
         // that handles the fact that no directory might be open, which
@@ -4445,40 +4453,54 @@ impl GitPanel {
             String::new()
         };
 
-        if matches!(self.git_access, GitAccess::No) {
-            button = Some(
-                panel_filled_button("Trust Directory")
-                    .tooltip(Tooltip::for_action_title_in(
-                        format!("git config --global --add safe.directory {}", directory),
-                        &git::AddSafeDirectory,
-                        &self.focus_handle,
-                    ))
-                    .on_click(move |_, _, cx| {
-                        cx.defer(move |cx| {
-                            cx.dispatch_action(&git::AddSafeDirectory);
-                        })
-                    }),
-            )
-        }
-
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-        if button.is_none() && worktree_count > 0 && self.active_repository.is_none() {
-            button = Some(
-                panel_filled_button("Initialize Repository")
-                    .tooltip(Tooltip::for_action_title_in(
-                        "git init",
-                        &git::Init,
-                        &self.focus_handle,
-                    ))
-                    .on_click(move |_, _, cx| {
-                        cx.defer(move |cx| {
-                            cx.dispatch_action(&git::Init);
-                        })
-                    }),
-            );
-        }
-
-        button.and_then(|button| Some(h_flex().w_full().justify_around().child(button)))
+        Some(
+            h_flex()
+                .max_w_full()
+                .gap_2()
+                .justify_around()
+                .child(div().flex_grow())
+                .when(matches!(self.git_access, GitAccess::No), |this| {
+                    this.child(
+                        panel_filled_button("Trust Directory")
+                            .icon(IconName::Check)
+                            .tooltip(Tooltip::for_action_title_in(
+                                format!("git config --global --add safe.directory {}", directory),
+                                &git::AddSafeDirectory,
+                                &self.focus_handle,
+                            ))
+                            .on_click(move |_, _, cx| {
+                                cx.defer(move |cx| {
+                                    cx.dispatch_action(&git::AddSafeDirectory);
+                                })
+                            }),
+                    )
+                    .child(
+                        panel_filled_button("Learn More")
+                            .icon(IconName::Link)
+                            .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
+                            .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+                    )
+                })
+                .when(
+                    worktree_count > 0 && self.active_repository.is_none(),
+                    |this| {
+                        this.child(
+                            panel_filled_button("Initialize Repository")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "git init",
+                                    &git::Init,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(move |_, _, cx| {
+                                    cx.defer(move |cx| {
+                                        cx.dispatch_action(&git::Init);
+                                    })
+                                }),
+                        )
+                    },
+                )
+                .child(div().flex_grow())
+        )
     }
 
     fn render_buffer_header_controls(
