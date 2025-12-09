@@ -1245,6 +1245,7 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub window_decorations: Option<WindowDecorations>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
