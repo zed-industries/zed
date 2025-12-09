@@ -43,12 +43,14 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
+#[cfg(any(feature = "x11", feature = "wayland"))]
 pub trait ResultExt {
     type Ok;
 
     fn notify_err(self, msg: &'static str) -> Self::Ok;
 }
 
+#[cfg(any(feature = "x11", feature = "wayland"))]
 impl<T> ResultExt for anyhow::Result<T> {
     type Ok = T;
 
