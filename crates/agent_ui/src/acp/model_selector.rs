@@ -293,15 +293,12 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                         .w_full()
                                         .gap_1p5()
                                         .map(|this| match &model_info.icon {
-                                            Some(AgentModelIcon::Path(path)) => this.child(
-                                                Icon::from_path(path.clone())
-                                                    .color(model_icon_color)
-                                                    .size(IconSize::Small),
-                                            ),
-                                            Some(AgentModelIcon::Named(icon)) => this.child(
-                                                Icon::new(*icon)
-                                                    .color(model_icon_color)
-                                                    .size(IconSize::Small),
+                                            Some(icon) => this.child(match icon {
+                                                    AgentModelIcon::Path(path) => Icon::from_path(path.clone()),
+                                                    AgentModelIcon::Named(name) => Icon::new(*name),
+                                                }
+                                                .color(model_icon_color)
+                                                .size(IconSize::Small)
                                             ),
                                             None => this,
                                         })
