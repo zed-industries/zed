@@ -649,8 +649,9 @@ pub(super) fn open_uri_internal(
                     .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
                     .send_uri(&uri)
                     .await
+                    .and_then(|e| e.response())
                 {
-                    Ok(_) => return,
+                    Ok(()) => return,
                     Err(e) => log::error!("Failed to open with dbus: {}", e),
                 }
 
