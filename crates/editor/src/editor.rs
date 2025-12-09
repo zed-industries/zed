@@ -1211,6 +1211,9 @@ pub struct Editor {
     accent_data: Option<AccentData>,
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
+    /// Matches used to create the multibuffer (e.g. LSP references, project search matches).
+    /// Ranges are always sorted by start anchor.
+    initial_multibuffer_matches: Vec<Range<multi_buffer::Anchor>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -2367,6 +2370,7 @@ impl Editor {
             accent_data: None,
             fetched_tree_sitter_chunks: HashMap::default(),
             use_base_text_line_numbers: false,
+            initial_multibuffer_matches: Vec::default(),
         };
 
         if is_minimap {
@@ -15960,6 +15964,103 @@ impl Editor {
         }
     }
 
+    pub fn select_next_multibuffer_match(
+        &mut self,
+        _: &SelectNextMultibufferMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_multibuffer_match(Bias::Right, window, cx);
+    }
+
+    pub fn select_prev_multibuffer_match(
+        &mut self,
+        _: &SelectPreviousMultibufferMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_multibuffer_match(Bias::Left, window, cx);
+    }
+
+    pub fn set_initial_multibuffer_matches(&mut self, ranges: Vec<Range<Anchor>>) {
+        self.initial_multibuffer_matches = ranges;
+    }
+
+    /// Multibuffers can be created with initial "matches" (e.g. LSP references, project search
+    /// matches, etc.). We populate a list when the multibuffer is created. During editing, matches
+    /// can be invalidated if the anchors are deleted
+    fn select_multibuffer_match(
+        &mut self,
+        direction: Bias,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let len_before = self.initial_multibuffer_matches.len();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        // todo! doing a linear scan every time might be slow?
+        self.initial_multibuffer_matches.retain(|range| {
+            // todo! is this right? what if a match is half-invalidated? can we truncate the match?
+            range.start.is_valid(&snapshot) && range.end.is_valid(&snapshot)
+        });
+        let len_after = self.initial_multibuffer_matches.len();
+        dbg!(len_before, len_after);
+
+        match &self.initial_multibuffer_matches[..] {
+            [] => return,
+            // if there is only one match, we select it regardless of direction
+            [only] => {
+                let only = only.clone();
+                self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                    selections.clear_disjoint();
+                    selections.insert_range(only.start..only.start);
+                });
+                return;
+            }
+            _ => {}
+        };
+
+        debug_assert!(self.initial_multibuffer_matches.len() >= 2);
+
+        dbg!(
+            self.initial_multibuffer_matches
+                .iter()
+                .map(|range| format!(
+                    "{:?}..{:?}",
+                    range.start.to_point(&snapshot),
+                    range.end.to_point(&snapshot)
+                ))
+                .collect::<Vec<_>>()
+        );
+
+        let display_snapshot = self.display_snapshot(cx);
+        let selection = self.selections.last::<MultiBufferOffset>(&display_snapshot);
+
+        let search = self
+            .initial_multibuffer_matches
+            .binary_search_by(|range| range.start.to_offset(&snapshot).cmp(&selection.start));
+
+        dbg!(self.initial_multibuffer_matches.len(), search, direction);
+
+        let target_index = match search {
+            Ok(i) => match (i, direction) {
+                (0, Bias::Left) => self.initial_multibuffer_matches.len() - 1,
+                (i, Bias::Left) => i - 1,
+                (i, Bias::Right) => (i + 1) % self.initial_multibuffer_matches.len(),
+            },
+            Err(i) => match (i, direction) {
+                (0, Bias::Left) => self.initial_multibuffer_matches.len() - 1,
+                (i, Bias::Left) => i - 1,
+                (i, Bias::Right) => i % self.initial_multibuffer_matches.len(),
+            },
+        };
+
+        let target = self.initial_multibuffer_matches[target_index].clone();
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            selections.clear_disjoint();
+            selections.insert_range(target.start..target.start);
+        });
+    }
+
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         if !EditorSettings::get_global(cx).gutter.runnables {
             self.clear_tasks();
@@ -17347,9 +17448,6 @@ impl Editor {
                 }
             };
 
-            // TODO(cameron): is this needed?
-            // the thinking is to avoid "jumping to the current location" (avoid
-            // polluting "jumplist" in vim terms)
             if current_location_index == destination_location_index {
                 return Ok(());
             }
@@ -17604,6 +17702,7 @@ impl Editor {
                     cx,
                 );
                 editor.lookup_key = Some(Box::new(key));
+                editor.set_initial_multibuffer_matches(ranges.clone());
                 editor
             })
         });

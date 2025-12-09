@@ -695,6 +695,10 @@ actions!(
         SelectNextSyntaxNode,
         /// Selects the previous syntax node sibling.
         SelectPreviousSyntaxNode,
+        /// Select the next match in the current multibuffer.
+        SelectNextMultibufferMatch,
+        /// Select the previous match in the current multibuffer.
+        SelectPreviousMultibufferMatch,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.
