@@ -911,7 +911,7 @@ impl PickerDelegate for BranchListDelegate {
         });
 
         Some(
-            ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
+            ListItem::new(format!("vcs-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
