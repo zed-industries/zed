@@ -838,7 +838,7 @@ impl AgentConfiguration {
                             .min_w_0()
                             .child(
                                 h_flex()
-                                    .id(SharedString::from(format!("tooltip-{}", item_id)))
+                                    .id(format!("tooltip-{}", item_id))
                                     .h_full()
                                     .w_3()
                                     .mr_2()
