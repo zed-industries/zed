@@ -131,7 +131,6 @@ impl Display for CustomShaderInfo {
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
 use {
     crate::ShaderInstance,
-    anyhow::{Context, Result, anyhow},
     naga::{
         Module, Type, TypeInner,
         front::wgsl,
@@ -153,14 +152,14 @@ pub(super) fn naga_validate_custom_shader(
     data_struct_name: Option<&str>,
     data_size: usize,
     data_align: usize,
-) -> Result<(Module, ModuleInfo, usize)> {
-    let module = wgsl::parse_str(source)?;
+) -> Result<(Module, ModuleInfo, usize), String> {
+    let module = wgsl::parse_str(source).map_err(|err| err.to_string())?;
     let module_info = Validator::new(
         ValidationFlags::all() ^ ValidationFlags::BINDINGS,
         Capabilities::empty(),
     )
     .validate(&module)
-    .context("naga validation failed")?;
+    .map_err(|err| format!("naga validation failed: {err}"))?;
 
     if let Some(data_struct_name) = data_struct_name {
         check_struct_size(
@@ -182,7 +181,7 @@ pub(super) fn naga_validate_custom_shader(
 }
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
-fn check_struct_size(module: &Module, name: &str, expected_size: usize) -> Result<()> {
+fn check_struct_size(module: &Module, name: &str, expected_size: usize) -> Result<(), String> {
     match module
         .types
         .iter()
@@ -196,13 +195,13 @@ fn check_struct_size(module: &Module, name: &str, expected_size: usize) -> Resul
             },
         )) => {
             if *span as usize != expected_size {
-                return Err(anyhow!(
+                return Err(format!(
                     "`{name}` struct was the incorrect size. Expected {expected_size}, found {}",
                     *span
                 ));
             }
         }
-        _ => return Err(anyhow!("`{name}` struct not found in shader")),
+        _ => return Err(format!("`{name}` struct not found in shader")),
     }
 
     Ok(())

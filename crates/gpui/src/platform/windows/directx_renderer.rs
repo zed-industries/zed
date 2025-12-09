@@ -25,6 +25,7 @@ use crate::{
         shader::{CustomShaderGlobalParams, naga_validate_custom_shader},
         windows::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget},
     },
+    shader::CustomShaderInfo,
     *,
 };
 
@@ -95,7 +96,7 @@ struct DirectXRenderPipelines {
     poly_sprites: PipelineState<PolychromeSprite>,
 
     custom: Vec<(PipelineState<ShaderInstance>, usize, usize)>,
-    custom_ids: HashMap<String, CustomShaderId>,
+    custom_ids: HashMap<CustomShaderInfo, Result<CustomShaderId, String>>,
 }
 
 struct DirectXGlobalElements<T> {
@@ -771,18 +772,10 @@ impl DirectXRenderer {
 
     pub(crate) fn register_shader(
         &mut self,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
-    ) -> anyhow::Result<CustomShaderId> {
-        self.pipelines.register_custom_shader(
-            &self.devices.as_ref().unwrap().device,
-            source,
-            instance_data_name,
-            instance_data_size,
-            instance_data_align,
-        )
+        info: CustomShaderInfo,
+    ) -> Result<CustomShaderId, (String, bool)> {
+        self.pipelines
+            .register_custom_shader(&self.devices.as_ref().unwrap().device, info)
     }
 }
 
@@ -923,42 +916,42 @@ impl DirectXRenderPipelines {
     fn register_custom_shader(
         &mut self,
         device: &ID3D11Device,
-        source: &str,
-        instance_data_name: Option<&str>,
-        instance_data_size: usize,
-        instance_data_align: usize,
-    ) -> anyhow::Result<CustomShaderId> {
-        if let Some(id) = self.custom_ids.get(source).copied() {
-            return Ok(id);
+        info: CustomShaderInfo,
+    ) -> Result<CustomShaderId, (String, bool)> {
+        if let Some(id) = self.custom_ids.get(&info) {
+            return id.clone().map_err(|err| (err, false));
         }
 
-        let (module, module_info, instance_size) = naga_validate_custom_shader(
-            source,
-            instance_data_name,
-            instance_data_size,
-            instance_data_align,
-        )?;
-        let mut hlsl = String::new();
-        naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default()).write(
-            &module,
-            &module_info,
-            None,
-        )?;
+        let source = info.to_string();
+        let result: Result<CustomShaderId, String> = (|| {
+            let (module, module_info, instance_size) = naga_validate_custom_shader(
+                &source,
+                info.data_definition.map(|_| info.data_name),
+                info.data_size,
+                info.data_align,
+            )?;
+            let mut hlsl = String::new();
+            naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
+                .write(&module, &module_info, None)
+                .map_err(|err| err.to_string())?;
+            let id = CustomShaderId(self.custom_ids.len() as u32);
+            self.custom.push((
+                PipelineState::new_custom(
+                    device,
+                    &hlsl,
+                    4,
+                    instance_size,
+                    create_blend_state(device).unwrap(),
+                )
+                .map_err(|err| err.to_string())?,
+                info.data_size,
+                info.data_align,
+            ));
+            Ok(id)
+        })();
 
-        let id = CustomShaderId(self.custom.len() as u32);
-        self.custom.push((
-            PipelineState::new_custom(
-                device,
-                &hlsl,
-                4,
-                instance_size,
-                create_blend_state(device).unwrap(),
-            )?,
-            instance_data_size,
-            instance_data_align,
-        ));
-        self.custom_ids.insert(source.to_string(), id);
-        Ok(id)
+        self.custom_ids.insert(info, result.clone());
+        result.map_err(|err| (err, true))
     }
 }
 
