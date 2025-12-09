@@ -45,17 +45,17 @@ pub fn init_global(
                             .log_err();
                     }
                     None => {
-                        let Ok(trusted_worktrees) = cx.update(|cx| {
-                            TrustedWorktreesStorage::new(worktree_store.clone(), remote_host, cx)
-                        }) else {
-                            return;
-                        };
-                        let trusted_worktrees = trusted_worktrees.await;
-                        let Ok(trusted_worktrees) = cx.new(|_| trusted_worktrees) else {
-                            return;
-                        };
-                        cx.update(|cx| cx.set_global(TrustedWorktrees(trusted_worktrees)))
-                            .ok();
+                        cx.update(|cx| {
+                            let trusted_worktrees = cx.new(|cx| {
+                                TrustedWorktreesStorage::new(
+                                    worktree_store.clone(),
+                                    remote_host,
+                                    cx,
+                                )
+                            });
+                            cx.set_global(TrustedWorktrees(trusted_worktrees))
+                        })
+                        .ok();
                     }
                 }
             })
@@ -138,29 +138,26 @@ impl TrustedWorktreesStorage {
         worktree_store: Entity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
         cx: &App,
-    ) -> Task<Self> {
+    ) -> Self {
         let remote_host = remote_host.map(|remote_host| remote_host.into());
-        cx.spawn(async move |cx| {
-            let trusted_paths = match cx.update(|cx| {
-                PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), remote_host.clone(), cx)
-            }) {
-                Ok(trusted_paths) => match trusted_paths.await {
-                    Ok(trusted_paths) => trusted_paths,
-                    Err(e) => {
-                        log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
-                        HashSet::default()
-                    }
-                },
-                Err(_window_closed) => HashSet::default(),
-            };
-            Self {
-                trusted_paths,
-                restricted: HashSet::default(),
-                restricted_globals: HashSet::from_iter([remote_host.clone()]),
-                serialization_task: Task::ready(()),
-                worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
+        let trusted_paths = match PROJECT_DB.fetch_trusted_worktrees(
+            worktree_store.clone(),
+            remote_host.clone(),
+            cx,
+        ) {
+            Ok(trusted_paths) => trusted_paths,
+            Err(e) => {
+                log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
+                HashSet::default()
             }
-        })
+        };
+        Self {
+            trusted_paths,
+            restricted: HashSet::default(),
+            restricted_globals: HashSet::from_iter([remote_host.clone()]),
+            serialization_task: Task::ready(()),
+            worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
+        }
     }
 
     pub fn has_restricted_worktrees(&self) -> bool {

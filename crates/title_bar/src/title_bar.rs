@@ -294,6 +294,12 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
+                cx.notify();
+            }));
+        }
+
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "ACP Claude Code Onboarding",
@@ -408,10 +414,10 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if TrustedWorktrees::try_get_global(cx)
+        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
             .map(|trusted_worktrees| trusted_worktrees.read(cx).has_restricted_worktrees())
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        if !has_restricted_worktrees {
             return None;
         }
 
@@ -424,7 +430,7 @@ impl TitleBar {
                         title_bar
                             .workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_worktree_security_modal(true, window, cx)
+                                workspace.show_worktree_trust_security_modal(true, window, cx)
                             })
                             .log_err();
                     })

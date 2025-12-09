@@ -1,3 +1,4 @@
+// TODO kb does not get focus inside the modal on restoration
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -222,7 +223,7 @@ impl SecurityModal {
             0 => None,
             1 => Some(Cow::Owned(format!(
                 "Trust all projects in the {:?} folder",
-                available_parents[0]
+                self.shorten_path(available_parents[0])
             ))),
             _ => Some(Cow::Borrowed("Trust all projects in the parent folders")),
         }
@@ -244,8 +245,8 @@ impl SecurityModal {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 let mut paths_to_trust = self
                     .restricted_paths
-                    .iter()
-                    .map(|(worktree_id, _)| match worktree_id {
+                    .keys()
+                    .map(|worktree_id| match worktree_id {
                         Some(worktree_id) => PathTrust::Worktree(*worktree_id),
                         None => PathTrust::Global(self.remote_host.clone()),
                     })
