@@ -22,7 +22,7 @@ impl RenderOnce for EditPredictionSetupPage {
         let providers = [
             render_api_key_provider(
                 "Mercury",
-                "Based on diffusion LLMs (dLLMs), which generate tokens in parallel, increasing speed and maximizing GPU efficiency.",
+                "Based on diffusion LLMs (dLLMs), which generate tokens in parallel.",
                 |ep_store| ep_store.has_mercury_api_token(),
                 |ep_store, api_token, cx| ep_store.mercury.set_api_token(api_token, cx),
                 ep_store.clone(),
@@ -83,6 +83,7 @@ fn render_api_key_provider(
     let configuration_block = if has_key {
         ConfiguredApiCard::new("API key configured")
             .button_label("Reset Key")
+            .button_tab_index(0)
             .on_click(move |_, _, cx| {
                 if let Some(ep_store) = ep_store.as_ref() {
                     ep_store
@@ -93,6 +94,7 @@ fn render_api_key_provider(
             .into_any_element()
     } else {
         SettingsInputField::new()
+            .tab_index(0)
             .with_placeholder("sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
             .on_confirm(move |api_key, cx| {
                 if let Some(ep_store) = ep_store.as_ref() {
@@ -108,6 +110,8 @@ fn render_api_key_provider(
 
     v_flex()
         .id(title)
+        .min_w_0()
+        .size_full()
         .child(Label::new(title))
         .child(
             Label::new(description)
