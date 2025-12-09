@@ -14,16 +14,13 @@ pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{List, prelude::*};
+use ui::{ConfiguredApiCard, List, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use x_ai::{Model, XAI_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{
-    api_key::ApiKeyState,
-    ui::{ConfiguredApiCard, InstructionListItem},
-};
+use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");

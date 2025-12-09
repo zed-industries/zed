@@ -2336,6 +2336,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: None,
                         json_path: Some(link.leak()),
                         in_json: true,
+                        hide: None,
                         files: USER | PROJECT,
                         render: Arc::new(|this, window, cx| {
                             this.render_sub_page_items(
@@ -7474,7 +7475,8 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Providers".into(),
             json_path: Some("edit_predictions.providers"),
-            description: Some("Some cool edit prediction description.".into()),
+            description: Some("Configure different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            hide: Some(|cx| !feature_flags::FeatureFlagAppExt::has_flag::<edit_prediction::Zeta2FeatureFlag>(cx)),
             in_json: false,
             files: USER,
             render: Arc::new(|_, _, _| {
@@ -7483,7 +7485,7 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
-            description: "Controls whether edit predictions are shown immediately or manually by triggering `editor::showeditprediction` (false).",
+            description: "Controls whether edit predictions are shown immediately or manually.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).show_edit_predictions"),
                 pick: |settings_content| {

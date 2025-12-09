@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
+use crate::ui::InstructionListItem;
 use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
@@ -44,7 +44,7 @@ use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{List, prelude::*};
+use ui::{ConfiguredApiCard, List, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 

@@ -26,10 +26,8 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, prelude::*};
+use ui::{CommonAnimationExt, ConfiguredApiCard, prelude::*};
 use util::debug_panic;
-
-use crate::ui::ConfiguredApiCard;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =

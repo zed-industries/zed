@@ -1,7 +1,7 @@
 use anyhow::Result;
 use edit_prediction::EditPredictionStore;
 use gpui::{Entity, Task, prelude::*};
-use ui::prelude::*;
+use ui::{ConfiguredApiCard, Divider, prelude::*};
 
 use crate::components::SettingsInputField;
 
@@ -22,6 +22,7 @@ impl RenderOnce for EditPredictionSetupPage {
         let providers = [
             render_api_key_provider(
                 "Mercury",
+                "Based on diffusion LLMs (dLLMs), which generate tokens in parallel, increasing speed and maximizing GPU efficiency.",
                 |ep_store| ep_store.has_mercury_api_token(),
                 |ep_store, api_token, cx| ep_store.mercury.set_api_token(api_token, cx),
                 ep_store.clone(),
@@ -31,6 +32,7 @@ impl RenderOnce for EditPredictionSetupPage {
             .into_any_element(),
             render_api_key_provider(
                 "Sweep",
+                "Write code 2x faster with Sweep's AI.",
                 |ep_store| ep_store.has_sweep_api_token(),
                 |ep_store, api_token, cx| ep_store.sweep_ai.set_api_token(api_token, cx),
                 ep_store.clone(),
@@ -41,59 +43,77 @@ impl RenderOnce for EditPredictionSetupPage {
         ];
 
         v_flex()
-            .gap_1()
-            .child(
-                v_flex()
-                    .child(Headline::new("Edit Prediction Providers"))
-                    .child(
-                        Label::new("Configure other providers to get in-editor predictions.")
-                            .color(Color::Muted),
-                    ),
-            )
-            .children(providers)
+            .p_8()
+            .pt_0()
+            .gap_4()
+            .child(Headline::new("Edit Prediction Providers"))
+            .children({
+                let provider_count = providers.len();
+                providers
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(move |(index, provider)| {
+                        [
+                            provider,
+                            if index + 1 != provider_count {
+                                Divider::horizontal().into_any_element()
+                            } else {
+                                gpui::Empty.into_any_element()
+                            },
+                        ]
+                    })
+            })
     }
 }
 
 fn render_api_key_provider(
     title: &'static str,
+    description: &'static str,
     key_configured: impl FnOnce(&EditPredictionStore) -> bool,
     write_key: impl Fn(&mut EditPredictionStore, Option<String>, &mut App) -> Task<Result<()>> + 'static,
     ep_store: Option<Entity<EditPredictionStore>>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
     let has_key = ep_store
         .as_ref()
+        // todo! expand key_configured to also tell whether key is from env, and what env var name is used, disable reset if from env
         .is_some_and(|ep_store| key_configured(ep_store.read(cx)));
 
     let configuration_block = if has_key {
-        div()
-            .child("API key configured")
-            .child(Button::new(title, "Reset").on_click(move |_, _, cx| {
+        ConfiguredApiCard::new("API key configured")
+            .button_label("Reset Key")
+            .on_click(move |_, _, cx| {
                 if let Some(ep_store) = ep_store.as_ref() {
                     ep_store
                         .update(cx, |ep_store, cx| write_key(ep_store, None, cx))
                         .detach_and_log_err(cx)
                 }
-            }))
+            })
+            .into_any_element()
     } else {
-        div().child(
-            SettingsInputField::new()
-                .with_placeholder("sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-                .on_confirm(move |api_key, cx| {
-                    if let Some(ep_store) = ep_store.as_ref() {
-                        ep_store
-                            .update(cx, |ep_store, cx| {
-                                write_key(ep_store, api_key.filter(|key| !key.is_empty()), cx)
-                            })
-                            .detach_and_log_err(cx)
-                    }
-                }),
-        )
+        SettingsInputField::new()
+            .with_placeholder("sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            .on_confirm(move |api_key, cx| {
+                if let Some(ep_store) = ep_store.as_ref() {
+                    ep_store
+                        .update(cx, |ep_store, cx| {
+                            write_key(ep_store, api_key.filter(|key| !key.is_empty()), cx)
+                        })
+                        .detach_and_log_err(cx)
+                }
+            })
+            .into_any_element()
     };
 
     v_flex()
         .id(title)
         .child(Label::new(title))
+        .child(
+            Label::new(description)
+                .color(Color::Muted)
+                .size(LabelSize::Small)
+                .mb_1(),
+        )
         .child(configuration_block)
 }

@@ -28,14 +28,14 @@ use std::sync::{
     atomic::{self, AtomicU64},
 };
 use strum::IntoEnumIterator;
-use ui::{List, prelude::*};
+use ui::{ConfiguredApiCard, List, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
 use crate::api_key::ApiKeyState;
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
+use crate::ui::InstructionListItem;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;

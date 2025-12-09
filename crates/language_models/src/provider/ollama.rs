@@ -22,13 +22,13 @@ use std::pin::Pin;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
+use ui::{ButtonLike, ConfiguredApiCard, ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::InputField;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
 use crate::api_key::ApiKeyState;
-use crate::ui::{ConfiguredApiCard, InstructionListItem};
+use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";

@@ -1,5 +1,5 @@
+use crate::{Tooltip, prelude::*};
 use gpui::{ClickEvent, IntoElement, ParentElement, SharedString};
-use ui::{Tooltip, prelude::*};
 
 #[derive(IntoElement)]
 pub struct ConfiguredApiCard {
