@@ -41,6 +41,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
 pub use git_store::{
@@ -1077,6 +1078,7 @@ impl Project {
                     worktree_store.clone(),
                     None::<RemoteConnectionOptions>,
                     None,
+                    None,
                     cx,
                 );
             }
@@ -1281,6 +1283,7 @@ impl Project {
                 worktree_store.clone(),
                 Some(connection_options),
                 None,
+                Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
                 cx,
             );
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -1465,6 +1468,9 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
+            remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
+            remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
+
             BufferStore::init(&remote_proto);
             LspStore::init(&remote_proto);
             SettingsObserver::init(&remote_proto);
@@ -4774,9 +4780,14 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateWorktree>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+        this.update(&mut cx, |project, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(worktree_id, cx)
+                });
+            }
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
@@ -4801,6 +4812,62 @@ impl Project {
             this.buffer_store.clone()
         })?;
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
+    }
+
+    async fn handle_trust_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrustWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let remote_host = this
+                .read(cx)
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            trusted_worktrees.trust(
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(|proto_path| {
+                        PathTrust::from_proto(proto_path, remote_host.as_ref())
+                    })
+                    .collect(),
+                cx,
+            );
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_restrict_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestrictWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx))?
+            .context("missing trusted worktrees")?;
+        trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let mut restricted_paths = envelope
+                .payload
+                .worktree_ids
+                .into_iter()
+                .map(WorktreeId::from_proto)
+                .map(PathTrust::Worktree)
+                .collect::<HashSet<_>>();
+            if envelope.payload.restrict_global {
+                let remote_host = this
+                    .read(cx)
+                    .remote_connection_options(cx)
+                    .map(RemoteHostLocation::from);
+                restricted_paths.insert(PathTrust::Global(remote_host));
+            }
+            trusted_worktrees.restrict(restricted_paths, cx);
+        })?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_update_buffer(
