@@ -730,11 +730,12 @@ pub(crate) struct ShaderInstanceBase {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub opacity: f32,
+    pub scale_factor: f32,
 }
 
 #[allow(unused)]
 impl ShaderInstanceBase {
-    pub const ALIGN: usize = 8; // largest alignment is a vec2
+    pub const ALIGN: usize = 8; // largest alignment used is a vec2
 }
 
 #[derive(Clone, Debug)]

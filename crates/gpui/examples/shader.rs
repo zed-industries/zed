@@ -23,7 +23,7 @@ impl Render for ShaderExample {
         let warping_shader = FragmentShader::new(
             "
             // Based on https://iquilezles.org/articles/warp/
-            let p = input.position.xy / 500.0;
+            let p = position / 500.0;
 
             let a = vec2<f32>(fbm(p + vec2<f32>(0.0, 0.0), data.hurst),
                               fbm(p + vec2<f32>(5.2, 2.3), data.hurst));
@@ -85,7 +85,13 @@ impl Render for ShaderExample {
                     .size_full()
                     .absolute(),
                 )
-                .child(star().size(relative(0.5)).border(px(20.0)).border_color(gpui::green()).rotation(radians(6.0 * PI * t)))
+                .child(
+                    star()
+                        .size(relative(0.5))
+                        .border(px(20.0))
+                        .border_color(gpui::green())
+                        .rotation(radians(6.0 * PI * t)),
+                )
                 .child(
                     star()
                         .size(relative(0.2))
@@ -94,9 +100,13 @@ impl Render for ShaderExample {
                         .border(px(2.0))
                         .rotation(radians(-24.0 * PI * t)),
                 )
-                .child(shader_element(FragmentShader::new(
-                    "return vec4<f32>((input.position.xy - input.origin) / input.size, 0.0, 1.0);"
-                )).size_40().cursor_crosshair())
+                .child(
+                    shader_element(FragmentShader::new(
+                        "return vec4<f32>((position - bounds.origin) / bounds.size, 0.0, 1.0);",
+                    ))
+                    .size_40()
+                    .cursor_crosshair(),
+                )
             },
         )
     }
@@ -162,8 +172,8 @@ impl RenderOnce for Star {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl gpui::IntoElement {
         shader_element_with_data(FragmentShader::new(
             "
-            let radius = min(input.size.x, input.size.y) / 2.0;
-            let pos = mat2x2<f32>(data.cosine, -data.sine, data.sine, data.cosine) * (input.position.xy - input.origin - input.size / 2.0);
+            let radius = min(bounds.size.x, bounds.size.y) / 2.0;
+            let pos = mat2x2<f32>(data.cosine, -data.sine, data.sine, data.cosine) * (position - bounds.origin - bounds.size / 2.0);
             let signed_dst = sd_pentagram(pos, radius * 0.90) - radius * 0.1;
 
             let border = clamp(signed_dst + data.border, 0.0, 1.0);

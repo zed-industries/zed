@@ -35,30 +35,21 @@ impl Display for CustomShaderInfo {
         struct GlobalParams {{
             viewport_size: vec2<f32>,
             premultiplied_alpha: u32,
-            opacity: f32,
+            pad: u32,
         }}
 
         var<uniform> globals: GlobalParams;
 
-        fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {{
-            let device_position = position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
-            return vec4<f32>(device_position, 0.0, 1.0);
-        }}
-
-        fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {{
-            let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-            return to_device_position_impl(position);
-        }}
-
-        fn distance_from_clip_rect_impl(position: vec2<f32>, clip_bounds: Bounds) -> vec4<f32> {{
-            let tl = position - clip_bounds.origin;
-            let br = clip_bounds.origin + clip_bounds.size - position;
-            return vec4<f32>(tl.x, br.x, tl.y, br.y);
+        fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec2<f32> {{
+            let position = unit_vertex * bounds.size + bounds.origin;
+            return position / globals.viewport_size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
         }}
 
         fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds) -> vec4<f32> {{
-            let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
-            return distance_from_clip_rect_impl(position, clip_bounds);
+            let position = unit_vertex * bounds.size + bounds.origin;
+            let tl = position - clip_bounds.origin;
+            let br = clip_bounds.origin + clip_bounds.size - position;
+            return vec4<f32>(tl.x, br.x, tl.y, br.y);
         }}
 
         struct Bounds {{
@@ -72,6 +63,7 @@ impl Display for CustomShaderInfo {
             bounds: Bounds,
             content_mask: Bounds,
             opacity: f32,
+            scale_factor: f32,
             {instance_data_field}
         }}
 
@@ -87,7 +79,8 @@ impl Display for CustomShaderInfo {
             @location(1) origin: vec2<f32>,
             @location(2) size: vec2<f32>,
             @location(3) opacity: f32,
-            @location(4) instance_id: u32,
+            @location(4) scale_factor: f32,
+            @location(5) instance_id: u32,
         }}
 
         @vertex
@@ -96,18 +89,20 @@ impl Display for CustomShaderInfo {
             let instance = b_instances.instances[instance_id];
 
             var out = VertexOut();
-            out.position = to_device_position(unit_vertex, instance.bounds);
+            out.position = vec4<f32>(to_device_position(unit_vertex, instance.bounds), 0.0, 1.0);
             out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
-            out.origin = instance.bounds.origin;
-            out.size = instance.bounds.size;
+            out.origin = instance.bounds.origin / instance.scale_factor;
+            out.size = instance.bounds.size / instance.scale_factor;
             out.opacity = instance.opacity;
+            out.scale_factor = instance.scale_factor;
             out.instance_id = instance_id;
+
             return out;
         }}
 
         {extra_items}
 
-        fn user_fs(input: VertexOut{instance_data_param}) -> vec4<f32> {{
+        fn user_fs(position: vec2<f32>, bounds: Bounds, scale_factor: f32{instance_data_param}) -> vec4<f32> {{
             {main_body}
         }}
 
@@ -117,7 +112,12 @@ impl Display for CustomShaderInfo {
                 return vec4<f32>(0.0);
             }}
 
-            let color = user_fs(input{instance_data_arg});
+            let color = user_fs(
+                input.position.xy / input.scale_factor,
+                Bounds(input.origin, input.size),
+                input.scale_factor
+                {instance_data_arg}
+            );
 
             let alpha = color.a * input.opacity;
             let multiplier = select(1.0, alpha, globals.premultiplied_alpha != 0u);
