@@ -61,5 +61,5 @@
     "**/.classpath",
     "**/.settings",
   ],
-  "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**", "**/*.lock"],
+  "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
 }
