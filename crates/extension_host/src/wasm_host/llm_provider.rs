@@ -770,7 +770,8 @@ impl LanguageModel for ExtensionLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model_info.name.clone())
+        // HACK: Add "(Extension)" prefix to help distinguish extension models during debugging
+        LanguageModelName::from(format!("(Extension) {}", self.model_info.name))
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {

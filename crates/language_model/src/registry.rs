@@ -157,6 +157,11 @@ impl LanguageModelRegistry {
         cx: &mut Context<Self>,
     ) {
         let id = provider.id();
+        log::info!(
+            "LanguageModelRegistry::register_provider: {} (name: {})",
+            id,
+            provider.name()
+        );
 
         let subscription = provider.subscribe(cx, {
             let id = id.clone();
@@ -196,8 +201,22 @@ impl LanguageModelRegistry {
 
     /// Returns providers, filtering out hidden built-in providers.
     pub fn visible_providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
-        self.providers()
-            .into_iter()
+        let all = self.providers();
+        log::info!(
+            "LanguageModelRegistry::visible_providers called, all_providers={}, installed_llm_extension_ids={:?}",
+            all.len(),
+            self.installed_llm_extension_ids
+        );
+        for p in &all {
+            let hidden = self.should_hide_provider(&p.id());
+            log::info!(
+                "  provider {} (id: {}): hidden={}",
+                p.name(),
+                p.id(),
+                hidden
+            );
+        }
+        all.into_iter()
             .filter(|p| !self.should_hide_provider(&p.id()))
             .collect()
     }

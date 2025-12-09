@@ -554,6 +554,11 @@ pub fn main() {
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(client.clone(), cx);
+        // Initialize the language model registry first, then set up the extension proxy
+        // BEFORE extension_host::init so that extensions can register their LLM providers
+        // when they load.
+        language_model::init(app_state.client.clone(), cx);
+        language_models::init_extension_proxy(cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -579,7 +584,6 @@ pub fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         edit_prediction_ui::init(cx);

@@ -101,8 +101,17 @@ const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
 /// This migration only runs once per provider - we track which providers have been
 /// migrated in `migrated_llm_providers` to avoid overriding user preferences.
 fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut App) {
+    log::info!(
+        "migrate_legacy_llm_provider_env_var called for extension: {}",
+        manifest.id
+    );
+
     // Only apply migration to known legacy LLM extensions
     if !LEGACY_LLM_EXTENSION_IDS.contains(&manifest.id.as_ref()) {
+        log::info!(
+            "  skipping - not a legacy LLM extension (known: {:?})",
+            LEGACY_LLM_EXTENSION_IDS
+        );
         return;
     }
 
@@ -122,7 +131,15 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
             .migrated_llm_providers
             .contains(full_provider_id.as_ref());
 
+        log::info!(
+            "  provider {}: env_var={}, already_migrated={}",
+            full_provider_id,
+            env_var_name,
+            already_migrated
+        );
+
         if already_migrated {
+            log::info!("  skipping - already migrated");
             continue;
         }
 
@@ -130,6 +147,8 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
         let env_var_is_set = std::env::var(env_var_name)
             .map(|v| !v.is_empty())
             .unwrap_or(false);
+
+        log::info!("  env_var_is_set: {}", env_var_is_set);
 
         // Mark as migrated regardless of whether we enable env var reading
         let should_enable_env_var = env_var_is_set;
@@ -697,28 +716,114 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
+        log::info!("auto_install_extensions called");
+
         if cfg!(test) {
+            log::info!("auto_install_extensions: skipping because cfg!(test)");
             return;
         }
 
         let extension_settings = ExtensionSettings::get_global(cx);
 
+        log::info!(
+            "auto_install_extensions: settings has {} extensions: {:?}",
+            extension_settings.auto_install_extensions.len(),
+            extension_settings
+                .auto_install_extensions
+                .keys()
+                .collect::<Vec<_>>()
+        );
+
         let extensions_to_install = extension_settings
             .auto_install_extensions
             .keys()
-            .filter(|extension_id| extension_settings.should_auto_install(extension_id))
+            .filter(|extension_id| {
+                let should = extension_settings.should_auto_install(extension_id);
+                log::info!("  {} should_auto_install: {}", extension_id, should);
+                should
+            })
             .filter(|extension_id| {
                 let is_already_installed = self
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
+                let dominated = SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref());
+                log::info!(
+                    "  {} is_already_installed: {}, suppressed: {}",
+                    extension_id,
+                    is_already_installed,
+                    dominated
+                );
+                !is_already_installed && !dominated
             })
             .cloned()
             .collect::<Vec<_>>();
 
+        log::info!(
+            "auto_install_extensions: will install {:?}",
+            extensions_to_install
+        );
+
         cx.spawn(async move |this, cx| {
             for extension_id in extensions_to_install {
+                // HACK: In debug builds, check if extension exists locally in repo's extensions/ dir
+                // and install as dev extension instead of fetching from registry.
+                // This allows testing unpublished extensions.
+                #[cfg(debug_assertions)]
+                {
+                    let local_extension_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .parent()
+                        .unwrap()
+                        .parent()
+                        .unwrap()
+                        .join("extensions")
+                        .join(extension_id.as_ref());
+
+                    if local_extension_path.exists() {
+                        log::info!(
+                            "Auto-installing local dev extension: {} from {:?}",
+                            extension_id,
+                            local_extension_path
+                        );
+
+                        // Force-remove existing extension directory if it exists and isn't a symlink
+                        // This handles the case where the extension was previously installed from the registry
+                        if let Some(installed_dir) = this
+                            .update(cx, |this, _cx| this.installed_dir.clone())
+                            .ok()
+                        {
+                            let existing_path = installed_dir.join(extension_id.as_ref());
+                            if existing_path.exists() {
+                                let metadata = std::fs::symlink_metadata(&existing_path);
+                                let is_symlink = metadata.map(|m| m.is_symlink()).unwrap_or(false);
+                                if !is_symlink {
+                                    log::info!(
+                                        "Removing existing non-dev extension directory: {:?}",
+                                        existing_path
+                                    );
+                                    if let Err(e) = std::fs::remove_dir_all(&existing_path) {
+                                        log::error!(
+                                            "Failed to remove existing extension directory {:?}: {}",
+                                            existing_path,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(task) = this
+                            .update(cx, |this, cx| {
+                                this.install_dev_extension(local_extension_path, cx)
+                            })
+                            .ok()
+                        {
+                            task.await.log_err();
+                        }
+                        continue;
+                    }
+                }
+
                 this.update(cx, |this, cx| {
                     this.install_latest_extension(extension_id.clone(), cx);
                 })
@@ -1139,6 +1244,11 @@ impl ExtensionStore {
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
             this.update(cx, |this, cx| {
+                // Run migration for legacy LLM provider env vars
+                if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                    migrate_legacy_llm_provider_env_var(&manifest, cx);
+                }
+
                 cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx)
                     && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
@@ -1696,9 +1806,19 @@ impl ExtensionStore {
                     }
 
                     // Register LLM providers
+                    log::info!(
+                        "Extension {} has {} LLM providers to register",
+                        manifest.id,
+                        llm_providers_with_models.len()
+                    );
                     for llm_provider in llm_providers_with_models {
                         let provider_id: Arc<str> =
                             format!("{}:{}", manifest.id, llm_provider.provider_info.id).into();
+                        log::info!(
+                            "Registering LLM provider {} with {} models",
+                            provider_id,
+                            llm_provider.models.len()
+                        );
                         let wasm_ext = extension.as_ref().clone();
                         let pinfo = llm_provider.provider_info.clone();
                         let mods = llm_provider.models.clone();

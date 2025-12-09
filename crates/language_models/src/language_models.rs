@@ -14,7 +14,7 @@ pub mod provider;
 mod settings;
 pub mod ui;
 
-pub use crate::extension::extension_for_builtin_provider;
+pub use crate::extension::{extension_for_builtin_provider, init_proxy as init_extension_proxy};
 pub use crate::google_ai_api_key::api_key_for_gemini_cli;
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
