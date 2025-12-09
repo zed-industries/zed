@@ -158,9 +158,8 @@ impl Icon {
     /// Create an icon from an external file path (e.g., from an extension).
     /// This renders the file as a raster image.
     pub fn from_path(path: impl Into<SharedString>) -> Self {
-        let path = path.into();
         Self {
-            source: IconSource::External(Arc::from(PathBuf::from(path.as_ref()))),
+            source: IconSource::External(Arc::from(PathBuf::from(path.into().as_ref()))),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
