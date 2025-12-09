@@ -18,6 +18,14 @@
   function: (member_expression
       property: [(property_identifier) (private_property_identifier)] @function.method))
 
+(call_expression
+  function: (member_expression
+    object: (identifier) @type
+    (#match? @type "^[A-Z][a-z]")))
+
+(new_expression
+    constructor: (identifier) @type)
+
 ; Function and method definitions
 
 (function_expression
@@ -285,6 +293,10 @@
 (jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+
+(jsx_opening_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
+(jsx_closing_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
+(jsx_self_closing_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
