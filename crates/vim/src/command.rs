@@ -1529,11 +1529,14 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("cl", "ist"), "diagnostics::Deploy"),
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
-        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic::default())
-            .range(wrap_count),
+        VimCommand::new(
+            ("cn", "ext"),
+            editor::actions::SelectNextMultibufferMatch::default(),
+        )
+        .range(wrap_count),
         VimCommand::new(
             ("cp", "revious"),
-            editor::actions::GoToPreviousDiagnostic::default(),
+            editor::actions::SelectPreviousMultibufferMatch::default(),
         )
         .range(wrap_count),
         VimCommand::new(

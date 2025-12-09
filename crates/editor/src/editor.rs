@@ -1212,7 +1212,8 @@ pub struct Editor {
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     use_base_text_line_numbers: bool,
     /// Matches used to create the multibuffer (e.g. LSP references, project search matches).
-    /// Ranges are always sorted by start anchor.
+    /// Ranges are always sorted by start anchor. Invalid anchors are removed on the next call to
+    /// [`SelectNextMultibufferMatch`] (or prev.)
     initial_multibuffer_matches: Vec<Range<multi_buffer::Anchor>>,
 }
 
