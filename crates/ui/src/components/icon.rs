@@ -144,6 +144,17 @@ impl Icon {
         }
     }
 
+    /// Create an icon from an embedded SVG path (e.g., "icons/ai.svg").
+    /// These are SVGs bundled in the Zed binary.
+    pub fn from_embedded(path: impl Into<SharedString>) -> Self {
+        Self {
+            source: IconSource::Embedded(path.into()),
+            color: Color::default(),
+            size: IconSize::default().rems(),
+            transformation: Transformation::default(),
+        }
+    }
+
     /// Create an icon from an external file path (e.g., from an extension).
     /// This renders the file as a raster image.
     pub fn from_path(path: impl Into<SharedString>) -> Self {
