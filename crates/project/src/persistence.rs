@@ -28,7 +28,7 @@ impl Domain for ProjectDb {
     const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE IF NOT EXISTS trusted_worktrees (
             trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            absolute_path TEXT NOT NULL,
+            absolute_path TEXT,
             user_name TEXT,
             host_name TEXT
         ) STRICT;
@@ -41,13 +41,18 @@ impl ProjectDb {
     pub(crate) async fn save_trusted_worktrees(
         &self,
         trusted_worktrees: HashMap<PathBuf, Option<RemoteHostLocation>>,
+        trusted_globals: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         PROJECT_DB
             .clear_worktrees()
             .await
             .context("clearing previous trust state")?;
 
-        let trusted_worktrees = trusted_worktrees.into_iter().collect::<Vec<_>>();
+        let trusted_worktrees = trusted_worktrees
+            .into_iter()
+            .map(|(abs_path, host)| (Some(abs_path), host))
+            .chain(trusted_globals.into_iter().map(|host| (None, host)))
+            .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
         for (count, placeholders) in std::iter::once("(?, ?, ?)")
@@ -78,8 +83,11 @@ VALUES {placeholders};"#
                 let mut statement = Statement::prepare(conn, query)?;
                 let mut next_index = 1;
                 for (abs_path, host) in trusted_worktrees {
-                    next_index =
-                        statement.bind(&abs_path.to_string_lossy().as_ref(), next_index)?;
+                    let abs_path = abs_path.as_ref().map(|abs_path| abs_path.to_string_lossy());
+                    next_index = statement.bind(
+                        &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
+                        next_index,
+                    )?;
                     next_index = statement.bind(
                         &host
                             .as_ref()
@@ -124,12 +132,17 @@ VALUES {placeholders};"#
                             }),
                         };
 
-                        if db_host != host {
-                            PathTrust::AbsPath(abs_path, db_host)
-                        } else {
-                            find_worktree_in_store(worktree_store, &abs_path, cx)
-                                .map(PathTrust::Worktree)
-                                .unwrap_or_else(|| PathTrust::AbsPath(abs_path, db_host))
+                        match abs_path {
+                            Some(abs_path) => {
+                                if db_host != host {
+                                    PathTrust::AbsPath(abs_path, db_host)
+                                } else {
+                                    find_worktree_in_store(worktree_store, &abs_path, cx)
+                                        .map(PathTrust::Worktree)
+                                        .unwrap_or_else(|| PathTrust::AbsPath(abs_path, db_host))
+                                }
+                            }
+                            None => PathTrust::Global(db_host),
                         }
                     })
                     .collect())
@@ -138,7 +151,7 @@ VALUES {placeholders};"#
     }
 
     query! {
-        async fn trusted_worktrees() -> Result<Vec<(PathBuf, Option<String>, Option<String>)>> {
+        async fn trusted_worktrees() -> Result<Vec<(Option<PathBuf>, Option<String>, Option<String>)>> {
             SELECT absolute_path, user_name, host_name
             FROM trusted_worktrees
         }
