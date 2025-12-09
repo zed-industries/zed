@@ -17,7 +17,6 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
-use std::borrow::Cow;
 use util::command::new_smol_command;
 
 #[cfg(unix)]
@@ -151,7 +150,7 @@ pub trait Fs: Send + Sync {
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
-    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<Vec<u8>>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1095,13 +1094,11 @@ impl Fs for RealFs {
             )
             .await?;
 
-        let branch_name;
-
-        if !stdout.is_empty() {
-            branch_name = String::from_utf8_lossy(&stdout);
+        let branch_name = if !stdout.is_empty() {
+            stdout
         } else {
-            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
-        }
+            fallback_branch_name
+        };
 
         new_smol_command("git")
             .current_dir(abs_work_directory_path)
@@ -1139,26 +1136,19 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<Vec<u8>> {
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String> {
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
-            .args(
-                [String::from("config")]
-                    .into_iter()
-                    .chain(args)
-                    .collect::<Vec<_>>(),
-            )
+            .args([String::from("config")].into_iter().chain(args))
             .output()
             .await?;
 
         if !output.status.success() {
-            anyhow::bail!(
-                "git config failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            let err = String::from_utf8(output.stderr)?;
+            anyhow::bail!(err);
         }
 
-        Ok(output.stdout)
+        String::from_utf8(output.stdout).map_err(Into::into)
     }
 
     fn is_fake(&self) -> bool {
@@ -2781,7 +2771,7 @@ impl Fs for FakeFs {
         anyhow::bail!("Git clone is not supported in fake Fs")
     }
 
-    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<Vec<u8>> {
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
         anyhow::bail!("Git config is not supported in fake Fs")
     }
 

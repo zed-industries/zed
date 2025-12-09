@@ -1775,12 +1775,7 @@ impl GitStore {
         }
     }
 
-    pub fn git_config(
-        &self,
-        path: Arc<Path>,
-        args: Vec<String>,
-        cx: &App,
-    ) -> Task<Result<Vec<u8>>> {
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
         match &self.state {
             GitStoreState::Local { fs, .. } => {
                 let fs = fs.clone();

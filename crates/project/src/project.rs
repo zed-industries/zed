@@ -5207,12 +5207,7 @@ impl Project {
             .git_init(path, fallback_branch_name, cx)
     }
 
-    pub fn git_config(
-        &self,
-        path: Arc<Path>,
-        args: Vec<String>,
-        cx: &App,
-    ) -> Task<Result<Vec<u8>>> {
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
         self.git_store.read(cx).git_config(path, args, cx)
     }
 

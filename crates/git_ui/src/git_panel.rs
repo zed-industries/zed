@@ -3342,7 +3342,7 @@ impl GitPanel {
                 };
 
                 git_panel.update(cx, |this, _cx| {
-                    this.git_access = dbg!(access);
+                    this.git_access = access;
                 })
             })
             .detach_and_log_err(cx);
