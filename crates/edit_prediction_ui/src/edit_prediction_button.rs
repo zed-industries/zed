@@ -304,7 +304,14 @@ impl Render for EditPredictionButton {
                                             cx.theme().colors().status_bar_background,
                                         ))
                                 }),
-                            move |_window, cx| Tooltip::for_action("Codestral", &ToggleMenu, cx),
+                            move |_window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    "Powered by Codestral",
+                                    &ToggleMenu,
+                                    cx,
+                                )
+                            },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -313,6 +320,7 @@ impl Render for EditPredictionButton {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let ep_icon;
+                let tooltip_meta;
                 let mut missing_token = false;
 
                 match provider {
@@ -320,6 +328,7 @@ impl Render for EditPredictionButton {
                         EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
                         ep_icon = IconName::SweepAi;
+                        tooltip_meta = "Powered by Sweep";
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token());
                     }
@@ -327,6 +336,7 @@ impl Render for EditPredictionButton {
                         EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
                         ep_icon = IconName::Inception;
+                        tooltip_meta = "Powered by Mercury";
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token());
                     }
@@ -336,6 +346,7 @@ impl Render for EditPredictionButton {
                         } else {
                             IconName::ZedPredictDisabled
                         };
+                        tooltip_meta = "Powered by Zed's Zeta"
                     }
                 };
 
@@ -403,7 +414,12 @@ impl Render for EditPredictionButton {
                         element.tooltip(move |_window, cx| {
                             if enabled {
                                 if show_editor_predictions {
-                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, cx)
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        tooltip_meta,
+                                        &ToggleMenu,
+                                        cx,
+                                    )
                                 } else if user.is_none() {
                                     Tooltip::with_meta(
                                         "Edit Prediction",
