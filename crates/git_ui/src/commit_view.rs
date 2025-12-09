@@ -152,6 +152,7 @@ impl CommitView {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
             editor.disable_inline_diagnostics();
+            editor.set_show_breakpoints(false, cx);
             editor.set_expand_all_diff_hunks(cx);
 
             editor
