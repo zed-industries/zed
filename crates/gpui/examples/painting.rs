@@ -1,7 +1,7 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas,
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
+    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
+    linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
 
 struct PaintingViewer {
