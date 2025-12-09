@@ -316,14 +316,11 @@ impl PickerDelegate for CommitDiffPickerDelegate {
                         .w_full()
                         .gap_2()
                         .child(
-                            div()
-                                .w(rems_from_px(52.))
-                                .flex_none()
-                                .child(
-                                    Label::new(short_sha.to_string())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Accent),
-                                ),
+                            div().w(rems_from_px(52.)).flex_none().child(
+                                Label::new(short_sha.to_string())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Accent),
+                            ),
                         )
                         .child(
                             v_flex()
@@ -744,7 +741,9 @@ mod tests {
         picker
             .update_in(&mut visual_cx, |picker, window, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches("Zephyr".to_string(), window, cx)
+                    picker
+                        .delegate
+                        .update_matches("Zephyr".to_string(), window, cx)
                 })
             })
             .await;
@@ -767,7 +766,9 @@ mod tests {
         picker
             .update_in(&mut visual_cx, |picker, window, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches("abc123".to_string(), window, cx)
+                    picker
+                        .delegate
+                        .update_matches("abc123".to_string(), window, cx)
                 })
             })
             .await;
@@ -790,7 +791,9 @@ mod tests {
         picker
             .update_in(&mut visual_cx, |picker, window, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches("bug".to_string(), window, cx)
+                    picker
+                        .delegate
+                        .update_matches("bug".to_string(), window, cx)
                 })
             })
             .await;
@@ -813,7 +816,9 @@ mod tests {
         picker
             .update_in(&mut visual_cx, |picker, window, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches("nonexistent_query_xyz".to_string(), window, cx)
+                    picker
+                        .delegate
+                        .update_matches("nonexistent_query_xyz".to_string(), window, cx)
                 })
             })
             .await;
@@ -842,7 +847,9 @@ mod tests {
         picker
             .update_in(&mut visual_cx, |picker, window, cx| {
                 picker.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches("Zephyr".to_string(), window, cx)
+                    picker
+                        .delegate
+                        .update_matches("Zephyr".to_string(), window, cx)
                 })
             })
             .await;

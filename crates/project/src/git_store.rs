@@ -4094,11 +4094,9 @@ impl Repository {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.show_file(commit, path).await
                 }
-                RepositoryState::Remote(_) => {
-                    Err(anyhow::anyhow!(
-                        "show_file is not supported for remote repositories"
-                    ))
-                }
+                RepositoryState::Remote(_) => Err(anyhow::anyhow!(
+                    "show_file is not supported for remote repositories"
+                )),
             }
         })
     }

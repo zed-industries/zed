@@ -317,10 +317,9 @@ fn open_commit_diff_picker(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let file_history_task = git_store
-        .update(cx, |git_store, cx| {
-            git_store.file_history_paginated(&repo, repo_path.clone(), 0, Some(50), cx)
-        });
+    let file_history_task = git_store.update(cx, |git_store, cx| {
+        git_store.file_history_paginated(&repo, repo_path.clone(), 0, Some(50), cx)
+    });
 
     let workspace_weak = workspace.weak_handle();
     let repo_weak = repo.downgrade();

@@ -797,7 +797,11 @@ impl GitRepository for RealGitRepository {
                 let path_str = path.as_unix_str().to_string();
                 let output = new_smol_command(git_binary_path)
                     .current_dir(&working_directory)
-                    .args(["--no-optional-locks", "show", &format!("{}:{}", commit, path_str)])
+                    .args([
+                        "--no-optional-locks",
+                        "show",
+                        &format!("{}:{}", commit, path_str),
+                    ])
                     .output()
                     .await?;
                 if output.status.success() {
@@ -3104,7 +3108,9 @@ mod tests {
         git2::Repository::init(repo_dir.path()).unwrap();
 
         let file_path = repo_dir.path().join("test.txt");
-        smol::fs::write(&file_path, "initial content").await.unwrap();
+        smol::fs::write(&file_path, "initial content")
+            .await
+            .unwrap();
 
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
@@ -3127,7 +3133,10 @@ mod tests {
         .await
         .unwrap();
 
-        let content = repo.show_file("HEAD".into(), repo_path("test.txt")).await.unwrap();
+        let content = repo
+            .show_file("HEAD".into(), repo_path("test.txt"))
+            .await
+            .unwrap();
         assert_eq!(content, Some("initial content".to_string()));
     }
 
@@ -3163,7 +3172,10 @@ mod tests {
         .await
         .unwrap();
 
-        let content = repo.show_file("HEAD".into(), repo_path("nonexistent.txt")).await.unwrap();
+        let content = repo
+            .show_file("HEAD".into(), repo_path("nonexistent.txt"))
+            .await
+            .unwrap();
         assert_eq!(content, None);
     }
 
@@ -3199,7 +3211,10 @@ mod tests {
         .await
         .unwrap();
 
-        let content = repo.show_file("invalid_commit_sha".into(), repo_path("test.txt")).await.unwrap();
+        let content = repo
+            .show_file("invalid_commit_sha".into(), repo_path("test.txt"))
+            .await
+            .unwrap();
         assert_eq!(content, None);
     }
 
@@ -3249,10 +3264,16 @@ mod tests {
         .await
         .unwrap();
 
-        let content_head = repo.show_file("HEAD".into(), repo_path("test.txt")).await.unwrap();
+        let content_head = repo
+            .show_file("HEAD".into(), repo_path("test.txt"))
+            .await
+            .unwrap();
         assert_eq!(content_head, Some("version 2".to_string()));
 
-        let content_parent = repo.show_file("HEAD~1".into(), repo_path("test.txt")).await.unwrap();
+        let content_parent = repo
+            .show_file("HEAD~1".into(), repo_path("test.txt"))
+            .await
+            .unwrap();
         assert_eq!(content_parent, Some("version 1".to_string()));
     }
 
