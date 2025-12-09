@@ -118,14 +118,14 @@ impl Render for SecurityModal {
                             None => match &restricted_path.host {
                                 Some(remote_host) => match &remote_host.user_name {
                                     Some(user_name) => format!(
-                                        "Project-level trust ({}@{})",
+                                        "Empty project ({}@{})",
                                         user_name, remote_host.host_name
                                     ),
                                     None => {
-                                        format!("Project-level trust ({})", remote_host.host_name)
+                                        format!("Empty project ({})", remote_host.host_name)
                                     }
                                 },
-                                None => "Project-level trust".to_string(),
+                                None => "Empty project".to_string(),
                             },
                         };
                         h_flex()
