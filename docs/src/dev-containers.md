@@ -43,3 +43,8 @@ Once connected, Zed operates inside the container environment for tasks, termina
 - **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads; containers must be manually restarted.
 - **Dependency on Docker:** The feature requires `docker` (or a compatible CLI) to be available in the system `PATH`.
 - **Other devcontainer features:** Some parts of the devcontainer specification are not yet implemented and may be added in future releases.
+
+## See also
+
+- [Remote Development](./remote-development.md) for connecting to remote servers over SSH.
+- [Tasks](./tasks.md) for running commands in the integrated terminal.
