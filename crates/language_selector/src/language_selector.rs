@@ -177,8 +177,7 @@ impl LanguageSelectorDelegate {
             .path_suffixes
             .iter()
             .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
-            .map(Icon::from_embedded)
-            .map(|icon| icon.color(Color::Muted))
+            .map(|path| Icon::from_embedded(path).color(Color::Muted))
     }
 }
 

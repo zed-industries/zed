@@ -2320,8 +2320,7 @@ impl OutlinePanel {
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
-                .map(Icon::from_embedded)
-                .map(|icon| icon.color(color).into_any_element());
+                .map(|path| Icon::from_embedded(path).color(color).into_any_element());
                 (
                     ElementId::from(directory.entry.id.to_proto() as usize),
                     HighlightedLabel::new(
@@ -2346,8 +2345,7 @@ impl OutlinePanel {
                             } else {
                                 None
                             }
-                            .map(Icon::from_embedded)
-                            .map(|icon| icon.color(color).into_any_element());
+                            .map(|path| Icon::from_embedded(path).color(color).into_any_element());
                             (icon, file_name(path.as_std_path()))
                         }
                         None => (None, "Untitled".to_string()),
@@ -2417,8 +2415,7 @@ impl OutlinePanel {
             } else {
                 FileIcons::get_chevron_icon(is_expanded, cx)
             }
-            .map(Icon::from_embedded)
-            .map(|icon| icon.color(color).into_any_element());
+            .map(|path| Icon::from_embedded(path).color(color).into_any_element());
             (
                 ElementId::from(
                     folded_dir

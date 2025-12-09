@@ -191,8 +191,7 @@ impl ScopeSelectorDelegate {
             .iter()
             .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
             .or(FileIcons::get(cx).get_icon_for_type("default", cx))
-            .map(Icon::from_embedded)
-            .map(|icon| icon.color(Color::Muted))
+            .map(|path| Icon::from_embedded(path).color(Color::Muted))
     }
 }
 
