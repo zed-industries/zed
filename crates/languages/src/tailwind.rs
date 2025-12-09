@@ -140,7 +140,6 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-
         })))
     }
 
