@@ -20,13 +20,12 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -937,14 +936,12 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Anthropic's settings", "https://console.anthropic.com/settings/keys"))
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
                         )
                 )
                 .child(self.api_key_editor.clone())
@@ -953,7 +950,8 @@ impl Render for ConfigurationView {
                         format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    .color(Color::Muted)
+                    .mt_0p5(),
                 )
                 .into_any_element()
         } else {

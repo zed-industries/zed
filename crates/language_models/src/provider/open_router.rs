@@ -17,12 +17,12 @@ use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsSto
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -829,17 +829,15 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create an API key by visiting",
-                            Some("OpenRouter's console"),
-                            Some("https://openrouter.ai/keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenRouter account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create an API key by visiting"))
+                                .child(ButtonLink::new("OpenRouter's console", "https://openrouter.ai/keys"))
+                        )
+                        .child(ListBulletItem::new("Ensure your OpenRouter account has credits")
+                        )
+                        .child(ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

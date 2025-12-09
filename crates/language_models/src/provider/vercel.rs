@@ -14,13 +14,13 @@ pub use settings::VercelAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use vercel::{Model, VERCEL_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
@@ -469,14 +469,14 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with Vercel v0, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("Vercel v0's console"),
-                            Some("https://v0.dev/chat/settings/keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the agent",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Vercel v0's console", "https://v0.dev/chat/settings/keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

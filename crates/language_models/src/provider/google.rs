@@ -28,14 +28,13 @@ use std::sync::{
     atomic::{self, AtomicU64},
 };
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
 use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -873,14 +872,14 @@ impl Render for ConfigurationView {
                 })))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("Google AI's console"),
-                            Some("https://aistudio.google.com/app/apikey"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Google AI's console", "https://aistudio.google.com/app/apikey"))
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        )
                 )
                 .child(self.api_key_editor.clone())
                 .child(

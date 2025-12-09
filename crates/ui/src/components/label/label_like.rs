@@ -227,7 +227,9 @@ impl RenderOnce for LabelLike {
                     .get_or_insert_with(Default::default)
                     .underline = Some(UnderlineStyle {
                     thickness: px(1.),
-                    color: None,
+                    color: Some(gpui::Hsla::from(
+                        cx.theme().colors().text_muted.opacity(0.2),
+                    )),
                     wavy: false,
                 });
                 this

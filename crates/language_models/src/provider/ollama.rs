@@ -22,13 +22,15 @@ use std::pin::Pin;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, ConfiguredApiCard, ElevationIndex, List, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, InlineCode, List, ListBulletItem,
+    Tooltip, prelude::*,
+};
 use ui_input::InputField;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
 use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -733,15 +735,17 @@ impl ConfigurationView {
             .child(Label::new("To use local Ollama:"))
             .child(
                 List::new()
-                    .child(InstructionListItem::new(
-                        "Download and install Ollama from",
-                        Some("ollama.com"),
-                        Some("https://ollama.com/download"),
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Start Ollama and download a model: `ollama run gpt-oss:20b`",
-                    ))
-                    .child(InstructionListItem::text_only(
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Download and install Ollama from"))
+                            .child(ButtonLink::new("ollama.com", "https://ollama.com/download")),
+                    )
+                    .child(
+                        ListBulletItem::new("")
+                            .child(Label::new("Start Ollama and download a model:"))
+                            .child(InlineCode::new("ollama run gpt-oss:20b")),
+                    )
+                    .child(ListBulletItem::new(
                         "Click 'Connect' below to start using Ollama in Zed",
                     )),
             )

@@ -19,12 +19,12 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
@@ -892,30 +892,32 @@ impl ConfigurationView {
 
         if should_show_editor {
             v_flex()
-                .id("codestral")
-                .size_full()
-                .mt_2()
-                .on_action(cx.listener(Self::save_codestral_api_key))
-                .child(Label::new(
-                    "To use Codestral as an edit prediction provider, \
-                    you need to add a Codestral-specific API key. Follow these steps:",
-                ))
-                .child(
-                    List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("the Codestral section of Mistral's console"),
-                            Some("https://console.mistral.ai/codestral"),
-                        ))
-                        .child(InstructionListItem::text_only("Paste your API key below and hit enter")),
-                )
-                .child(self.codestral_api_key_editor.clone())
-                .child(
-                    Label::new(
-                        format!("You can also assign the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                    .id("codestral")
+                    .size_full()
+                    .mt_2()
+                    .on_action(cx.listener(Self::save_codestral_api_key))
+                    .child(Label::new(
+                        "To use Codestral as an edit prediction provider, \
+                        you need to add a Codestral-specific API key. Follow these steps:",
+                    ))
+                    .child(
+                        List::new()
+                            .child(
+                                ListBulletItem::new("")
+                                    .child(Label::new("Create one by visiting"))
+                                    .child(ButtonLink::new("the Codestral section of Mistral's console", "https://console.mistral.ai/codestral"))
+                            )
+                            .child(
+                                ListBulletItem::new("Paste your API key below and hit enter")
+                            )
                     )
-                    .size(LabelSize::Small).color(Color::Muted),
-                ).into_any()
+                    .child(self.codestral_api_key_editor.clone())
+                    .child(
+                        Label::new(
+                            format!("You can also assign the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        )
+                        .size(LabelSize::Small).color(Color::Muted),
+                    ).into_any()
         } else {
             ConfiguredApiCard::new(configured_card_label)
                 .disabled(env_var_set)
@@ -923,7 +925,7 @@ impl ConfigurationView {
                 .when(env_var_set, |this| {
                     this.tooltip_label(format!(
                         "To reset your API key, \
-                            unset the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable."
+                                unset the {CODESTRAL_API_KEY_ENV_VAR_NAME} environment variable."
                     ))
                 })
                 .on_click(
@@ -957,17 +959,17 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with Mistral, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("Mistral's console"),
-                            Some("https://console.mistral.ai/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your Mistral account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("Mistral's console", "https://console.mistral.ai/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Ensure your Mistral account has credits")
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

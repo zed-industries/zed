@@ -14,13 +14,13 @@ pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use x_ai::{Model, XAI_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -471,14 +471,14 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with xAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("xAI console"),
-                            Some("https://console.x.ai/team/default/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the agent",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("xAI console", "https://console.x.ai/team/default/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

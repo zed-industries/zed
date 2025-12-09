@@ -20,12 +20,12 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -785,17 +785,17 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("OpenAI's console"),
-                            Some("https://platform.openai.com/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenAI account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("OpenAI's console", "https://platform.openai.com/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Ensure your OpenAI account has credits")
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

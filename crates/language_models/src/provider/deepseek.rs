@@ -19,12 +19,12 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
-use ui::{ConfiguredApiCard, List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use crate::api_key::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -624,12 +624,15 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use DeepSeek in Zed, you need an API key:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Get your API key from the",
-                            Some("DeepSeek console"),
-                            Some("https://platform.deepseek.com/api_keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Get your API key from the"))
+                                .child(ButtonLink::new(
+                                    "DeepSeek console",
+                                    "https://platform.deepseek.com/api_keys",
+                                )),
+                        )
+                        .child(ListBulletItem::new(
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
