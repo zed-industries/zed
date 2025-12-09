@@ -569,7 +569,7 @@ You can change the following settings to modify vim mode's behavior:
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
 | highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
-| friendly_mode_display        | Whether to show friendly mode display.                                                                                                                                                         | false         |
+| friendly_mode_display        | Whether to show friendly mode display.                                                                                                                                                        | false         |
 
 Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
 
