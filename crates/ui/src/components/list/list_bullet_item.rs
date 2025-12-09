@@ -51,7 +51,7 @@ impl RenderOnce for ListBulletItem {
                     )
                     .map(|this| {
                         if !self.children.is_empty() {
-                            this.child(h_flex().gap_px().flex_wrap().children(self.children))
+                            this.child(h_flex().gap_0p5().flex_wrap().children(self.children))
                         } else {
                             this.child(
                                 div().w_full().min_w_0().child(
