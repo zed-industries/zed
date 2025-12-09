@@ -133,6 +133,11 @@ impl PlatformWindow for TestWindow {
         lock.bounds.size = size;
     }
 
+    fn set_position(&mut self, position: Point<Pixels>) {
+        let mut lock = self.0.lock();
+        lock.bounds.origin = position;
+    }
+
     fn scale_factor(&self) -> f32 {
         2.0
     }

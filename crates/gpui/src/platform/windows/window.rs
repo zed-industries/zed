@@ -577,6 +577,30 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn set_position(&mut self, position: Point<Pixels>) {
+        let hwnd = self.0.hwnd;
+        let position = position.to_device_pixels(self.scale_factor());
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        position.x.0,
+                        position.y.0,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER,
+                    )
+                    .context("unable to set window position")
+                    .log_err();
+                }
+            })
+            .detach();
+    }
+
     fn scale_factor(&self) -> f32 {
         self.state.scale_factor.get()
     }
