@@ -1,6 +1,6 @@
 use crate::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableVariant, THREAD_TIMINGS,
-    TaskLabel, TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
+    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
 };
 use calloop::{
     EventLoop, PostAction,
@@ -19,9 +19,9 @@ struct TimerAfter {
 }
 
 pub(crate) struct LinuxDispatcher {
-    main_sender: BadPriorityQueueCalloopSender<RunnableVariant>,
+    main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
-    background_sender: BadPriorityQueueSender<RunnableVariant>,
+    background_sender: PriorityQueueSender<RunnableVariant>,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -29,8 +29,8 @@ pub(crate) struct LinuxDispatcher {
 const MIN_THREADS: usize = 2;
 
 impl LinuxDispatcher {
-    pub fn new(main_sender: BadPriorityQueueCalloopSender<RunnableVariant>) -> Self {
-        let (background_sender, background_receiver) = BadPriorityQueueReceiver::new();
+    pub fn new(main_sender: PriorityQueueCalloopSender<RunnableVariant>) -> Self {
+        let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         let thread_count =
             std::thread::available_parallelism().map_or(MIN_THREADS, |i| i.get().max(MIN_THREADS));
 
@@ -230,27 +230,13 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 }
 
-pub struct BadPriorityQueueSender<T> {
-    sender: flume::Sender<(Priority, T)>,
-}
-
-impl<T> BadPriorityQueueSender<T> {
-    fn new(tx: flume::Sender<(Priority, T)>) -> Self {
-        Self { sender: tx }
-    }
-
-    fn send(&self, priority: Priority, item: T) -> Result<(), flume::SendError<(Priority, T)>> {
-        self.sender.send((priority, item))
-    }
-}
-
-pub struct BadPriorityQueueCalloopSender<T> {
-    sender: BadPriorityQueueSender<T>,
+pub struct PriorityQueueCalloopSender<T> {
+    sender: PriorityQueueSender<T>,
     ping: calloop::ping::Ping,
 }
 
-impl<T> BadPriorityQueueCalloopSender<T> {
-    fn new(tx: BadPriorityQueueSender<T>, ping: calloop::ping::Ping) -> Self {
+impl<T> PriorityQueueCalloopSender<T> {
+    fn new(tx: PriorityQueueSender<T>, ping: calloop::ping::Ping) -> Self {
         Self { sender: tx, ping }
     }
 
@@ -263,150 +249,26 @@ impl<T> BadPriorityQueueCalloopSender<T> {
     }
 }
 
-impl<T> Drop for BadPriorityQueueCalloopSender<T> {
+impl<T> Drop for PriorityQueueCalloopSender<T> {
     fn drop(&mut self) {
         self.ping.ping();
     }
 }
 
-pub struct BadPriorityQueueReceiver<T> {
-    receiver: flume::Receiver<(Priority, T)>,
-    high_priority: Vec<T>,
-    medium_priority: Vec<T>,
-    low_priority: Vec<T>,
-    disconnected: bool,
-}
-
-impl<T> Clone for BadPriorityQueueReceiver<T> {
-    fn clone(&self) -> Self {
-        Self {
-            receiver: self.receiver.clone(),
-            high_priority: Vec::new(),
-            medium_priority: Vec::new(),
-            low_priority: Vec::new(),
-            disconnected: self.disconnected,
-        }
-    }
-}
-
-pub struct ReceiverDisconnected;
-
-impl<T> BadPriorityQueueReceiver<T> {
-    const TICKET_COUNT: usize = 100;
-
-    pub fn new() -> (BadPriorityQueueSender<T>, Self) {
-        let (tx, rx) = flume::unbounded();
-
-        let sender = BadPriorityQueueSender::new(tx);
-
-        let receiver = BadPriorityQueueReceiver {
-            receiver: rx,
-            high_priority: Vec::new(),
-            medium_priority: Vec::new(),
-            low_priority: Vec::new(),
-            disconnected: false,
-        };
-
-        (sender, receiver)
-    }
-
-    pub fn try_pop(&mut self) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
-        self.pop_inner(false)
-    }
-
-    pub fn pop(&mut self) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
-        self.pop_inner(true)
-    }
-
-    #[inline(always)]
-    fn pop_inner(&mut self, block: bool) -> Result<impl Iterator<Item = T>, ReceiverDisconnected> {
-        if self.disconnected {
-            return Err(ReceiverDisconnected);
-        }
-
-        let mut add_element = |(priority, item): (Priority, T)| match priority {
-            Priority::High => self.high_priority.push(item),
-            Priority::Medium => self.medium_priority.push(item),
-            Priority::Low => self.low_priority.push(item),
-        };
-
-        let mut max_count = Self::TICKET_COUNT;
-        if block {
-            match self.receiver.recv() {
-                Ok(e) => add_element(e),
-                Err(flume::RecvError::Disconnected) => {
-                    self.disconnected = true;
-                }
-            };
-            max_count -= 1;
-        }
-
-        loop {
-            match self.receiver.try_recv() {
-                Ok(e) => {
-                    max_count -= 1;
-                    add_element(e);
-                    if max_count == 0 {
-                        break;
-                    }
-                }
-                Err(flume::TryRecvError::Empty) => {
-                    break;
-                }
-                Err(flume::TryRecvError::Disconnected) => {
-                    self.disconnected = true;
-                    break;
-                }
-            }
-        }
-
-        let mut ticket_count = Self::TICKET_COUNT;
-
-        // todo(kate): make it also consider the other way around where there's
-        // a lot of high priority tasks and no low priority ones i have it a
-        // math problem and will solve it later
-        // todo(for kate): tests, soo many tests
-        let high_percentage = Priority::High.ticket_percentage();
-        let medium_percentage = Priority::Medium.ticket_percentage() / (1.0f32 - high_percentage);
-        let low_percentage = (Priority::Low.ticket_percentage() / (1.0f32 - high_percentage))
-            / (1.0f32 - medium_percentage);
-
-        let high_taken = (ticket_count as f32 * high_percentage).ceil() as usize;
-        ticket_count -= high_taken;
-
-        let medium_taken = (ticket_count as f32 * medium_percentage).ceil() as usize;
-        ticket_count -= medium_taken;
-
-        let low_taken = (ticket_count as f32 * low_percentage).ceil() as usize;
-
-        let high_priority = self
-            .high_priority
-            .drain(..high_taken.min(self.high_priority.len()));
-        let medium_priority = self
-            .medium_priority
-            .drain(..medium_taken.min(self.medium_priority.len()));
-        let low_priority = self
-            .low_priority
-            .drain(..low_taken.min(self.low_priority.len()));
-
-        Ok(high_priority.chain(medium_priority).chain(low_priority))
-    }
-}
-
-pub struct BadPriorityQueueCalloopReceiver<T> {
-    receiver: BadPriorityQueueReceiver<T>,
+pub struct PriorityQueueCalloopReceiver<T> {
+    receiver: PriorityQueueReceiver<T>,
     source: calloop::ping::PingSource,
     ping: calloop::ping::Ping,
 }
 
-impl<T> BadPriorityQueueCalloopReceiver<T> {
-    pub fn new() -> (BadPriorityQueueCalloopSender<T>, Self) {
+impl<T> PriorityQueueCalloopReceiver<T> {
+    pub fn new() -> (PriorityQueueCalloopSender<T>, Self) {
         let (ping, source) = calloop::ping::make_ping().expect("Failed to create a Ping.");
 
-        let (tx, rx) = BadPriorityQueueReceiver::new();
+        let (tx, rx) = PriorityQueueReceiver::new();
 
         (
-            BadPriorityQueueCalloopSender::new(tx, ping.clone()),
+            PriorityQueueCalloopSender::new(tx, ping.clone()),
             Self {
                 receiver: rx,
                 source,
@@ -435,7 +297,7 @@ impl std::error::Error for ChannelError {
     }
 }
 
-impl<T> calloop::EventSource for BadPriorityQueueCalloopReceiver<T> {
+impl<T> calloop::EventSource for PriorityQueueCalloopReceiver<T> {
     type Event = Event<T>;
     type Metadata = ();
     type Ret = ();
@@ -511,11 +373,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tomato() {
+    fn calloop_works() {
         let mut event_loop = calloop::EventLoop::try_new().unwrap();
         let handle = event_loop.handle();
 
-        let (tx, rx) = BadPriorityQueueCalloopReceiver::new();
+        let (tx, rx) = PriorityQueueCalloopReceiver::new();
 
         struct Data {
             got_msg: bool,

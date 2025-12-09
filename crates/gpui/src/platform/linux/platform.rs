@@ -22,7 +22,7 @@ use util::command::{new_smol_command, new_std_command};
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, BadPriorityQueueCalloopReceiver, ClipboardItem,
+    Action, AnyWindowHandle, BackgroundExecutor, PriorityQueueCalloopReceiver, ClipboardItem,
     CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant,
@@ -149,8 +149,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, BadPriorityQueueCalloopReceiver<RunnableVariant>) {
-        let (main_sender, main_receiver) = BadPriorityQueueCalloopReceiver::new();
+    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
+        let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());

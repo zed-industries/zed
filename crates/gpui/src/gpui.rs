@@ -45,6 +45,7 @@ pub mod test;
 mod text_system;
 mod util;
 mod view;
+mod queue;
 mod window;
 
 #[cfg(doc)]
@@ -108,6 +109,7 @@ pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
+pub use queue::*;
 
 use std::{any::Any, future::Future};
 use taffy::TaffyLayoutEngine;
