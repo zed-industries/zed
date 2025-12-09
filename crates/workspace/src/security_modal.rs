@@ -1,4 +1,3 @@
-// TODO kb does not get focus inside the modal on restoration
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -62,6 +61,7 @@ impl ModalView for SecurityModal {
     }
 }
 
+// TODO kb keyboard navigation
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {

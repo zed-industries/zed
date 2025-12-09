@@ -665,14 +665,17 @@ impl ContextServerStore {
     }
 }
 
+// TODO kb is never called before `+` is pressed in the panel
 fn wait_for_worktree_trust(
     context_server_store: WeakEntity<ContextServerStore>,
     cx: &mut AsyncApp,
 ) -> Option<Task<()>> {
+    dbg!("1");
     let trusted_worktrees = cx
         .update(|cx| TrustedWorktrees::try_get_global(cx))
         .ok()??;
 
+    dbg!("1.5");
     let remote_host = context_server_store
         .update(cx, |context_server_store, cx| {
             let remote_host = context_server_store
@@ -680,15 +683,16 @@ fn wait_for_worktree_trust(
                 .read_with(cx, |project, cx| project.remote_connection_options(cx))
                 .ok()?;
             if trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                trusted_worktrees.can_trust_global(remote_host.clone(), cx)
+                dbg!(trusted_worktrees.can_trust_global(remote_host.clone(), cx))
             }) {
-                Some(remote_host.map(RemoteHostLocation::from))
-            } else {
                 None
+            } else {
+                Some(remote_host.map(RemoteHostLocation::from))
             }
         })
         .ok()
         .flatten()?;
+    dbg!("2");
 
     Some(cx.spawn(async move |cx| {
         log::info!("Waiting for global startup to be trusted before starting context servers");
