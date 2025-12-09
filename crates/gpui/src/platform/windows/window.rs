@@ -587,17 +587,9 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 unsafe {
-                    SetWindowPos(
-                        hwnd,
-                        None,
-                        x,
-                        y,
-                        0,
-                        0,
-                        SWP_NOSIZE | SWP_NOZORDER,
-                    )
-                    .context("unable to set window position")
-                    .log_err();
+                    SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
+                        .context("unable to set window position")
+                        .log_err();
                 }
             })
             .detach();
