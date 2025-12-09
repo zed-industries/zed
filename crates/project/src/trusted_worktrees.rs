@@ -64,6 +64,40 @@ pub fn init_global(
     }
 }
 
+pub fn wait_for_worktree_trust(
+    remote_host: Option<impl Into<RemoteHostLocation>>,
+    cx: &mut App,
+) -> Option<Task<()>> {
+    let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
+    let remote_host = remote_host.map(|host| host.into());
+
+    let remote_host = if trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+        trusted_worktrees.can_trust_global(remote_host.clone(), cx)
+    }) {
+        None
+    } else {
+        Some(remote_host)
+    }?;
+
+    Some(cx.spawn(async move |cx| {
+        log::info!("Waiting for global startup to be trusted before starting context servers");
+        let (tx, restricted_worktrees_task) = smol::channel::bounded::<()>(1);
+        let Ok(_subscription) = cx.update(|cx| {
+            cx.subscribe(&trusted_worktrees, move |_, e, _| {
+                if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                    if trusted_paths.contains(&PathTrust::Global(remote_host.clone())) {
+                        tx.send_blocking(()).ok();
+                    }
+                }
+            })
+        }) else {
+            return;
+        };
+
+        restricted_worktrees_task.recv().await.ok();
+    }))
+}
+
 pub struct TrustedWorktrees(Entity<TrustedWorktreesStorage>);
 
 impl Global for TrustedWorktrees {}
@@ -151,10 +185,17 @@ impl TrustedWorktreesStorage {
                 HashSet::default()
             }
         };
+        let restricted_globals = if trusted_paths.contains(&PathTrust::Global(remote_host.clone()))
+        {
+            HashSet::default()
+        } else {
+            HashSet::from_iter([remote_host.clone()])
+        };
+
         Self {
             trusted_paths,
             restricted: HashSet::default(),
-            restricted_globals: HashSet::from_iter([remote_host.clone()]),
+            restricted_globals,
             serialization_task: Task::ready(()),
             worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
         }
@@ -434,7 +475,6 @@ impl TrustedWorktreesStorage {
         let remote_host = remote_host.map(|host_data| host_data.into());
         self.worktree_stores
             .insert(worktree_store.downgrade(), remote_host.clone());
-        self.restricted_globals.insert(remote_host.clone());
         self.trusted_paths = self
             .trusted_paths
             .drain()
@@ -452,6 +492,12 @@ impl TrustedWorktreesStorage {
                 PathTrust::Global(host) => PathTrust::Global(host),
             })
             .collect();
+        if !self
+            .trusted_paths
+            .contains(&PathTrust::Global(remote_host.clone()))
+        {
+            self.restricted_globals.insert(remote_host.clone());
+        }
         cx.emit(TrustedWorktreesEvent::Restricted(HashSet::from_iter([
             PathTrust::Global(remote_host),
         ])));

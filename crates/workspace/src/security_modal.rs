@@ -61,7 +61,7 @@ impl ModalView for SecurityModal {
     }
 }
 
-// TODO kb keyboard navigation
+// TODO kb keyboard navigation (ESC to dismiss?)
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
