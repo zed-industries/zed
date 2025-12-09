@@ -3465,7 +3465,7 @@ impl BufferSnapshot {
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
     pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
-        let range = dbg!(range.start.to_offset(self))..range.end.to_offset(self);
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
         if language_aware {

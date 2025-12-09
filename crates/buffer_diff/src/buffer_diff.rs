@@ -1,14 +1,13 @@
 use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{
-    BufferRow, DiffOptions, File, Language, LanguageName, LanguageRegistry,
+    BufferRow, Capability, DiffOptions, File, Language, LanguageName, LanguageRegistry,
     language_settings::language_settings, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
     cmp::Ordering,
-    future::Future,
     iter,
     ops::Range,
     sync::{Arc, LazyLock},
@@ -1051,10 +1050,16 @@ impl EventEmitter<BufferDiffEvent> for BufferDiff {}
 
 impl BufferDiff {
     pub fn new(buffer: &text::BufferSnapshot, cx: &mut App) -> Self {
+        let base_text = cx.new(|cx| {
+            let mut buffer = language::Buffer::local("", cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
         BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiffInner {
-                base_text: cx.new(|cx| language::Buffer::local("", cx)),
+                base_text,
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
@@ -1065,10 +1070,16 @@ impl BufferDiff {
 
     pub fn new_unchanged(buffer: &text::BufferSnapshot, cx: &mut Context<Self>) -> Self {
         let base_text = buffer.text();
+        let base_text = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(base_text, cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
         BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiffInner {
-                base_text: cx.new(|cx| language::Buffer::local(base_text, cx)),
+                base_text,
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
@@ -1193,11 +1204,6 @@ impl BufferDiff {
                     diff_options,
                 );
                 let base_text = base_text.unwrap_or_default();
-                if cfg!(debug_assertions) {
-                    for hunk in hunks.iter() {
-                        base_text.get(hunk.diff_base_byte_range.clone()).unwrap();
-                    }
-                }
                 BufferDiffInner {
                     base_text,
                     hunks,
@@ -1207,7 +1213,18 @@ impl BufferDiff {
             })
     }
 
-    pub fn language_changed(&mut self, cx: &mut Context<Self>) {
+    pub fn language_changed(
+        &mut self,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.inner.base_text.update(cx, |base_text, cx| {
+            base_text.set_language(language, cx);
+            if let Some(language_registry) = language_registry {
+                base_text.set_language_registry(language_registry);
+            }
+        });
         cx.emit(BufferDiffEvent::LanguageChanged);
     }
 
@@ -1234,6 +1251,7 @@ impl BufferDiff {
     ) -> Option<Range<Anchor>> {
         log::debug!("set snapshot with secondary {secondary_diff_change:?}");
 
+        dbg!(base_text_changed);
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
         let (mut changed_range, mut base_text_changed_range) =
@@ -1269,32 +1287,14 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        if cfg!(debug_assertions) {
-            for hunk in new_state.hunks.iter() {
-                new_state.base_text.get(hunk.diff_base_byte_range.clone());
-            }
-        }
         if base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
-                base_text.set_text(dbg!(new_state.base_text.clone()), cx);
+                base_text.set_capability(Capability::ReadWrite, cx);
+                base_text.set_text(new_state.base_text.clone(), cx);
+                base_text.set_capability(Capability::ReadOnly, cx);
             })
         }
         state.hunks = new_state.hunks;
-        if cfg!(debug_assertions) {
-            pretty_assertions::assert_eq!(
-                state.base_text.read(cx).snapshot().text().as_str(),
-                new_state.base_text.as_ref()
-            );
-            for hunk in state.hunks.iter() {
-                state
-                    .base_text
-                    .read(cx)
-                    .snapshot()
-                    .text_summary_for_range::<text::TextSummary, _>(
-                        hunk.diff_base_byte_range.clone(),
-                    );
-            }
-        }
         if base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {

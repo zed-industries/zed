@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::{BufferDiff};
 use editor::{Addon, Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
@@ -195,7 +195,8 @@ impl CommitView {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
 
-                        let hunks: Vec<_> = buffer_diff.read(cx).hunks(&snapshot, cx).collect();
+                        let hunks: Vec<_> =
+                            buffer_diff.read(cx).snapshot(cx).hunks(&snapshot).collect();
 
                         let excerpt_ranges = if hunks.is_empty() {
                             vec![language::Point::zero()..snapshot.max_point()]
@@ -796,35 +797,29 @@ async fn build_buffer_diff(
         LineEnding::normalize(old_text);
     }
 
+    let language = cx.update(|cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
 
-    let base_buffer = cx
-        .update(|cx| {
-            Buffer::build_snapshot(
-                old_text.as_deref().unwrap_or("").into(),
-                buffer.language().cloned(),
-                Some(language_registry.clone()),
-                cx,
-            )
-        })?
-        .await;
+    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx))?;
 
-    let diff_snapshot = cx
-        .update(|cx| {
-            BufferDiffSnapshot::new_with_base_buffer(
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
                 buffer.text.clone(),
-                old_text.map(Arc::new),
-                base_buffer,
+                old_text.map(|old_text| Arc::from(old_text.as_str())),
+                true,
+                language.clone(),
                 cx,
             )
         })?
         .await;
 
-    cx.new(|cx| {
-        let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
-        diff
-    })
+    diff.update(cx, |diff, cx| {
+        diff.language_changed(language, Some(language_registry.clone()), cx);
+        diff.set_snapshot(update, &buffer.text, true, cx)
+    }).ok();
+
+    Ok(diff)
 }
 
 impl EventEmitter<EditorEvent> for CommitView {}

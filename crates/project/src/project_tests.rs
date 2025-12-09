@@ -7222,9 +7222,9 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks(&snapshot, cx),
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &unstaged_diff.base_text_string().unwrap(),
+            &unstaged_diff.base_text_string(cx).unwrap(),
             &[
                 (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
@@ -7250,9 +7250,11 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            unstaged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_diff.base_text().text(),
+            &unstaged_diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7332,16 +7334,17 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    diff_1.read_with(cx, |diff, _| {
-        assert_eq!(diff.base_text().language().cloned(), Some(language))
+    diff_1.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).language().cloned(), Some(language))
     });
     cx.run_until_parked();
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..1,
@@ -7380,9 +7383,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text().text(),
+            &diff.base_text(cx).text(),
             &[(
                 2..3,
                 "",
@@ -7409,9 +7413,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7430,9 +7435,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -7501,9 +7507,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7532,14 +7538,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7584,9 +7591,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7634,14 +7641,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         let range =
             snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
         let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(range, &snapshot)
             .collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
 
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7684,9 +7692,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string().unwrap(),
+            &diff.base_text_string(cx).unwrap(),
             &[
                 (
                     0..0,
@@ -7727,7 +7735,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Stage two hunks with separate operations.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
         diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
     });
@@ -7915,7 +7923,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[
@@ -7947,7 +7955,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the third hunk before receiving the second FS event.
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
         diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
     });
 
@@ -7959,7 +7967,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
     uncommitted_diff.update(cx, |diff, cx| {
         assert_hunks(
-            diff.hunks(&snapshot, cx),
+            diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[
@@ -8045,8 +8053,9 @@ async fn test_staging_random_hunks(
         .await
         .unwrap();
 
-    let mut hunks =
-        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
@@ -8097,7 +8106,8 @@ async fn test_staging_random_hunks(
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         let actual_hunks = diff
-            .hunks(&snapshot, cx)
+            .snapshot(cx)
+            .hunks(&snapshot)
             .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
             .collect::<Vec<_>>();
         assert_eq!(actual_hunks, expected_hunks);
@@ -8162,7 +8172,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks(&snapshot, cx),
+            uncommitted_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
             &uncommitted_diff.base_text_string(cx).unwrap(),
             &[(
@@ -8227,7 +8237,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .unwrap();
 
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
         diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
     });
 
@@ -10344,7 +10354,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    unstaged_diff.update(cx, |unstaged_diff, _cx| {
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
         let base_text = unstaged_diff.base_text_string(cx).unwrap();
         assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
     });
@@ -10375,7 +10385,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
             "Diff bases should be automatically updated to file_2 staged content"
         );
 
-        let hunks: Vec<_> = unstaged_diff.hunks(&snapshot, cx).collect();
+        let hunks: Vec<_> = unstaged_diff.snapshot(cx).hunks(&snapshot).collect();
         assert!(!hunks.is_empty(), "Should have diff hunks for file_2");
     });
 
@@ -10388,7 +10398,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
 
     cx.run_until_parked();
 
-    uncommitted_diff.update(cx, |uncommitted_diff, _cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let base_text = uncommitted_diff.base_text_string(cx).unwrap();
         assert_eq!(
             base_text, file_2_committed,

@@ -498,11 +498,11 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
-        let diff_hunk_ranges = diff_read
+        let diff_snapshot = diff_read.snapshot(cx);
+        let diff_hunk_ranges = diff_snapshot
             .hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(diff_read.buffer_id),
                 &snapshot,
-                cx,
             )
             .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon

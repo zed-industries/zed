@@ -132,7 +132,6 @@ impl Chunk {
             return true;
         }
         if PANIC || cfg!(debug_assertions) {
-            dbg!(offset);
             panic_char_boundary(&self.text, offset);
         } else {
             log_err_char_boundary(&self.text, offset);

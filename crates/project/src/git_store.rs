@@ -819,6 +819,7 @@ impl GitStore {
 
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
+                diff_state.language_changed = true;
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
@@ -3119,7 +3120,7 @@ impl BufferGitState {
             {
                 unstaged_diff.update(cx, |diff, cx| {
                     if language_changed {
-                        diff.language_changed(cx);
+                        diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
                     diff.set_snapshot(new_unstaged_diff, &buffer, index_changed, cx)
                 })?
@@ -3134,7 +3135,7 @@ impl BufferGitState {
             {
                 uncommitted_diff.update(cx, |diff, cx| {
                     if language_changed {
-                        diff.language_changed(cx);
+                        diff.language_changed(language, language_registry, cx);
                     }
                     diff.set_snapshot_with_secondary(
                         new_uncommitted_diff,

@@ -440,7 +440,9 @@ mod tests {
             HELLO!
         "};
         let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-        let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
