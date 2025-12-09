@@ -6,7 +6,7 @@ If your repository includes a `.devcontainer/devcontainer.json` file, Zed can op
 
 ## Requirements
 
-- Docker (or a compatible CLI such as Podman) must be installed and available in your `PATH`.
+- Docker must be installed and available in your `PATH`. Zed requires the `docker` command to be present. If you use Podman, you can alias it to `docker` (e.g., `alias docker=podman`).
 - Your project must contain a `.devcontainer/devcontainer.json` file.
 
 ## Using Dev Containers in Zed
