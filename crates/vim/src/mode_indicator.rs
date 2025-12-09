@@ -61,21 +61,26 @@ impl ModeIndicator {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
-    fn classic_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
+    fn current_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
         let recording = Vim::globals(cx)
             .recording_register
             .map(|reg| format!("recording @{reg} "))
             .into_iter();
 
-        let pre_count = cx.global::<VimGlobals>().pre_count;
-        let post_count = cx.global::<VimGlobals>().post_count;
-
         let vim = vim.read(cx);
         recording
-            .chain(pre_count.map(|count| format!("{}", count)))
+            .chain(
+                cx.global::<VimGlobals>()
+                    .pre_count
+                    .map(|count| format!("{}", count)),
+            )
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
             .chain(vim.operator_stack.iter().map(|item| item.status()))
-            .chain(post_count.map(|count| format!("{}", count)))
+            .chain(
+                cx.global::<VimGlobals>()
+                    .post_count
+                    .map(|count| format!("{}", count)),
+            )
             .collect::<Vec<_>>()
             .join("")
     }
@@ -201,18 +206,17 @@ impl Render for ModeIndicator {
                 mode.to_string()
             };
 
-            let operators_description = self.classic_operators_description(vim.clone(), cx);
+            let current_operators_description = self.current_operators_description(vim.clone(), cx);
             let pending = self
                 .pending_keys
                 .as_ref()
-                .unwrap_or(&operators_description);
-
-            let mode_label = if bg_color != system_transparent {
+                .unwrap_or(&current_operators_description);
+            let mode = if bg_color != system_transparent {
                 mode_str.into()
             } else {
                 format!("-- {} --", mode_str).into()
             };
-            (pending.into(), Some(mode_label))
+            (pending.into(), Some(mode))
         };
         h_flex()
             .gap_1()
