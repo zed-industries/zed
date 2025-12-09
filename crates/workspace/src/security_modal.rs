@@ -8,7 +8,7 @@ use collections::{HashMap, HashSet};
 use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
 use project::{
     WorktreeId,
-    trusted_worktrees::{PathTrust, RemoteHostData, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use theme::ActiveTheme;
@@ -22,12 +22,12 @@ use ui::{
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
-    restricted_paths: HashMap<WorktreeId, (Arc<Path>, Option<RemoteHostData>)>,
+    restricted_paths: HashMap<WorktreeId, (Arc<Path>, Option<RemoteHostLocation>)>,
     home_dir: Option<PathBuf>,
     dismissed: bool,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
-    remote_host: Option<RemoteHostData>,
+    remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
 }
 
@@ -162,7 +162,7 @@ Review .zed/settings.json for any extensions or commands configured by this proj
 impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
-        remote_host: Option<impl Into<RemoteHostData>>,
+        remote_host: Option<impl Into<RemoteHostLocation>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
