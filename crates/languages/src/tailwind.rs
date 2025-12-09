@@ -140,13 +140,7 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-            "includeLanguages": {
-                "html": "html",
-                "css": "css",
-                "javascript": "javascript",
-                "typescript": "typescript",
-                "typescriptreact": "typescriptreact",
-            },
+
         })))
     }
 
@@ -167,8 +161,18 @@ impl LspAdapter for TailwindLspAdapter {
             tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
+        if tailwind_user_settings.get("includeLanguages").is_none() {
+            tailwind_user_settings["includeLanguages"] = json!({
+                "html": "html",
+                "css": "css",
+                "javascript": "javascript",
+                "typescript": "typescript",
+                "typescriptreact": "typescriptreact",
+            });
+        }
+
         Ok(json!({
-            "tailwindCSS": tailwind_user_settings,
+            "tailwindCSS": tailwind_user_settings
         }))
     }
 
