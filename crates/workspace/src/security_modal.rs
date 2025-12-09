@@ -149,9 +149,8 @@ Review .zed/settings.json for any extensions or commands configured by this proj
             .footer(
                 h_flex()
                     .p_3()
-                    .justify_between()
-                    .when_some(trust_label, |div, trust_label| {
-                        div.child(
+                    .map(|div| match trust_label {
+                        Some(trust_label) => div.justify_between().child(
                             Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
                                 .label(trust_label)
                                 .on_click(cx.listener(
@@ -160,7 +159,8 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                                         cx.notify();
                                     },
                                 )),
-                        )
+                        ),
+                        None => div.justify_end(),
                     })
                     .child(
                         h_flex()
