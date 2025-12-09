@@ -126,17 +126,6 @@ enum IconSource {
     ExternalSvg(SharedString),
 }
 
-impl IconSource {
-    fn from_path(path: impl Into<SharedString>) -> Self {
-        let path = path.into();
-        if path.starts_with("icons/") {
-            Self::Embedded(path)
-        } else {
-            Self::External(Arc::from(PathBuf::from(path.as_ref())))
-        }
-    }
-}
-
 #[derive(IntoElement, RegisterComponent)]
 pub struct Icon {
     source: IconSource,
@@ -155,9 +144,23 @@ impl Icon {
         }
     }
 
-    pub fn from_path(path: impl Into<SharedString>) -> Self {
+    /// Create an icon from an embedded SVG path (e.g., "icons/ai.svg").
+    /// These are SVGs bundled in the Zed binary.
+    pub fn from_embedded(path: impl Into<SharedString>) -> Self {
         Self {
-            source: IconSource::from_path(path),
+            source: IconSource::Embedded(path.into()),
+            color: Color::default(),
+            size: IconSize::default().rems(),
+            transformation: Transformation::default(),
+        }
+    }
+
+    /// Create an icon from an external file path (e.g., from an extension).
+    /// This renders the file as a raster image.
+    pub fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        Self {
+            source: IconSource::External(Arc::from(PathBuf::from(path.as_ref()))),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
