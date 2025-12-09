@@ -1,10 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::AsyncWindowContext;
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
+use smol::fs;
 use workspace::Workspace;
 
 use crate::remote_connections::Connection;
@@ -42,43 +43,75 @@ async fn check_for_docker() -> Result<(), DevContainerError> {
     }
 }
 
-async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<(), DevContainerError> {
+async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<PathBuf, DevContainerError> {
     let mut command = util::command::new_smol_command("devcontainer");
     command.arg("--version");
 
-    match command.output().await {
-        Ok(_) => Ok(()),
-        Err(e) => {
+    if let Err(e) = command.output().await {
+        log::error!(
+            "Unable to find devcontainer CLI in $PATH. Checking for a zed installed version. Error: {:?}",
+            e
+        );
+
+        let datadir_cli_path = paths::devcontainer_dir()
+            .join("node_modules")
+            .join(".bin")
+            .join("devcontainer");
+
+        let mut command = util::command::new_smol_command(&datadir_cli_path.display().to_string());
+        command.arg("--version");
+
+        if let Err(e) = command.output().await {
             log::error!(
-                "Unable to find devcontainer CLI in $PATH. Trying to install with npm {:?}",
+                "Unable to find devcontainer CLI in Data dir. Will try to install. Error: {:?}",
                 e
             );
-
-            if let Err(e) = node_runtime
-                .run_npm_subcommand(None, "install", &["-g", "@devcontainers/cli"])
-                .await
-            {
-                log::error!("Unable to install devcontainer CLI to npm. Error: {:?}", e);
-                return Err(DevContainerError::DevContainerCliNotAvailable);
-            };
-
-            let mut command = util::command::new_smol_command("devcontainer");
-            command.arg("--version");
-            if let Err(e) = command.output().await {
-                log::error!(
-                    "Unable to find devcontainer cli after NPM install. Ensure the global node_modules is in your path and try again. Error: {:?}",
-                    e
-                );
-                Err(DevContainerError::DevContainerCliNotAvailable)
-            } else {
-                Ok(())
-            }
+        } else {
+            log::info!("Found devcontainer CLI in Data dir");
+            return Ok(datadir_cli_path.clone());
         }
+
+        if let Err(e) = fs::create_dir_all(paths::devcontainer_dir()).await {
+            log::error!("Unable to create devcontainer directory. Error: {:?}", e);
+            return Err(DevContainerError::DevContainerCliNotAvailable);
+        }
+
+        if let Err(e) = node_runtime
+            .npm_install_packages(
+                &paths::devcontainer_dir(),
+                &[("@devcontainers/cli", "latest")],
+            )
+            .await
+        {
+            log::error!(
+                "Unable to install devcontainer CLI to data directory. Error: {:?}",
+                e
+            );
+            return Err(DevContainerError::DevContainerCliNotAvailable);
+        };
+
+        let mut command = util::command::new_smol_command(&datadir_cli_path.display().to_string());
+        command.arg("--version");
+        if let Err(e) = command.output().await {
+            log::error!(
+                "Unable to find devcontainer cli after NPM install. Error: {:?}",
+                e
+            );
+            Err(DevContainerError::DevContainerCliNotAvailable)
+        } else {
+            Ok(datadir_cli_path)
+        }
+    } else {
+        log::info!("Found devcontainer cli on $PATH, using it");
+        Ok(PathBuf::from("devcontainer"))
     }
 }
 
-async fn devcontainer_up(path: Arc<Path>) -> Result<DevContainerUp, DevContainerError> {
-    let mut command = util::command::new_smol_command("devcontainer");
+async fn devcontainer_up(
+    path_to_cli: &PathBuf,
+    path: Arc<Path>,
+) -> Result<DevContainerUp, DevContainerError> {
+    let mut command = util::command::new_smol_command(path_to_cli.display().to_string());
     command.arg("up");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
@@ -111,9 +144,10 @@ async fn devcontainer_up(path: Arc<Path>) -> Result<DevContainerUp, DevContainer
 }
 
 async fn devcontainer_read_configuration(
+    path_to_cli: &PathBuf,
     path: Arc<Path>,
 ) -> Result<DevContainerConfigurationOutput, DevContainerError> {
-    let mut command = util::command::new_smol_command("devcontainer");
+    let mut command = util::command::new_smol_command(path_to_cli.display().to_string());
     command.arg("read-configuration");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
@@ -138,7 +172,7 @@ async fn devcontainer_read_configuration(
             }
         }
         Err(e) => {
-            log::error!("Error running devcontainer up: {:?}", e);
+            log::error!("Error running devcontainer read-configuration: {:?}", e);
             Err(DevContainerError::DevContainerUpFailed)
         }
     }
@@ -146,11 +180,13 @@ async fn devcontainer_read_configuration(
 
 // Name the project with two fallbacks
 async fn get_project_name(
+    path_to_cli: &PathBuf,
     path: Arc<Path>,
     remote_workspace_folder: String,
     container_id: String,
 ) -> Result<String, DevContainerError> {
-    if let Ok(dev_container_configuration) = devcontainer_read_configuration(path).await
+    if let Ok(dev_container_configuration) =
+        devcontainer_read_configuration(path_to_cli, path).await
         && let Some(name) = dev_container_configuration.configuration.name
     {
         // Ideally, name the project after the name defined in devcontainer.json
@@ -188,7 +224,7 @@ pub(crate) async fn start_dev_container(
 ) -> Result<(Connection, String), DevContainerError> {
     check_for_docker().await?;
 
-    ensure_devcontainer_cli(node_runtime).await?;
+    let path_to_devcontainer_cli = ensure_devcontainer_cli(node_runtime).await?;
 
     let Some(directory) = project_directory(cx) else {
         return Err(DevContainerError::DevContainerNotFound);
@@ -198,9 +234,10 @@ pub(crate) async fn start_dev_container(
         container_id,
         remote_workspace_folder,
         ..
-    }) = devcontainer_up(directory.clone()).await
+    }) = devcontainer_up(&path_to_devcontainer_cli, directory.clone()).await
     {
         let project_name = get_project_name(
+            &path_to_devcontainer_cli,
             directory,
             remote_workspace_folder.clone(),
             container_id.clone(),
@@ -209,7 +246,6 @@ pub(crate) async fn start_dev_container(
 
         let connection = Connection::DevContainer(DevContainerConnection {
             name: project_name.into(),
-            image: "mcr.microsoft.com/devcontainers/rust:latest".into(),
             container_id: container_id.into(),
             working_directory: remote_workspace_folder.clone().into(),
         });
