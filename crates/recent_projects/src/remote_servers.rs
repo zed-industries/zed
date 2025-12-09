@@ -1655,7 +1655,7 @@ impl RemoteServerProjects {
                                     .spacing(ui::ListItemSpacing::Sparse)
                                     .start_slot(Icon::new(IconName::XCircle).color(Color::Error))
                                     .child(Label::new("Error Creating Dev Container:"))
-                                    .child(Label::new(format!("{}", message)).buffer_font(cx)),
+                                    .child(Label::new(message).buffer_font(cx)),
                             )
                             .child(ListSeparator)
                             .child(

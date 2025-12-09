@@ -174,7 +174,7 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let remote_platform = if self.remote_platform.is_some() {
-            self.remote_platform.clone().unwrap()
+            self.remote_platform.unwrap()
         } else {
             anyhow::bail!("No remote platform defined; cannot proceed.")
         };
@@ -254,12 +254,7 @@ impl DockerExecConnection {
         );
         if !self.connection_options.upload_binary_over_docker_exec
             && let Some(url) = delegate
-                .get_download_url(
-                    remote_platform.clone(),
-                    release_channel,
-                    wanted_version.clone(),
-                    cx,
-                )
+                .get_download_url(remote_platform, release_channel, wanted_version.clone(), cx)
                 .await?
         {
             match self
@@ -287,12 +282,7 @@ impl DockerExecConnection {
         }
 
         let src_path = delegate
-            .download_server_binary_locally(
-                remote_platform.clone(),
-                release_channel,
-                wanted_version,
-                cx,
-            )
+            .download_server_binary_locally(remote_platform, release_channel, wanted_version, cx)
             .await
             .context("downloading server binary locally")?;
         self.upload_local_server_binary(
@@ -568,10 +558,9 @@ impl DockerExecConnection {
 
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
-            dbg!(&pid);
-            if let Ok(_) = util::command::new_std_command("kill")
+            if let Ok(_) = util::command::new_smol_command("kill")
                 .arg(pid.to_string())
-                .output()
+                .spawn()
             {
                 Ok(())
             } else {
@@ -729,15 +718,15 @@ impl RemoteConnection for DockerExecConnection {
                 inner_program.push(arg.clone());
             }
         } else {
-            inner_program.push(self.shell().clone());
+            inner_program.push(self.shell());
             inner_program.push("-l".to_string());
         };
 
         let mut docker_args = vec!["exec".to_string()];
 
-        if parsed_working_dir.is_some() {
+        if let Some(parsed_working_dir) = parsed_working_dir {
             docker_args.push("-w".to_string());
-            docker_args.push(parsed_working_dir.unwrap());
+            docker_args.push(parsed_working_dir);
         }
 
         for (k, v) in env.iter() {
@@ -776,7 +765,7 @@ impl RemoteConnection for DockerExecConnection {
     fn shell(&self) -> String {
         match &self.shell {
             Some(shell) => shell.clone(),
-            None => self.default_system_shell().clone(),
+            None => self.default_system_shell(),
         }
     }
 

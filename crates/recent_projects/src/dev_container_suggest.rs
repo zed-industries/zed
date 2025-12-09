@@ -56,15 +56,17 @@ pub fn suggest_on_worktree_updated(
 
     let abs_path = worktree.abs_path();
     let project_path = abs_path.to_string_lossy().to_string();
-    let key = project_devcontainer_key(&project_path);
+    let key_for_dismiss = project_devcontainer_key(&project_path);
 
-    let already_dismissed = KEY_VALUE_STORE.read_kvp(&key).ok().flatten().is_some();
+    let already_dismissed = KEY_VALUE_STORE
+        .read_kvp(&key_for_dismiss)
+        .ok()
+        .flatten()
+        .is_some();
 
     if already_dismissed {
         return;
     }
-
-    let key_for_dismiss = key.clone();
 
     cx.on_next_frame(window, move |workspace, _window, cx| {
         struct DevContainerSuggestionNotification;
@@ -91,9 +93,8 @@ pub fn suggest_on_worktree_updated(
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click({
-                    let key = key_for_dismiss.clone();
                     move |_window, cx| {
-                        let key = key.clone();
+                        let key = key_for_dismiss.clone();
                         db::write_and_log(cx, move || {
                             KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
                         });

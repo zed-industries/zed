@@ -162,7 +162,7 @@ async fn get_project_name(
             .and_then(|name| name.to_str())
             .map(|string| string.into())
             // Finally, name the project after the container ID as a last resort
-            .unwrap_or_else(|| container_id.clone().into()))
+            .unwrap_or_else(|| container_id.clone()))
     }
 }
 
@@ -214,7 +214,7 @@ pub(crate) async fn start_dev_container(
             working_directory: remote_workspace_folder.clone().into(),
         });
 
-        Ok((connection, remote_workspace_folder.into()))
+        Ok((connection, remote_workspace_folder))
     } else {
         Err(DevContainerError::DevContainerUpFailed)
     }
