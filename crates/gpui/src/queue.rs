@@ -99,6 +99,7 @@ impl<T> PriorityQueueReceiver<T> {
 
     fn collect_new(&mut self, block: bool) {
         let mut add_element = |this: &mut Self, (priority, item): (Priority, T)| match priority {
+            Priority::Realtime(_) => unreachable!(),
             Priority::High => this.high_priority.push(item),
             Priority::Medium => this.medium_priority.push(item),
             Priority::Low => this.low_priority.push(item),
@@ -165,9 +166,7 @@ impl<T> PriorityQueueReceiver<T> {
         }
 
         if !self.low_priority.is_empty() {
-            let flip = self
-                .rand
-                .random_ratio(P::Low.probability(), mass);
+            let flip = self.rand.random_ratio(P::Low.probability(), mass);
             if flip {
                 return Ok(self.low_priority.pop());
             }
