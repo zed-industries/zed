@@ -710,7 +710,10 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
-            let data_dir = user_data_dir.unwrap_or_else(|| paths::data_dir());
+            let data_dir = user_data_dir
+                .map(PathBuf::from)
+                .unwrap_or_else(|| paths::data_dir().clone());
+
             let sock_path = data_dir.join(format!(
                 "zed-{}.sock",
                 *release_channel::RELEASE_CHANNEL_NAME
@@ -761,10 +764,11 @@ mod linux {
                     if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
-                    let mut args = vec![path.as_os_str(), &OsString::from(ipc_url)];
+                    let mut args: Vec<OsString> =
+                        vec![path.as_os_str().to_owned(), OsString::from(ipc_url.clone())];
                     if let Some(dir) = user_data_dir {
-                        args.push("--user-data-dir");
-                        args.push(dir);
+                        args.push(OsString::from("--user-data-dir"));
+                        args.push(OsString::from(dir));
                     }
                     let error = exec::execvp(path.clone(), &args);
                     // if exec succeeded, we never get here.

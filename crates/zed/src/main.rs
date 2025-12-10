@@ -3,7 +3,7 @@ mod zed;
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
