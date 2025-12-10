@@ -22,12 +22,23 @@ pub trait ModalView: ManagedView {
     fn fade_out_background(&self) -> bool {
         false
     }
+
+    /// Doesn't allow the modal to be dissmissed either by hitting escape
+    /// or by clicking on the backdrop, forcing users to dismiss it through
+    /// interacting with the buttons inside the modal.
+    ///
+    /// This method is recommended for alert modal use cases where the
+    /// user unavoidably needs to decide between some options.
+    fn undismissable(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
+    fn undismissable(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -41,6 +52,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
+    }
+
+    fn undismissable(&self, cx: &mut App) -> bool {
+        self.read(cx).undismissable()
     }
 }
 
@@ -180,12 +195,14 @@ impl Render for ModalLayer {
                 background.fade_out(0.2);
                 this.bg(background)
             })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.hide_modal(window, cx);
-                }),
-            )
+            .when(!active_modal.modal.undismissable(cx), |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.hide_modal(window, cx);
+                    }),
+                )
+            })
             .child(
                 v_flex()
                     .h(px(0.0))
