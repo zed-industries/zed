@@ -6,6 +6,7 @@ use std::{
 
 use collections::{HashMap, HashSet};
 use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
+
 use project::{
     WorktreeId,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
@@ -14,10 +15,7 @@ use project::{
 use smallvec::SmallVec;
 use theme::ActiveTheme;
 use ui::{
-    AlertModal, Button, ButtonCommon as _, ButtonStyle, Checkbox, Clickable as _, Color, Context,
-    FluentBuilder, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, KeyBinding,
-    Label, LabelCommon as _, ListBulletItem, ParentElement as _, Render, Styled, ToggleState,
-    Window, h_flex, rems, v_flex,
+    AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, prelude::*,
 };
 
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
@@ -40,7 +38,7 @@ struct RestrictedPath {
 }
 
 impl Focusable for SecurityModal {
-    fn focus_handle(&self, _: &ui::App) -> gpui::FocusHandle {
+    fn focus_handle(&self, _: &ui::App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -80,16 +78,28 @@ impl Render for SecurityModal {
         let focus_handle = self.focus_handle(cx);
 
         AlertModal::new("security-modal")
+            .key_context("SecurityModal")
+            .track_focus(&focus_handle)
+             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
+                this.trust_and_dismiss(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
+                this.dismiss(cx);
+            }))
+            .width(rems(40.))
             .header(
                 v_flex()
                     .p_3()
-                    .bg(cx.theme().colors().background)
                     .gap_1()
+                    .rounded_t_md()
+                    .bg(cx.theme().colors().background.opacity(0.4))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_2()
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
-                            .child(Headline::new(header_label).size(HeadlineSize::Small)),
+                            .child(Label::new(header_label)),
                     )
                     .children(self.restricted_paths.values().map(|restricted_path| {
                         let abs_path = restricted_path.abs_path.as_ref().and_then(|abs_path| {
@@ -136,22 +146,32 @@ impl Render for SecurityModal {
                     })),
             )
             .child(
-                "Untrusted workspaces are opened in Restricted Mode to protect your system.
-Review .zed/settings.json for any extensions or commands configured by this project.",
-            )
-            .child(
                 v_flex()
-                    .mt_2()
-                    .child(Label::new("Restricted mode prevents:").color(Color::Muted))
-                    .child(ListBulletItem::new("Project settings from being applied"))
-                    .child(ListBulletItem::new("Language servers from running"))
-                    .child(ListBulletItem::new("MCP integrations from installing")),
-            )
-            .footer(
-                h_flex()
-                    .p_3()
-                    .map(|div| match trust_label {
-                        Some(trust_label) => div.justify_between().child(
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .child(
+                                Label::new(
+                                    "Untrusted workspaces are opened in Restricted Mode to protect your system.",
+                                )
+                                .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(
+                                    "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                )
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
+                            .child(ListBulletItem::new("Project settings from being applied"))
+                            .child(ListBulletItem::new("Language servers from running"))
+                            .child(ListBulletItem::new("MCP integrations from installing")),
+                    )
+                    .map(|this| match trust_label {
+                        Some(trust_label) => this.justify_between().child(
                             Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
                                 .label(trust_label)
                                 .on_click(cx.listener(
@@ -161,34 +181,43 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                                     },
                                 )),
                         ),
-                        None => div.justify_end(),
-                    })
+                        None => this.justify_end(),
+                    }),
+            )
+            .footer(
+                h_flex()
+                    .px_3()
+                    .pb_3()
+                    .gap_1()
+                    .justify_end()
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("open-in-restricted-mode", "Restricted Mode")
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ToggleWorktreeSecurity,
-                                        &focus_handle,
-                                        cx,
-                                    ))
-                                    .color(Color::Muted)
-                                    .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                        security_modal.dismiss(cx);
-                                        cx.stop_propagation();
-                                    })),
+                        Button::new("rm", "Continue with Restricted Mode")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ToggleWorktreeSecurity,
+                                    &focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
                             )
-                            .child(
-                                Button::new("trust-and-continue", "Trust and Continue")
-                                    .style(ButtonStyle::Filled)
-                                    .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                        security_modal.trust_and_dismiss(cx);
-                                    })),
-                            ),
+                            .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                security_modal.dismiss(cx);
+                                cx.stop_propagation();
+                            })),
+                    )
+                    .child(
+                        Button::new("tc", "Trust and Continue")
+                            .style(ButtonStyle::Filled)
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                security_modal.trust_and_dismiss(cx);
+                            })),
                     ),
             )
-            .width(rems(40.))
             .into_any_element()
     }
 }
