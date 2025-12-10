@@ -54,7 +54,7 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
-    fallback_telemetry_id: SharedString,
+    telemetry_id_override: Option<SharedString>,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -64,7 +64,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
-        fallback_telemetry_id,
+        telemetry_id_override,
         command.clone(),
         root_dir,
         default_mode,
@@ -81,7 +81,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
-        fallback_telemetry_id: SharedString,
+        telemetry_id_override: Option<SharedString>,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -199,12 +199,19 @@ impl AcpConnection {
             return Err(UnsupportedVersion.into());
         }
 
+        // We have some hard-coded values we want to keep
+        let telemetry_id = telemetry_id_override
+            // Otherwise, use the one the agent provides
+            .or_else(|| response.agent_info.map(|info| info.name.into()))
+            // Otherwise, just use the name
+            .unwrap_or_else(|| server_name.clone());
+
         Ok(Self {
             auth_methods: response.auth_methods,
             root_dir: root_dir.to_owned(),
             connection,
             server_name,
-            telemetry_id: fallback_telemetry_id,
+            telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
             default_mode,

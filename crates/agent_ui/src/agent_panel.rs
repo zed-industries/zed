@@ -888,7 +888,10 @@ impl AgentPanel {
             if !loading {
                 telemetry::event!(
                     "Agent Thread Started",
-                    agent = server.fallback_telemetry_id()
+                    // This might not match later events, because we might get a better name after initialization
+                    agent = server
+                        .telemetry_id_override()
+                        .unwrap_or_else(|| server.name())
                 );
             }
 

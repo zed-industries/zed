@@ -6472,10 +6472,6 @@ pub(crate) mod tests {
     where
         C: 'static + AgentConnection + Send + Clone,
     {
-        fn fallback_telemetry_id(&self) -> SharedString {
-            "test".into()
-        }
-
         fn logo(&self) -> ui::IconName {
             ui::IconName::Ai
         }
