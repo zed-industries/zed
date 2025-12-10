@@ -35,7 +35,7 @@ pub async fn run_prediction(
 
     let provider = provider.unwrap();
 
-    if matches!(provider, PredictionProvider::AnthropicBatched) {
+    if matches!(provider, PredictionProvider::Teacher) {
         if example.prompt.is_none() {
             run_format_prompt(example, PromptFormat::Teacher).await;
         }
@@ -75,7 +75,7 @@ pub async fn run_prediction(
                 PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
                 PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
                 PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-                PredictionProvider::AnthropicBatched => todo!(),
+                PredictionProvider::Teacher => todo!(),
             };
             store.set_edit_prediction_model(model);
         })
@@ -252,7 +252,7 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
     let prediction = ExamplePrediction {
         actual_patch,
         actual_output,
-        provider: PredictionProvider::AnthropicBatched,
+        provider: PredictionProvider::Teacher,
     };
 
     example.predictions.push(prediction);
@@ -260,7 +260,7 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
 
 pub async fn sync_batches(provider: &PredictionProvider) {
     match provider {
-        PredictionProvider::AnthropicBatched => {
+        PredictionProvider::Teacher => {
             let cache_path = crate::paths::LLM_CACHE_DB.as_ref();
             let llm_client =
                 AnthropicClient::batch(cache_path).expect("Failed to create LLM client");

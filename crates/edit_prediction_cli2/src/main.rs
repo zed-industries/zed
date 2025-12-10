@@ -86,7 +86,7 @@ enum PredictionProvider {
     Mercury,
     Zeta1,
     Zeta2,
-    AnthropicBatched,
+    Teacher,
 }
 
 #[derive(Debug, Args)]
