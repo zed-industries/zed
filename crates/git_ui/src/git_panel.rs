@@ -4017,7 +4017,7 @@ impl GitPanel {
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
                 .separator()
-                .action_disabled_when(is_created, "File History", Box::new(git::FileHistory))
+                .action_disabled_when(is_created, "View File History", Box::new(git::FileHistory))
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);

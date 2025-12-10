@@ -280,7 +280,11 @@ pub fn deploy_context_menu(
                     "Copy Permalink",
                     Box::new(CopyPermalinkToLine),
                 )
-                .action_disabled_when(!has_git_repo, "File History", Box::new(git::FileHistory));
+                .action_disabled_when(
+                    !has_git_repo,
+                    "View File History",
+                    Box::new(git::FileHistory),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
