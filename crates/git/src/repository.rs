@@ -1819,7 +1819,6 @@ impl GitRepository for RealGitRepository {
                 .args(["commit", "--quiet", "-m"])
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
