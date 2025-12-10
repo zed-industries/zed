@@ -2,8 +2,8 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Keystroke, ScrollHandle, Subscription, WeakEntity, Window,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Keystroke,
+    ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::HashMap;
@@ -208,7 +208,7 @@ impl Render for WhichKeyModal {
                                     .color(Color::Accent),
                             )
                             .text_align(gpui::TextAlign::Right)
-                    }))
+                    })),
             )
             .child(
                 // Actions column
@@ -224,17 +224,15 @@ impl Render for WhichKeyModal {
                             Color::Default
                         };
 
-                        div()
-                            .child(
-                                Label::new(action_name.clone())
-                                    .size(LabelSize::Default)
-                                    .color(label_color)
-                                    .single_line()
-                                    .truncate(),
-                            )
-                    }))
+                        div().child(
+                            Label::new(action_name.clone())
+                                .size(LabelSize::Default)
+                                .color(label_color)
+                                .single_line()
+                                .truncate(),
+                        )
+                    })),
             );
-
 
         div()
             .id("which-key-buffer-panel-scroll")
@@ -246,18 +244,14 @@ impl Render for WhichKeyModal {
             .max_w(max_panel_width)
             .elevation_3(cx)
             .px(px(12.))
-            .child(
-                v_flex()
-                    .child(title_section)
-                    .when(has_rows, |el| {
-                        el.child(
-                            div()
-                                .max_h(max_content_height)
-                                .child(content)
-                                .vertical_scrollbar_for(&self.scroll_handle, window, cx)
-                        )
-                    }),
-            )
+            .child(v_flex().child(title_section).when(has_rows, |el| {
+                el.child(
+                    div()
+                        .max_h(max_content_height)
+                        .child(content)
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                )
+            }))
     }
 }
 
