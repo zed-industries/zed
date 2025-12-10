@@ -273,8 +273,30 @@ impl GitListEntry {
     }
 }
 
-// build a directory tree from Git status entries by grouping them with custom TreeKey values
-// that combine a section and a repo path, ensuring keys implement hashing and equality for storage.
+// Represents the current view mode of the Git panel.
+// In tree view, `logical_indices` maps visible indices to actual entry indices
+// since some entries (like collapsed directories) may be hidden.
+enum GitPanelViewMode {
+    Flat,
+    Tree {
+        // Maps visible index to actual entry index.
+        // Length equals the number of visible entries.
+        logical_indices: Vec<usize>,
+    },
+}
+
+impl GitPanelViewMode {
+    fn from_settings(cx: &App) -> Self {
+        if GitPanelSettings::get_global(cx).tree_view {
+            GitPanelViewMode::Tree {
+                logical_indices: Vec::new(),
+            }
+        } else {
+            GitPanelViewMode::Flat
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitTreeStatusEntry {
     entry: GitStatusEntry,
@@ -397,10 +419,7 @@ pub struct GitPanel {
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
-    // len == entries.iter.filter(|entry| entry.is_visible()).count()
-    // Pairs of mapping from visible index to actual index
-    // so logical_indices[visible_index] = actual_index
-    logical_indices: Vec<usize>,
+    view_mode: GitPanelViewMode,
     entries_indices: HashMap<RepoPath, usize>,
     single_staged_entry: Option<GitStatusEntry>,
     single_tracked_entry: Option<GitStatusEntry>,
@@ -498,6 +517,9 @@ impl GitPanel {
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 let tree_view = GitPanelSettings::get_global(cx).tree_view;
+                if tree_view != was_tree_view {
+                    this.view_mode = GitPanelViewMode::from_settings(cx);
+                }
                 if sort_by_path != was_sort_by_path || tree_view != was_tree_view {
                     this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
@@ -569,7 +591,7 @@ impl GitPanel {
                 add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
-                logical_indices: Vec::new(),
+                view_mode: GitPanelViewMode::from_settings(cx),
                 entries_indices: HashMap::default(),
                 focus_handle: cx.focus_handle(),
                 fs,
@@ -2997,7 +3019,6 @@ impl GitPanel {
             .and_then(|op| self.entry_by_path(&op.anchor));
 
         self.entries.clear();
-        self.logical_indices.clear();
         self.entries_indices.clear();
         self.directory_descendants.clear();
         self.single_staged_entry.take();
@@ -3013,7 +3034,7 @@ impl GitPanel {
         self.max_width_item_index = None;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-        let tree_view = GitPanelSettings::get_global(cx).tree_view;
+        let tree_view = matches!(self.view_mode, GitPanelViewMode::Tree { .. });
         let group_by_status = tree_view || !sort_by_path;
 
         let mut changed_entries = Vec::new();
@@ -3100,6 +3121,8 @@ impl GitPanel {
 
         // todo! review the logic here. seems we can simplify here
         if tree_view {
+            let mut logical_indices = Vec::new();
+
             let mut push_tree_entry =
                 |entries: &mut Vec<GitListEntry>,
                  logical_indices: &mut Vec<usize>,
@@ -3130,7 +3153,7 @@ impl GitPanel {
             if !conflict_entries.is_empty() {
                 push_tree_entry(
                     &mut self.entries,
-                    &mut self.logical_indices,
+                    &mut logical_indices,
                     &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::Conflict,
@@ -3148,7 +3171,7 @@ impl GitPanel {
                         self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
                     push_tree_entry(
                         &mut self.entries,
-                        &mut self.logical_indices,
+                        &mut logical_indices,
                         &mut self.entries_indices,
                         entry.0,
                         entry.1,
@@ -3160,7 +3183,7 @@ impl GitPanel {
             if !changed_entries.is_empty() {
                 push_tree_entry(
                     &mut self.entries,
-                    &mut self.logical_indices,
+                    &mut logical_indices,
                     &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::Tracked,
@@ -3178,7 +3201,7 @@ impl GitPanel {
                         self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
                     push_tree_entry(
                         &mut self.entries,
-                        &mut self.logical_indices,
+                        &mut logical_indices,
                         &mut self.entries_indices,
                         entry.0,
                         entry.1,
@@ -3190,7 +3213,7 @@ impl GitPanel {
             if !new_entries.is_empty() {
                 push_tree_entry(
                     &mut self.entries,
-                    &mut self.logical_indices,
+                    &mut logical_indices,
                     &mut self.entries_indices,
                     GitListEntry::Header(GitHeaderEntry {
                         header: Section::New,
@@ -3205,7 +3228,7 @@ impl GitPanel {
                         self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
                     push_tree_entry(
                         &mut self.entries,
-                        &mut self.logical_indices,
+                        &mut logical_indices,
                         &mut self.entries_indices,
                         entry.0,
                         entry.1,
@@ -3214,6 +3237,7 @@ impl GitPanel {
                 }
             }
 
+            self.view_mode = GitPanelViewMode::Tree { logical_indices };
             self.expanded_dirs
                 .retain(|key, _| seen_directories.contains(key));
         } else {
@@ -4400,12 +4424,9 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let is_tree_view = GitPanelSettings::get_global(cx).tree_view;
-
-        let entry_count = if is_tree_view {
-            self.logical_indices.len()
-        } else {
-            self.entries.len()
+        let (is_tree_view, entry_count) = match &self.view_mode {
+            GitPanelViewMode::Tree { logical_indices } => (true, logical_indices.len()),
+            GitPanelViewMode::Flat => (false, self.entries.len()),
         };
 
         v_flex()
@@ -4426,15 +4447,11 @@ impl GitPanel {
                             cx.processor(move |this, range: Range<usize>, window, cx| {
                                 let mut items = Vec::with_capacity(range.end - range.start);
 
-                                for ix in range.into_iter().map(|ix| {
-                                    if is_tree_view {
-                                        // todo! maybe change this to a get so we don't crash when out of bounds
-                                        // it shouldn't be needed though, because logical indices is used as the len
-                                        // for entry_count
-                                        this.logical_indices[ix]
-                                    } else {
-                                        ix
+                                for ix in range.into_iter().map(|ix| match &this.view_mode {
+                                    GitPanelViewMode::Tree { logical_indices } => {
+                                        logical_indices[ix]
                                     }
+                                    GitPanelViewMode::Flat => ix,
                                 }) {
                                     match &this.entries.get(ix) {
                                         Some(GitListEntry::Status(entry)) => {
@@ -4482,7 +4499,7 @@ impl GitPanel {
                                 items
                             }),
                         )
-                        .when(GitPanelSettings::get_global(cx).tree_view, |list| {
+                        .when(is_tree_view, |list| {
                             let indent_size = px(TREE_INDENT);
                             list.with_decoration(
                                 ui::indent_guides(indent_size, IndentGuideColors::panel(cx))
