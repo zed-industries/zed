@@ -333,6 +333,7 @@ impl AcpThreadView {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -403,6 +404,7 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
+                track_load_event,
                 window,
                 cx,
             ),
@@ -447,6 +449,7 @@ impl AcpThreadView {
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
+            true,
             window,
             cx,
         );
@@ -460,6 +463,7 @@ impl AcpThreadView {
         resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
@@ -517,6 +521,10 @@ impl AcpThreadView {
                     return;
                 }
             };
+
+            if track_load_event {
+                telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
+            }
 
             let result = if let Some(native_agent) = connection
                 .clone()
@@ -1674,6 +1682,7 @@ impl AcpThreadView {
                             None,
                             this.workspace.clone(),
                             this.project.clone(),
+                            true,
                             window,
                             cx,
                         )
@@ -6395,6 +6404,7 @@ pub(crate) mod tests {
                     project,
                     history_store,
                     None,
+                    false,
                     window,
                     cx,
                 )
@@ -6664,6 +6674,7 @@ pub(crate) mod tests {
                     project.clone(),
                     history_store.clone(),
                     None,
+                    false,
                     window,
                     cx,
                 )

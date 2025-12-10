@@ -305,6 +305,7 @@ impl ActiveView {
                 project,
                 history_store,
                 prompt_store,
+                false,
                 window,
                 cx,
             )
@@ -885,16 +886,6 @@ impl AgentPanel {
 
             let server = ext_agent.server(fs, history);
 
-            if !loading {
-                telemetry::event!(
-                    "Agent Thread Started",
-                    // This might not match later events, because we might get a better name after initialization
-                    agent = server
-                        .telemetry_id_override()
-                        .unwrap_or_else(|| server.name())
-                );
-            }
-
             this.update_in(cx, |this, window, cx| {
                 let selected_agent = ext_agent.into();
                 if this.selected_agent != selected_agent {
@@ -911,6 +902,7 @@ impl AgentPanel {
                         project,
                         this.history_store.clone(),
                         this.prompt_store.clone(),
+                        !loading,
                         window,
                         cx,
                     )
