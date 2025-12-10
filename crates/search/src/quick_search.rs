@@ -12,30 +12,36 @@ use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, search::SearchQuery};
 use std::{fmt::Write as _, path::Path, pin::pin, sync::Arc, time::Duration};
 use text::ToPoint as _;
-use ui::{Button, Color, Icon, IconName, KeyBinding, Label, ListItem, ListItemSpacing, SpinnerLabel, prelude::*, rems_from_px};
+use ui::{
+    Button, ButtonStyle, Color, Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label,
+    ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*, rems_from_px,
+};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace};
 
 #[derive(Default)]
-struct LastQuickSearchQuery(HashMap<EntityId, String>);
+struct LastQuickSearchState(HashMap<EntityId, (String, SearchOptions)>);
 
-impl Global for LastQuickSearchQuery {}
+impl Global for LastQuickSearchState {}
 
-fn get_last_query(workspace_id: EntityId, cx: &App) -> Option<String> {
-    cx.try_global::<LastQuickSearchQuery>()
+fn get_last_state(workspace_id: EntityId, cx: &App) -> Option<(String, SearchOptions)> {
+    cx.try_global::<LastQuickSearchState>()
         .and_then(|storage| storage.0.get(&workspace_id).cloned())
 }
 
-fn set_last_query(workspace_id: EntityId, query: String, cx: &mut App) {
-    if !cx.has_global::<LastQuickSearchQuery>() {
-        cx.set_global(LastQuickSearchQuery::default());
+fn set_last_state(workspace_id: EntityId, query: String, options: SearchOptions, cx: &mut App) {
+    if !cx.has_global::<LastQuickSearchState>() {
+        cx.set_global(LastQuickSearchState::default());
     }
-    cx.global_mut::<LastQuickSearchQuery>()
+    cx.global_mut::<LastQuickSearchState>()
         .0
-        .insert(workspace_id, query);
+        .insert(workspace_id, (query, options));
 }
 
-use crate::SearchOptions;
+use crate::{
+    SearchOption, SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
+    ToggleWholeWord,
+};
 
 const MODAL_HEIGHT: Pixels = px(650.);
 const MODAL_WIDTH: Pixels = px(1100.);
@@ -110,6 +116,7 @@ pub struct QuickSearchDelegate {
     is_searching: bool,
     current_query: String,
     focus_handle: Option<FocusHandle>,
+    regex_error: Option<String>,
 }
 
 pub struct QuickSearchModal {
@@ -135,10 +142,9 @@ impl Render for QuickSearchModal {
         let picker = self.picker.clone();
 
         let delegate = &self.picker.read(cx).delegate;
-        let match_count = delegate.match_count;
-        let file_count = delegate.file_count;
-        let is_limited = delegate.is_limited;
         let is_searching = delegate.is_searching;
+        let search_options = delegate.search_options;
+        let focus_handle = self.picker.focus_handle(cx);
 
         div()
             .id("quick-search-modal")
@@ -151,6 +157,7 @@ impl Render for QuickSearchModal {
                     .size_full()
                     .overflow_hidden()
                     .border_1()
+                    .rounded_none()
                     .border_color(cx.theme().colors().border)
                     .on_mouse_down_out(cx.listener(|_, _, _, cx| {
                         cx.emit(DismissEvent);
@@ -195,20 +202,34 @@ impl Render for QuickSearchModal {
                                                         )
                                                     }),
                                             )
-                                            .when(match_count > 0 && !is_searching, |this| {
-                                                let results_text = if is_limited {
-                                                    format!("{}+ results (limited)", match_count)
-                                                } else {
-                                                    let result_word = if match_count == 1 { "result" } else { "results" };
-                                                    let file_word = if file_count == 1 { "file" } else { "files" };
-                                                    format!("{} {} in {} {}", match_count, result_word, file_count, file_word)
-                                                };
-                                                this.child(
-                                                    Label::new(results_text)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                            }),
+                                            .child(
+                                                h_flex()
+                                                    .gap_0p5()
+                                                    .child(Self::render_search_option_button(
+                                                        SearchOption::CaseSensitive,
+                                                        search_options,
+                                                        focus_handle.clone(),
+                                                        cx,
+                                                    ))
+                                                    .child(Self::render_search_option_button(
+                                                        SearchOption::WholeWord,
+                                                        search_options,
+                                                        focus_handle.clone(),
+                                                        cx,
+                                                    ))
+                                                    .child(Self::render_search_option_button(
+                                                        SearchOption::Regex,
+                                                        search_options,
+                                                        focus_handle.clone(),
+                                                        cx,
+                                                    ))
+                                                    .child(Self::render_search_option_button(
+                                                        SearchOption::IncludeIgnored,
+                                                        search_options,
+                                                        focus_handle,
+                                                        cx,
+                                                    )),
+                                            ),
                                     )
                                     .child(self.picker.clone()),
                             )
@@ -223,9 +244,7 @@ impl Render for QuickSearchModal {
                                     .on_click(move |_, window, cx| {
                                         window.focus(&picker.focus_handle(cx));
                                     })
-                                    .when_some(preview_editor, |this, editor| {
-                                        this.child(editor)
-                                    })
+                                    .when_some(preview_editor, |this, editor| this.child(editor))
                                     .when(self.preview_editor.is_none(), |this| {
                                         this.child(
                                             div()
@@ -260,6 +279,94 @@ impl QuickSearchModal {
                 QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
             });
         });
+        workspace.register_action(Self::toggle_case_sensitive);
+        workspace.register_action(Self::toggle_whole_word);
+        workspace.register_action(Self::toggle_regex);
+        workspace.register_action(Self::toggle_include_ignored);
+    }
+
+    fn toggle_search_option(
+        workspace: &mut Workspace,
+        option: SearchOptions,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if let Some(modal) = workspace.active_modal::<Self>(cx) {
+            modal.update(cx, |modal, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.toggle_search_option(option);
+                    cx.notify();
+                });
+            });
+            modal.update(cx, |modal, cx| {
+                let query = modal.picker.read(cx).delegate.current_query.clone();
+                modal.picker.update(cx, |picker, cx| {
+                    picker.set_query(query, window, cx);
+                });
+            });
+        }
+    }
+
+    fn toggle_case_sensitive(
+        workspace: &mut Workspace,
+        _: &ToggleCaseSensitive,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::toggle_search_option(workspace, SearchOptions::CASE_SENSITIVE, window, cx);
+    }
+
+    fn toggle_whole_word(
+        workspace: &mut Workspace,
+        _: &ToggleWholeWord,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::toggle_search_option(workspace, SearchOptions::WHOLE_WORD, window, cx);
+    }
+
+    fn toggle_regex(
+        workspace: &mut Workspace,
+        _: &ToggleRegex,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::toggle_search_option(workspace, SearchOptions::REGEX, window, cx);
+    }
+
+    fn toggle_include_ignored(
+        workspace: &mut Workspace,
+        _: &ToggleIncludeIgnored,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::toggle_search_option(workspace, SearchOptions::INCLUDE_IGNORED, window, cx);
+    }
+
+    fn render_search_option_button(
+        option: SearchOption,
+        active: SearchOptions,
+        focus_handle: FocusHandle,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let action = option.to_toggle_action();
+        let label = option.label();
+        let search_option = option.as_options();
+        IconButton::new(label, option.icon())
+            .on_click(cx.listener(move |modal, _, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.toggle_search_option(search_option);
+                    cx.notify();
+                });
+                let query = modal.picker.read(cx).delegate.current_query.clone();
+                modal.picker.update(cx, |picker, cx| {
+                    picker.set_query(query, window, cx);
+                });
+            }))
+            .style(ButtonStyle::Subtle)
+            .shape(IconButtonShape::Square)
+            .toggle_state(active.contains(option.as_options()))
+            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
     }
 
     fn new(
@@ -270,13 +377,16 @@ impl QuickSearchModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_self = cx.entity().downgrade();
-        let last_query = get_last_query(workspace_id, cx);
+        let last_state = get_last_state(workspace_id, cx);
+        let (last_query, last_options) = last_state
+            .map(|(q, o)| (Some(q), o))
+            .unwrap_or((None, SearchOptions::NONE));
 
         let delegate = QuickSearchDelegate {
             workspace,
             workspace_id,
             project,
-            search_options: SearchOptions::NONE,
+            search_options: last_options,
             items: Vec::new(),
             visible_indices: Vec::new(),
             collapsed_files: HashSet::default(),
@@ -289,6 +399,7 @@ impl QuickSearchModal {
             is_searching: false,
             current_query: last_query.clone().unwrap_or_default(),
             focus_handle: None,
+            regex_error: None,
         };
 
         let picker = cx.new(|cx| {
@@ -398,6 +509,10 @@ impl QuickSearchDelegate {
         self.update_visible_indices();
     }
 
+    fn toggle_search_option(&mut self, option: SearchOptions) {
+        self.search_options.toggle(option);
+    }
+
     fn actual_index(&self, visible_index: usize) -> Option<usize> {
         self.visible_indices.get(visible_index).copied()
     }
@@ -428,7 +543,10 @@ impl PickerDelegate for QuickSearchDelegate {
         let ix = ix.min(self.visible_indices.len().saturating_sub(1));
 
         let actual_ix = self.visible_indices[ix];
-        if matches!(self.items.get(actual_ix), Some(QuickSearchItem::LineMatch { .. })) {
+        if matches!(
+            self.items.get(actual_ix),
+            Some(QuickSearchItem::LineMatch { .. })
+        ) {
             self.selected_index = ix;
             return;
         }
@@ -436,12 +554,12 @@ impl PickerDelegate for QuickSearchDelegate {
         let going_down = ix >= self.selected_index;
 
         if going_down {
-            if let Some(next) = self.visible_indices[ix..]
-                .iter()
-                .position(|&actual_idx| {
-                    matches!(self.items.get(actual_idx), Some(QuickSearchItem::LineMatch { .. }))
-                })
-            {
+            if let Some(next) = self.visible_indices[ix..].iter().position(|&actual_idx| {
+                matches!(
+                    self.items.get(actual_idx),
+                    Some(QuickSearchItem::LineMatch { .. })
+                )
+            }) {
                 self.selected_index = ix + next;
                 return;
             }
@@ -451,12 +569,18 @@ impl PickerDelegate for QuickSearchDelegate {
         if let Some(prev) = self.visible_indices[..=upper_bound]
             .iter()
             .rposition(|&actual_idx| {
-                matches!(self.items.get(actual_idx), Some(QuickSearchItem::LineMatch { .. }))
+                matches!(
+                    self.items.get(actual_idx),
+                    Some(QuickSearchItem::LineMatch { .. })
+                )
             })
         {
             self.selected_index = prev;
         } else if let Some(next) = self.visible_indices.iter().position(|&actual_idx| {
-            matches!(self.items.get(actual_idx), Some(QuickSearchItem::LineMatch { .. }))
+            matches!(
+                self.items.get(actual_idx),
+                Some(QuickSearchItem::LineMatch { .. })
+            )
         }) {
             self.selected_index = next;
         }
@@ -504,6 +628,7 @@ impl PickerDelegate for QuickSearchDelegate {
             self.file_count = 0;
             self.is_limited = false;
             self.is_searching = false;
+            self.regex_error = None;
             let quick_search = self.quick_search.clone();
             cx.defer_in(window, move |_, window, cx| {
                 if let Some(quick_search) = quick_search.upgrade() {
@@ -539,19 +664,54 @@ impl PickerDelegate for QuickSearchDelegate {
                 return;
             }
 
-            let search_query = match SearchQuery::text(
-                &query,
-                search_options.contains(SearchOptions::WHOLE_WORD),
-                search_options.contains(SearchOptions::CASE_SENSITIVE),
-                search_options.contains(SearchOptions::INCLUDE_IGNORED),
-                PathMatcher::default(),
-                PathMatcher::default(),
-                false,
-                None,
-            ) {
-                Ok(q) => q,
+            let search_query_result = if search_options.contains(SearchOptions::REGEX) {
+                SearchQuery::regex(
+                    &query,
+                    search_options.contains(SearchOptions::WHOLE_WORD),
+                    search_options.contains(SearchOptions::CASE_SENSITIVE),
+                    search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                    false,
+                    PathMatcher::default(),
+                    PathMatcher::default(),
+                    false,
+                    None,
+                )
+            } else {
+                SearchQuery::text(
+                    &query,
+                    search_options.contains(SearchOptions::WHOLE_WORD),
+                    search_options.contains(SearchOptions::CASE_SENSITIVE),
+                    search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                    PathMatcher::default(),
+                    PathMatcher::default(),
+                    false,
+                    None,
+                )
+            };
+
+            let search_query = match search_query_result {
+                Ok(q) => {
+                    picker
+                        .update(cx, |picker, cx| {
+                            picker.delegate.regex_error = None;
+                            cx.notify();
+                        })
+                        .ok();
+                    q
+                }
                 Err(err) => {
-                    log::warn!("Quick search: invalid query '{}': {}", query, err);
+                    let error_message = err.to_string();
+                    picker
+                        .update(cx, |picker, cx| {
+                            picker.delegate.regex_error = Some(error_message);
+                            picker.delegate.items.clear();
+                            picker.delegate.visible_indices.clear();
+                            picker.delegate.match_count = 0;
+                            picker.delegate.file_count = 0;
+                            picker.delegate.is_searching = false;
+                            cx.notify();
+                        })
+                        .ok();
                     return;
                 }
             };
@@ -761,7 +921,12 @@ impl PickerDelegate for QuickSearchDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        set_last_query(self.workspace_id, self.current_query.clone(), cx);
+        set_last_state(
+            self.workspace_id,
+            self.current_query.clone(),
+            self.search_options,
+            cx,
+        );
 
         let actual_index = match self.actual_index(self.selected_index) {
             Some(idx) => idx,
@@ -805,7 +970,12 @@ impl PickerDelegate for QuickSearchDelegate {
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        set_last_query(self.workspace_id, self.current_query.clone(), cx);
+        set_last_state(
+            self.workspace_id,
+            self.current_query.clone(),
+            self.search_options,
+            cx,
+        );
         cx.emit(DismissEvent);
     }
 
@@ -910,6 +1080,62 @@ impl PickerDelegate for QuickSearchDelegate {
         }
     }
 
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if let Some(error) = &self.regex_error {
+            return Some(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        Label::new(format!("Invalid regex: {}", error))
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .into_any(),
+            );
+        }
+
+        if self.match_count > 0 && !self.is_searching {
+            let results_text = if self.is_limited {
+                format!("{}+ results (limited)", self.match_count)
+            } else {
+                let result_word = if self.match_count == 1 {
+                    "result"
+                } else {
+                    "results"
+                };
+                let file_word = if self.file_count == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
+                format!(
+                    "{} {} in {} {}",
+                    self.match_count, result_word, self.file_count, file_word
+                )
+            };
+            return Some(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        Label::new(results_text)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any(),
+            );
+        }
+
+        None
+    }
+
     fn render_footer(
         &self,
         _window: &mut Window,
@@ -929,7 +1155,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     Button::new("open-split", "Open in Split")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(11.))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
@@ -939,7 +1165,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     Button::new("open", "Open")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(11.))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx);
@@ -991,7 +1217,9 @@ mod tests {
         let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search.update(&mut cx, |modal, cx| {
@@ -1022,7 +1250,9 @@ mod tests {
         let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search.update_in(&mut cx, |modal, window, cx| {
@@ -1100,7 +1330,9 @@ mod tests {
         let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search.update_in(&mut cx, |modal, window, cx| {
@@ -1143,7 +1375,9 @@ mod tests {
         let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search.update(&mut cx, |modal, cx| {
@@ -1201,7 +1435,9 @@ mod tests {
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             let project = project.clone();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search.update_in(&mut cx, |modal, window, cx| {
@@ -1224,12 +1460,15 @@ mod tests {
 
         let quick_search2 = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            move |window, cx| {
+                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+            }
         });
 
         quick_search2.update(&mut cx, |modal, cx| {
             assert_eq!(
-                modal.picker.read(cx).delegate.current_query, "hello",
+                modal.picker.read(cx).delegate.current_query,
+                "hello",
                 "Query should be restored from previous session"
             );
         });
