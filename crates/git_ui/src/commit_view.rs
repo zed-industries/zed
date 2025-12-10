@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::actions::OpenExcerptHistoric;
+use editor::actions::OpenParentExcerpts;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, multibuffer_context_lines,
@@ -1016,7 +1016,7 @@ impl Render for CommitView {
             .size_full()
             // editor can check if this action is via the window.is_action_avaliable
             // if it is we can handle it here
-            .on_action(|_: &OpenExcerptHistoric, window, cx| {
+            .on_action(|_: &OpenParentExcerpts, _window, _cx| {
                 dbg!("Action is hit");
             })
             .bg(cx.theme().colors().editor_background)

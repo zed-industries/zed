@@ -6,10 +6,11 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerptHistoric,
-    OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects,
-    SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerptTarget,
+    OpenExcerpts, OpenHeadExcerpts, OpenParentExcerpts, PageDown, PageUp,
+    PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
+    Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt,
+    ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -89,8 +90,8 @@ use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, prelude::*,
-    right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
+    ButtonLike, ContextMenu, Icon, IconName, Indicator, KeyBinding, POPOVER_Y_PADDING, PopoverMenu,
+    Tooltip, prelude::*, right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
@@ -471,6 +472,10 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_code_actions);
         register_action(editor, window, Editor::open_excerpts);
         register_action(editor, window, Editor::open_excerpts_in_split);
+        register_action(editor, window, Editor::open_head_excerpts);
+        register_action(editor, window, Editor::open_head_excerpts_in_split);
+        register_action(editor, window, Editor::open_parent_excerpts);
+        register_action(editor, window, Editor::open_parent_excerpts_in_split);
         register_action(editor, window, Editor::toggle_soft_wrap);
         register_action(editor, window, Editor::toggle_tab_bar);
         register_action(editor, window, Editor::toggle_line_numbers);
@@ -759,7 +764,7 @@ impl EditorElement {
                                 line_offset_from_top,
                             }),
                             false,
-                            &OpenExcerpts::default(),
+                            &OpenExcerptTarget::Modified,
                             window,
                             cx,
                         );
@@ -796,7 +801,7 @@ impl EditorElement {
                         line_offset_from_top,
                     }),
                     modifiers.alt,
-                    &OpenExcerpts::default(),
+                    &OpenExcerptTarget::Modified,
                     window,
                     cx,
                 );
@@ -3948,7 +3953,7 @@ impl EditorElement {
         let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
         // Check if this is a non-local file (like GitBlob) that also exists in the project
         // todo! complete this
-        let can_handle_commit_diff_action = window.is_action_available(&OpenExcerptHistoric, cx);
+        let can_handle_commit_diff_action = window.is_action_available(&OpenParentExcerpts, cx);
 
         // todo! complete this
         let (is_historical_commit, can_open_current) = (true, true);
@@ -3985,7 +3990,6 @@ impl EditorElement {
         };
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
-        let open_current_action = OpenExcerpts;
 
         let header = div()
             .p_1()
@@ -4137,7 +4141,7 @@ impl EditorElement {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
                                                         e.modifiers().secondary(),
-                                                        &OpenExcerpts::default(),
+                                                        &OpenExcerptTarget::Modified,
                                                         window,
                                                         cx,
                                                     );
@@ -4161,7 +4165,7 @@ impl EditorElement {
                                         Button::new("open-file-button", "Open File")
                                             .style(ButtonStyle::OutlinedGhost)
                                             .key_binding(KeyBinding::for_action_in(
-                                                &OpenExcerpts::default(),
+                                                &OpenExcerpts,
                                                 &focus_handle,
                                                 cx,
                                             ))
@@ -4171,7 +4175,7 @@ impl EditorElement {
                                                     editor.open_excerpts_common(
                                                         Some(jump_data.clone()),
                                                         e.modifiers().secondary(),
-                                                        &OpenExcerpts::default(),
+                                                        &OpenExcerptTarget::Modified,
                                                         window,
                                                         cx,
                                                     );
@@ -4182,30 +4186,39 @@ impl EditorElement {
                                         can_open_current && can_handle_commit_diff_action,
                                         |el| {
                                             el.child(
-                                                ButtonLike::new("open-file-button")
-                                                    .style(ButtonStyle::OutlinedGhost)
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_2p5()
-                                                            .child(Label::new("Open current"))
-                                                            .child(KeyBinding::for_action_in(
-                                                                &open_current_action,
-                                                                &focus_handle,
-                                                                cx,
-                                                            )),
+                                                PopoverMenu::new("open-file-menu")
+                                                    .trigger(
+                                                        IconButton::new(
+                                                            "open-file-menu-trigger",
+                                                            IconName::Ellipsis,
+                                                        )
+                                                        .icon_size(IconSize::Small),
                                                     )
-                                                    .on_click(window.listener_for(&self.editor, {
-                                                        let jump_data = jump_data.clone();
-                                                        move |editor, e: &ClickEvent, window, cx| {
-                                                            editor.open_excerpts_common(
-                                                                Some(jump_data.clone()),
-                                                                e.modifiers().secondary(),
-                                                                &open_current_action,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    })),
+                                                    .menu(move |window, cx| {
+                                                        let focus_handle = cx.focus_handle();
+                                                        Some(ContextMenu::build(
+                                                            window,
+                                                            cx,
+                                                            move |menu, _win, _cx| {
+                                                                menu.context(focus_handle)
+                                                                    .action(
+                                                                        "Open Parent",
+                                                                        OpenParentExcerpts
+                                                                            .boxed_clone(),
+                                                                    )
+                                                                    .action(
+                                                                        "Open Historical",
+                                                                        OpenExcerpts.boxed_clone(),
+                                                                    )
+                                                                    .action(
+                                                                        "Open Current",
+                                                                        OpenHeadExcerpts
+                                                                            .boxed_clone(),
+                                                                    )
+                                                            },
+                                                        ))
+                                                    })
+                                                    .anchor(Corner::BottomLeft),
                                             )
                                         },
                                     )
@@ -4219,7 +4232,7 @@ impl EditorElement {
                                         editor.open_excerpts_common(
                                             Some(jump_data.clone()),
                                             e.modifiers().secondary(),
-                                            &OpenExcerpts::default(),
+                                            &OpenExcerptTarget::Modified,
                                             window,
                                             cx,
                                         );
