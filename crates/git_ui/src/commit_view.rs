@@ -169,62 +169,64 @@ impl CommitView {
         let commit_message = commit.message.clone();
 
         cx.spawn(async move |this, cx| {
-            let diff_file_tasks = commit_diff.files.into_iter().map(|file| {
-                let commit_sha = commit_sha.clone();
-                let repository_clone = repository_clone.clone();
-                let first_worktree_id = first_worktree_id.clone();
-                let language_registry = language_registry.clone();
-                cx.spawn(async move |cx| {
-                    let is_deleted = file.new_text.is_none();
-                    let new_text = file.new_text.unwrap_or_default();
-                    let old_text = file.old_text;
-                    let worktree_id = repository_clone
-                        .update(cx, |repository, cx| {
-                            repository
-                                .repo_path_to_project_path(&file.path, cx)
-                                .map(|path| path.worktree_id)
-                                .or(first_worktree_id)
-                        })?
-                        .context("project has no worktrees")?;
-                    let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
-                    let file_name = file
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string())
-                        .unwrap_or_else(|| file.path.display(PathStyle::Posix).to_string());
-                    let display_name: Arc<str> =
-                        Arc::from(format!("{short_sha} - {file_name}").into_boxed_str());
+            for file in commit_diff.files {
+                let is_deleted = file.new_text.is_none();
+                let new_text = file.new_text.unwrap_or_default();
+                let old_text = file.old_text;
+                let worktree_id = repository_clone
+                    .update(cx, |repository, cx| {
+                        repository
+                            .repo_path_to_project_path(&file.path, cx)
+                            .map(|path| path.worktree_id)
+                            .or(first_worktree_id)
+                    })?
+                    .context("project has no worktrees")?;
+                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let file_name = file
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| file.path.display(PathStyle::Posix).to_string());
+                let display_name: Arc<str> =
+                    Arc::from(format!("{short_sha} - {file_name}").into_boxed_str());
 
-                    let file = Arc::new(GitBlob {
-                        path: file.path.clone(),
-                        is_deleted,
-                        worktree_id,
-                        display_name,
-                    }) as Arc<dyn language::File>;
+                let file = Arc::new(GitBlob {
+                    path: file.path.clone(),
+                    is_deleted,
+                    worktree_id,
+                    display_name,
+                }) as Arc<dyn language::File>;
 
-                    let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
-                    let buffer_diff =
-                        build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
+                let buffer_diff =
+                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
-                    let (path, excerpt_ranges) = buffer.read_with(cx, |buffer, cx| {
-                        let path = buffer.file().unwrap().path().clone();
-                        let mut hunks = buffer_diff.read(cx).hunks(&buffer, cx).peekable();
-                        let excerpt_ranges = if hunks.peek().is_none() {
-                            vec![language::Point::zero()..buffer.max_point()]
-                        } else {
-                            hunks
-                                .map(|hunk| hunk.buffer_range.to_point(&buffer))
-                                .collect::<Vec<_>>()
+                this.update(cx, |this, cx| {
+                    this.multibuffer.update(cx, |multibuffer, cx| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let path = snapshot.file().unwrap().path().clone();
+                        let excerpt_ranges = {
+                            let mut hunks = buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                            if hunks.peek().is_none() {
+                                vec![language::Point::zero()..snapshot.max_point()]
+                            } else {
+                                hunks
+                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                    .collect::<Vec<_>>()
+                            }
                         };
 
-                        (path, excerpt_ranges)
-                    })?;
-
-                    anyhow::Ok((buffer, buffer_diff, path, excerpt_ranges))
-                })
-            });
-
-            let diff_files = futures::future::try_join_all(diff_file_tasks).await?;
+                        let _is_newly_added = multibuffer.set_excerpts_for_path(
+                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
+                            buffer,
+                            excerpt_ranges,
+                            multibuffer_context_lines(cx),
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff, cx);
+                    });
+                })?;
+            }
 
             let message_buffer = cx.new(|cx| {
                 let mut buffer = Buffer::local(commit_message, cx);
@@ -234,17 +236,6 @@ impl CommitView {
 
             this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multibuffer, cx| {
-                    for (buffer, buffer_diff, path, excerpt_ranges) in diff_files {
-                        let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
-                            buffer,
-                            excerpt_ranges,
-                            multibuffer_context_lines(cx),
-                            cx,
-                        );
-                        multibuffer.add_diff(buffer_diff, cx);
-                    }
-
                     let range = ExcerptRange {
                         context: Anchor::MIN..Anchor::MAX,
                         primary: Anchor::MIN..Anchor::MAX,
