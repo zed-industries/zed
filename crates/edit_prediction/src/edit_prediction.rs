@@ -233,7 +233,6 @@ pub struct EditPredictionFinishedDebugEvent {
     pub buffer: WeakEntity<Buffer>,
     pub position: Anchor,
     pub model_output: Option<String>,
-    pub request_time: Duration,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -630,6 +629,10 @@ impl EditPredictionStore {
                 license_detection_watchers: HashMap::default(),
                 _subscription: cx.subscribe(&project, Self::handle_project_event),
             })
+    }
+
+    pub fn remove_project(&mut self, project: &Entity<Project>) {
+        self.projects.remove(&project.entity_id());
     }
 
     fn handle_excerpt_store_event(

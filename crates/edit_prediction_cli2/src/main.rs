@@ -80,6 +80,7 @@ struct PredictArgs {
 enum PredictionProvider {
     Sweep,
     Mercury,
+    Zeta1,
     Zeta2,
     AnthropicBatched,
 }

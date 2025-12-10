@@ -183,7 +183,6 @@ pub fn request_prediction_with_zeta2(
 
             log::trace!("Sending edit prediction request");
 
-            let before_request = Instant::now();
             let response = EditPredictionStore::send_raw_llm_request(
                 request,
                 client,
@@ -196,7 +195,6 @@ pub fn request_prediction_with_zeta2(
             )
             .await;
             let received_response_at = Instant::now();
-            let request_time = received_response_at - before_request;
 
             log::trace!("Got edit prediction response");
 
@@ -213,7 +211,6 @@ pub fn request_prediction_with_zeta2(
                             buffer: active_buffer.downgrade(),
                             position,
                             model_output: Some(output_text.clone()),
-                            request_time,
                         },
                     ))
                     .ok();

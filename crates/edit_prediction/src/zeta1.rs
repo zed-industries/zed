@@ -1,7 +1,8 @@
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, EditPredictionModelInput, EditPredictionStore, ZedUpdateRequiredError,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::{EditPredictionInputs, EditPredictionResult},
 };
@@ -36,6 +37,7 @@ pub(crate) fn request_prediction_with_zeta1(
         position,
         events,
         trigger,
+        debug_tx,
         ..
     }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
@@ -143,6 +145,18 @@ pub(crate) fn request_prediction_with_zeta1(
             cursor_path: full_path,
         };
 
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(DebugEvent::EditPredictionStarted(
+                    EditPredictionStartedDebugEvent {
+                        buffer: buffer.downgrade(),
+                        prompt: Some(serde_json::to_string(&inputs).unwrap()),
+                        position,
+                    },
+                ))
+                .ok();
+        }
+
         let (response, usage) = match response {
             Ok(response) => response,
             Err(err) => {
@@ -182,6 +196,18 @@ pub(crate) fn request_prediction_with_zeta1(
                 });
             })
             .ok();
+        }
+
+        if let Some(debug_tx) = &debug_tx {
+            debug_tx
+                .unbounded_send(DebugEvent::EditPredictionFinished(
+                    EditPredictionFinishedDebugEvent {
+                        buffer: buffer.downgrade(),
+                        model_output: Some(response.output_excerpt.clone()),
+                        position,
+                    },
+                ))
+                .ok();
         }
 
         let edit_prediction = process_completion_response(

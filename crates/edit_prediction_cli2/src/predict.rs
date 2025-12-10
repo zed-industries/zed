@@ -7,12 +7,12 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{DebugEvent, EditPredictionStore};
-use futures::StreamExt as _;
-use gpui::{AppContext as _, AsyncApp};
+use futures::{FutureExt as _, StreamExt as _, future::Shared};
+use gpui::{AppContext as _, AsyncApp, Task};
 use std::{
     fs,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
@@ -29,9 +29,29 @@ pub async fn run_prediction(
     }
 
     run_load_project(example, app_state.clone(), cx.clone()).await;
-    run_context_retrieval(example, app_state, cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
     let provider = provider.unwrap();
+
+    if matches!(
+        provider,
+        PredictionProvider::Zeta1 | PredictionProvider::Zeta2
+    ) {
+        static AUTHENTICATED: OnceLock<Shared<Task<()>>> = OnceLock::new();
+        AUTHENTICATED
+            .get_or_init(|| {
+                let client = app_state.client.clone();
+                cx.spawn(async move |cx| {
+                    client
+                        .sign_in_with_optional_connect(true, cx)
+                        .await
+                        .unwrap();
+                })
+                .shared()
+            })
+            .clone()
+            .await;
+    }
 
     let ep_store = cx
         .update(|cx| EditPredictionStore::try_global(cx).unwrap())
@@ -40,6 +60,7 @@ pub async fn run_prediction(
     ep_store
         .update(&mut cx, |store, _cx| {
             let model = match provider {
+                PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
                 PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
                 PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
                 PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
@@ -65,7 +86,6 @@ pub async fn run_prediction(
             while let Some(event) = debug_rx.next().await {
                 let run_ix = current_run_ix.load(SeqCst);
                 let mut updated_example = updated_example.lock().unwrap();
-                assert_eq!(updated_example.predictions.len(), run_ix + 1);
 
                 let run_dir = if repetition_count > 1 {
                     run_dir.join(format!("{:03}", run_ix))
@@ -75,11 +95,15 @@ pub async fn run_prediction(
 
                 match event {
                     DebugEvent::EditPredictionStarted(request) => {
+                        assert_eq!(updated_example.predictions.len(), run_ix + 1);
+
                         if let Some(prompt) = request.prompt {
                             fs::write(run_dir.join("prediction_prompt.md"), &prompt)?;
                         }
                     }
                     DebugEvent::EditPredictionFinished(request) => {
+                        assert_eq!(updated_example.predictions.len(), run_ix + 1);
+
                         if let Some(output) = request.model_output {
                             fs::write(run_dir.join("prediction_response.md"), &output)?;
                             updated_example
@@ -154,6 +178,11 @@ pub async fn run_prediction(
             .unwrap_or_default();
     }
 
+    ep_store
+        .update(&mut cx, |store, _| {
+            store.remove_project(&state.project);
+        })
+        .unwrap();
     debug_task.await.unwrap();
 
     *example = Arc::into_inner(updated_example)

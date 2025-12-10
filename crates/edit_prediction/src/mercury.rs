@@ -11,7 +11,8 @@ use language::{BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
 use std::{fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionInputs,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent,
     open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 
@@ -43,6 +44,7 @@ impl Mercury {
             position,
             events,
             related_files,
+            debug_tx,
             ..
         }: EditPredictionModelInput,
         cx: &mut App,
@@ -59,6 +61,7 @@ impl Mercury {
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
         let buffer_snapshotted_at = Instant::now();
+        let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
@@ -101,6 +104,18 @@ impl Mercury {
                 },
                 cursor_path: full_path.clone(),
             };
+
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionStarted(
+                        EditPredictionStartedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            prompt: Some(prompt.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
 
             let request_body = open_ai::Request {
                 model: "mercury-coder".into(),
@@ -157,6 +172,18 @@ impl Mercury {
             let id = mem::take(&mut response.id);
             let response_str = text_from_response(response).unwrap_or_default();
 
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionFinished(
+                        EditPredictionFinishedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            model_output: Some(response_str.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
+
             let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
             let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);
 
@@ -182,8 +209,6 @@ impl Mercury {
 
             anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
         });
-
-        let buffer = buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) =
