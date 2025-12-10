@@ -108,7 +108,7 @@ use gpui::{
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
-    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun, TextStyle,
     TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
     WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
@@ -1069,8 +1069,7 @@ pub struct Editor {
     show_gutter: bool,
     show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
-    // todo!
-    pub offset_content: bool,
+    offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1250,6 +1249,7 @@ impl NextScrollCursorCenterTopBottom {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    offset_content: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -2940,6 +2940,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode.clone(),
             show_gutter: self.show_gutter,
+            offset_content: self.offset_content,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
@@ -23070,10 +23071,6 @@ impl Editor {
         }
     }
 
-    pub fn last_gutter_dimensions(&self) -> &GutterDimensions {
-        &self.gutter_dimensions
-    }
-
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
         self.load_diff_task.clone()
     }
@@ -24755,90 +24752,94 @@ impl EditorSnapshot {
         &self,
         font_id: FontId,
         font_size: Pixels,
-        max_line_number_width: Pixels,
+        style: &EditorStyle,
+        window: &mut Window,
         cx: &App,
-    ) -> Option<GutterDimensions> {
-        if !self.show_gutter {
-            return None;
+    ) -> GutterDimensions {
+        if self.show_gutter
+            && let Some(ch_width) = cx.text_system().ch_width(font_id, font_size).log_err()
+            && let Some(ch_advance) = cx.text_system().ch_advance(font_id, font_size).log_err()
+        {
+            let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
+                matches!(
+                    ProjectSettings::get_global(cx).git.git_gutter,
+                    GitGutterSetting::TrackedFiles
+                )
+            });
+            let gutter_settings = EditorSettings::get_global(cx).gutter;
+            let show_line_numbers = self
+                .show_line_numbers
+                .unwrap_or(gutter_settings.line_numbers);
+            let line_gutter_width = if show_line_numbers {
+                // Avoid flicker-like gutter resizes when the line number gains another digit by
+                // only resizing the gutter on files with > 10**min_line_number_digits lines.
+                let min_width_for_number_on_gutter =
+                    ch_advance * gutter_settings.min_line_number_digits as f32;
+                self.max_line_number_width(style, window)
+                    .max(min_width_for_number_on_gutter)
+            } else {
+                0.0.into()
+            };
+
+            let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
+            let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
+
+            let git_blame_entries_width =
+                self.git_blame_gutter_max_author_length
+                    .map(|max_author_length| {
+                        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+
+                        /// The number of characters to dedicate to gaps and margins.
+                        const SPACING_WIDTH: usize = 4;
+
+                        let max_char_count = max_author_length.min(renderer.max_author_length())
+                            + ::git::SHORT_SHA_LENGTH
+                            + MAX_RELATIVE_TIMESTAMP.len()
+                            + SPACING_WIDTH;
+
+                        ch_advance * max_char_count
+                    });
+
+            let is_singleton = self.buffer_snapshot().is_singleton();
+
+            let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
+            left_padding += if !is_singleton {
+                ch_width * 4.0
+            } else if show_runnables || show_breakpoints {
+                ch_width * 3.0
+            } else if show_git_gutter && show_line_numbers {
+                ch_width * 2.0
+            } else if show_git_gutter || show_line_numbers {
+                ch_width
+            } else {
+                px(0.)
+            };
+
+            let shows_folds = is_singleton && gutter_settings.folds;
+
+            let right_padding = if shows_folds && show_line_numbers {
+                ch_width * 4.0
+            } else if shows_folds || (!is_singleton && show_line_numbers) {
+                ch_width * 3.0
+            } else if show_line_numbers {
+                ch_width
+            } else {
+                px(0.)
+            };
+
+            GutterDimensions {
+                left_padding,
+                right_padding,
+                width: line_gutter_width + left_padding + right_padding,
+                margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
+                git_blame_entries_width,
+            }
+        } else if self.offset_content {
+            GutterDimensions::default_with_margin(font_id, font_size, cx)
+        } else {
+            GutterDimensions::default()
         }
-
-        let ch_width = cx.text_system().ch_width(font_id, font_size).log_err()?;
-        let ch_advance = cx.text_system().ch_advance(font_id, font_size).log_err()?;
-
-        let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
-            matches!(
-                ProjectSettings::get_global(cx).git.git_gutter,
-                GitGutterSetting::TrackedFiles
-            )
-        });
-        let gutter_settings = EditorSettings::get_global(cx).gutter;
-        let show_line_numbers = self
-            .show_line_numbers
-            .unwrap_or(gutter_settings.line_numbers);
-        let line_gutter_width = if show_line_numbers {
-            // Avoid flicker-like gutter resizes when the line number gains another digit by
-            // only resizing the gutter on files with > 10**min_line_number_digits lines.
-            let min_width_for_number_on_gutter =
-                ch_advance * gutter_settings.min_line_number_digits as f32;
-            max_line_number_width.max(min_width_for_number_on_gutter)
-        } else {
-            0.0.into()
-        };
-
-        let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
-        let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
-
-        let git_blame_entries_width =
-            self.git_blame_gutter_max_author_length
-                .map(|max_author_length| {
-                    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                    const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
-
-                    /// The number of characters to dedicate to gaps and margins.
-                    const SPACING_WIDTH: usize = 4;
-
-                    let max_char_count = max_author_length.min(renderer.max_author_length())
-                        + ::git::SHORT_SHA_LENGTH
-                        + MAX_RELATIVE_TIMESTAMP.len()
-                        + SPACING_WIDTH;
-
-                    ch_advance * max_char_count
-                });
-
-        let is_singleton = self.buffer_snapshot().is_singleton();
-
-        let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-        left_padding += if !is_singleton {
-            ch_width * 4.0
-        } else if show_runnables || show_breakpoints {
-            ch_width * 3.0
-        } else if show_git_gutter && show_line_numbers {
-            ch_width * 2.0
-        } else if show_git_gutter || show_line_numbers {
-            ch_width
-        } else {
-            px(0.)
-        };
-
-        let shows_folds = is_singleton && gutter_settings.folds;
-
-        let right_padding = if shows_folds && show_line_numbers {
-            ch_width * 4.0
-        } else if shows_folds || (!is_singleton && show_line_numbers) {
-            ch_width * 3.0
-        } else if show_line_numbers {
-            ch_width
-        } else {
-            px(0.)
-        };
-
-        Some(GutterDimensions {
-            left_padding,
-            right_padding,
-            width: line_gutter_width + left_padding + right_padding,
-            margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
-            git_blame_entries_width,
-        })
     }
 
     pub fn render_crease_toggle(
@@ -24921,6 +24922,28 @@ impl EditorSnapshot {
             None
         }
     }
+
+    pub fn max_line_number_width(&self, style: &EditorStyle, window: &mut Window) -> Pixels {
+        let digit_count = self.widest_line_number().ilog10() + 1;
+        column_pixels(style, digit_count as usize, window)
+    }
+}
+
+pub fn column_pixels(style: &EditorStyle, column: usize, window: &Window) -> Pixels {
+    let font_size = style.text.font_size.to_pixels(window.rem_size());
+    let layout = window.text_system().shape_line(
+        SharedString::from(" ".repeat(column)),
+        font_size,
+        &[TextRun {
+            len: column,
+            font: style.text.font(),
+            color: Hsla::default(),
+            ..Default::default()
+        }],
+        None,
+    );
+
+    layout.width
 }
 
 impl Deref for EditorSnapshot {

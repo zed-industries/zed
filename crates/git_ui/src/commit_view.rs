@@ -1,10 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{
-    Editor, EditorEvent, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer,
-    multibuffer_context_lines,
-};
+use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
@@ -14,7 +11,7 @@ use gpui::{
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    ReplicaId, Rope, TextBuffer,
+    Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -71,6 +68,7 @@ struct GitBlob {
     display_name: Arc<str>,
 }
 
+const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
@@ -148,6 +146,32 @@ impl CommitView {
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
+
+        let message_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(commit.message.clone(), cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            let snapshot = message_buffer.read(cx).snapshot();
+            let full_range = Point::zero()..snapshot.max_point();
+            let range = ExcerptRange {
+                context: full_range.clone(),
+                primary: full_range,
+            };
+            multibuffer.set_excerpt_ranges_for_path(
+                PathKey::with_sort_prefix(
+                    COMMIT_MESSAGE_SORT_PREFIX,
+                    RelPath::unix("commit message").unwrap().into(),
+                ),
+                message_buffer.clone(),
+                &snapshot,
+                vec![range],
+                cx,
+            )
+        });
+
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
@@ -155,9 +179,38 @@ impl CommitView {
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+            editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
+
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(editor::Anchor::min()),
+                    height: Some(1),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(|_| gpui::Empty.into_any_element()),
+                    priority: 0,
+                }]
+                .into_iter()
+                .chain(
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                        .map(|anchor| BlockProperties {
+                            placement: BlockPlacement::Below(anchor),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(|_| gpui::Empty.into_any_element()),
+                            priority: 0,
+                        }),
+                ),
+                None,
+                cx,
+            );
 
             editor
         });
+
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let first_worktree_id = project
@@ -167,7 +220,6 @@ impl CommitView {
             .map(|worktree| worktree.read(cx).id());
 
         let repository_clone = repository.clone();
-        let commit_message = commit.message.clone();
 
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
@@ -228,59 +280,6 @@ impl CommitView {
                     });
                 })?;
             }
-
-            let message_buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(commit_message, cx);
-                buffer.set_capability(Capability::ReadOnly, cx);
-                buffer
-            })?;
-
-            this.update(cx, |this, cx| {
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    let range = ExcerptRange {
-                        context: Anchor::MIN..Anchor::MAX,
-                        primary: Anchor::MIN..Anchor::MAX,
-                    };
-                    multibuffer.insert_excerpts_after(
-                        ExcerptId::min(),
-                        message_buffer.clone(),
-                        [range],
-                        cx,
-                    )
-                });
-
-                this.editor.update(cx, |editor, cx| {
-                    editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
-                    editor
-                        .disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
-
-                    editor.insert_blocks(
-                        [BlockProperties {
-                            placement: BlockPlacement::Above(editor::Anchor::min()),
-                            height: Some(1),
-                            style: BlockStyle::Sticky,
-                            render: Arc::new(|_| gpui::Empty.into_any_element()),
-                            priority: 0,
-                        }]
-                        .into_iter()
-                        .chain(
-                            editor
-                                .buffer()
-                                .read(cx)
-                                .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
-                                .map(|anchor| BlockProperties {
-                                    placement: BlockPlacement::Below(anchor),
-                                    height: Some(1),
-                                    style: BlockStyle::Sticky,
-                                    render: Arc::new(|_| gpui::Empty.into_any_element()),
-                                    priority: 0,
-                                }),
-                        ),
-                        None,
-                        cx,
-                    )
-                });
-            })?;
 
             anyhow::Ok(())
         })
@@ -418,23 +417,15 @@ impl CommitView {
             None
         };
 
-        let gutter_width = self
-            .editor
-            .update(cx, |editor, cx| {
-                let style = editor.style(cx);
-                let font_id = window.text_system().resolve_font(&style.text.font());
-                let font_size = style.text.font_size.to_pixels(window.rem_size());
-                editor
-                    .snapshot(window, cx)
-                    .gutter_dimensions(font_id, font_size, Pixels::ZERO, cx)
-                    .or_else(|| {
-                        editor
-                            .offset_content
-                            .then(|| GutterDimensions::default_with_margin(font_id, font_size, cx))
-                    })
-                    .map(|dimensions| dimensions.full_width())
-            })
-            .unwrap_or_default();
+        let gutter_width = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let style = editor.style(cx);
+            let font_id = window.text_system().resolve_font(&style.text.font());
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            snapshot
+                .gutter_dimensions(font_id, font_size, style, window, cx)
+                .full_width()
+        });
 
         h_flex()
             .border_b_1()
