@@ -1445,12 +1445,126 @@ pub struct CodeActionsMenu {
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
     pub deployed_from: Option<CodeActionSource>,
+    filter_query: String,
+    filtered_actions: Option<Vec<CodeActionsItem>>,
+    filter_matches: Option<Vec<StringMatch>>,
 }
 
 impl CodeActionsMenu {
+    pub fn new(
+        actions: CodeActionContents,
+        buffer: Entity<Buffer>,
+        selected_item: usize,
+        scroll_handle: UniformListScrollHandle,
+        deployed_from: Option<CodeActionSource>,
+    ) -> Self {
+        Self {
+            actions,
+            buffer,
+            selected_item,
+            scroll_handle,
+            deployed_from,
+            filter_query: String::new(),
+            filtered_actions: None,
+            filter_matches: None,
+        }
+    }
+
+    pub fn filter(&mut self, query: &str, cx: &mut Context<Editor>) {
+        self.filter_query.push_str(query);
+
+        if self.filter_query.is_empty() {
+            self.filtered_actions = None;
+            self.filter_matches = None;
+        } else {
+            let mut filtered = Vec::new();
+            let titles: Vec<String> = (0..self.actions.len())
+                .filter_map(|i| {
+                    if let Some(action) = self.actions.get(i) {
+                        let title = match &action {
+                            CodeActionsItem::CodeAction { action, .. } => {
+                                action.lsp_action.title().to_string()
+                            }
+                            CodeActionsItem::Task(_, task) => task.resolved_label.to_string(),
+                            CodeActionsItem::DebugScenario(scenario) => scenario.label.to_string(),
+                        };
+                        Some(title)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let candidates: Vec<_> = titles
+                .iter()
+                .enumerate()
+                .map(|(i, title)| fuzzy::StringMatchCandidate::new(i, title.as_str()))
+                .collect();
+
+            let cancellation_flag = Default::default();
+            // Use the fuzzy matcher to get the matching results
+            let matches_task = fuzzy::match_strings(
+                &candidates,
+                &self.filter_query,
+                self.filter_query.chars().any(|c| c.is_uppercase()),
+                false,
+                100,                // limit to 100 matches
+                &cancellation_flag, // cancellation flag
+                cx.background_executor().clone(),
+            );
+
+            // Execute the blocking task to get the matches
+            let matches = cx.background_executor().block(matches_task);
+            for mat in &matches {
+                if let Some(action) = self.actions.get(mat.candidate_id) {
+                    filtered.push(action);
+                }
+            }
+
+            self.filtered_actions = Some(filtered);
+            self.filter_matches = Some(matches);
+        }
+
+        // Reset selection to first item
+        self.selected_item = 0;
+        cx.notify();
+    }
+
+    pub fn clear_filter(&mut self, cx: &mut Context<Editor>) {
+        self.filter_query.clear();
+        self.filtered_actions = None;
+        self.filter_matches = None;
+        self.selected_item = 0;
+        cx.notify();
+    }
+
+    pub fn backspace_filter(&mut self, cx: &mut Context<Editor>) {
+        if self.filter_query.pop().is_some() {
+            if self.filter_query.is_empty() {
+                self.filtered_actions = None;
+                self.filter_matches = None;
+            } else {
+                // Re-run the filter with the updated query
+                let query = self.filter_query.clone();
+                self.filter_query.clear();
+                self.filter(&query, cx);
+                return;
+            }
+
+            // Reset selection to first item
+            self.selected_item = 0;
+        }
+        cx.notify();
+    }
+
     fn select_first(&mut self, cx: &mut Context<Editor>) {
+        let len = self.visible_len();
+        if len == 0 {
+            return;
+        }
+
         self.selected_item = if self.scroll_handle.y_flipped() {
-            self.actions.len() - 1
+            len - 1
         } else {
             0
         };
@@ -1460,10 +1574,15 @@ impl CodeActionsMenu {
     }
 
     fn select_last(&mut self, cx: &mut Context<Editor>) {
+        let len = self.visible_len();
+        if len == 0 {
+            return;
+        }
+
         self.selected_item = if self.scroll_handle.y_flipped() {
             0
         } else {
-            self.actions.len() - 1
+            len - 1
         };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
@@ -1471,10 +1590,15 @@ impl CodeActionsMenu {
     }
 
     fn select_prev(&mut self, cx: &mut Context<Editor>) {
+        let len = self.visible_len();
+        if len == 0 {
+            return;
+        }
+
         self.selected_item = if self.scroll_handle.y_flipped() {
-            self.next_match_index()
+            self.next_match_index(len)
         } else {
-            self.prev_match_index()
+            self.prev_match_index(len)
         };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
@@ -1482,34 +1606,53 @@ impl CodeActionsMenu {
     }
 
     fn select_next(&mut self, cx: &mut Context<Editor>) {
+        let len = self.visible_len();
+        if len == 0 {
+            return;
+        }
+
         self.selected_item = if self.scroll_handle.y_flipped() {
-            self.prev_match_index()
+            self.prev_match_index(len)
         } else {
-            self.next_match_index()
+            self.next_match_index(len)
         };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
-    fn prev_match_index(&self) -> usize {
+    fn prev_match_index(&self, len: usize) -> usize {
         if self.selected_item > 0 {
             self.selected_item - 1
         } else {
-            self.actions.len() - 1
+            len - 1
         }
     }
 
-    fn next_match_index(&self) -> usize {
-        if self.selected_item + 1 < self.actions.len() {
+    fn next_match_index(&self, len: usize) -> usize {
+        if self.selected_item + 1 < len {
             self.selected_item + 1
         } else {
             0
         }
     }
 
+    fn visible_len(&self) -> usize {
+        self.filtered_actions
+            .as_ref()
+            .map_or_else(|| self.actions.len(), |filtered| filtered.len())
+    }
+
+    pub fn get_action(&self, index: usize) -> Option<CodeActionsItem> {
+        if let Some(ref filtered) = self.filtered_actions {
+            filtered.get(index).cloned()
+        } else {
+            self.actions.get(index)
+        }
+    }
+
     pub fn visible(&self) -> bool {
-        !self.actions.is_empty()
+        self.visible_len() > 0
     }
 
     fn origin(&self) -> ContextMenuOrigin {
@@ -1529,15 +1672,31 @@ impl CodeActionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
 
+        // Create a snapshot of the actions to use for rendering
+        let actions_to_render = if let Some(ref filtered) = self.filtered_actions {
+            filtered.clone()
+        } else {
+            let mut all_actions = Vec::new();
+            for i in 0..self.actions.len() {
+                if let Some(action) = self.actions.get(i) {
+                    all_actions.push(action);
+                }
+            }
+            all_actions
+        };
+
+        let actions_to_render_for_width = actions_to_render.clone();
+
+        let filter_matches = self.filter_matches.clone();
+
         let list = uniform_list(
             "code_actions_menu",
-            self.actions.len(),
+            actions_to_render.len(),
             cx.processor(move |_this, range: Range<usize>, _, cx| {
-                actions
+                actions_to_render
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
@@ -1545,46 +1704,52 @@ impl CodeActionsMenu {
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;
                         let selected = item_ix == selected_item;
-                        let colors = cx.theme().colors();
+
+                        // Get match positions for highlighting
+                        let match_positions = filter_matches
+                            .as_ref()
+                            .and_then(|matches| matches.get(item_ix))
+                            .map(|m| m.positions.clone())
+                            .unwrap_or_default();
+
                         div().min_w(px(220.)).max_w(px(540.)).child(
                             ListItem::new(item_ix)
                                 .inset(true)
                                 .toggle_state(selected)
                                 .when_some(action.as_code_action(), |this, action| {
+                                    let title = action.lsp_action.title().replace("\n", "");
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
                                             .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(
-                                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title().replace("\n", ""),
-                                            )
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
+                                            .child(ui::HighlightedLabel::new(
+                                                title,
+                                                match_positions.clone(),
+                                            )),
                                     )
                                 })
                                 .when_some(action.as_task(), |this, task| {
+                                    let title = task.resolved_label.replace("\n", "");
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
                                             .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(task.resolved_label.replace("\n", ""))
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
+                                            .child(ui::HighlightedLabel::new(
+                                                title,
+                                                match_positions.clone(),
+                                            )),
                                     )
                                 })
                                 .when_some(action.as_debug_scenario(), |this, scenario| {
+                                    let title = format!("debug: {}", scenario.label);
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
                                             .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child("debug: ")
-                                            .child(scenario.label.clone())
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
+                                            .child(ui::HighlightedLabel::new(
+                                                title,
+                                                match_positions.clone(),
+                                            )),
                                     )
                                 })
                                 .on_click(cx.listener(move |editor, _, window, cx| {
@@ -1608,7 +1773,7 @@ impl CodeActionsMenu {
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(&self.scroll_handle)
         .with_width_from_item(
-            self.actions
+            actions_to_render_for_width
                 .iter()
                 .enumerate()
                 .max_by_key(|(_, action)| match action {
@@ -1624,6 +1789,36 @@ impl CodeActionsMenu {
         )
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
-        Popover::new().child(list).into_any_element()
+        // Add a text input element at the top if we're currently filtering
+        let children = if !self.filter_query.is_empty() {
+            vec![
+                div()
+                    .id("code_actions_filter")
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        h_flex()
+                            .child(
+                                ui::Icon::new(ui::IconName::MagnifyingGlass)
+                                    .size(ui::IconSize::XSmall)
+                                    .color(ui::Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .ml_2()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(format!("Filter: {}", self.filter_query)),
+                            ),
+                    )
+                    .into_any_element(),
+                list.into_any_element(),
+            ]
+        } else {
+            vec![list.into_any_element()]
+        };
+
+        Popover::new().children(children).into_any_element()
     }
 }
