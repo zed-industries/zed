@@ -52,6 +52,12 @@ uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
 
+mitex = "0.2.4"
+typst = "0.14.1"
+typst-svg = "0.14.1"
+typst-assets = { version = "0.14.1", features = ["fonts"] }
+fontdb = "0.23.0"
+
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
@@ -68,3 +74,4 @@ tree-sitter-md.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-python.workspace = true
 util = { workspace = true, features = ["test-support"] }
+mitex = "0.2.4"

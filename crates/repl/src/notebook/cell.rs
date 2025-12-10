@@ -639,6 +639,9 @@ impl Render for CodeCell {
                                             Output::Svg { content, .. } => {
                                                 Some(content.clone().into_any_element())
                                             }
+                                            Output::Latex { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
                                             Output::Message(message) => Some(
                                                 div().child(message.clone()).into_any_element(),
                                             ),
