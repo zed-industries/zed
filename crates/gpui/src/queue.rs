@@ -45,6 +45,7 @@ impl<T> Clone for PriorityQueueReceiver<T> {
 #[derive(Debug)]
 pub(crate) struct ReceiverDisconnected;
 
+#[allow(dead_code)]
 impl<T> PriorityQueueReceiver<T> {
     pub(crate) fn new() -> (PriorityQueueSender<T>, Self) {
         let (tx, rx) = flume::unbounded();

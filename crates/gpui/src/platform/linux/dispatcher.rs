@@ -405,7 +405,7 @@ mod tests {
         };
 
         let _channel_token = handle
-            .insert_source(rx, move |evt, &mut (), data: &mut Data| match dbg!(evt) {
+            .insert_source(rx, move |evt, &mut (), data: &mut Data| match evt {
                 Event::Msg(()) => {
                     data.got_msg = true;
                 }
