@@ -56,10 +56,6 @@ impl AgentServerDelegate {
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
     fn name(&self) -> SharedString;
-    // Normally we use the id the agent gives us, or the name. In some case we want to override this for historical reasons.
-    fn telemetry_id_override(&self) -> Option<SharedString> {
-        None
-    }
     fn default_mode(&self, _cx: &mut App) -> Option<agent_client_protocol::SessionModeId> {
         None
     }

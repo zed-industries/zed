@@ -21,10 +21,6 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn telemetry_id_override(&self) -> Option<SharedString> {
-        Some("zed".into())
-    }
-
     fn name(&self) -> SharedString {
         "Zed Agent".into()
     }

@@ -23,10 +23,6 @@ pub(crate) mod tests {
 }
 
 impl AgentServer for Codex {
-    fn telemetry_id_override(&self) -> Option<SharedString> {
-        Some("codex".into())
-    }
-
     fn name(&self) -> SharedString {
         "Codex".into()
     }
@@ -84,7 +80,6 @@ impl AgentServer for Codex {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let telemetry_id_override = self.telemetry_id_override();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
@@ -110,7 +105,7 @@ impl AgentServer for Codex {
 
             let connection = crate::acp::connect(
                 name,
-                telemetry_id_override,
+                Some("codex".into()),
                 command,
                 root_dir.as_ref(),
                 default_mode,
