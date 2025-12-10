@@ -1,9 +1,14 @@
 use crate::component_prelude::*;
 use crate::prelude::*;
 use crate::{Checkbox, ListBulletItem, ToggleState};
+use gpui::Action;
+use gpui::FocusHandle;
 use gpui::IntoElement;
+use gpui::Stateful;
 use smallvec::{SmallVec, smallvec};
 use theme::ActiveTheme;
+
+type ActionHandler = Box<dyn FnOnce(Stateful<Div>) -> Stateful<Div>>;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct AlertModal {
@@ -15,6 +20,9 @@ pub struct AlertModal {
     primary_action: Option<SharedString>,
     dismiss_label: Option<SharedString>,
     width: Option<DefiniteLength>,
+    key_context: Option<String>,
+    action_handlers: Vec<ActionHandler>,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl AlertModal {
@@ -28,6 +36,9 @@ impl AlertModal {
             primary_action: None,
             dismiss_label: None,
             width: None,
+            key_context: None,
+            action_handlers: Vec::new(),
+            focus_handle: None,
         }
     }
 
@@ -60,6 +71,25 @@ impl AlertModal {
         self.width = Some(width.into());
         self
     }
+
+    pub fn key_context(mut self, key_context: impl Into<String>) -> Self {
+        self.key_context = Some(key_context.into());
+        self
+    }
+
+    pub fn on_action<A: Action>(
+        mut self,
+        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.action_handlers
+            .push(Box::new(move |div| div.on_action(listener)));
+        self
+    }
+
+    pub fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
 }
 
 impl RenderOnce for AlertModal {
@@ -68,11 +98,21 @@ impl RenderOnce for AlertModal {
         let has_default_footer = self.primary_action.is_some() || self.dismiss_label.is_some();
 
         let mut modal = v_flex()
+            .when_some(self.key_context, |this, key_context| {
+                this.key_context(key_context.as_str())
+            })
+            .when_some(self.focus_handle, |this, focus_handle| {
+                this.track_focus(&focus_handle)
+            })
             .id(self.id)
             .elevation_3(cx)
-            .bg(cx.theme().colors().elevated_surface_background)
             .w(width)
+            .bg(cx.theme().colors().elevated_surface_background)
             .overflow_hidden();
+
+        for handler in self.action_handlers {
+            modal = handler(modal);
+        }
 
         if let Some(header) = self.header {
             modal = modal.child(header);
