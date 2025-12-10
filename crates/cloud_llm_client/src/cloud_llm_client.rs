@@ -368,6 +368,7 @@ pub struct LanguageModel {
     pub max_token_count_in_max_mode: Option<usize>,
     pub max_output_tokens: usize,
     pub supports_tools: bool,
+    // pub supports_streaming_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
