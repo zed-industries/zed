@@ -479,12 +479,43 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
-            this._task = window.spawn(cx, {
-                let this = cx.weak_entity();
-                async |cx| Self::refresh(this, cx).await
-            })
-        });
+        let buffer_weak = buffer.downgrade();
+        let project = self.project.clone();
+        let subscription = cx.subscribe_in(
+            &diff,
+            window,
+            move |this, diff_entity, event, window, cx| {
+                // Check if buffer was restored to original state (no hunks) and is dirty
+                if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
+                    if let Some(buffer_entity) = buffer_weak.upgrade() {
+                        let buffer_snapshot = buffer_entity.read(cx).snapshot();
+                        let has_hunks = diff_entity
+                            .read(cx)
+                            .hunks_intersecting_range(
+                                Anchor::min_max_range_for_buffer(diff_entity.read(cx).buffer_id),
+                                &buffer_snapshot,
+                                cx,
+                            )
+                            .next()
+                            .is_some();
+
+                        // If no hunks remain and buffer is dirty, auto-save to sync git status
+                        if !has_hunks && buffer_entity.read(cx).is_dirty() {
+                            project
+                                .update(cx, |project, cx| {
+                                    project.save_buffer(buffer_entity.clone(), cx)
+                                })
+                                .detach_and_log_err(cx);
+                        }
+                    }
+                }
+
+                this._task = window.spawn(cx, {
+                    let this = cx.weak_entity();
+                    async |cx| Self::refresh(this, cx).await
+                })
+            },
+        );
         self.buffer_diff_subscriptions
             .insert(path_key.path.clone(), (diff.clone(), subscription));
 
