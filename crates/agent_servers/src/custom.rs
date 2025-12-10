@@ -114,7 +114,6 @@ impl AgentServer for CustomAgentServer {
         let default_model = self.default_model(cx);
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
-
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
