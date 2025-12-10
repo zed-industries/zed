@@ -5120,7 +5120,6 @@ dependencies = [
  "cloud_zeta2_prompt",
  "collections",
  "copilot",
- "credentials_provider",
  "ctor",
  "db",
  "edit_prediction_context",

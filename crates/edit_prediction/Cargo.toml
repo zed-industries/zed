@@ -24,7 +24,6 @@ cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
 collections.workspace = true
 copilot.workspace = true
-credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
