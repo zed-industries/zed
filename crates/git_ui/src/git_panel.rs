@@ -1432,7 +1432,7 @@ impl GitPanel {
                         if let Some(op) = self.bulk_staging.clone()
                             && op.anchor == status_entry.repo_path
                         {
-                            clear_anchor = Some(op.anchor.clone());
+                            clear_anchor = Some(op.anchor);
                         }
                         false
                     } else {
@@ -1447,7 +1447,7 @@ impl GitPanel {
                         if let Some(op) = self.bulk_staging.clone()
                             && op.anchor == status_entry.entry.repo_path
                         {
-                            clear_anchor = Some(op.anchor.clone());
+                            clear_anchor = Some(op.anchor);
                         }
                         false
                     } else {
@@ -3438,7 +3438,7 @@ impl GitPanel {
         flattened
     }
 
-    fn compact_directory_chain<'a>(mut node: &'a TreeNode) -> (&'a TreeNode, SharedString) {
+    fn compact_directory_chain(mut node: &TreeNode) -> (&TreeNode, SharedString) {
         let mut parts = vec![node.name.clone()];
         while node.files.is_empty() && node.children.len() == 1 {
             let Some(child) = node.children.values().next() else {
@@ -4381,7 +4381,6 @@ impl GitPanel {
                                         cx.entity(),
                                         |this, range, _window, _cx| {
                                             range
-                                                .clone()
                                                 .map(|ix| match this.entries.get(ix) {
                                                     Some(GitListEntry::Directory(dir)) => dir.depth,
                                                     Some(GitListEntry::TreeStatus(status)) => {
