@@ -56,7 +56,10 @@ pub enum ShellKind {
     Tcsh,
     Rc,
     Fish,
+    /// Pre-installed "legacy" powershell for windows
     PowerShell,
+    /// PowerShell 7.x
+    Pwsh,
     Nushell,
     Cmd,
     Xonsh,
@@ -238,6 +241,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Tcsh => write!(f, "tcsh"),
             ShellKind::Fish => write!(f, "fish"),
             ShellKind::PowerShell => write!(f, "powershell"),
+            ShellKind::Pwsh => write!(f, "pwsh"),
             ShellKind::Nushell => write!(f, "nu"),
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
@@ -260,7 +264,8 @@ impl ShellKind {
             .to_string_lossy();
 
         match &*program {
-            "powershell" | "pwsh" => ShellKind::PowerShell,
+            "powershell" => ShellKind::PowerShell,
+            "pwsh" => ShellKind::Pwsh,
             "cmd" => ShellKind::Cmd,
             "nu" => ShellKind::Nushell,
             "fish" => ShellKind::Fish,
@@ -279,7 +284,7 @@ impl ShellKind {
 
     pub fn to_shell_variable(self, input: &str) -> String {
         match self {
-            Self::PowerShell => Self::to_powershell_variable(input),
+            Self::PowerShell | Self::Pwsh => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
             Self::Posix => input.to_owned(),
             Self::Fish => input.to_owned(),
@@ -407,7 +412,7 @@ impl ShellKind {
 
     pub fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
-            ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
+            ShellKind::PowerShell | ShellKind::Pwsh => vec!["-C".to_owned(), combined_command],
             ShellKind::Cmd => vec![
                 "/S".to_owned(),
                 "/C".to_owned(),
@@ -430,7 +435,7 @@ impl ShellKind {
 
     pub const fn command_prefix(&self) -> Option<char> {
         match self {
-            ShellKind::PowerShell => Some('&'),
+            ShellKind::PowerShell | ShellKind::Pwsh => Some('&'),
             ShellKind::Nushell => Some('^'),
             ShellKind::Posix
             | ShellKind::Csh
@@ -461,6 +466,7 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::PowerShell
+            | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish => ';',
@@ -475,6 +481,7 @@ impl ShellKind {
             | ShellKind::Tcsh
             | ShellKind::Rc
             | ShellKind::Fish
+            | ShellKind::Pwsh
             | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
             ShellKind::Nushell | ShellKind::Elvish => ";",
@@ -483,8 +490,9 @@ impl ShellKind {
 
     pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
         match self {
-            ShellKind::PowerShell => Self::try_quote_powershell(arg),
-            ShellKind::Cmd => Self::try_quote_cmd(arg),
+            ShellKind::PowerShell => Some(Self::quote_powershell(arg)),
+            ShellKind::Pwsh => Some(Self::quote_pwsh(arg)),
+            ShellKind::Cmd => Some(Self::quote_cmd(arg)),
             ShellKind::Posix
             | ShellKind::Csh
             | ShellKind::Tcsh
@@ -495,6 +503,69 @@ impl ShellKind {
             | ShellKind::Elvish => shlex::try_quote(arg).ok(),
         }
     }
+
+    fn quote_windows(arg: &str, enclose: bool) -> Cow<'_, str> {
+        if arg.is_empty() {
+            return Cow::Borrowed("\"\"");
+        }
+
+        let needs_quoting = arg.chars().any(|c| c == ' ' || c == '\t' || c == '"');
+        if !needs_quoting {
+            return Cow::Borrowed(arg);
+        }
+
+        let mut result = String::with_capacity(arg.len() + 2);
+
+        if enclose {
+            result.push('"');
+        }
+
+        let chars: Vec<char> = arg.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            if chars[i] == '\\' {
+                let mut num_backslashes = 0;
+                while i < chars.len() && chars[i] == '\\' {
+                    num_backslashes += 1;
+                    i += 1;
+                }
+
+                if i < chars.len() && chars[i] == '"' {
+                    // Backslashes followed by quote: double the backslashes and escape the quote
+                    for _ in 0..(num_backslashes * 2 + 1) {
+                        result.push('\\');
+                    }
+                    result.push('"');
+                    i += 1;
+                } else if i >= chars.len() {
+                    // Trailing backslashes: double them (they precede the closing quote)
+                    for _ in 0..(num_backslashes * 2) {
+                        result.push('\\');
+                    }
+                } else {
+                    // Backslashes not followed by quote: output as-is
+                    for _ in 0..num_backslashes {
+                        result.push('\\');
+                    }
+                }
+            } else if chars[i] == '"' {
+                // Quote not preceded by backslash: escape it
+                result.push('\\');
+                result.push('"');
+                i += 1;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+
+        if enclose {
+            result.push('"');
+        }
+        Cow::Owned(result)
+    }
+
     fn needs_quoting_powershell(s: &str) -> bool {
         s.is_empty()
             || s.chars().any(|c| {
@@ -521,34 +592,81 @@ impl ShellKind {
             })
     }
 
-    fn try_quote_powershell(arg: &str) -> Option<Cow<'_, str>> {
+    fn need_quotes_powershell(arg: &str) -> bool {
+        let mut quote_count = 0;
+        for c in arg.chars() {
+            if c == '"' {
+                quote_count += 1;
+            } else if c.is_whitespace() && (quote_count % 2 == 0) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn escape_powershell_quotes(s: &str) -> String {
+        let mut result = String::with_capacity(s.len() + 4);
+        result.push('\'');
+        for c in s.chars() {
+            if c == '\'' {
+                result.push('\'');
+            }
+            result.push(c);
+        }
+        result.push('\'');
+        result
+    }
+
+    pub fn quote_powershell(arg: &str) -> Cow<'_, str> {
+        let ps_will_quote = Self::need_quotes_powershell(arg);
+        let crt_quoted = Self::quote_windows(arg, !ps_will_quote);
+
         if !Self::needs_quoting_powershell(arg) {
-            return Some(Cow::Borrowed(arg));
+            return crt_quoted;
         }
 
-        let mut result = String::with_capacity(arg.len() + 2);
-        result.push('"');
+        Cow::Owned(Self::escape_powershell_quotes(&crt_quoted))
+    }
 
-        for c in arg.chars() {
+    pub fn quote_pwsh(arg: &str) -> Cow<'_, str> {
+        if arg.is_empty() {
+            return Cow::Borrowed("''");
+        }
+
+        if !Self::needs_quoting_powershell(arg) {
+            return Cow::Borrowed(arg);
+        }
+
+        Cow::Owned(Self::escape_powershell_quotes(arg))
+    }
+
+    pub fn quote_cmd(arg: &str) -> Cow<'_, str> {
+        let crt_quoted = Self::quote_windows(arg, true);
+
+        let needs_cmd_escaping = crt_quoted.contains('"')
+            || crt_quoted.contains('%')
+            || crt_quoted
+                .chars()
+                .any(|c| matches!(c, '^' | '<' | '>' | '&' | '|' | '(' | ')'));
+
+        if !needs_cmd_escaping {
+            return crt_quoted;
+        }
+
+        let mut result = String::with_capacity(crt_quoted.len() * 2);
+        for c in crt_quoted.chars() {
             match c {
-                '"' => result.push_str("`\""),
-                '`' => result.push_str("``"),
-                '$' => result.push_str("`$"),
+                '^' | '"' | '<' | '>' | '&' | '|' | '(' | ')' => {
+                    result.push('^');
+                    result.push(c);
+                }
+                '%' => {
+                    result.push_str("%%cd:~,%");
+                }
                 _ => result.push(c),
             }
         }
-
-        result.push('"');
-        Some(Cow::Owned(result))
-    }
-
-    fn try_quote_cmd(arg: &str) -> Option<Cow<'_, str>> {
-        let mut result = String::with_capacity(arg.len() + 2);
-
-        result.push('"');
-        result.push_str(&arg.replace('"', "\"\""));
-        result.push('"');
-        Some(Cow::Owned(result))
+        Cow::Owned(result)
     }
 
     /// Quotes the given argument if necessary, taking into account the command prefix.
@@ -595,7 +713,7 @@ impl ShellKind {
         match self {
             ShellKind::Cmd => "",
             ShellKind::Nushell => "overlay use",
-            ShellKind::PowerShell => ".",
+            ShellKind::PowerShell | ShellKind::Pwsh => ".",
             ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
@@ -615,6 +733,7 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::PowerShell
+            | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish => "clear",
@@ -633,6 +752,7 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::PowerShell
+            | ShellKind::Pwsh
             | ShellKind::Nushell
             | ShellKind::Xonsh
             | ShellKind::Elvish => true,
@@ -657,12 +777,12 @@ mod tests {
     #[test]
     fn test_try_quote_powershell() {
         let shell_kind = ShellKind::PowerShell;
-        assert_ne!(
+        assert_eq!(
             shell_kind
                 .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
                 .unwrap()
                 .into_owned(),
-            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest `\"test_foo.py::test_foo`\"\"".to_string()
+            "'C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"'".to_string()
         );
     }
 
@@ -674,7 +794,7 @@ mod tests {
                 .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
                 .unwrap()
                 .into_owned(),
-            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
+            "^\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\^\"test_foo.py::test_foo\\^\"^\"".to_string()
         );
     }
 
@@ -685,7 +805,7 @@ mod tests {
         // Empty string
         assert_eq!(
             shell_kind.try_quote("").unwrap().into_owned(),
-            "\"\"".to_string()
+            "'\"\"'".to_string()
         );
 
         // String without special characters (no quoting needed)
@@ -694,7 +814,7 @@ mod tests {
         // String with spaces
         assert_eq!(
             shell_kind.try_quote("hello world").unwrap().into_owned(),
-            "\"hello world\"".to_string()
+            "'hello world'".to_string()
         );
 
         // String with dollar signs
@@ -732,7 +852,7 @@ mod tests {
         // Empty string
         assert_eq!(
             shell_kind.try_quote("").unwrap().into_owned(),
-            "\"\"".to_string()
+            "^\"^\"".to_string()
         );
 
         // String without special characters (no quoting needed)
@@ -741,25 +861,25 @@ mod tests {
         // String with spaces
         assert_eq!(
             shell_kind.try_quote("hello world").unwrap().into_owned(),
-            "\"hello world\"".to_string()
+            "^\"hello world^\"".to_string()
         );
 
         // String with space and backslash (backslash not at end, so not doubled)
         assert_eq!(
             shell_kind.try_quote("path\\ test").unwrap().into_owned(),
-            "\"path\\ test\"".to_string()
+            "^\"path\\ test^\"".to_string()
         );
 
         // String ending with backslash (must be doubled before closing quote)
         assert_eq!(
             shell_kind.try_quote("test path\\").unwrap().into_owned(),
-            "\"test path\\\\\"".to_string()
+            "^\"test path\\\\^\"".to_string()
         );
 
         // String ending with multiple backslashes (all doubled before closing quote)
         assert_eq!(
             shell_kind.try_quote("test path\\\\").unwrap().into_owned(),
-            "\"test path\\\\\\\\\"".to_string()
+            "^\"test path\\\\\\\\^\"".to_string()
         );
 
         // String with embedded quote (quote is escaped, backslash before it is doubled)

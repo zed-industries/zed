@@ -44,7 +44,7 @@ impl ShellBuilder {
             self.program.clone()
         } else {
             match self.kind {
-                ShellKind::PowerShell => {
+                ShellKind::PowerShell | ShellKind::Pwsh => {
                     format!("{} -C '{}'", self.program, command_to_use_in_label)
                 }
                 ShellKind::Cmd => {
@@ -117,7 +117,7 @@ impl ShellBuilder {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
-                    ShellKind::PowerShell => {
+                    ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
                         combined_command.push_str("}");
                     }
@@ -181,7 +181,7 @@ mod test {
             .build(Some("echo".into()), &["nothing".to_string()]);
 
         assert_eq!(program, "nu");
-        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "(^echo nothing) </dev/null"]);
     }
 
     #[test]
