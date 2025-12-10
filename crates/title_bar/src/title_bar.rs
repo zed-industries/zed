@@ -323,12 +323,18 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => {
-                (options.nickname.map(|nick| nick.into()), IconName::Server)
+        let (nickname, tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => (
+                options.nickname.map(|nick| nick.into()),
+                "Remote Project",
+                IconName::Server,
+            ),
+            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+            RemoteConnectionOptions::Docker(_dev_container_connection) => {
+                (None, "Dev Container", IconName::Box)
             }
-            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
         };
+
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
@@ -375,7 +381,7 @@ impl TitleBar {
                 )
                 .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
-                        "Remote Project",
+                        tooltip_title,
                         Some(&OpenRemote {
                             from_existing_connection: false,
                             create_new_window: false,

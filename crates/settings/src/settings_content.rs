@@ -889,7 +889,17 @@ pub enum ImageFileSizeUnit {
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
+    pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
+pub struct DevContainerConnection {
+    pub name: SharedString,
+    pub container_id: SharedString,
 }
 
 #[with_fallible_options]
@@ -901,7 +911,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: collections::BTreeSet<SshProject>,
+    pub projects: collections::BTreeSet<RemoteProject>,
     /// Name to use for this server in UI.
     pub nickname: Option<String>,
     // By default Zed will download the binary to the host directly.
@@ -918,14 +928,14 @@ pub struct WslConnection {
     pub distro_name: SharedString,
     pub user: Option<String>,
     #[serde(default)]
-    pub projects: BTreeSet<SshProject>,
+    pub projects: BTreeSet<RemoteProject>,
 }
 
 #[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
-pub struct SshProject {
+pub struct RemoteProject {
     pub paths: Vec<String>,
 }
 
