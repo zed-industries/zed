@@ -39,6 +39,7 @@ use std::{
     sync::Arc,
 };
 use ui::App;
+use util::paths::normalize_lexically;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
@@ -1075,7 +1076,10 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
-            allowed_paths,
+            allowed_paths: allowed_paths
+                .into_iter()
+                .filter_map(|path| normalize_lexically(&path).ok())
+                .collect(),
         }
     }
 
@@ -1084,9 +1088,12 @@ impl AcpThread {
     }
 
     pub fn is_path_allowed(&self, path: &Path) -> bool {
+        let Ok(normalized) = normalize_lexically(path) else {
+            return false;
+        };
         self.allowed_paths
             .iter()
-            .any(|allowed| path.starts_with(allowed))
+            .any(|allowed| normalized.starts_with(allowed))
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -3224,6 +3231,77 @@ mod tests {
             .update(cx, |thread, cx| {
                 thread.read_text_file(
                     path!("/home/.claude/open_backup/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
+    }
+
+    #[gpui::test]
+    async fn test_allowed_paths_traversal_bypass_prevented(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project": {
+                    "file.txt": "project content"
+                },
+                "home": {
+                    ".claude": {
+                        "open": {
+                            "test.txt": "open content"
+                        }
+                    },
+                    "secret": {
+                        "password.txt": "secret password"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(
+            FakeAgentConnection::new().with_allowed_paths(vec![path!("/home/.claude/open").into()]),
+        );
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/project")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/open/test.txt").into(),
+                    None,
+                    None,
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(content, "open content");
+
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(
+                    path!("/home/.claude/open/../secret/password.txt").into(),
                     None,
                     None,
                     false,
