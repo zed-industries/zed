@@ -233,6 +233,15 @@ impl PromptParser for TeacherPrompt {
             cursor_excerpt.replace(&old_editable_region, &new_editable_region);
         let diff = language::unified_diff(&cursor_excerpt, &edited_cursor_excerpt);
 
+        let diff = indoc::formatdoc! {"
+            --- a/{path}
+            +++ b/{path}
+            {diff}
+            ",
+            path = example.cursor_path.to_string_lossy(),
+            diff = diff,
+        };
+
         diff
     }
 }

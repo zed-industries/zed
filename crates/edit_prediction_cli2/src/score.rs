@@ -30,7 +30,6 @@ fn parse_patch(patch: &str) -> Vec<DiffLine<'_>> {
 }
 
 pub fn print_report(examples: &[Example]) {
-    println!("\n");
     println!(
         "────────────────────────────────────────────────────────────────────────────────────────────────────────"
     );

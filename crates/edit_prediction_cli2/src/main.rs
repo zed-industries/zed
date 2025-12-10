@@ -37,6 +37,8 @@ struct EpArgs {
     inputs: Vec<PathBuf>,
     #[arg(long, short, global = true)]
     output: Option<PathBuf>,
+    #[arg(long, short, global = true)]
+    in_place: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -93,6 +95,20 @@ struct ScoreArgs {
     provider: Option<PredictionProvider>,
 }
 
+impl EpArgs {
+    fn output_path(&self) -> Option<PathBuf> {
+        if self.in_place {
+            if self.inputs.len() == 1 {
+                self.inputs.first().cloned()
+            } else {
+                panic!("--in-place requires exactly one input file")
+            }
+        } else {
+            self.output.clone()
+        }
+    }
+}
+
 fn main() {
     zlog::init();
     zlog::init_output_stderr();
@@ -103,6 +119,7 @@ fn main() {
         return;
     }
 
+    let output = args.output_path();
     let command = args.command.unwrap();
 
     match &command {
@@ -166,7 +183,7 @@ fn main() {
                 futures::future::join_all(futures).await;
             }
 
-            write_examples(&examples, args.output.as_ref());
+            write_examples(&examples, output.as_ref());
 
             match &command {
                 Command::Predict(args) => predict::sync_batches(&args.provider).await,
