@@ -36,13 +36,12 @@ Once connected, Zed operates inside the container environment for tasks, termina
 
 ## Known Limitations
 
-> **Note:** The current implementation is an MVP and has several limitations.
+> **Note:** This feature is still in development.
 
 - **Extensions:** Zed does not yet manage extensions separately for container environments. The host's extensions are used as-is.
 - **Port forwarding:** Only the `appPort` field is supported. `forwardPorts` and other advanced port-forwarding features are not implemented.
 - **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads; containers must be manually restarted.
-- **Dependency on Docker:** The feature requires `docker` (or a compatible CLI) to be available in the system `PATH`.
-- **Other devcontainer features:** Some parts of the devcontainer specification are not yet implemented and may be added in future releases.
+
 
 ## See also
 
