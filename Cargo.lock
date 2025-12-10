@@ -4787,6 +4787,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "rand 0.9.2",

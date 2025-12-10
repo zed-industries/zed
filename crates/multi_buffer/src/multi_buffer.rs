@@ -6422,6 +6422,14 @@ impl MultiBufferSnapshot {
         Some(self.excerpt(excerpt_id)?.buffer_id)
     }
 
+    pub fn excerpt_id_for_buffer_id(&self, buffer_id: BufferId) -> Option<ExcerptId> {
+        // todo! is linear OK here?
+        self.excerpts
+            .iter()
+            .find(|ex| ex.buffer_id == buffer_id)
+            .map(|ex| ex.id)
+    }
+
     pub fn buffer_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<&BufferSnapshot> {
         Some(&self.excerpt(excerpt_id)?.buffer)
     }

@@ -336,6 +336,33 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
+    fn update_multibuffer_initial_ranges(&mut self, cx: &mut App) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+
+        let len = self.diagnostics.values().map(|v| v.len()).sum();
+        let mut ranges: Vec<Range<multi_buffer::Anchor>> = Vec::with_capacity(len);
+
+        for (buffer_id, diagnostics) in &self.diagnostics {
+            let Some(excerpt_id) = snapshot.excerpt_id_for_buffer_id(*buffer_id) else {
+                #[cfg(debug_assertions)]
+                panic!("no excerpt_id for buffer_id: {buffer_id}");
+                #[cfg(not(debug_assertions))]
+                continue;
+            };
+
+            for diagnostic in diagnostics {
+                let opt = snapshot.anchor_range_in_excerpt(excerpt_id, diagnostic.range.clone());
+                if let Some(range) = opt {
+                    ranges.push(range);
+                };
+            }
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            editor.set_initial_multibuffer_matches(ranges);
+        });
+    }
+
     fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.update_excerpts_task.is_some() {
             return;
@@ -375,6 +402,10 @@ impl ProjectDiagnosticsEditor {
                         this.update_excerpts(buffer, retain_excerpts, window, cx)
                     })?
                     .await?;
+
+                    this.update(cx, |this, cx| {
+                        this.update_multibuffer_initial_ranges(cx);
+                    });
                 }
             }
             Ok(())
@@ -464,6 +495,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.update_stale_excerpts(window, cx);
+        self.update_multibuffer_initial_ranges(cx);
     }
 
     fn diagnostics_are_unchanged(

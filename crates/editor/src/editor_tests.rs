@@ -28978,3 +28978,59 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(after);
 }
+
+// #[gpui::test]
+// async fn next_multibuffer_match_lsp_references(cx: &mut TestAppContext) {
+//     init_test(cx, |_| {});
+//     let mut cx = EditorLspTestContext::new_rust(
+//         lsp::ServerCapabilities {
+//             references_provider: Some(lsp::OneOf::Left(true)),
+//             ..lsp::ServerCapabilities::default()
+//         },
+//         cx,
+//     )
+//     .await;
+//     cx.lsp
+//         .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+//             let mk_loc = |row, start_col, end_col| lsp::Location {
+//                 uri: params.text_document_position.text_document.uri.clone(),
+//                 range: lsp::Range::new(
+//                     lsp::Position::new(row, start_col),
+//                     lsp::Position::new(row, end_col),
+//                 ),
+//             };
+//
+//             Ok(Some(vec![
+//                 mk_loc(1, 8, 13),
+//                 mk_loc(3, 12, 17),
+//                 mk_loc(5, 12, 17),
+//                 mk_loc(7, 12, 17),
+//             ]))
+//         });
+//
+//     let initial_state = indoc!(
+//         r#"
+//         fn main() {
+//             let ˇhello = 123;
+//
+//             let x = hello;
+//
+//             let y = hello;
+//
+//             let z = hello;
+//         }     
+//     "#
+//     );
+//
+//     cx.set_state(initial_state);
+//
+//     let navigated = cx
+//         .update_editor(|editor, window, cx| editor.find_all_references(&action, window, cx))
+//         .expect("should have spawned a task")
+//         .await
+//         .unwrap();
+//     assert_eq!(navigated, Navigated::Yes);
+//
+//
+//
+// }
