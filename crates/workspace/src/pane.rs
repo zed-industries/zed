@@ -218,6 +218,8 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Renames the currently active tab.
+        RenameTab,
         /// Splits the pane to the left, cloning the current item.
         SplitLeft,
         /// Splits the pane upward, cloning the current item.
@@ -2642,6 +2644,7 @@ impl Pane {
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let tab_tooltip_content = item.tab_tooltip_content(cx);
         let item_id = item.item_id();
+        let supports_rename = item.supports_rename(cx);
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
         let is_pinned = self.is_tab_pinned(ix);
@@ -2940,7 +2943,18 @@ impl Pane {
                                     pane.close_all_items(&close_all_items_action, window, cx)
                                         .detach_and_log_err(cx)
                                 }),
-                            );
+                            )
+                            .when(supports_rename, |menu| {
+                                menu.separator().entry(
+                                    "Rename",
+                                    Some(RenameTab.boxed_clone()),
+                                    window.handler_for(&pane, move |pane, window, cx| {
+                                        if let Some(item) = pane.items.get(ix).cloned() {
+                                            item.relay_action(RenameTab.boxed_clone(), window, cx);
+                                        }
+                                    }),
+                                )
+                            });
 
                         let pin_tab_entries = |menu: ContextMenu| {
                             menu.separator().map(|this| {

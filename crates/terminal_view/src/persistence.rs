@@ -427,6 +427,9 @@ impl Domain for TerminalDb {
             ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
             UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
         ),
+        sql!(
+            ALTER TABLE terminals ADD COLUMN custom_name TEXT;
+        ),
     ];
 }
 
@@ -445,33 +448,36 @@ impl TerminalDb {
         }
     }
 
-    pub async fn save_working_directory(
+    pub async fn save_terminal(
         &self,
         item_id: ItemId,
         workspace_id: WorkspaceId,
         working_directory: PathBuf,
+        custom_name: Option<String>,
     ) -> Result<()> {
         log::debug!(
-            "Saving working directory {working_directory:?} for item {item_id} in workspace {workspace_id:?}"
+            "Saving terminal {item_id} in workspace {workspace_id:?}: working_directory={working_directory:?}, custom_name={custom_name:?}"
         );
         let query =
-            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
-            VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path, custom_name)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
                 working_directory = ?3,
-                working_directory_path = ?4"
+                working_directory_path = ?4,
+                custom_name = ?5"
         ;
         self.write(move |conn| {
             let mut statement = Statement::prepare(conn, query)?;
             let mut next_index = statement.bind(&item_id, 1)?;
             next_index = statement.bind(&workspace_id, next_index)?;
             next_index = statement.bind(&working_directory, next_index)?;
-            statement.bind(
+            next_index = statement.bind(
                 &working_directory.to_string_lossy().into_owned(),
                 next_index,
             )?;
+            statement.bind(&custom_name, next_index)?;
             statement.exec()
         })
         .await
@@ -480,6 +486,14 @@ impl TerminalDb {
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    query! {
+        pub fn get_terminal(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(PathBuf, Option<String>)>> {
+            SELECT working_directory, custom_name
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }

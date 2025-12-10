@@ -6,12 +6,17 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
+    div,
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
     ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
+use menu::{Cancel, Confirm};
 use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
@@ -43,6 +48,7 @@ use workspace::{
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
+    pane::RenameTab,
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
 };
@@ -88,6 +94,52 @@ actions!(
         RerunTask
     ]
 );
+
+pub struct TerminalRenameEditor {
+    editor: Entity<Editor>,
+    terminal_view: WeakEntity<TerminalView>,
+}
+
+impl TerminalRenameEditor {
+    pub fn new(editor: Entity<Editor>, terminal_view: WeakEntity<TerminalView>) -> Self {
+        Self {
+            editor,
+            terminal_view,
+        }
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let new_name = self.editor.read(cx).text(cx);
+        if let Some(terminal_view) = self.terminal_view.upgrade() {
+            terminal_view.update(cx, |view, cx| {
+                view.finish_rename(Some(new_name), window, cx)
+            });
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(terminal_view) = self.terminal_view.upgrade() {
+            terminal_view.update(cx, |view, cx| view.finish_rename(None, window, cx));
+        }
+    }
+}
+
+impl Focusable for TerminalRenameEditor {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for TerminalRenameEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .h_6()
+            .w_full()
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .child(self.editor.clone())
+    }
+}
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
@@ -135,6 +187,7 @@ pub struct TerminalView {
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
     ime_state: Option<ImeState>,
+    rename_editor: Option<Entity<TerminalRenameEditor>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -271,6 +324,7 @@ impl TerminalView {
             scroll_handle,
             cwd_serialized: false,
             ime_state: None,
+            rename_editor: None,
             _subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
@@ -374,6 +428,56 @@ impl TerminalView {
     pub fn clear_bell(&mut self, cx: &mut Context<TerminalView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
+    }
+
+    pub fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current_title = self.terminal.read(cx).title(false);
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(current_title, window, cx);
+            editor.select_all(&SelectAll, window, cx);
+            editor
+        });
+
+        let terminal_view = cx.entity().downgrade();
+        let rename_editor = cx.new(|_cx| TerminalRenameEditor::new(editor, terminal_view));
+
+        let focus_handle = rename_editor.focus_handle(cx);
+        window.focus(&focus_handle);
+
+        self.rename_editor = Some(rename_editor);
+        cx.emit(ItemEvent::UpdateTab);
+        cx.notify();
+    }
+
+    pub fn finish_rename(
+        &mut self,
+        new_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rename_editor.take().is_some() {
+            if let Some(new_name) = new_name {
+                let new_name = new_name.trim();
+                let title_override = if new_name.is_empty() {
+                    None
+                } else {
+                    Some(new_name.to_string())
+                };
+
+                self.terminal.update(cx, |terminal, _| {
+                    terminal.set_title_override(title_override);
+                });
+            }
+
+            window.focus(&self.focus_handle);
+            cx.emit(ItemEvent::UpdateTab);
+            cx.notify();
+        }
+    }
+
+    pub fn is_renaming(&self) -> bool {
+        self.rename_editor.is_some()
     }
 
     pub fn deploy_context_menu(
@@ -498,6 +602,10 @@ impl TerminalView {
             .map(|task| terminal_rerun_override(&task.spawned_task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
+    }
+
+    fn rename_tab(&mut self, _: &RenameTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_rename(window, cx);
     }
 
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
@@ -1026,6 +1134,11 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rename_editor) = &self.rename_editor {
+            window.focus(&rename_editor.focus_handle(cx));
+            return;
+        }
+
         self.terminal.update(cx, |terminal, _| {
             terminal.set_cursor_shape(self.cursor_shape);
             terminal.focus_in();
@@ -1097,6 +1210,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
+            .on_action(cx.listener(Self::rename_tab))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1179,6 +1293,20 @@ impl Item for TerminalView {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        if let Some(rename_editor) = &self.rename_editor {
+            return h_flex()
+                .gap_1()
+                .items_center()
+                .child(Icon::new(IconName::Terminal).color(Color::Muted))
+                .child(
+                    div()
+                        .min_w(px(100.))
+                        .max_w(px(200.))
+                        .child(rename_editor.clone()),
+                )
+                .into_any();
+        }
+
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
 
@@ -1346,6 +1474,10 @@ impl Item for TerminalView {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
         f(*event)
     }
+
+    fn supports_rename(&self) -> bool {
+        true
+    }
 }
 
 impl SerializableItem for TerminalView {
@@ -1376,10 +1508,11 @@ impl SerializableItem for TerminalView {
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
+            let custom_name = terminal.title_override().cloned();
             self.cwd_serialized = true;
             Some(cx.background_spawn(async move {
                 TERMINAL_DB
-                    .save_working_directory(item_id, workspace_id, cwd)
+                    .save_terminal(item_id, workspace_id, cwd, custom_name)
                     .await
             }))
         } else {
@@ -1400,29 +1533,34 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let cwd = cx
+            let (cwd, custom_name) = cx
                 .update(|_window, cx| {
                     let from_db = TERMINAL_DB
-                        .get_working_directory(item_id, workspace_id)
+                        .get_terminal(item_id, workspace_id)
                         .log_err()
                         .flatten();
-                    if from_db
-                        .as_ref()
-                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
-                    {
-                        from_db
-                    } else {
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                    if let Some((cwd, custom_name)) = from_db {
+                        if !cwd.as_os_str().is_empty() {
+                            return (Some(cwd), custom_name);
+                        }
                     }
+                    let default_cwd = workspace
+                        .upgrade()
+                        .and_then(|workspace| default_working_directory(workspace.read(cx), cx));
+                    (default_cwd, None)
                 })
-                .ok()
-                .flatten();
+                .unwrap_or((None, None));
 
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
                 .await?;
+
+            if let Some(custom_name) = custom_name {
+                terminal.update(cx, |terminal, _| {
+                    terminal.set_title_override(Some(custom_name));
+                })?;
+            }
+
             cx.update(|window, cx| {
                 cx.new(|cx| {
                     TerminalView::new(

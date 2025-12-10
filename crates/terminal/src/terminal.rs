@@ -2083,6 +2083,15 @@ impl Terminal {
 
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
+
+        if let Some(ref title_override) = self.title_override {
+            return if truncate {
+                truncate_and_trailoff(title_override, MAX_CHARS)
+            } else {
+                title_override.clone()
+            };
+        }
+
         match &self.task {
             Some(task_state) => {
                 if truncate {
@@ -2091,45 +2100,49 @@ impl Terminal {
                     task_state.spawned_task.full_label.clone()
                 }
             }
-            None => self
-                .title_override
-                .as_ref()
-                .map(|title_override| title_override.to_string())
-                .unwrap_or_else(|| match &self.terminal_type {
-                    TerminalType::Pty { info, .. } => info
-                        .current
-                        .as_ref()
-                        .map(|fpi| {
-                            let process_file = fpi
-                                .cwd
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default();
+            None => match &self.terminal_type {
+                TerminalType::Pty { info, .. } => info
+                    .current
+                    .as_ref()
+                    .map(|fpi| {
+                        let process_file = fpi
+                            .cwd
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
 
-                            let argv = fpi.argv.as_slice();
-                            let process_name = format!(
-                                "{}{}",
-                                fpi.name,
-                                if !argv.is_empty() {
-                                    format!(" {}", (argv[1..]).join(" "))
-                                } else {
-                                    "".to_string()
-                                }
-                            );
-                            let (process_file, process_name) = if truncate {
-                                (
-                                    truncate_and_trailoff(&process_file, MAX_CHARS),
-                                    truncate_and_trailoff(&process_name, MAX_CHARS),
-                                )
+                        let argv = fpi.argv.as_slice();
+                        let process_name = format!(
+                            "{}{}",
+                            fpi.name,
+                            if !argv.is_empty() {
+                                format!(" {}", (argv[1..]).join(" "))
                             } else {
-                                (process_file, process_name)
-                            };
-                            format!("{process_file} — {process_name}")
-                        })
-                        .unwrap_or_else(|| "Terminal".to_string()),
-                    TerminalType::DisplayOnly => "Terminal".to_string(),
-                }),
+                                "".to_string()
+                            }
+                        );
+                        let (process_file, process_name) = if truncate {
+                            (
+                                truncate_and_trailoff(&process_file, MAX_CHARS),
+                                truncate_and_trailoff(&process_name, MAX_CHARS),
+                            )
+                        } else {
+                            (process_file, process_name)
+                        };
+                        format!("{process_file} — {process_name}")
+                    })
+                    .unwrap_or_else(|| "Terminal".to_string()),
+                TerminalType::DisplayOnly => "Terminal".to_string(),
+            },
         }
+    }
+
+    pub fn set_title_override(&mut self, title: Option<String>) {
+        self.title_override = title;
+    }
+
+    pub fn title_override(&self) -> Option<&String> {
+        self.title_override.as_ref()
     }
 
     pub fn kill_active_task(&mut self) {
