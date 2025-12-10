@@ -1,9 +1,9 @@
 use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
 use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
-use gpui::{App, AsyncApp, Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
-use std::{ops::Range, path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
@@ -94,7 +94,6 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
                     this.pending_refresh = None;
                     completion.range = trimmed_completion.0;
                     completion.text = trimmed_completion.1.to_string();
-                    dbg!(&completion.text);
                     this.completion = Some((completion, preview));
 
                     cx.notify();
@@ -128,7 +127,6 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             || !completion.range.start.is_valid(buffer)
             || !completion.range.end.is_valid(buffer)
         {
-            dbg!("Bail");
             return None;
         }
         Some(EditPrediction::Local {

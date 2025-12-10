@@ -937,7 +937,6 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-        dbg!(&completion);
         if let Some(command) = &completion.command {
             let request = server
                 .lsp
