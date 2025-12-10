@@ -139,7 +139,7 @@ impl CommitModal {
                             && !git_panel.amend_pending()
                         {
                             git_panel.set_amend_pending(true, cx);
-                            git_panel.load_last_commit_message_if_empty(cx);
+                            git_panel.load_last_commit_message(cx);
                         }
                     }
                     ForceMode::Commit => {
@@ -524,7 +524,7 @@ impl CommitModal {
         if !self.git_panel.read(cx).amend_pending() {
             self.git_panel.update(cx, |git_panel, cx| {
                 git_panel.set_amend_pending(true, cx);
-                git_panel.load_last_commit_message_if_empty(cx);
+                git_panel.load_last_commit_message(cx);
             });
         } else {
             telemetry::event!("Git Amended", source = "Git Modal");
