@@ -38,7 +38,7 @@ impl LanguageModelProviderRegistryProxy {
 impl ExtensionLanguageModelProviderProxy for LanguageModelProviderRegistryProxy {
     fn register_language_model_provider(
         &self,
-        provider_id: Arc<str>,
+        _provider_id: Arc<str>,
         register_fn: LanguageModelProviderRegistration,
         cx: &mut App,
     ) {
