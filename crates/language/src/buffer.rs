@@ -1,8 +1,8 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
-    TextObject, TreeSitterOptions,
+    DebuggerTextObject, LanguageScope, Outline, OutlineConfig, PLAIN_TEXT, RunnableCapture,
+    RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -353,7 +353,8 @@ pub enum BufferEvent {
     /// The buffer is in need of a reload
     ReloadNeeded,
     /// The buffer's language was changed.
-    LanguageChanged,
+    /// The boolean indicates whether this buffer did not have a language before, but does now.
+    LanguageChanged(bool),
     /// The buffer's syntax trees were updated.
     Reparsed,
     /// The buffer's diagnostics were updated.
@@ -1386,10 +1387,12 @@ impl Buffer {
     ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
-        self.language = language;
+        let old_language = std::mem::replace(&mut self.language, language);
         self.was_changed();
         self.reparse(cx, may_block);
-        cx.emit(BufferEvent::LanguageChanged);
+        let has_fresh_language =
+            self.language.is_some() && old_language.is_none_or(|old| old == *PLAIN_TEXT);
+        cx.emit(BufferEvent::LanguageChanged(has_fresh_language));
     }
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve

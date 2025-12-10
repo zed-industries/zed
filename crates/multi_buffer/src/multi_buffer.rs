@@ -129,7 +129,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
-    LanguageChanged(BufferId),
+    LanguageChanged(BufferId, bool),
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
@@ -2294,7 +2294,9 @@ impl MultiBuffer {
             BufferEvent::Saved => Event::Saved,
             BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             BufferEvent::Reloaded => Event::Reloaded,
-            BufferEvent::LanguageChanged => Event::LanguageChanged(buffer_id),
+            BufferEvent::LanguageChanged(has_language) => {
+                Event::LanguageChanged(buffer_id, *has_language)
+            }
             BufferEvent::Reparsed => Event::Reparsed(buffer_id),
             BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             BufferEvent::CapabilityChanged => {

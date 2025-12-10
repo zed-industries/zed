@@ -5249,6 +5249,7 @@ dependencies = [
  "client",
  "gpui",
  "language",
+ "text",
 ]
 
 [[package]]
@@ -7758,7 +7759,6 @@ dependencies = [
  "tempfile",
  "url",
  "util",
- "zed-reqwest",
 ]
 
 [[package]]

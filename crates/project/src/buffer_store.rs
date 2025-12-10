@@ -1141,7 +1141,7 @@ impl BufferStore {
                     })
                     .log_err();
             }
-            BufferEvent::LanguageChanged => {}
+            BufferEvent::LanguageChanged(_) => {}
             _ => {}
         }
     }

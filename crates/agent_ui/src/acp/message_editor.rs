@@ -567,6 +567,14 @@ impl MessageEditor {
             {
                 cx.stop_propagation();
 
+                let insertion_target = self
+                    .editor
+                    .read(cx)
+                    .selections
+                    .newest_anchor()
+                    .start
+                    .text_anchor;
+
                 let project = workspace.read(cx).project().clone();
                 for selection in selections {
                     if let (Some(file_path), Some(line_range)) =
@@ -587,8 +595,7 @@ impl MessageEditor {
                                 let snapshot = buffer.snapshot(cx);
                                 let (excerpt_id, _, buffer_snapshot) =
                                     snapshot.as_singleton().unwrap();
-                                let start_offset = buffer_snapshot.len();
-                                let text_anchor = buffer_snapshot.anchor_before(start_offset);
+                                let text_anchor = insertion_target.bias_left(&buffer_snapshot);
 
                                 editor.insert(&mention_text, window, cx);
                                 editor.insert(" ", window, cx);
