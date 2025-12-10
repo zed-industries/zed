@@ -65,9 +65,9 @@ impl Render for SecurityModal {
         }
 
         let header_label = if self.restricted_paths.len() == 1 {
-            "Unrecognized Workspace"
+            "Unrecognized Project"
         } else {
-            "Unrecognized Workspaces"
+            "Unrecognized Projects"
         };
 
         let trust_label = self.build_trust_label();
@@ -148,7 +148,7 @@ impl Render for SecurityModal {
                         v_flex()
                             .child(
                                 Label::new(
-                                    "Untrusted workspaces are opened in Restricted Mode to protect your system.",
+                                    "Untrusted projects are opened in Restricted Mode to protect your system.",
                                 )
                                 .color(Color::Muted),
                             )
