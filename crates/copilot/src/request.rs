@@ -89,12 +89,12 @@ impl lsp::request::Request for SignOut {
     const METHOD: &'static str = "signOut";
 }
 
-pub enum GetCompletions {}
+pub(crate) enum GetCompletions {}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetCompletionsParams {
-    pub doc: GetCompletionsDocument,
+pub(crate) struct GetCompletionsParams {
+    pub(crate) doc: GetCompletionsDocument,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,13 +111,13 @@ pub struct GetCompletionsDocument {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetCompletionsResult {
-    pub completions: Vec<Completion>,
+pub(crate) struct GetCompletionsResult {
+    pub(crate) completions: Vec<Completion>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Completion {
+pub(crate) struct Completion {
     pub text: String,
     pub position: lsp::Position,
     pub uuid: String,
@@ -131,7 +131,7 @@ impl lsp::request::Request for GetCompletions {
     const METHOD: &'static str = "getCompletions";
 }
 
-pub enum GetCompletionsCycling {}
+pub(crate) enum GetCompletionsCycling {}
 
 impl lsp::request::Request for GetCompletionsCycling {
     type Params = GetCompletionsParams;
