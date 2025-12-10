@@ -180,15 +180,17 @@ fn git_panel_context_menu(
                 Some(Box::new(ToggleTreeView)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
             )
-            .entry(
-                if state.sort_by_path {
-                    "Sort by Status"
-                } else {
-                    "Sort by Path"
-                },
-                Some(Box::new(ToggleSortByPath)),
-                move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
-            )
+            .when(!state.tree_view, |this| {
+                this.entry(
+                    if state.sort_by_path {
+                        "Sort by Status"
+                    } else {
+                        "Sort by Path"
+                    },
+                    Some(Box::new(ToggleSortByPath)),
+                    move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
+                )
+            })
     })
 }
 
