@@ -1,3 +1,4 @@
+mod anthropic_client;
 mod example;
 mod format_prompt;
 mod headless;
@@ -18,7 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 use crate::example::{read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
-use crate::predict::run_prediction;
+use crate::predict::{run_prediction, teardown_predictions};
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 
@@ -157,6 +158,11 @@ fn main() {
                 }
                 futures::future::join_all(futures).await;
             }
+
+            match &command {
+                Command::Predict(args) => teardown_predictions(&args.provider).await,
+                _ => (),
+            };
 
             write_examples(&examples, args.output.as_ref());
 

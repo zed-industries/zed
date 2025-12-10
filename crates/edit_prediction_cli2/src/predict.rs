@@ -1,5 +1,6 @@
 use crate::{
     PredictionProvider,
+    anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
     headless::EpAppState,
     load_project::run_load_project,
@@ -32,6 +33,11 @@ pub async fn run_prediction(
     run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
     let provider = provider.unwrap();
+
+    if matches!(provider, PredictionProvider::AnthropicBatched) {
+        let batched = true;
+        return predict_anthropic(example, repetition_count, batched).await;
+    }
 
     if matches!(
         provider,
@@ -189,4 +195,60 @@ pub async fn run_prediction(
         .unwrap()
         .into_inner()
         .unwrap();
+}
+
+async fn predict_anthropic(example: &mut Example, repetition_count: usize, batched: bool) {
+    let llm_model_name = "claude-sonnet-4-5";
+    let max_tokens = 16384;
+    let llm_client = if batched {
+        AnthropicClient::batch(&crate::paths::LLM_CACHE_DB.as_ref())
+    } else {
+        AnthropicClient::plain()
+    };
+    let llm_client = llm_client.expect("Failed to create LLM client");
+
+    let prompt = example
+        .prompt
+        .as_ref()
+        .expect("Prompt is required for an example")
+        .input
+        .clone();
+
+    let messages = vec![anthropic::Message {
+        role: anthropic::Role::User,
+        content: vec![anthropic::RequestContent::Text {
+            text: prompt,
+            cache_control: None,
+        }],
+    }];
+
+    let Some(response) = llm_client
+        .generate(llm_model_name, max_tokens, messages)
+        .await
+        .unwrap()
+    else {
+        return;
+    };
+
+    let prediction = ExamplePrediction {
+        actual_patch: todo!(),
+        actual_output: todo!(),
+        provider: PredictionProvider::AnthropicBatched,
+    };
+
+    example.predictions.push(prediction);
+}
+
+pub async fn teardown_predictions(provider: &PredictionProvider) {
+    match provider {
+        PredictionProvider::AnthropicBatched => {
+            let llm_client = AnthropicClient::batch(&crate::paths::LLM_CACHE_DB.as_ref())
+                .expect("Failed to create LLM client");
+            llm_client
+                .sync_batches()
+                .await
+                .expect("Failed to sync batches");
+        }
+        _ => (),
+    }
 }

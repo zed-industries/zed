@@ -96,22 +96,6 @@ impl TeacherModel {
         let context_before_edit = strip_special_tags(&context);
         let diff = language::unified_diff(&context_before_edit, &context_after_edit);
 
-        // zeta distill --batch batch_results.txt
-        // zeta distill
-        // 1. Run `zeta distill <2000 examples <- all examples>` for the first time
-        //  - store LLM requests in a batch, don't actual send the request
-        //  - send the batch (2000 requests) after all inputs are processed
-        // 2. `zeta send-batches`
-        //   - upload the batch to Anthropic
-
-        // https://platform.claude.com/docs/en/build-with-claude/batch-processing
-        // https://crates.io/crates/anthropic-sdk-rust
-
-        //   - poll for results
-        //   - when ready, store results in cache (a database)
-        // 3. `zeta distill` again
-        //    - use the cached results this time
-
         Ok(Some(TeacherOutput {
             parsed_output,
             prompt,
