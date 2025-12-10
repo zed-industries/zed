@@ -150,7 +150,7 @@ fn set_high_thread_priority() -> anyhow::Result<()> {
     // SAFETY: always safe to call
     let thread_id = unsafe { libc::pthread_self() };
 
-    // SAFETY: all sched_param members are valid when intialized to zero.
+    // SAFETY: all sched_param members are valid when initialized to zero.
     let mut sched_param = unsafe { MaybeUninit::<libc::sched_param>::zeroed().assume_init() };
     sched_param.sched_priority = 45;
 

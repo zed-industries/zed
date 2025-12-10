@@ -1,6 +1,4 @@
-use crate::{
-    Capslock, LinuxDispatcher, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush,
-};
+use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
