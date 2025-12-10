@@ -5882,6 +5882,11 @@ impl Editor {
                         is_incomplete,
                         buffer.clone(),
                         completions.into(),
+                        editor
+                            .context_menu()
+                            .borrow_mut()
+                            .as_ref()
+                            .map(|menu| menu.primary_scroll_handle()),
                         display_options,
                         snippet_sort_order,
                         languages,
@@ -10016,13 +10021,16 @@ impl Editor {
 
         let id = post_inc(&mut self.next_completion_id);
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
-        *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
+        let mut context_menu = self.context_menu.borrow_mut();
+        let old_menu = context_menu.take();
+        *context_menu = Some(CodeContextMenu::Completions(
             CompletionsMenu::new_snippet_choices(
                 id,
                 true,
                 choices,
                 selection,
                 buffer,
+                old_menu.map(|menu| menu.primary_scroll_handle()),
                 snippet_sort_order,
             ),
         ));
