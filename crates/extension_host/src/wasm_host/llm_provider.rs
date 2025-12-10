@@ -212,21 +212,44 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
 
         cx.spawn(async move |cx| {
             let result = extension
-                .call(|extension, store| {
-                    async move {
-                        extension
-                            .call_llm_provider_authenticate(store, &provider_id)
-                            .await
+                .call({
+                    let provider_id = provider_id.clone();
+                    |extension, store| {
+                        async move {
+                            extension
+                                .call_llm_provider_authenticate(store, &provider_id)
+                                .await
+                        }
+                        .boxed()
                     }
-                    .boxed()
                 })
                 .await;
 
             match result {
                 Ok(Ok(Ok(()))) => {
+                    // After successful auth, refresh the models list
+                    let models_result = extension
+                        .call({
+                            let provider_id = provider_id.clone();
+                            |ext, store| {
+                                async move {
+                                    ext.call_llm_provider_models(store, &provider_id).await
+                                }
+                                .boxed()
+                            }
+                        })
+                        .await;
+
+                    let new_models: Vec<LlmModelInfo> = match models_result {
+                        Ok(Ok(Ok(models))) => models,
+                        _ => Vec::new(),
+                    };
+
                     cx.update(|cx| {
-                        state.update(cx, |state, _| {
+                        state.update(cx, |state, cx| {
                             state.is_authenticated = true;
+                            state.available_models = new_models;
+                            cx.notify();
                         });
                     })?;
                     Ok(())
@@ -705,9 +728,28 @@ impl ExtensionProviderConfigurationView {
 
             let error_message = match poll_result {
                 Ok(Ok(Ok(()))) => {
+                    // After successful auth, refresh the models list
+                    let models_result = extension
+                        .call({
+                            let provider_id = provider_id.clone();
+                            |ext, store| {
+                                async move {
+                                    ext.call_llm_provider_models(store, &provider_id).await
+                                }
+                                .boxed()
+                            }
+                        })
+                        .await;
+
+                    let new_models: Vec<LlmModelInfo> = match models_result {
+                        Ok(Ok(Ok(models))) => models,
+                        _ => Vec::new(),
+                    };
+
                     let _ = cx.update(|cx| {
                         state.update(cx, |state, cx| {
                             state.is_authenticated = true;
+                            state.available_models = new_models;
                             cx.notify();
                         });
                     });
