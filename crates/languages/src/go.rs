@@ -23,7 +23,7 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
-use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName, quote_arg};
 use util::{ResultExt, fs::remove_matching, maybe};
 
 fn server_binary_arguments() -> Vec<OsString> {
@@ -563,11 +563,11 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-v".into(),
                     "-run".into(),
-                    format!(
-                        "\\^Test{}\\$/\\^{}\\$",
+                    quote_arg(&format!(
+                        "^Test{}$/^{}$",
                         GO_SUITE_NAME_TASK_VARIABLE.template_value(),
                         VariableName::Symbol.template_value(),
-                    ),
+                    )),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-testify-suite".to_owned()],
@@ -585,11 +585,11 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-v".into(),
                     "-run".into(),
-                    format!(
-                        "\\^{}\\$/\\^{}\\$",
+                    quote_arg(&format!(
+                        "^{}$/^{}$",
                         VariableName::Symbol.template_value(),
                         GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
-                    ),
+                    )),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-table-test-case".to_owned()],
@@ -605,7 +605,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    quote_arg(&format!("^{}$", VariableName::Symbol.template_value(),)),
                 ],
                 tags: vec!["go-test".to_owned()],
                 cwd: package_cwd.clone(),
@@ -621,7 +621,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    quote_arg(&format!("^{}$", VariableName::Symbol.template_value(),)),
                 ],
                 tags: vec!["go-example".to_owned()],
                 cwd: package_cwd.clone(),
@@ -653,11 +653,11 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-v".into(),
                     "-run".into(),
-                    format!(
-                        "'^{}$/^{}$'",
+                    quote_arg(&format!(
+                        "^{}$/^{}$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
-                    ),
+                    )),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-subtest".to_owned()],
@@ -675,7 +675,7 @@ impl ContextProvider for GoContextProvider {
                     "-benchmem".into(),
                     "-run='^$'".into(),
                     "-bench".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
+                    quote_arg(&format!("^{}$", VariableName::Symbol.template_value())),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
@@ -692,7 +692,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-fuzz=Fuzz".into(),
                     "-run".into(),
-                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                    quote_arg(&format!("^{}$", VariableName::Symbol.template_value())),
                 ],
                 tags: vec!["go-fuzz".to_owned()],
                 cwd: package_cwd.clone(),
