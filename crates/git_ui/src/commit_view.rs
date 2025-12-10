@@ -2,7 +2,8 @@ use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, multibuffer_context_lines,
+    Editor, EditorEvent, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer,
+    multibuffer_context_lines,
 };
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
@@ -417,10 +418,23 @@ impl CommitView {
             None
         };
 
-        let editor = self.editor.read(cx);
-        let gutter_width = editor.last_gutter_dimensions().full_width();
-        // hide elements until editor renders once
-        let loading = gutter_width < px(1.);
+        let gutter_width = self
+            .editor
+            .update(cx, |editor, cx| {
+                let style = editor.style(cx);
+                let font_id = window.text_system().resolve_font(&style.text.font());
+                let font_size = style.text.font_size.to_pixels(window.rem_size());
+                editor
+                    .snapshot(window, cx)
+                    .gutter_dimensions(font_id, font_size, Pixels::ZERO, cx)
+                    .or_else(|| {
+                        editor
+                            .offset_content
+                            .then(|| GutterDimensions::default_with_margin(font_id, font_size, cx))
+                    })
+                    .map(|dimensions| dimensions.full_width())
+            })
+            .unwrap_or_default();
 
         h_flex()
             .border_b_1()
@@ -430,8 +444,7 @@ impl CommitView {
                 h_flex()
                     .w(gutter_width)
                     .justify_center()
-                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx))
-                    .when(loading, |this| this.opacity(0.)),
+                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx)),
             )
             .child(
                 h_flex()
@@ -479,8 +492,7 @@ impl CommitView {
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(move |_, _, cx| cx.open_url(&url))
-                    }))
-                    .when(loading, |this| this.opacity(0.)),
+                    })),
             )
     }
 

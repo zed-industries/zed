@@ -575,7 +575,7 @@ impl Default for EditorStyle {
     }
 }
 
-pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
+pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
     let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
@@ -598,7 +598,7 @@ pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
     style
 }
 
-pub fn make_suggestion_styles(cx: &mut App) -> EditPredictionStyles {
+pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     EditPredictionStyles {
         insertion: HighlightStyle {
             color: Some(cx.theme().status().predictive),
@@ -1069,7 +1069,8 @@ pub struct Editor {
     show_gutter: bool,
     show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
-    offset_content: bool,
+    // todo!
+    pub offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1274,7 +1275,7 @@ pub struct GutterDimensions {
 }
 
 impl GutterDimensions {
-    fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
+    pub fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
         Self {
             margin: Self::default_gutter_margin(font_id, font_size, cx),
             ..Default::default()
@@ -1825,7 +1826,11 @@ impl Editor {
         Editor::new_internal(mode, buffer, project, None, window, cx)
     }
 
-    pub fn sticky_headers(&self, cx: &App) -> Option<Vec<OutlineItem<Anchor>>> {
+    pub fn sticky_headers(
+        &self,
+        style: &EditorStyle,
+        cx: &App,
+    ) -> Option<Vec<OutlineItem<Anchor>>> {
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let multi_buffer_visible_start = self
@@ -1843,7 +1848,7 @@ impl Editor {
                 .outline_items_containing(
                     Point::new(start_row, 0)..Point::new(end_row, 0),
                     true,
-                    self.style().map(|style| style.syntax.as_ref()),
+                    Some(style.syntax.as_ref()),
                 )
                 .into_iter()
                 .map(|outline_item| OutlineItem {
@@ -6890,7 +6895,7 @@ impl Editor {
         };
 
         let anchor = self.selections.newest_anchor().head();
-        let position = self.to_pixel_point(anchor, &snapshot, window);
+        let position = self.to_pixel_point(anchor, &snapshot, window, cx);
         if let (Some(position), Some(last_bounds)) = (position, self.last_bounds) {
             self.show_blame_popover(
                 buffer,
@@ -9203,7 +9208,8 @@ impl Editor {
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        let line_origin = self.display_to_pixel_point(target_line_end, editor_snapshot, window)?;
+        let line_origin =
+            self.display_to_pixel_point(target_line_end, editor_snapshot, window, cx)?;
 
         let start_point = content_origin - point(scroll_pixel_position.x.into(), Pixels::ZERO);
         let mut origin = start_point
@@ -9945,8 +9951,7 @@ impl Editor {
     }
 
     pub fn render_context_menu(
-        &self,
-        style: &EditorStyle,
+        &mut self,
         max_height_in_lines: u32,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -9956,7 +9961,9 @@ impl Editor {
         if !menu.visible() {
             return None;
         };
-        Some(menu.render(style, max_height_in_lines, window, cx))
+        self.style
+            .as_ref()
+            .map(|style| menu.render(style, max_height_in_lines, window, cx))
     }
 
     fn render_context_menu_aside(
@@ -20356,8 +20363,11 @@ impl Editor {
         self.style = Some(style);
     }
 
-    pub fn style(&self) -> Option<&EditorStyle> {
-        self.style.as_ref()
+    pub fn style(&mut self, cx: &App) -> &EditorStyle {
+        if self.style.is_none() {
+            self.style = Some(self.create_editor_style(cx));
+        }
+        self.style.as_ref().unwrap()
     }
 
     // Called by the element. This method is not designed to be called outside of the editor
@@ -22979,22 +22989,24 @@ impl Editor {
     }
 
     pub fn to_pixel_point(
-        &self,
+        &mut self,
         source: multi_buffer::Anchor,
         editor_snapshot: &EditorSnapshot,
         window: &mut Window,
+        cx: &App,
     ) -> Option<gpui::Point<Pixels>> {
         let source_point = source.to_display_point(editor_snapshot);
-        self.display_to_pixel_point(source_point, editor_snapshot, window)
+        self.display_to_pixel_point(source_point, editor_snapshot, window, cx)
     }
 
     pub fn display_to_pixel_point(
-        &self,
+        &mut self,
         source: DisplayPoint,
         editor_snapshot: &EditorSnapshot,
         window: &mut Window,
+        cx: &App,
     ) -> Option<gpui::Point<Pixels>> {
-        let line_height = self.style()?.text.line_height_in_pixels(window.rem_size());
+        let line_height = self.style(cx).text.line_height_in_pixels(window.rem_size());
         let text_layout_details = self.text_layout_details(window);
         let scroll_top = text_layout_details
             .scroll_anchor
@@ -23160,6 +23172,57 @@ impl Editor {
         // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
         // skip any LSP updates for it.
         self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
+    }
+
+    fn create_editor_style(&self, cx: &App) -> EditorStyle {
+        let settings = ThemeSettings::get_global(cx);
+
+        let mut text_style = match self.mode {
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features.clone(),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                font_size: rems(0.875).into(),
+                font_weight: settings.ui_font.weight,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features.clone(),
+                font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                font_size: settings.buffer_font_size(cx).into(),
+                font_weight: settings.buffer_font.weight,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+        };
+        if let Some(text_style_refinement) = &self.text_style_refinement {
+            text_style.refine(text_style_refinement)
+        }
+
+        let background = match self.mode {
+            EditorMode::SingleLine => cx.theme().system().transparent,
+            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
+            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
+        };
+
+        EditorStyle {
+            background,
+            border: cx.theme().colors().border,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+            syntax: cx.theme().syntax().clone(),
+            status: cx.theme().status().clone(),
+            inlay_hints_style: make_inlay_hints_style(cx),
+            edit_prediction_styles: make_suggestion_styles(cx),
+            unnecessary_code_fade: settings.unnecessary_code_fade,
+            show_underlines: self.diagnostics_enabled(),
+        }
     }
 }
 
@@ -24688,7 +24751,7 @@ impl EditorSnapshot {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
-    fn gutter_dimensions(
+    pub fn gutter_dimensions(
         &self,
         font_id: FontId,
         font_size: Pixels,
@@ -24938,57 +25001,7 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-
-        let mut text_style = match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
-                color: cx.theme().colors().editor_foreground,
-                font_family: settings.ui_font.family.clone(),
-                font_features: settings.ui_font.features.clone(),
-                font_fallbacks: settings.ui_font.fallbacks.clone(),
-                font_size: rems(0.875).into(),
-                font_weight: settings.ui_font.weight,
-                line_height: relative(settings.buffer_line_height.value()),
-                ..Default::default()
-            },
-            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
-                color: cx.theme().colors().editor_foreground,
-                font_family: settings.buffer_font.family.clone(),
-                font_features: settings.buffer_font.features.clone(),
-                font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                font_size: settings.buffer_font_size(cx).into(),
-                font_weight: settings.buffer_font.weight,
-                line_height: relative(settings.buffer_line_height.value()),
-                ..Default::default()
-            },
-        };
-        if let Some(text_style_refinement) = &self.text_style_refinement {
-            text_style.refine(text_style_refinement)
-        }
-
-        let background = match self.mode {
-            EditorMode::SingleLine => cx.theme().system().transparent,
-            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
-            EditorMode::Full { .. } => cx.theme().colors().editor_background,
-            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
-        };
-
-        EditorElement::new(
-            &cx.entity(),
-            EditorStyle {
-                background,
-                border: cx.theme().colors().border,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
-                syntax: cx.theme().syntax().clone(),
-                status: cx.theme().status().clone(),
-                inlay_hints_style: make_inlay_hints_style(cx),
-                edit_prediction_styles: make_suggestion_styles(cx),
-                unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
-                show_underlines: self.diagnostics_enabled(),
-            },
-        )
+        EditorElement::new(&cx.entity(), self.create_editor_style(cx))
     }
 }
 
