@@ -11,7 +11,7 @@ use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    io::Write,
+    io::{Read, Write},
     mem,
     ops::Range,
     path::{Path, PathBuf},
@@ -155,14 +155,36 @@ impl Example {
 
 pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
     let mut examples = Vec::new();
+
+    let stdin_path: PathBuf = PathBuf::from("-");
+
+    let inputs = if inputs.is_empty() {
+        &[stdin_path]
+    } else {
+        inputs
+    };
+
     for path in inputs {
-        let content =
-            std::fs::read_to_string(path).expect(&format!("Failed to read path: {:?}", &path));
+        let is_stdin = path.as_path() == Path::new("-");
+        let content = if is_stdin {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .expect("Failed to read from stdin");
+            buffer
+        } else {
+            std::fs::read_to_string(path).expect(&format!("Failed to read path: {:?}", &path))
+        };
         let filename = path.file_stem().unwrap().to_string_lossy().to_string();
-        let ext = path
-            .extension()
-            .unwrap_or_else(|| panic!("{} should have an extension", path.display()));
-        match ext.to_string_lossy().as_ref() {
+        let ext = if !is_stdin {
+            path.extension()
+                .map(|ext| ext.to_string_lossy().to_string())
+                .unwrap_or_else(|| panic!("{} should have an extension", path.display()))
+        } else {
+            "jsonl".to_string()
+        };
+
+        match ext.as_ref() {
             "json" => {
                 let mut example =
                     serde_json::from_str::<Example>(&content).unwrap_or_else(|error| {
