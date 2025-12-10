@@ -1549,16 +1549,25 @@ impl GitPanel {
         }
     }
 
-    fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.amend_pending {
-            return;
+    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commit(window, cx) {
+            telemetry::event!("Git Committed", source = "Git Panel");
         }
+    }
+
+    /// Commits staged changes with the current commit message.
+    ///
+    /// Returns `true` if the commit was executed, `false` otherwise.
+    pub(crate) fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.amend_pending {
+            return false;
+        }
+
         if self
             .commit_editor
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            telemetry::event!("Git Committed", source = "Git Panel");
             self.commit_changes(
                 CommitOptions {
                     amend: false,
@@ -1566,13 +1575,26 @@ impl GitPanel {
                 },
                 window,
                 cx,
-            )
+            );
+            true
         } else {
             cx.propagate();
+            false
         }
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self.amend(window, cx) {
+            telemetry::event!("Git Amended", source = "Git Panel");
+        }
+    }
+
+    /// Amends the most recent commit with staged changes and/or an updated commit message.
+    ///
+    /// Uses a two-stage workflow where the first invocation loads the commit
+    /// message for editing, second invocation performs the amend. Returns
+    /// `true` if the amend was executed, `false` otherwise.
+    pub(crate) fn amend(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self
             .commit_editor
             .focus_handle(cx)
@@ -1582,8 +1604,9 @@ impl GitPanel {
                 if !self.amend_pending {
                     self.set_amend_pending(true, cx);
                     self.load_last_commit_message(cx);
+
+                    return false;
                 } else {
-                    telemetry::event!("Git Amended", source = "Git Panel");
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
@@ -1592,13 +1615,16 @@ impl GitPanel {
                         window,
                         cx,
                     );
+
+                    return true;
                 }
             }
+            return false;
         } else {
             cx.propagate();
+            return false;
         }
     }
-
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
         self.active_repository
             .as_ref()
@@ -4501,8 +4527,8 @@ impl Render for GitPanel {
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
-                    .on_action(cx.listener(GitPanel::commit))
-                    .on_action(cx.listener(GitPanel::amend))
+                    .on_action(cx.listener(GitPanel::on_commit))
+                    .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
@@ -5889,7 +5915,7 @@ mod tests {
 
             // Start amending the previous commit.
             panel.focus_editor(&Default::default(), window, cx);
-            panel.amend(&Amend, window, cx);
+            panel.on_amend(&Amend, window, cx);
         });
 
         // Since `GitPanel.amend` attempts to fetch the latest commit message in
@@ -5910,7 +5936,7 @@ mod tests {
 
             // Finish amending the previous commit.
             panel.focus_editor(&Default::default(), window, cx);
-            panel.amend(&Amend, window, cx);
+            panel.on_amend(&Amend, window, cx);
         });
 
         // Since the actual commit logic is run in a background task, we need to
