@@ -2535,12 +2535,15 @@ impl RemoteServerProjects {
                 .child(
                     List::new()
                         .empty_message(
-                            v_flex()
+                            h_flex()
+                                .size_full()
+                                .p_2()
+                                .justify_center()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .child(
-                                    div().px_3().child(
-                                        Label::new("No remote servers registered yet.")
-                                            .color(Color::Muted),
-                                    ),
+                                    Label::new("No remote servers registered yet.")
+                                        .color(Color::Muted),
                                 )
                                 .into_any_element(),
                         )
