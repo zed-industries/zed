@@ -1,52 +1,46 @@
-use anyhow::Result;
-use gpui::{App, ClipboardItem, RenderImage, Window, img};
 use std::sync::Arc;
+
+use anyhow::{Context as _, Result};
+use gpui::{App, ClipboardItem, Pixels, RenderImage, Window, img, px};
 use ui::{IntoElement, Styled, div, prelude::*};
 
 use crate::outputs::OutputContent;
 
-const SVG_SCALE_FACTOR: f32 = 2.0; //needed because svg_renderer has a smooth svg scale factor that would affect the div dimensions otherwise
+const SVG_SCALE_FACTOR: f32 = 2.0;
 
 pub struct SvgView {
     raw_svg: String,
-    height: u32,
-    width: u32,
+    width: Pixels,
+    height: Pixels,
     image: Arc<RenderImage>,
 }
 
 impl SvgView {
     pub fn from(svg_data: &str, cx: &App) -> Result<Self> {
         let renderer = cx.svg_renderer();
-        let image = renderer.render_single_frame(svg_data.as_bytes(), 1.0, true)?;
+        let image = renderer
+            .render_single_frame(svg_data.as_bytes(), 1.0, true)
+            .context("rendering SVG")?;
 
         let size = image.size(0);
-        let width = (size.width.0 as f32 / SVG_SCALE_FACTOR) as u32;
-        let height = (size.height.0 as f32 / SVG_SCALE_FACTOR) as u32;
+        let width = px(size.width.0 as f32 / SVG_SCALE_FACTOR);
+        let height = px(size.height.0 as f32 / SVG_SCALE_FACTOR);
 
-        Ok(SvgView {
+        Ok(Self {
             raw_svg: svg_data.to_string(),
-            height,
             width,
+            height,
             image,
         })
     }
 }
 
 impl Render for SvgView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let line_height = window.line_height();
-
-        let (height, width) = if self.height as f32 / f32::from(line_height) == u8::MAX as f32 {
-            let height = u8::MAX as f32 * line_height;
-            let width = self.width as f32 * height / self.height as f32;
-            (height, width)
-        } else {
-            (self.height.into(), self.width.into())
-        };
-
-        let image = self.image.clone();
-
-        div().h(height).w(width).child(img(image))
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .h(self.height)
+            .w(self.width)
+            .child(img(self.image.clone()))
     }
 }
 
@@ -67,25 +61,19 @@ mod tests {
     const SIMPLE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>"#;
 
     #[gpui::test]
-    fn test_svg_view_from_valid_svg(cx: &mut App) {
+    fn test_valid_svg(cx: &mut App) {
         let result = SvgView::from(SIMPLE_SVG, cx);
-
         assert!(result.is_ok());
+
         let view = result.unwrap();
         assert_eq!(view.raw_svg, SIMPLE_SVG);
-        assert!(view.width > 0);
-        assert!(view.height > 0);
+        assert!(view.width > Pixels::ZERO);
+        assert!(view.height > Pixels::ZERO);
     }
 
     #[gpui::test]
-    fn test_svg_view_from_invalid_svg(cx: &mut App) {
+    fn test_invalid_svg(cx: &mut App) {
         let result = SvgView::from("not valid svg content", cx);
         assert!(result.is_err());
-    }
-
-    #[gpui::test]
-    fn test_svg_view_clipboard_contains_raw_svg(cx: &mut App) {
-        let view = SvgView::from(SIMPLE_SVG, cx).unwrap();
-        assert_eq!(view.raw_svg, SIMPLE_SVG);
     }
 }
