@@ -258,17 +258,7 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
     example.predictions.push(prediction);
 }
 
-/// Should be called before the first example in the batch is processed
-pub async fn on_batch_start(provider: &PredictionProvider) {
-    sync_batches(provider).await;
-}
-
-/// Should be called after the last example
-pub async fn on_batch_end(provider: &PredictionProvider) {
-    sync_batches(provider).await;
-}
-
-async fn sync_batches(provider: &PredictionProvider) {
+pub async fn sync_batches(provider: &PredictionProvider) {
     match provider {
         PredictionProvider::AnthropicBatched => {
             let cache_path = crate::paths::LLM_CACHE_DB.as_ref();

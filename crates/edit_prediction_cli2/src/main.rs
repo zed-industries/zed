@@ -123,7 +123,7 @@ fn main() {
 
         cx.spawn(async move |cx| {
             match &command {
-                Command::Predict(args) => predict::on_batch_start(&args.provider).await,
+                Command::Predict(args) => predict::sync_batches(&args.provider).await,
                 _ => (),
             };
 
@@ -166,12 +166,13 @@ fn main() {
                 futures::future::join_all(futures).await;
             }
 
+            write_examples(&examples, args.output.as_ref());
+
             match &command {
-                Command::Predict(args) => predict::on_batch_end(&args.provider).await,
+                Command::Predict(args) => predict::sync_batches(&args.provider).await,
+                Command::Score(_) | Command::Eval(_) => score::print_report(&examples),
                 _ => (),
             };
-
-            write_examples(&examples, args.output.as_ref());
 
             let _ = cx.update(|cx| cx.quit());
         })
