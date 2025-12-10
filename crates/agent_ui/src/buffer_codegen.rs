@@ -607,21 +607,6 @@ impl CodegenAlternative {
         }))
     }
 
-    // stream: impl Future<Output = Result<InlineAssistantStream>>
-    // impl Stream for InlineAssistantStream {
-    //    type Output = InlineAssistantChunk
-    // }
-    //
-    // enum InlineAssistantChunk {
-    //  rewrite_text(String)
-    //  Error(Err)
-    // }
-    // explanation_text(String)
-    //
-    //
-    //
-    // handle_completion_stream
-
     pub fn handle_stream(
         &mut self,
         model_telemetry_id: String,
@@ -712,41 +697,6 @@ impl CodegenAlternative {
                                 stream?.stream.map_err(|error| error.into()),
                             );
                             futures::pin_mut!(chunks);
-                            // impl Stream<Output = Result<String>>;
-
-                            // struct StreamingDiffLoop {
-                            //     diff: StreamingDiff,
-                            //     line_diff: LineDiff,
-                            //     new_text: String,
-                            //     base_indent: Option<usize>,
-                            //     line_indent: Option<usize>,
-                            //     first_line: bool,
-                            // }
-
-                            // impl StreamingDiffLoop {
-                            //     fn new(selected_text: &str) -> Self {
-                            //         Self {
-                            //             diff: StreamingDiff::new(selected_text.to_string()),
-                            //             line_diff: LineDiff::default(),
-                            //             new_text: String::new(),
-                            //             base_indent: None,
-                            //             line_indent: None,
-                            //             first_line: true,
-                            //         }
-                            //     }
-                            // }
-
-                            // let diff_loop = StreamingDiffLoop::new(selected_text.to_string());
-
-                            // while let Some(chunk) = chunks.next().await {
-                            //     if response_latency.is_none() {
-                            //         response_latency = Some(request_start.elapsed());
-                            //     }
-                            //     let chunk = chunk?;
-                            //     completion_clone.lock().push_str(&chunk);
-
-                            //     diff_loop.push(chunk, suggested_line_indent, selection_start, selected_text, diff_tx);
-                            // }
 
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();

@@ -426,9 +426,24 @@ impl Model {
     }
 
     pub fn beta_headers(&self) -> Option<String> {
+        dbg!("BETA HEADERS");
         let mut headers = vec![];
 
         match self {
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeOpus4_1Thinking
+            | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeSonnet4_5Thinking => {
+                // Fine-grained tool streaming for newer models
+                dbg!("PUSHING");
+                headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
+            }
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
                 // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
                 // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use

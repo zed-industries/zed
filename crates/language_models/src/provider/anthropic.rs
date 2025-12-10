@@ -316,6 +316,7 @@ impl AnthropicModel {
             return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
+        dbg!("CALLING beta_headers");
         let beta_headers = self.model.beta_headers();
 
         async move {
