@@ -136,7 +136,7 @@ impl MistralLanguageModelProvider {
         &crate::AllLanguageModelSettings::get_global(cx).mistral
     }
 
-    fn api_url(cx: &App) -> SharedString {
+    pub fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             mistral::MISTRAL_API_URL.into()

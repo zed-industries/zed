@@ -3,11 +3,11 @@ use cloud_llm_client::predict_edits_v3::Event;
 use edit_prediction_context::RelatedFile;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, Task,
+    App, AppContext as _, Context, Entity, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
-use language_model::{ApiKeyState, EnvVar};
+use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -278,15 +278,13 @@ impl SweepAi {
     }
 }
 
-pub const SWEEP_CREDENTIALS_URL: &str = "https://autocomplete.sweep.dev";
+pub const SWEEP_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://autocomplete.sweep.dev");
 pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
-pub const SWEEP_AI_TOKEN_ENV_VAR: &str = "SWEEP_AI_TOKEN";
+pub const SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP_AI_TOKEN");
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(
-        SWEEP_CREDENTIALS_URL.into(),
-        EnvVar::new(SWEEP_AI_TOKEN_ENV_VAR.into()),
-    );
+    let mut key = ApiKeyState::new(SWEEP_CREDENTIALS_URL.into(), SWEEP_AI_TOKEN_ENV_VAR.clone());
     // todo! load in call to provider, update API to have nicer key behavior
     _ = key.load_if_needed(
         SWEEP_CREDENTIALS_URL.into(),

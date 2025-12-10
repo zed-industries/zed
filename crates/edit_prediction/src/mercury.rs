@@ -3,11 +3,11 @@ use cloud_llm_client::predict_edits_v3::Event;
 use edit_prediction_context::RelatedFile;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, Task,
+    App, AppContext as _, Context, Entity, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use language_model::{ApiKeyState, EnvVar};
+use language_model::{ApiKeyState, EnvVar, env_var};
 use project::{Project, ProjectPath};
 use std::{
     collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
@@ -291,18 +291,16 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
     prompt.push_str(delimiters.end);
 }
 
-pub const MERCURY_CREDENTIALS_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
+pub const MERCURY_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
-pub const MERCURY_TOKEN_ENV_VAR: &str = "MERCURY_AI_TOKEN";
+pub const MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(
-        MERCURY_CREDENTIALS_URL.into(),
-        EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
-    );
+    let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone());
     // todo! see todo on sweep load
     _ = key.load_if_needed(
-        MERCURY_CREDENTIALS_URL.into(),
+        MERCURY_CREDENTIALS_URL.clone(),
         |ep_store| &mut ep_store.sweep_ai.api_token,
         cx,
     );

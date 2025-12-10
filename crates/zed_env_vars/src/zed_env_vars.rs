@@ -31,7 +31,7 @@ impl EnvVar {
 #[macro_export]
 macro_rules! env_var {
     ($name:expr) => {
-        LazyLock::new(|| $crate::EnvVar::new(($name).into()))
+        ::std::sync::LazyLock::new(|| $crate::EnvVar::new(($name).into()))
     };
 }
 
@@ -40,6 +40,6 @@ macro_rules! env_var {
 #[macro_export]
 macro_rules! bool_env_var {
     ($name:expr) => {
-        LazyLock::new(|| $crate::EnvVar::new(($name).into()).value.is_some())
+        ::std::sync::LazyLock::new(|| $crate::EnvVar::new(($name).into()).value.is_some())
     };
 }
