@@ -56,7 +56,6 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-mod xml_edits;
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;

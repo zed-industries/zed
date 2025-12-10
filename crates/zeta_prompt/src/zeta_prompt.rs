@@ -112,7 +112,6 @@ fn write_edit_history_section(prompt: &mut String, input: &ZetaPromptInput) {
                 write_event(prompt, event);
             }
         }
-        prompt.push('\n');
     });
 }
 
@@ -155,7 +154,10 @@ fn push_delimited(
 
     cb(prompt);
 
-    prompt.push_str("\n</");
+    if !prompt.ends_with('\n') {
+        prompt.push('\n');
+    }
+    prompt.push_str("</");
     prompt.push_str(tag);
     prompt.push_str(">\n");
 }

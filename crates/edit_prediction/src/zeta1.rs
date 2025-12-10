@@ -132,7 +132,10 @@ pub(crate) fn request_prediction_with_zeta1(
             events: included_events.into(),
             related_files: vec![].into(),
             cursor_path: full_path,
-            cursor_excerpt: body.input_excerpt.into(),
+            cursor_excerpt: snapshot
+                .text_for_range(context_range)
+                .collect::<String>()
+                .into(),
             editable_range_in_excerpt: (editable_range.start - context_start_offset)
                 ..(editable_offset_range.end - context_start_offset),
             cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot) - context_start_offset,

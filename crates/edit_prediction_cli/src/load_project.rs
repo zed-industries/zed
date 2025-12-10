@@ -6,12 +6,14 @@ use crate::{
 use anyhow::{Result, anyhow};
 use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
+use edit_prediction::EditPredictionStore;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, ToOffset, ToPoint};
+use project::buffer_store::BufferStoreEvent;
 use project::{Project, ProjectPath};
 use std::{
     cell::RefCell,
@@ -27,6 +29,26 @@ pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>,
     }
 
     let project = setup_project(example, &app_state, &mut cx).await;
+    let buffer_store = project
+        .read_with(&cx, |project, _| project.buffer_store().clone())
+        .unwrap();
+
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
+        .unwrap();
+
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })
+    .unwrap()
+    .detach();
+
     let _open_buffers = apply_edit_history(example, &project, &mut cx)
         .await
         .unwrap();
