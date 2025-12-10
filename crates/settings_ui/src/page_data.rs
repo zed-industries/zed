@@ -33,10 +33,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         SettingField {
                             json_path: Some("project_name"),
                             pick: |settings_content| {
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                                settings_content.project.worktree.project_name.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
-                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                                settings_content.project.worktree.project_name = value.filter(|name| !name.is_empty());
                             },
                         }
                     ),
@@ -3065,6 +3065,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar Buttons",
+                    description: "Show the tab bar buttons (New, Split Pane, Zoom).",
+                    field: Box::new(SettingField {
+                        json_path: Some("tab_bar.show_tab_bar_buttons"),
+                        pick: |settings_content| {
+                            settings_content
+                                .tab_bar
+                                .as_ref()?
+                                .show_tab_bar_buttons
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_tab_bar_buttons = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
@@ -3123,7 +3145,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",
-                    description: "Show opened editors as Preview tabs.",
+                    description: "Show opened editors as preview tabs.",
                     field: Box::new(SettingField {
                         json_path: Some("preview_tabs.enabled"),
                         pick: |settings_content| {
@@ -3140,8 +3162,30 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From Project Panel",
+                    description: "Whether to open tabs in preview mode when opened from the project panel with a single click.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_from_project_panel"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_from_project_panel
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_project_panel = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From File Finder",
-                    description: "Whether to open tabs in Preview mode when selected from the file finder.",
+                    description: "Whether to open tabs in preview mode when selected from the file finder.",
                     field: Box::new(SettingField {
                         json_path: Some("preview_tabs.enable_preview_from_file_finder"),
                         pick: |settings_content| {
@@ -3162,22 +3206,88 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Preview From Code Navigation",
-                    description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.",
+                    title: "Enable Preview From Multibuffer",
+                    description: "Whether to open tabs in preview mode when opened from a multibuffer.",
                     field: Box::new(SettingField {
-                        json_path: Some("preview_tabs.enable_preview_from_code_navigation"),
+                        json_path: Some("preview_tabs.enable_preview_from_multibuffer"),
                         pick: |settings_content| {
                             settings_content
                                 .preview_tabs
                                 .as_ref()?
-                                .enable_preview_from_code_navigation
+                                .enable_preview_from_multibuffer
                                 .as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
-                                .enable_preview_from_code_navigation = value;
+                                .enable_preview_from_multibuffer = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview Multibuffer From Code Navigation",
+                    description: "Whether to open tabs in preview mode when code navigation is used to open a multibuffer.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_multibuffer_from_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_multibuffer_from_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_multibuffer_from_code_navigation = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview File From Code Navigation",
+                    description: "Whether to open tabs in preview mode when code navigation is used to open a single file.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_preview_file_from_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_preview_file_from_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_file_from_code_navigation = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Keep Preview On Code Navigation",
+                    description: "Whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.",
+                    field: Box::new(SettingField {
+                        json_path: Some("preview_tabs.enable_keep_preview_on_code_navigation"),
+                        pick: |settings_content| {
+                            settings_content
+                                .preview_tabs
+                                .as_ref()?
+                                .enable_keep_preview_on_code_navigation
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_keep_preview_on_code_navigation = value;
                         },
                     }),
                     metadata: None,
@@ -3259,6 +3369,21 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         },
                         write: |settings_content, value| {
                             settings_content.workspace.use_system_window_tabs = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Window Decorations",
+                    description: "(Linux only) whether Zed or your compositor should draw window decorations.",
+                    field: Box::new(SettingField {
+                        json_path: Some("window_decorations"),
+                        pick: |settings_content| {
+                            settings_content.workspace.window_decorations.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.workspace.window_decorations = value;
                         },
                     }),
                     metadata: None,
@@ -3818,6 +3943,24 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         write: |settings_content, value| {
                             settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
                         },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sort Mode",
+                    description: "Sort order for entries in the project panel.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .sort_mode = value;
+                        },
+                        json_path: Some("project_panel.sort_mode"),
                     }),
                     metadata: None,
                     files: USER,
@@ -4409,7 +4552,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations.",
                     field: Box::new(SettingField {
-                        json_path: Some("agent.default_height"),
+                        json_path: Some("debugger.stepping_granularity"),
                         pick: |settings_content| {
                             settings_content
                                 .debugger
@@ -4544,6 +4687,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .project
                                     .shell
                                     .get_or_insert_with(|| settings::Shell::default());
+                                let default_shell = if cfg!(target_os = "windows") {
+                                    "powershell.exe"
+                                } else {
+                                    "sh"
+                                };
                                 *settings_value = match value {
                                     settings::ShellDiscriminants::System => {
                                         settings::Shell::System
@@ -4552,7 +4700,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         let program = match settings_value {
                                             settings::Shell::Program(p) => p.clone(),
                                             settings::Shell::WithArguments { program, .. } => program.clone(),
-                                            _ => String::from("sh"),
+                                            _ => String::from(default_shell),
                                         };
                                         settings::Shell::Program(program)
                                     },
@@ -4562,7 +4710,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::Shell::WithArguments { program, args, title_override } => {
                                                 (program.clone(), args.clone(), title_override.clone())
                                             },
-                                            _ => (String::from("sh"), vec![], None),
+                                            _ => (String::from(default_shell), vec![], None),
                                         };
                                         settings::Shell::WithArguments {
                                             program,
@@ -5471,6 +5619,19 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                         write: |settings_content, value| {
                             settings_content.git.get_or_insert_default().hunk_style = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Path Style",
+                    description: "Should the name or path be displayed first in the git view.",
+                    field: Box::new(SettingField {
+                        json_path: Some("git.path_style"),
+                        pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().path_style = value;
                         },
                     }),
                     metadata: None,
@@ -6453,7 +6614,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Jsx Tag Auto Close",
+            title: "JSX Tag Auto Close",
             description: "Whether to automatically close JSX tags.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).jsx_tag_auto_close"),
@@ -6909,6 +7070,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Word Diff Enabled",
+            description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).word_diff_enabled"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.word_diff_enabled.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.word_diff_enabled = value;
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
             description: "Preferred debuggers for this language.",
             field: Box::new(
@@ -6954,6 +7134,25 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
 
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | PROJECT,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Colorize Brackets",
+            description: "Whether to colorize brackets in the editor.",
+            field: Box::new(SettingField {
+                json_path: Some("languages.$(language).colorize_brackets"),
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        language.colorize_brackets.as_ref()
+                    })
+                },
+                write: |settings_content, value| {
+                    language_settings_field_mut(settings_content, value, |language, value| {
+                        language.colorize_brackets = value;
                     })
                 },
             }),

@@ -925,15 +925,15 @@ impl StatusItemView for ActivityIndicator {
 
 #[cfg(test)]
 mod tests {
-    use gpui::SemanticVersion;
     use release_channel::AppCommitSha;
+    use semver::Version;
 
     use super::*;
 
     #[test]
     fn test_version_tooltip_message() {
         let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Semantic(
-            SemanticVersion::new(1, 0, 0),
+            Version::new(1, 0, 0),
         ));
 
         assert_eq!(message, "Version: 1.0.0");

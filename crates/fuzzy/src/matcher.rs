@@ -96,7 +96,8 @@ impl<'a> Matcher<'a> {
                 continue;
             }
 
-            let matrix_len = self.query.len() * (prefix.len() + candidate_chars.len());
+            let matrix_len =
+                self.query.len() * (lowercase_prefix.len() + lowercase_candidate_chars.len());
             self.score_matrix.clear();
             self.score_matrix.resize(matrix_len, None);
             self.best_position_matrix.clear();
@@ -595,5 +596,16 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// Test for https://github.com/zed-industries/zed/issues/44324
+    #[test]
+    fn test_recursive_score_match_index_out_of_bounds() {
+        let paths = vec!["İ/İ/İ/İ"];
+        let query = "İ/İ";
+
+        // This panicked with "index out of bounds: the len is 21 but the index is 22"
+        let result = match_single_path_query(query, false, &paths);
+        let _ = result;
     }
 }

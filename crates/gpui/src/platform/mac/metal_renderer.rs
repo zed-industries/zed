@@ -132,11 +132,21 @@ impl MetalRenderer {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
-        let mut devices = metal::Device::all();
-        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
-        let Some(device) = devices.pop() else {
-            log::error!("unable to access a compatible graphics device");
-            std::process::exit(1);
+        let device = if let Some(d) = metal::Device::all()
+            .into_iter()
+            .min_by_key(|d| (d.is_removable(), !d.is_low_power()))
+        {
+            d
+        } else {
+            // For some reason `all()` can return an empty list, see https://github.com/zed-industries/zed/issues/37689
+            // In that case, we fall back to the system default device.
+            log::error!(
+                "Unable to enumerate Metal devices; attempting to use system default device"
+            );
+            metal::Device::system_default().unwrap_or_else(|| {
+                log::error!("unable to access a compatible graphics device");
+                std::process::exit(1);
+            })
         };
 
         let layer = metal::MetalLayer::new();

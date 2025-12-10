@@ -608,6 +608,7 @@ impl DirectWriteState {
             let mut first_run = true;
             let mut ascent = Pixels::default();
             let mut descent = Pixels::default();
+            let mut break_ligatures = false;
             for run in font_runs {
                 if first_run {
                     first_run = false;
@@ -616,6 +617,7 @@ impl DirectWriteState {
                     text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
                     ascent = px(metrics[0].baseline);
                     descent = px(metrics[0].height - metrics[0].baseline);
+                    break_ligatures = !break_ligatures;
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
@@ -636,10 +638,17 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                text_layout.SetFontSize(font_size.0, text_range)?;
+                let font_size = if break_ligatures {
+                    font_size.0.next_up()
+                } else {
+                    font_size.0
+                };
+                text_layout.SetFontSize(font_size, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
+
+                break_ligatures = !break_ligatures;
             }
 
             let mut runs = Vec::new();
@@ -1506,7 +1515,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     id,
                     position: point(
                         px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(0.0),
+                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
                     ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,

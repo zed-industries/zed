@@ -437,6 +437,8 @@ actions!(
         SwapPaneUp,
         /// Swaps the current pane with the one below.
         SwapPaneDown,
+        // Swaps the current pane with the first available adjacent pane (searching in order: below, above, right, left) and activates that pane.
+        SwapPaneAdjacent,
         /// Move the current pane to be at the far left.
         MovePaneLeft,
         /// Move the current pane to be at the far right.
@@ -673,6 +675,7 @@ impl ProjectItemRegistry {
                             Ok((project_entry_id, build_workspace_item))
                         }
                         Err(e) => {
+                            log::warn!("Failed to open a project item: {e:#}");
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
@@ -1639,20 +1642,18 @@ impl Workspace {
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
-                } else {
-                    let restorable_bounds = serialized_workspace
-                        .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                        .or_else(|| {
-                            let (display, window_bounds) = DB.last_window().log_err()?;
-                            Some((display?, window_bounds?))
-                        });
-
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
+                } else if let Some(workspace) = serialized_workspace.as_ref() {
+                    // Reopening an existing workspace - restore its saved bounds
+                    if let (Some(display), Some(bounds)) =
+                        (workspace.display, workspace.window_bounds.as_ref())
+                    {
+                        (Some(bounds.0), Some(display))
                     } else {
                         (None, None)
                     }
+                } else {
+                    // New window - let GPUI's default_bounds() handle cascading
+                    (None, None)
                 };
 
                 // Use the serialized workspace to construct the new window
@@ -1845,7 +1846,7 @@ impl Workspace {
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
-    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> + use<> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
 
@@ -2869,7 +2870,7 @@ impl Workspace {
 
     pub fn active_item_as<I: 'static>(&self, cx: &App) -> Option<Entity<I>> {
         let item = self.active_item(cx)?;
-        item.to_any().downcast::<I>().ok()
+        item.to_any_view().downcast::<I>().ok()
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
@@ -3634,14 +3635,33 @@ impl Workspace {
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
+        keep_old_preview: bool,
+        allow_new_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T>
     where
         T: ProjectItem,
     {
+        let old_item_id = pane.read(cx).active_item().map(|item| item.item_id());
+
         if let Some(item) = self.find_project_item(&pane, &project_item, cx) {
+            if !keep_old_preview
+                && let Some(old_id) = old_item_id
+                && old_id != item.item_id()
+            {
+                // switching to a different item, so unpreview old active item
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(old_id);
+                });
+            }
+
             self.activate_item(&item, activate_pane, focus_item, window, cx);
+            if !allow_new_preview {
+                pane.update(cx, |pane, _| {
+                    pane.unpreview_item_if_preview(item.item_id());
+                });
+            }
             return item;
         }
 
@@ -3650,16 +3670,14 @@ impl Workspace {
                 T::for_project_item(self.project().clone(), Some(pane), project_item, window, cx)
             })
         });
-        let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation
-                && let Some(preview_item_id) = pane.preview_item_id()
-                && preview_item_id != item_id
-            {
-                destination_index = pane.close_current_preview_item(window, cx);
+            if !keep_old_preview && let Some(old_id) = old_item_id {
+                pane.unpreview_item_if_preview(old_id);
             }
-            pane.set_preview_item_id(Some(item.item_id()), cx)
+            if allow_new_preview {
+                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+            }
         });
 
         self.add_item(
@@ -5823,6 +5841,21 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneAdjacent, window, cx| {
+                const DIRECTION_PRIORITY: [SplitDirection; 4] = [
+                    SplitDirection::Down,
+                    SplitDirection::Up,
+                    SplitDirection::Right,
+                    SplitDirection::Left,
+                ];
+                for dir in DIRECTION_PRIORITY {
+                    if workspace.find_pane_in_direction(dir, cx).is_some() {
+                        workspace.swap_pane_in_direction(dir, cx);
+                        workspace.activate_pane_in_direction(dir.opposite(), window, cx);
+                        break;
+                    }
+                }
+            }))
             .on_action(cx.listener(|workspace, _: &MovePaneLeft, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Left, cx)
             }))
@@ -5950,7 +5983,94 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _action: &pane::ActivateNextItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let mut recent_pane: Option<Entity<Pane>> = None;
+                                let mut recent_timestamp = 0;
+                                for pane_handle in workspace.panes() {
+                                    let pane = pane_handle.read(cx);
+                                    for entry in pane.activation_history() {
+                                        if entry.timestamp > recent_timestamp {
+                                            recent_timestamp = entry.timestamp;
+                                            recent_pane = Some(pane_handle.clone());
+                                        }
+                                    }
+                                }
+
+                                if let Some(pane) = recent_pane {
+                                    pane.update(cx, |pane, cx| {
+                                        let current_index = pane.active_item_index();
+                                        let items_len = pane.items_len();
+                                        if items_len > 0 {
+                                            let next_index = if current_index + 1 < items_len {
+                                                current_index + 1
+                                            } else {
+                                                0
+                                            };
+                                            pane.activate_item(
+                                                next_index, false, false, window, cx,
+                                            );
+                                        }
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _action: &pane::ActivatePreviousItem, window, cx| {
+                    if let Some(active_dock) = workspace.active_dock(window, cx) {
+                        let dock = active_dock.read(cx);
+                        if let Some(active_panel) = dock.active_panel() {
+                            if active_panel.pane(cx).is_none() {
+                                let mut recent_pane: Option<Entity<Pane>> = None;
+                                let mut recent_timestamp = 0;
+                                for pane_handle in workspace.panes() {
+                                    let pane = pane_handle.read(cx);
+                                    for entry in pane.activation_history() {
+                                        if entry.timestamp > recent_timestamp {
+                                            recent_timestamp = entry.timestamp;
+                                            recent_pane = Some(pane_handle.clone());
+                                        }
+                                    }
+                                }
+
+                                if let Some(pane) = recent_pane {
+                                    pane.update(cx, |pane, cx| {
+                                        let current_index = pane.active_item_index();
+                                        let items_len = pane.items_len();
+                                        if items_len > 0 {
+                                            let prev_index = if current_index > 0 {
+                                                current_index - 1
+                                            } else {
+                                                items_len.saturating_sub(1)
+                                            };
+                                            pane.activate_item(
+                                                prev_index, false, false, window, cx,
+                                            );
+                                        }
+                                    });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    cx.propagate();
+                },
+            ))
             .on_action(cx.listener(Workspace::cancel))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_random_database_id(&mut self) {
+        self.database_id = Some(WorkspaceId(Uuid::new_v4().as_u64_pair().0 as i64));
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -7137,7 +7257,9 @@ actions!(
         /// Shares the current project with collaborators.
         ShareProject,
         /// Shares your screen with collaborators.
-        ScreenShare
+        ScreenShare,
+        /// Copies the current room name and session id for debugging purposes.
+        CopyRoomId,
     ]
 );
 actions!(
@@ -7306,14 +7428,9 @@ pub fn join_channel(
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
     cx.spawn(async move |cx| {
-        let result = join_channel_internal(
-            channel_id,
-            &app_state,
-            requesting_window,
-            &active_call,
-             cx,
-        )
-            .await;
+        let result =
+            join_channel_internal(channel_id, &app_state, requesting_window, &active_call, cx)
+                .await;
 
         // join channel succeeded, and opened a window
         if matches!(result, Ok(true)) {
@@ -7321,8 +7438,7 @@ pub fn join_channel(
         }
 
         // find an existing workspace to focus and show call controls
-        let mut active_window =
-            requesting_window.or_else(|| activate_any_workspace_window( cx));
+        let mut active_window = requesting_window.or_else(|| activate_any_workspace_window(cx));
         if active_window.is_none() {
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
@@ -7334,7 +7450,8 @@ pub fn join_channel(
             if result.is_ok() {
                 cx.update(|cx| {
                     cx.dispatch_action(&OpenChannelNotes);
-                }).log_err();
+                })
+                .log_err();
             }
 
             active_window = Some(window_handle);
@@ -7346,19 +7463,25 @@ pub fn join_channel(
                 active_window
                     .update(cx, |_, window, cx| {
                         let detail: SharedString = match err.error_code() {
-                            ErrorCode::SignedOut => {
-                                "Please sign in to continue.".into()
+                            ErrorCode::SignedOut => "Please sign in to continue.".into(),
+                            ErrorCode::UpgradeRequired => concat!(
+                                "Your are running an unsupported version of Zed. ",
+                                "Please update to continue."
+                            )
+                            .into(),
+                            ErrorCode::NoSuchChannel => concat!(
+                                "No matching channel was found. ",
+                                "Please check the link and try again."
+                            )
+                            .into(),
+                            ErrorCode::Forbidden => concat!(
+                                "This channel is private, and you do not have access. ",
+                                "Please ask someone to add you and try again."
+                            )
+                            .into(),
+                            ErrorCode::Disconnected => {
+                                "Please check your internet connection and try again.".into()
                             }
-                            ErrorCode::UpgradeRequired => {
-                                "Your are running an unsupported version of Zed. Please update to continue.".into()
-                            }
-                            ErrorCode::NoSuchChannel => {
-                                "No matching channel was found. Please check the link and try again.".into()
-                            }
-                            ErrorCode::Forbidden => {
-                                "This channel is private, and you do not have access. Please ask someone to add you and try again.".into()
-                            }
-                            ErrorCode::Disconnected => "Please check your internet connection and try again.".into(),
                             _ => format!("{}\n\nPlease try again.", err).into(),
                         };
                         window.prompt(
@@ -7366,7 +7489,8 @@ pub fn join_channel(
                             "Failed to join channel",
                             Some(&detail),
                             &["Ok"],
-                        cx)
+                            cx,
+                        )
                     })?
                     .await
                     .ok();
@@ -9174,7 +9298,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -9407,10 +9531,10 @@ mod tests {
 
         // Open two docks (left and right) with one panel each
         let (left_panel, right_panel) = workspace.update_in(cx, |workspace, window, cx| {
-            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let left_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(left_panel.clone(), window, cx);
 
-            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(right_panel.clone(), window, cx);
 
             workspace.toggle_dock(DockPosition::Left, window, cx);
@@ -9838,10 +9962,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
-            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, cx));
+            let panel_1 = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel_2 = cx.new(|cx| TestPanel::new(DockPosition::Right, 101, cx));
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
@@ -10748,7 +10872,7 @@ mod tests {
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -11212,7 +11336,7 @@ mod tests {
 
             // Now we can check if the handle we got back errored or not
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestPngItemView>()
             );
 
@@ -11225,7 +11349,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestIpynbItemView>()
             );
 
@@ -11274,7 +11398,7 @@ mod tests {
 
             // This _must_ be the second item registered
             assert_eq!(
-                handle.to_any().entity_type(),
+                handle.to_any_view().entity_type(),
                 TypeId::of::<TestAlternatePngItemView>()
             );
 

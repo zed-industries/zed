@@ -1,26 +1,30 @@
-use crate::{
-    context::load_context, context_store::ContextStore, inline_prompt_editor::CodegenStatus,
-};
+use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
+use feature_flags::{FeatureFlagAppExt as _, InlineAssistantV2FeatureFlag};
 use futures::{
-    SinkExt, Stream, StreamExt, TryStreamExt as _, channel::mpsc, future::LocalBoxFuture, join,
+    SinkExt, Stream, StreamExt, TryStreamExt as _,
+    channel::mpsc,
+    future::{LocalBoxFuture, Shared},
+    join,
 };
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role, report_assistant_event,
+    LanguageModel, LanguageModelCompletionError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelTextStream, Role,
+    report_assistant_event,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::Project;
-use prompt_store::{PromptBuilder, PromptStore};
+use prompt_store::PromptBuilder;
 use rope::Rope;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use smol::future::FutureExt;
 use std::{
     cmp,
@@ -34,6 +38,29 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+use ui::SharedString;
+
+/// Use this tool to provide a message to the user when you're unable to complete a task.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FailureMessageInput {
+    /// A brief message to the user explaining why you're unable to fulfill the request or to ask a question about the request.
+    ///
+    /// The message may use markdown formatting if you wish.
+    pub message: String,
+}
+
+/// Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RewriteSectionInput {
+    /// A brief description of the edit you have made.
+    ///
+    /// The description may use markdown formatting if you wish.
+    /// This is optional - if the edit is simple or obvious, you should leave it empty.
+    pub description: String,
+
+    /// The text to replace the section with.
+    pub replacement_text: String,
+}
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,
@@ -43,9 +70,6 @@ pub struct BufferCodegen {
     buffer: Entity<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    context_store: Entity<ContextStore>,
-    project: WeakEntity<Project>,
-    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     pub is_insertion: bool,
@@ -56,9 +80,6 @@ impl BufferCodegen {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        context_store: Entity<ContextStore>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -68,9 +89,6 @@ impl BufferCodegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                Some(context_store.clone()),
-                project.clone(),
-                prompt_store.clone(),
                 Some(telemetry.clone()),
                 builder.clone(),
                 cx,
@@ -85,9 +103,6 @@ impl BufferCodegen {
             buffer,
             range,
             initial_transaction_id,
-            context_store,
-            project,
-            prompt_store,
             telemetry,
             builder,
         };
@@ -102,6 +117,10 @@ impl BufferCodegen {
             .push(cx.observe(&codegen, |_, _, cx| cx.notify()));
         self.subscriptions
             .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
+    }
+
+    pub fn active_completion(&self, cx: &App) -> Option<String> {
+        self.active_alternative().read(cx).current_completion()
     }
 
     pub fn active_alternative(&self) -> &Entity<CodegenAlternative> {
@@ -148,6 +167,7 @@ impl BufferCodegen {
         &mut self,
         primary_model: Arc<dyn LanguageModel>,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let alternative_models = LanguageModelRegistry::read_global(cx)
@@ -165,9 +185,6 @@ impl BufferCodegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    Some(self.context_store.clone()),
-                    self.project.clone(),
-                    self.prompt_store.clone(),
                     Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
@@ -180,7 +197,7 @@ impl BufferCodegen {
             .zip(&self.alternatives)
         {
             alternative.update(cx, |alternative, cx| {
-                alternative.start(user_prompt.clone(), model.clone(), cx)
+                alternative.start(user_prompt.clone(), context_task.clone(), model.clone(), cx)
             })?;
         }
 
@@ -228,6 +245,10 @@ impl BufferCodegen {
     pub fn last_equal_ranges<'a>(&self, cx: &'a App) -> &'a [Range<Anchor>] {
         self.active_alternative().read(cx).last_equal_ranges()
     }
+
+    pub fn selected_text<'a>(&self, cx: &'a App) -> Option<&'a str> {
+        self.active_alternative().read(cx).selected_text()
+    }
 }
 
 impl EventEmitter<CodegenEvent> for BufferCodegen {}
@@ -243,9 +264,6 @@ pub struct CodegenAlternative {
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
-    context_store: Option<Entity<ContextStore>>,
-    project: WeakEntity<Project>,
-    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
@@ -254,7 +272,9 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     elapsed_time: Option<f64>,
     completion: Option<String>,
+    selected_text: Option<String>,
     pub message_id: Option<String>,
+    pub model_explanation: Option<SharedString>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -264,9 +284,6 @@ impl CodegenAlternative {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
-        context_store: Option<Entity<ContextStore>>,
-        project: WeakEntity<Project>,
-        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -291,7 +308,7 @@ impl CodegenAlternative {
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
             buffer.set_language(language, cx);
             if let Some(language_registry) = language_registry {
-                buffer.set_language_registry(language_registry)
+                buffer.set_language_registry(language_registry);
             }
             buffer
         });
@@ -307,18 +324,17 @@ impl CodegenAlternative {
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
-            context_store,
-            project,
-            prompt_store,
             telemetry,
-            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
-            active,
+            active: active,
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
             elapsed_time: None,
             completion: None,
+            selected_text: None,
+            model_explanation: None,
+            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
 
@@ -366,6 +382,7 @@ impl CodegenAlternative {
     pub fn start(
         &mut self,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -380,24 +397,34 @@ impl CodegenAlternative {
         let api_key = model.api_key(cx);
         let telemetry_id = model.telemetry_id();
         let provider_id = model.provider_id();
-        let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
-            if user_prompt.trim().to_lowercase() == "delete" {
-                async { Ok(LanguageModelTextStream::default()) }.boxed_local()
-            } else {
-                let request = self.build_request(&model, user_prompt, cx)?;
-                cx.spawn(async move |_, cx| {
-                    Ok(model.stream_completion_text(request.await, cx).await?)
-                })
-                .boxed_local()
-            };
-        self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+
+        if cx.has_flag::<InlineAssistantV2FeatureFlag>() {
+            let request = self.build_request(&model, user_prompt, context_task, cx)?;
+            let tool_use =
+                cx.spawn(async move |_, cx| model.stream_completion_tool(request.await, cx).await);
+            self.handle_tool_use(telemetry_id, provider_id.to_string(), api_key, tool_use, cx);
+        } else {
+            let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
+                if user_prompt.trim().to_lowercase() == "delete" {
+                    async { Ok(LanguageModelTextStream::default()) }.boxed_local()
+                } else {
+                    let request = self.build_request(&model, user_prompt, context_task, cx)?;
+                    cx.spawn(async move |_, cx| {
+                        Ok(model.stream_completion_text(request.await, cx).await?)
+                    })
+                    .boxed_local()
+                };
+            self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+        }
+
         Ok(())
     }
 
-    fn build_request(
+    fn build_request_v2(
         &self,
         model: &Arc<dyn LanguageModel>,
         user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -427,23 +454,116 @@ impl CodegenAlternative {
             anyhow::bail!("invalid transformation range");
         };
 
-        let prompt = self
+        let system_prompt = self
             .builder
-            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt_v2(
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
             .context("generating content prompt")?;
 
-        let context_task = self.context_store.as_ref().and_then(|context_store| {
-            if let Some(project) = self.project.upgrade() {
-                let context = context_store
-                    .read(cx)
-                    .context()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                Some(load_context(context, &project, &self.prompt_store, cx))
-            } else {
-                None
+        let temperature = AgentSettings::temperature_for_model(model, cx);
+
+        let tool_input_format = model.tool_input_format();
+
+        Ok(cx.spawn(async move |_cx| {
+            let mut messages = vec![LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![system_prompt.into()],
+                cache: false,
+                reasoning_details: None,
+            }];
+
+            let mut user_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+                reasoning_details: None,
+            };
+
+            if let Some(context) = context_task.await {
+                context.add_to_request_message(&mut user_message);
             }
-        });
+
+            user_message.content.push(user_prompt.into());
+            messages.push(user_message);
+
+            let tools = vec![
+                LanguageModelRequestTool {
+                    name: "rewrite_section".to_string(),
+                    description: "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
+                    input_schema: language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
+                },
+                LanguageModelRequestTool {
+                    name: "failure_message".to_string(),
+                    description: "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
+                    input_schema: language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
+                },
+            ];
+
+            LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                intent: Some(CompletionIntent::InlineAssist),
+                mode: None,
+                tools,
+                tool_choice: None,
+                stop: Vec::new(),
+                temperature,
+                messages,
+                thinking_allowed: false,
+            }
+        }))
+    }
+
+    fn build_request(
+        &self,
+        model: &Arc<dyn LanguageModel>,
+        user_prompt: String,
+        context_task: Shared<Task<Option<LoadedContext>>>,
+        cx: &mut App,
+    ) -> Result<Task<LanguageModelRequest>> {
+        if cx.has_flag::<InlineAssistantV2FeatureFlag>() {
+            return self.build_request_v2(model, user_prompt, context_task, cx);
+        }
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let language = buffer.language_at(self.range.start);
+        let language_name = if let Some(language) = language.as_ref() {
+            if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
+                None
+            } else {
+                Some(language.name())
+            }
+        } else {
+            None
+        };
+
+        let language_name = language_name.as_ref();
+        let start = buffer.point_to_buffer_offset(self.range.start);
+        let end = buffer.point_to_buffer_offset(self.range.end);
+        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+            let (start_buffer, start_buffer_offset) = start;
+            let (end_buffer, end_buffer_offset) = end;
+            if start_buffer.remote_id() == end_buffer.remote_id() {
+                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
+            } else {
+                anyhow::bail!("invalid transformation range");
+            }
+        } else {
+            anyhow::bail!("invalid transformation range");
+        };
+
+        let prompt = self
+            .builder
+            .generate_inline_transformation_prompt(
+                user_prompt,
+                language_name,
+                buffer,
+                range.start.0..range.end.0,
+            )
+            .context("generating content prompt")?;
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
@@ -452,12 +572,11 @@ impl CodegenAlternative {
                 role: Role::User,
                 content: Vec::new(),
                 cache: false,
+                reasoning_details: None,
             };
 
-            if let Some(context_task) = context_task {
-                context_task
-                    .await
-                    .add_to_request_message(&mut request_message);
+            if let Some(context) = context_task.await {
+                context.add_to_request_message(&mut request_message);
             }
 
             request_message.content.push(prompt.into());
@@ -486,10 +605,20 @@ impl CodegenAlternative {
         cx: &mut Context<Self>,
     ) {
         let start_time = Instant::now();
+
+        // Make a new snapshot and re-resolve anchor in case the document was modified.
+        // This can happen often if the editor loses focus and is saved + reformatted,
+        // as in https://github.com/zed-industries/zed/issues/39088
+        self.snapshot = self.buffer.read(cx).snapshot(cx);
+        self.range = self.snapshot.anchor_after(self.range.start)
+            ..self.snapshot.anchor_after(self.range.end);
+
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
+
+        self.selected_text = Some(selected_text.to_string());
 
         let selection_start = self.range.start.to_point(&snapshot);
 
@@ -532,6 +661,7 @@ impl CodegenAlternative {
 
         self.generation = cx.spawn(async move |codegen, cx| {
             let stream = stream.await;
+
             let token_usage = stream
                 .as_ref()
                 .ok()
@@ -741,12 +871,21 @@ impl CodegenAlternative {
                             output_tokens = usage.output_tokens,
                         )
                     }
+
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
                 })
                 .ok();
         });
         cx.notify();
+    }
+
+    pub fn current_completion(&self) -> Option<String> {
+        self.completion.clone()
+    }
+
+    pub fn selected_text(&self) -> Option<&str> {
+        self.selected_text.as_deref()
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
@@ -920,6 +1059,101 @@ impl CodegenAlternative {
                 .ok();
         })
     }
+
+    fn handle_tool_use(
+        &mut self,
+        _telemetry_id: String,
+        _provider_id: String,
+        _api_key: Option<String>,
+        tool_use: impl 'static
+        + Future<
+            Output = Result<language_model::LanguageModelToolUse, LanguageModelCompletionError>,
+        >,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff = Diff::default();
+        self.status = CodegenStatus::Pending;
+
+        self.generation = cx.spawn(async move |codegen, cx| {
+            let finish_with_status = |status: CodegenStatus, cx: &mut AsyncApp| {
+                let _ = codegen.update(cx, |this, cx| {
+                    this.status = status;
+                    cx.emit(CodegenEvent::Finished);
+                    cx.notify();
+                });
+            };
+
+            let tool_use = tool_use.await;
+
+            match tool_use {
+                Ok(tool_use) if tool_use.name.as_ref() == "rewrite_section" => {
+                    // Parse the input JSON into RewriteSectionInput
+                    match serde_json::from_value::<RewriteSectionInput>(tool_use.input) {
+                        Ok(input) => {
+                            // Store the description if non-empty
+                            let description = if !input.description.trim().is_empty() {
+                                Some(input.description.clone())
+                            } else {
+                                None
+                            };
+
+                            // Apply the replacement text to the buffer and compute diff
+                            let batch_diff_task = codegen
+                                .update(cx, |this, cx| {
+                                    this.model_explanation = description.map(Into::into);
+                                    let range = this.range.clone();
+                                    this.apply_edits(
+                                        std::iter::once((range, input.replacement_text)),
+                                        cx,
+                                    );
+                                    this.reapply_batch_diff(cx)
+                                })
+                                .ok();
+
+                            // Wait for the diff computation to complete
+                            if let Some(diff_task) = batch_diff_task {
+                                diff_task.await;
+                            }
+
+                            finish_with_status(CodegenStatus::Done, cx);
+                            return;
+                        }
+                        Err(e) => {
+                            finish_with_status(CodegenStatus::Error(e.into()), cx);
+                            return;
+                        }
+                    }
+                }
+                Ok(tool_use) if tool_use.name.as_ref() == "failure_message" => {
+                    // Handle failure message tool use
+                    match serde_json::from_value::<FailureMessageInput>(tool_use.input) {
+                        Ok(input) => {
+                            let _ = codegen.update(cx, |this, _cx| {
+                                // Store the failure message as the tool description
+                                this.model_explanation = Some(input.message.into());
+                            });
+                            finish_with_status(CodegenStatus::Done, cx);
+                            return;
+                        }
+                        Err(e) => {
+                            finish_with_status(CodegenStatus::Error(e.into()), cx);
+                            return;
+                        }
+                    }
+                }
+                Ok(_tool_use) => {
+                    // Unexpected tool.
+                    finish_with_status(CodegenStatus::Done, cx);
+                    return;
+                }
+                Err(e) => {
+                    finish_with_status(CodegenStatus::Error(e.into()), cx);
+                    return;
+                }
+            }
+        });
+        cx.notify();
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1075,15 +1309,15 @@ impl Diff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
     use futures::{
         Stream,
         stream::{self},
     };
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
+    use language::{Buffer, Point};
     use language_model::{LanguageModelRegistry, TokenUsage};
+    use languages::rust_lang;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{future, sync::Arc};
@@ -1100,23 +1334,18 @@ mod tests {
                 }
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1167,23 +1396,18 @@ mod tests {
                 le
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1236,23 +1460,18 @@ mod tests {
             "  \n",
             "}\n" //
         );
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1312,16 +1531,11 @@ mod tests {
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1362,23 +1576,18 @@ mod tests {
                 let x = 0;
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 14))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 false,
-                None,
-                project.downgrade(),
-                None,
                 None,
                 prompt_builder,
                 cx,
@@ -1483,28 +1692,5 @@ mod tests {
             );
         });
         chunks_tx
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_indents_query(
-            r#"
-            (call_expression) @indent
-            (field_expression) @indent
-            (_ "(" ")" @end) @indent
-            (_ "{" "}" @end) @indent
-            "#,
-        )
-        .unwrap()
     }
 }

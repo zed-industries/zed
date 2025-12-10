@@ -1,5 +1,6 @@
 mod base_keymap_setting;
 mod editable_setting_control;
+mod fallible_options;
 mod keymap_file;
 pub mod merge_from;
 mod serde_helper;
@@ -33,7 +34,7 @@ pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, MigrationStatus, ParseStatus, Settings, SettingsFile,
-    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsStore,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};

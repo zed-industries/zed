@@ -1,5 +1,5 @@
 mod application_menu;
-mod collab;
+pub mod collab;
 mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;

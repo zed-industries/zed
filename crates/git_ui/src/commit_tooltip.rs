@@ -197,8 +197,7 @@ impl Render for CommitTooltip {
             time_format::TimestampFormat::MediumAbsolute,
         );
         let markdown_style = {
-            let mut style = hover_markdown_style(window, cx);
-            style.base_text_style.refine(&style.code_block.text);
+            let style = hover_markdown_style(window, cx);
             style
         };
 
@@ -320,6 +319,7 @@ impl Render for CommitTooltip {
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
+                                                        None,
                                                         None,
                                                         window,
                                                         cx,
