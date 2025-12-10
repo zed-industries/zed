@@ -209,53 +209,27 @@ pub enum SplitOperation {
     Move,
 }
 
-/// Splits the pane to the left.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitLeft {
-    pub operation: SplitOperation,
+macro_rules! split_structs {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+            #[action(namespace = pane)]
+            #[serde(deny_unknown_fields, default)]
+            pub struct $name {
+                pub operation: SplitOperation,
+            }
+        )*
+    };
 }
 
-/// Splits the pane to the right.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitRight {
-    pub operation: SplitOperation,
-}
-
-/// Splits the pane upward.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitUp {
-    pub operation: SplitOperation,
-}
-
-/// Splits the pane downward.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitDown {
-    pub operation: SplitOperation,
-}
-
-/// Splits the pane horizontally.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitHorizontal {
-    pub operation: SplitOperation,
-}
-
-/// Splits the pane vertically.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
-#[action(namespace = pane)]
-#[serde(deny_unknown_fields, default)]
-pub struct SplitVertical {
-    pub operation: SplitOperation,
-}
+split_structs!(
+    SplitLeft,
+    SplitRight,
+    SplitUp,
+    SplitDown,
+    SplitHorizontal,
+    SplitVertical
+);
 
 actions!(
     pane,
