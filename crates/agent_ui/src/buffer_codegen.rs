@@ -707,6 +707,7 @@ impl CodegenAlternative {
                             let mut first_line = true;
 
                             while let Some(chunk) = chunks.next().await {
+                                dbg!(&chunk);
                                 if response_latency.is_none() {
                                     response_latency = Some(request_start.elapsed());
                                 }
@@ -1112,14 +1113,14 @@ impl CodegenAlternative {
             };
 
             let chars_read_so_far = Arc::new(Mutex::new(0usize));
-            let tool_to_text = move |tool_use: LanguageModelToolUse| -> String {
+            let tool_to_text = move |tool_use: LanguageModelToolUse| -> Option<String> {
                 let mut chars_read_so_far = chars_read_so_far.lock();
-                dbg!(&tool_use);
+                // dbg!(&tool_use);
                 let input: RewriteSectionInput =
-                    serde_json::from_value(tool_use.input.clone()).unwrap();
+                    serde_json::from_value(tool_use.input.clone()).ok()?;
                 let value = input.replacement_text[*chars_read_so_far..].to_string();
-                *chars_read_so_far = value.len();
-                value
+                *chars_read_so_far = input.replacement_text.len();
+                Some(value)
             };
 
             let mut message_id = None;
@@ -1138,9 +1139,10 @@ impl CodegenAlternative {
                         Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
                             if tool_use.name.as_ref() == "rewrite_section" =>
                         {
-                            dbg!("AAA 1");
-                            first_text = Some(tool_to_text(tool_use));
-                            break;
+                            first_text = tool_to_text(tool_use);
+                            if first_text.is_some() {
+                                break;
+                            }
                         }
                         Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                             *last_token_usage.lock() = token_usage;
@@ -1184,7 +1186,7 @@ impl CodegenAlternative {
                             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
                                 if tool_use.name.as_ref() == "rewrite_section" =>
                             {
-                                Some(Ok(tool_to_text(tool_use)))
+                                tool_to_text(tool_use).map(Ok)
                             }
                             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                 *last_token_usage.lock() = token_usage;
