@@ -2056,7 +2056,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2076,7 +2076,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2632,7 +2632,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2661,7 +2661,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.1.2",
  "rustix-linux-procfs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -4386,7 +4386,7 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-go",
  "util",
  "zlog",
@@ -4615,7 +4615,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-json",
  "ui",
@@ -4902,7 +4902,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5235,7 +5235,7 @@ dependencies = [
  "settings",
  "smallvec",
  "text",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "util",
  "zlog",
 ]
@@ -5614,7 +5614,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5839,7 +5839,7 @@ dependencies = [
  "theme",
  "tokio",
  "toml 0.8.23",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "wasmtime",
 ]
 
@@ -5994,7 +5994,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6363,7 +6363,7 @@ checksum = "94e7099f6313ecacbe1256e8ff9d617b75d1bcb16a6fddef94866d225a01a14a"
 dependencies = [
  "io-lifetimes",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8291,7 +8291,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8373,7 +8373,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8763,7 +8763,7 @@ dependencies = [
  "text",
  "theme",
  "toml 0.8.23",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
@@ -8943,7 +8943,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "ui",
  "util",
  "workspace",
@@ -8997,7 +8997,7 @@ dependencies = [
  "text",
  "theme",
  "toml 0.8.23",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",
@@ -9856,7 +9856,7 @@ dependencies = [
  "serde_json_lenient",
  "settings_json",
  "streaming-iterator",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-json",
  "unindent",
 ]
@@ -10007,7 +10007,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10087,7 +10087,7 @@ dependencies = [
  "text",
  "theme",
  "tracing",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "util",
  "zlog",
  "ztracing",
@@ -10417,7 +10417,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12621,8 +12621,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.1",
- "heck 0.5.0",
- "itertools 0.12.1",
+ "heck 0.4.1",
+ "itertools 0.10.5",
  "log",
  "multimap 0.10.1",
  "once_cell",
@@ -12655,7 +12655,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
@@ -13952,7 +13952,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13965,7 +13965,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14087,7 +14087,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14741,7 +14741,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "serde_path_to_error",
- "tree-sitter 0.25.10",
+ "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
@@ -15457,6 +15457,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
+ "windows-sys 0.52.0",
  "windows-sys 0.59.0",
 ]
 
@@ -16165,7 +16166,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes",
  "rustix 0.38.44",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -16342,7 +16343,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -17253,7 +17254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -17275,16 +17276,6 @@ checksum = "1ad61aed86bc3faea4300c7aee358b4c6d0c8d6ccc36524c96e4c92ccf26e77e"
 dependencies = [
  "num-integer",
  "strength_reduce",
-]
-
-[[package]]
-name = "tree-sitter"
-version = "0.20.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
-dependencies = [
- "cc",
- "regex",
 ]
 
 [[package]]
@@ -17514,10 +17505,9 @@ dependencies = [
 [[package]]
 name = "tree-sitter-vue"
 version = "0.1.0"
-source = "git+https://github.com/tree-sitter-grammars/tree-sitter-vue?rev=22bdfa6c9fc0f5ffa44c6e938ec46869ac8a99ff#22bdfa6c9fc0f5ffa44c6e938ec46869ac8a99ff"
 dependencies = [
  "cc",
- "tree-sitter 0.20.10",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -19100,7 +19090,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -19826,7 +19816,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
