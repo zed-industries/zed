@@ -30,6 +30,16 @@ struct DevContainerConfigurationOutput {
     configuration: DevContainerConfiguration,
 }
 
+#[cfg(not(target_os = "windows"))]
+fn dev_container_cli() -> String {
+    "devcontainer".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn dev_container_cli() -> String {
+    "devcontainer.cmd".to_string()
+}
+
 async fn check_for_docker() -> Result<(), DevContainerError> {
     let mut command = util::command::new_smol_command("docker");
     command.arg("--version");
@@ -44,7 +54,7 @@ async fn check_for_docker() -> Result<(), DevContainerError> {
 }
 
 async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<PathBuf, DevContainerError> {
-    let mut command = util::command::new_smol_command("devcontainer");
+    let mut command = util::command::new_smol_command(&dev_container_cli());
     command.arg("--version");
 
     if let Err(e) = command.output().await {
@@ -56,9 +66,10 @@ async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<PathBuf, D
         let datadir_cli_path = paths::devcontainer_dir()
             .join("node_modules")
             .join(".bin")
-            .join("devcontainer");
+            .join(&dev_container_cli());
 
-        let mut command = util::command::new_smol_command(&datadir_cli_path.display().to_string());
+        let mut command =
+            util::command::new_smol_command(&datadir_cli_path.as_os_str().display().to_string());
         command.arg("--version");
 
         if let Err(e) = command.output().await {
@@ -103,7 +114,7 @@ async fn ensure_devcontainer_cli(node_runtime: NodeRuntime) -> Result<PathBuf, D
         }
     } else {
         log::info!("Found devcontainer cli on $PATH, using it");
-        Ok(PathBuf::from("devcontainer"))
+        Ok(PathBuf::from(&dev_container_cli()))
     }
 }
 
