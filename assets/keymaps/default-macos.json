@@ -873,6 +873,14 @@
     }
   },
   {
+    "context": "GitCommit > Editor || GitStash > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-shift-enter": ["editor::OpenExcerpts", { "target": "open_current" }],
+      "alt-cmd-shift-enter": ["editor::OpenExcerptsSplit", { "target": "open_current" }]
+    }
+  },
+  {
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {

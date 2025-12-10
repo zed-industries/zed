@@ -1690,6 +1690,12 @@ pub enum FormatTarget {
     Ranges(Vec<Range<MultiBufferPoint>>),
 }
 
+pub(crate) enum OpenExcerptTarget {
+    Parent,
+    Modified,
+    Head,
+}
+
 pub(crate) struct FocusedBlock {
     id: BlockId,
     focus_handle: WeakFocusHandle,
@@ -8421,6 +8427,7 @@ impl Editor {
             "Set Breakpoint"
         };
 
+        // todo! Use window.is_action_available(&OpenHistoricExcerpt, cx)
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
@@ -22235,20 +22242,57 @@ impl Editor {
     pub fn open_excerpts_in_split(
         &mut self,
         _: &OpenExcerptsSplit,
-        window: &mut Window,
+        win: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_excerpts_common(None, true, window, cx)
+        self.open_excerpts_common(None, true, &OpenExcerptTarget::Modified, win, cx)
     }
 
-    pub fn open_excerpts(&mut self, _: &OpenExcerpts, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_excerpts_common(None, false, window, cx)
+    pub fn open_excerpts(&mut self, _: &OpenExcerpts, win: &mut Window, cx: &mut Context<Self>) {
+        self.open_excerpts_common(None, false, &OpenExcerptTarget::Modified, win, cx)
+    }
+
+    pub fn open_head_excerpts_in_split(
+        &mut self,
+        _: &OpenParentExcerptsSplit,
+        win: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, true, &OpenExcerptTarget::Head, win, cx)
+    }
+
+    pub fn open_head_excerpts(
+        &mut self,
+        _: &OpenParentExcerpts,
+        win: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, false, &OpenExcerptTarget::Head, win, cx)
+    }
+
+    pub fn open_parent_excerpts_in_split(
+        &mut self,
+        _: &OpenHeadExcerptsSplit,
+        win: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, true, &OpenExcerptTarget::Parent, win, cx)
+    }
+
+    pub fn open_parent_excerpts(
+        &mut self,
+        _: &OpenHeadExcerpts,
+        win: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_excerpts_common(None, false, &OpenExcerptTarget::Parent, win, cx)
     }
 
     fn open_excerpts_common(
         &mut self,
         jump_data: Option<JumpData>,
         split: bool,
+        target: &OpenExcerptTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -22420,7 +22464,6 @@ impl Editor {
                                 cx,
                             )
                         });
-
                     editor.update(cx, |editor, cx| {
                         if has_file && !is_project_file {
                             editor.set_read_only(true);
@@ -22453,7 +22496,7 @@ impl Editor {
                         editor.nav_history = nav_history;
                     });
                 }
-            })
+            });
         });
     }
 

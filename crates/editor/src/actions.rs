@@ -635,6 +635,14 @@ actions!(
         OpenExcerpts,
         /// Opens excerpts in a split pane.
         OpenExcerptsSplit,
+        /// Specific to `CommitDiff` and `StashDiff` views, opens excerts at head if file wasn't moved or deleted
+        OpenHeadExcerpt,
+        /// Specific to `CommitDiff` and `StashDiff` views, opens excerts at head in a split pane if it exists
+        OpenHeadExcerptSplit,
+        /// Specific to `CommitDiff` view, opens excerts before changes were commited
+        OpenParentExcerpt,
+        /// Specific to `CommitDiff` view, opens excerts before changes were commited in a split pane
+        OpenParentExcerptSplit,
         /// Opens the proposed changes editor.
         OpenProposedChangesEditor,
         /// Opens documentation for the symbol at cursor.

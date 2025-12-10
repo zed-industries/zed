@@ -1007,7 +1007,11 @@ impl Render for CommitView {
         let is_stash = self.stash.is_some();
 
         v_flex()
+            .id("commit-view")
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
+            // todo!
+            // add your action listerners here
+            // .on_action()
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
