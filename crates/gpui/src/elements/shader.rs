@@ -8,7 +8,7 @@ use crate::{
     StyleRefinement, Window, fill, point, rgb,
 };
 
-/// Fragment shader which can be rendered using `shader_element` or `shader_element_with_data`.
+/// A custom shader which can be rendered using `shader_element` or `shader_element_with_data`.
 #[derive(Clone)]
 pub struct FragmentShader<T: ShaderUniform> {
     main_body: SharedString,
@@ -17,7 +17,29 @@ pub struct FragmentShader<T: ShaderUniform> {
 }
 
 impl<T: ShaderUniform> FragmentShader<T> {
-    /// Create a new fragment shader
+    /// Create a new fragment shader.
+    ///
+    /// The `main_body` contains the body of the fragment shaders function,
+    /// written in [WGSL](https://www.w3.org/TR/WGSL/). This code *must* return
+    /// a `vec4<f32>` containing the color for that pixels in RGBA, with values
+    /// from 0 to 1.
+    ///
+    /// Within this function, you have access to the following parameters:
+    ///
+    /// - `position` (`vec2<f32>`): The absolute position of the pixel within
+    ///   the window. The units are in unscaled pixels, *not* device pixels.
+    /// - `bounds` (`Bounds { origin: vec2<f32>, size: vec2<f32> }`): The bounds
+    ///   of this shader, in the same units as `position`.
+    /// - `scale_factor` (`f32`): See [Window::scale_factor()]. This can be used
+    ///   to convert to device pixels.
+    /// - `data`: This value will only be present if drawn using [shader_element_with_data].
+    ///   Its type is whatever type the instance data is.
+    /// - `globals.viewport_size` (`vec2<f32>`): The size of the surface in
+    ///   *device pixels*. You will need to divide by `scale_factor` if you
+    ///   require the same units as `position`.
+    ///
+    /// Additionally, any functions or types defined using [with_item] will be
+    /// accessible within the main body.
     pub fn new(main_body: &'static str) -> Self {
         Self {
             main_body: SharedString::new_static(main_body),
@@ -26,17 +48,18 @@ impl<T: ShaderUniform> FragmentShader<T> {
         }
     }
 
-    /// Adds an extra item (struct, function, etc.) to the WGSL source code
+    /// Adds a helper function or type to the shader code.
     pub fn with_item(mut self, item: &'static str) -> Self {
         self.extra_items.push(SharedString::new_static(item));
         self
     }
 }
 
-/// An element which can render an instance of a fragment shader. Use `shader_element` or `shader_element_with_data` to construct.
+/// An element which can render an instance of a fragment shader.
+/// Use `shader_element` or `shader_element_with_data` to construct.
 pub struct ShaderElement<T: ShaderUniform> {
     shader: FragmentShader<T>,
-    instance_data: T,
+    data: T,
     interactivity: Interactivity,
 }
 
@@ -72,23 +95,24 @@ impl<T: ShaderUniform> InteractiveElement for ShaderElement<T> {
     }
 }
 
-/// Constructs a `ShaderElement` which renders a shader which *doesn't* take instance-data.
+/// Constructs a `ShaderElement` which renders a shader which *doesn't* take instance data.
 pub fn shader_element(shader: FragmentShader<()>) -> ShaderElement<()> {
     ShaderElement {
         shader,
-        instance_data: (),
+        data: (),
         interactivity: Interactivity::new(),
     }
 }
 
-/// Constructs a `ShaderElement` which renders a shader with custom data for each instance.
+/// Constructs a `ShaderElement` which renders the shader while exposing `data`
+/// within the shader's main body.
 pub fn shader_element_with_data<T: ShaderUniform>(
     shader: FragmentShader<T>,
-    instance_data: T,
+    data: T,
 ) -> ShaderElement<T> {
     ShaderElement {
         shader,
-        instance_data,
+        data,
         interactivity: Interactivity::new(),
     }
 }
@@ -171,10 +195,11 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
                 bounds,
                 self.shader.main_body.clone(),
                 self.shader.extra_items.clone(),
-                &self.instance_data,
+                &self.data,
             ) {
                 Ok(_) => {}
                 Err((msg, first_err)) => {
+                    // Draw an error texture
                     for x in 0..5 {
                         for y in 0..5 {
                             window.paint_quad(fill(
@@ -206,29 +231,37 @@ impl<T: ShaderUniform> Element for ShaderElement<T> {
 
 /// Marker trait for data which can be passed to custom WGSL shaders.
 ///
-/// To create a custom structure, derive this trait:
+/// To create a custom structure, use the derive macro [derive@crate::ShaderUniform]:
 ///
 /// ```rust
 /// #[repr(C)]
 /// #[derive(gpui::ShaderUniform, Clone, Copy)]
 /// struct MyStruct {
-///     a_vec4_field: [f32; 4],
-///     some_other_field: u32,
-///     // an_invalid_field: [f32; 2], // ERROR! This field can't be here since its offset is 20, which is not a multiple of 8
+///     color: [f32; 4],
+///     something: u32,
 /// }
 /// ```
+///
+/// SAFETY: If implementing this trait manually (*not* through the derive macro),
+/// then you must ensure that the definitions in both languages are compatible
+/// and that alignment is correct. If alignment is incorrect or the field
+/// ordering does not match the definition, then the shader may fail to compile
+/// or you may get unexpected behavior. Also ensure that your type is `#[repr(C)]`
+/// to ensure it has a defined layout.
 pub unsafe trait ShaderUniform: Clone + Copy + 'static {
-    /// The name of the type in wgsl (ie. `f32`, `InstanceData`)
+    /// The name of the type in WGSL (eg. `f32`, `MyStruct`).
     const NAME: &str;
 
-    /// The type's definition, if it is a struct.
+    /// The type's definition, if it requires one (eg. a struct). This will be
+    /// included in the shader's source code.
     const DEFINITION: Option<&str>;
 
-    /// The wgsl alignment of this type in bytes
+    /// The [WGSL alignment](https://sotrh.github.io/learn-wgpu/showcase/alignment/#alignment-of-uniform-and-storage-buffers)
+    /// of this type in bytes.
     const ALIGN: usize;
 }
 
-// Used to mark instance-data as unused. It is not allowed in instance-data structs.
+// Only used to mark instance data as unused. The derive macro will prevent it from being used.
 unsafe impl ShaderUniform for () {
     const NAME: &str = "This shouldn't ever be emitted";
     const DEFINITION: Option<&str> = None;

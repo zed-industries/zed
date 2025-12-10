@@ -58,6 +58,7 @@ impl Display for CustomShaderInfo {
             size: vec2<f32>,
         }}
 
+        {extra_items}
         {instance_data_definition}
 
         struct Instance {{
@@ -100,8 +101,6 @@ impl Display for CustomShaderInfo {
 
             return out;
         }}
-
-        {extra_items}
 
         fn user_fs(position: vec2<f32>, bounds: Bounds, scale_factor: f32{instance_data_param}) -> vec4<f32> {{
             {main_body}

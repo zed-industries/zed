@@ -41,7 +41,28 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
 }
 
-/// #[derive(ShaderUniform)] is used to make a struct which can be sent to custom shaders as instance-data.
+/// #[derive(ShaderUniform)] is used to make a struct which can be sent to
+/// custom shaders as instance data.
+///
+/// Example:
+/// ```rust
+/// #[repr(C)]
+/// #[derive(gpui::ShaderUniform, Clone, Copy)]
+/// struct MyStruct {
+///     color: [f32; 4],
+///     something: u32,
+/// }
+/// ```
+///
+/// To derive this trait, your struct must be composed of fields which implement
+/// `ShaderUniform` and are [properly aligned](https://sotrh.github.io/learn-wgpu/showcase/alignment/#alignment-of-uniform-and-storage-buffers).
+/// If the alignment of a field is incorrect, then an error will indicate the issue.
+/// To fix any alignment issues, move types with larger alignments (such as `[f32; 4]`) to
+/// the start of the struct and insert padding fields if issues are still encountered.
+///
+/// Note: if a field within your struct isn't a primitive, then you may need
+/// to include its definition within your fragment shader using
+/// `.with_item(MyOtherStruct::DEFINITION.unwrap())`, since it isn't included automatically.
 #[proc_macro_derive(ShaderUniform)]
 pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
     derive_shader_uniform::derive_shader_uniform(input)

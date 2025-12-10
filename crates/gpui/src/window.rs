@@ -3268,9 +3268,14 @@ impl Window {
         Ok(())
     }
 
-    /// Paint a custom shader
+    /// Paint a custom shader into the scene for the next frame at the current z-index.
     ///
-    /// This method should only be called as a part of the paint phase of element drawing.
+    /// Refer to the [crate::FragmentShader] documentation for information on what the main body
+    /// and extra items can contain. If this function fails to compile, it returns a
+    /// String containing the compilation error message and a boolean indicating whether
+    /// this was the first attempt to compile this shader.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_shader<T: ShaderUniform>(
         &mut self,
         bounds: Bounds<Pixels>,
