@@ -1,8 +1,8 @@
 use crate::{
-    PredictionProvider,
+    PredictionProvider, PromptFormat,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
-    format_prompt::{PromptParser, TeacherPrompt},
+    format_prompt::{PromptParser, TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
@@ -36,6 +36,10 @@ pub async fn run_prediction(
     let provider = provider.unwrap();
 
     if matches!(provider, PredictionProvider::AnthropicBatched) {
+        if example.prompt.is_none() {
+            run_format_prompt(example, PromptFormat::Teacher).await;
+        }
+
         let batched = true;
         return predict_anthropic(example, repetition_count, batched).await;
     }
@@ -208,10 +212,10 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
     };
     let llm_client = llm_client.expect("Failed to create LLM client");
 
-    let prompt = example
-        .prompt
-        .as_ref()
-        .expect("Prompt is required for an example");
+    let prompt = example.prompt.as_ref().expect(&format!(
+        "Prompt is required for an example {}",
+        &example.name
+    ));
 
     let messages = vec![anthropic::Message {
         role: anthropic::Role::User,
