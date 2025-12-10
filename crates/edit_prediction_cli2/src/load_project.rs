@@ -22,6 +22,10 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>, mut cx: AsyncApp) {
+    if example.state.is_some() {
+        return;
+    }
+
     let project = setup_project(example, &app_state, &mut cx).await;
     let _open_buffers = apply_edit_history(example, &project, &mut cx)
         .await

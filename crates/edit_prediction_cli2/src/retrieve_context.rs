@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::HashSet;
-use edit_prediction::EditPredictionStore;
+use edit_prediction::{DebugEvent, EditPredictionStore};
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity, Task};
 use language::{Buffer, LanguageNotFound};
@@ -38,17 +38,23 @@ pub async fn run_context_retrieval(
         .update(|cx| EditPredictionStore::try_global(cx).unwrap())
         .unwrap();
 
-    ep_store
+    let mut events = ep_store
         .update(&mut cx, |store, cx| {
             store.register_buffer(&state.buffer, &project, cx);
             store.set_use_context(true);
             store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
             store.debug_info(&project, cx)
         })
-        .unwrap()
-        .next()
-        .await
         .unwrap();
+
+    while let Some(event) = events.next().await {
+        match event {
+            DebugEvent::ContextRetrievalFinished(_) => {
+                break;
+            }
+            _ => {}
+        }
+    }
 
     let context_files = ep_store
         .update(&mut cx, |store, cx| {

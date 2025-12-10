@@ -2,6 +2,7 @@ use crate::{
     PredictionProvider,
     example::{Example, ExamplePrediction},
     headless::EpAppState,
+    load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     retrieve_context::run_context_retrieval,
 };
@@ -27,6 +28,7 @@ pub async fn run_prediction(
         return;
     }
 
+    run_load_project(example, app_state.clone(), cx.clone()).await;
     run_context_retrieval(example, app_state, cx.clone()).await;
 
     let provider = provider.unwrap();

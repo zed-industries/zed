@@ -70,10 +70,10 @@ enum PromptFormat {
 
 #[derive(Debug, Args)]
 struct PredictArgs {
+    #[clap(long)]
     provider: PredictionProvider,
     #[clap(long, default_value_t = 1)]
     repetitions: usize,
-    cache: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
