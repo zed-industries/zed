@@ -5359,6 +5359,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "tree-sitter-vue",
  "tree-sitter-yaml",
  "ui",
  "unicode-script",
@@ -8773,6 +8774,7 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "tree-sitter-vue",
  "unicase",
  "unindent",
  "util",
@@ -17497,6 +17499,14 @@ source = "git+https://github.com/zed-industries/tree-sitter-typescript?rev=e2c53
 dependencies = [
  "cc",
  "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-vue"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
