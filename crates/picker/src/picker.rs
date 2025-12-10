@@ -461,7 +461,10 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         let query = self.query(cx);
-        if let Some(query) = self.delegate.select_history(Direction::Down, &query, window, cx) {
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Down, &query, window, cx)
+        {
             self.set_query(query, window, cx);
             return;
         }
@@ -485,7 +488,10 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         let query = self.query(cx);
-        if let Some(query) = self.delegate.select_history(Direction::Up, &query, window, cx) {
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Up, &query, window, cx)
+        {
             self.set_query(query, window, cx);
             return;
         }

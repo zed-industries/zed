@@ -18,8 +18,8 @@ use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
-use picker::Direction;
 use persistence::COMMAND_PALETTE_HISTORY;
+use picker::Direction;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
@@ -185,7 +185,8 @@ impl QueryHistory {
             COMMAND_PALETTE_HISTORY
                 .list_recent_queries()
                 .unwrap_or_default()
-                .into_iter().collect()
+                .into_iter()
+                .collect()
         })
     }
 
@@ -217,7 +218,11 @@ impl QueryHistory {
         let start_index = self.cursor.unwrap_or(self.history().len());
 
         for i in (0..start_index).rev() {
-            if self.history().get(i).is_some_and(|e| e.starts_with(&prefix)) {
+            if self
+                .history()
+                .get(i)
+                .is_some_and(|e| e.starts_with(&prefix))
+            {
                 self.cursor = Some(i);
                 return self.history().get(i).map(|s| s.as_str());
             }
@@ -230,7 +235,11 @@ impl QueryHistory {
         let prefix = self.prefix.clone().unwrap_or_default();
 
         for i in (selected + 1)..self.history().len() {
-            if self.history().get(i).is_some_and(|e| e.starts_with(&prefix)) {
+            if self
+                .history()
+                .get(i)
+                .is_some_and(|e| e.starts_with(&prefix))
+            {
                 self.cursor = Some(i);
                 return self.history().get(i).map(|s| s.as_str());
             }
@@ -373,7 +382,8 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> Option<String> {
         match direction {
             Direction::Up => {
-                let should_use_history = self.selected_ix == 0 || self.query_history.is_navigating();
+                let should_use_history =
+                    self.selected_ix == 0 || self.query_history.is_navigating();
                 if should_use_history {
                     if let Some(query) = self.query_history.previous(query).map(|s| s.to_string()) {
                         return Some(query);
@@ -1147,8 +1157,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let palette =
-            open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
+        let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
 
         // With empty query, press up - should get "gamma" (most recent)
         cx.simulate_keystrokes("up");

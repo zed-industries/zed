@@ -133,8 +133,6 @@ impl CommandPaletteDB {
             ORDER BY MAX(last_invoked) ASC
         }
     }
-
-
 }
 
 #[cfg(test)]
