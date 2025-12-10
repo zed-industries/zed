@@ -2072,7 +2072,11 @@
   // Common language server settings.
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
-    "button": true
+    "button": true,
+    "notifications": {
+      // Wether to automatically dismiss language server notifications.
+      "auto_dismiss": "always"
+    }
   },
   // Jupyter settings
   "jupyter": {

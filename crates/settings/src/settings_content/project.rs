@@ -179,6 +179,7 @@ pub struct LspNotificationSettingsContent {
 
 #[with_fallible_options]
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
 pub enum NotificationAutoDismissalSetting {
     /// Automatically dismiss notifications.
     #[default]
