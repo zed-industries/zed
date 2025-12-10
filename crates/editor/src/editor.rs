@@ -1275,7 +1275,7 @@ pub struct GutterDimensions {
 }
 
 impl GutterDimensions {
-    pub fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
+    fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
         Self {
             margin: Self::default_gutter_margin(font_id, font_size, cx),
             ..Default::default()
@@ -20366,7 +20366,7 @@ impl Editor {
 
     pub fn style(&mut self, cx: &App) -> &EditorStyle {
         if self.style.is_none() {
-            self.style = Some(self.create_editor_style(cx));
+            self.style = Some(self.create_style(cx));
         }
         self.style.as_ref().unwrap()
     }
@@ -23171,7 +23171,7 @@ impl Editor {
         self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 
-    fn create_editor_style(&self, cx: &App) -> EditorStyle {
+    fn create_style(&self, cx: &App) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
@@ -25024,7 +25024,7 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        EditorElement::new(&cx.entity(), self.create_editor_style(cx))
+        EditorElement::new(&cx.entity(), self.create_style(cx))
     }
 }
 
