@@ -103,7 +103,6 @@ impl AgentServer for ClaudeCode {
                 .await?;
             let connection = crate::acp::connect(
                 name,
-                Some("claude-code".into()),
                 command,
                 root_dir.as_ref(),
                 default_mode,

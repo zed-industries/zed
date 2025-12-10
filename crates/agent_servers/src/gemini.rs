@@ -61,7 +61,6 @@ impl AgentServer for Gemini {
 
             let connection = crate::acp::connect(
                 name,
-                Some("gemini-cli".into()),
                 command,
                 root_dir.as_ref(),
                 default_mode,

@@ -134,7 +134,6 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 name,
-                None,
                 command,
                 root_dir.as_ref(),
                 default_mode,

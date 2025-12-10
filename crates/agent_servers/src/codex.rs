@@ -105,7 +105,6 @@ impl AgentServer for Codex {
 
             let connection = crate::acp::connect(
                 name,
-                Some("codex".into()),
                 command,
                 root_dir.as_ref(),
                 default_mode,
