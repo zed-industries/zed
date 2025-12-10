@@ -242,8 +242,9 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
 pub async fn teardown_predictions(provider: &PredictionProvider) {
     match provider {
         PredictionProvider::AnthropicBatched => {
-            let llm_client = AnthropicClient::batch(&crate::paths::LLM_CACHE_DB.as_ref())
-                .expect("Failed to create LLM client");
+            let cache_path = crate::paths::LLM_CACHE_DB.as_ref();
+            let llm_client =
+                AnthropicClient::batch(cache_path).expect("Failed to create LLM client");
             llm_client
                 .sync_batches()
                 .await
