@@ -529,7 +529,6 @@ impl CommitModal {
         } else {
             telemetry::event!("Git Amended", source = "Git Modal");
             self.git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_amend_pending(false, cx);
                 git_panel.commit_changes(
                     CommitOptions {
                         amend: true,

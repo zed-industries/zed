@@ -1746,11 +1746,16 @@ impl GitPanel {
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
+
                 match result {
                     Ok(()) => {
-                        this.commit_editor
-                            .update(cx, |editor, cx| editor.clear(window, cx));
-                        this.original_commit_message = None;
+                        if options.amend {
+                            this.set_amend_pending(false, cx);
+                        } else {
+                            this.commit_editor
+                                .update(cx, |editor, cx| editor.clear(window, cx));
+                            this.original_commit_message = None;
+                        }
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -1759,9 +1764,6 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
-        if options.amend {
-            self.set_amend_pending(false, cx);
-        }
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4348,6 +4350,9 @@ impl GitPanel {
         self.amend_pending
     }
 
+    /// Sets the pending amend state, ensuring that the original commit message
+    /// is either saved, when `value` is `true` and there's no pending amend, or
+    /// restored, when `value` is `false` and there's a pending amend.
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         if value && !self.amend_pending {
             let current_message = self.commit_message_buffer(cx).read(cx).text();
@@ -5882,6 +5887,7 @@ mod tests {
                 buffer.set_text("refactor: update main.rs", cx);
             });
 
+            // Start amending the previous commit.
             panel.focus_editor(&Default::default(), window, cx);
             panel.amend(&Amend, window, cx);
         });
@@ -5902,10 +5908,20 @@ mod tests {
                 Some("refactor: update main.rs".to_string())
             );
 
-            // After amending, the commit editor's message should be restored to
-            // the original message.
+            // Finish amending the previous commit.
             panel.focus_editor(&Default::default(), window, cx);
             panel.amend(&Amend, window, cx);
+        });
+
+        // Since the actual commit logic is run in a background task, we need to
+        // await its completion to actually ensure that the commit message
+        // editor's contents are set to the original message and haven't been
+        // cleared.
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, _window, cx| {
+            // After amending, the commit editor's message should be restored to
+            // the original message.
             assert_eq!(
                 panel.commit_message_buffer(cx).read(cx).text(),
                 "refactor: update main.rs"
