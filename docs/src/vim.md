@@ -471,11 +471,11 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 }
 ```
 
-Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
+Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap. If you would like operations to remain unaffected (ex. `dw`), add ` && vim_mode != operator` to the `context` check.
 
 ```json [settings]
 {
-  "context": "VimControl && !menu && vim_mode != operator",
+  "context": "VimControl && !menu",
   "bindings": {
     "w": "vim::NextSubwordStart",
     "b": "vim::PreviousSubwordStart",
