@@ -211,14 +211,12 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
     let prompt = example
         .prompt
         .as_ref()
-        .expect("Prompt is required for an example")
-        .input
-        .clone();
+        .expect("Prompt is required for an example");
 
     let messages = vec![anthropic::Message {
         role: anthropic::Role::User,
         content: vec![anthropic::RequestContent::Text {
-            text: prompt,
+            text: prompt.input.clone(),
             cache_control: None,
         }],
     }];
@@ -242,7 +240,10 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output);
+    let actual_patch = match prompt.format {
+        crate::PromptFormat::Teacher => TeacherPrompt::parse(example, &actual_output),
+        crate::PromptFormat::Zeta2 => todo!(),
+    };
 
     let prediction = ExamplePrediction {
         actual_patch,
