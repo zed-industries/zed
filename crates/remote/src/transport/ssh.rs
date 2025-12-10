@@ -1431,6 +1431,9 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
@@ -1463,6 +1466,9 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
+                "/bin/fish",
+                "-i",
+                "-c",
                 "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );

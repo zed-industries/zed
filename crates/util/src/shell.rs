@@ -820,13 +820,13 @@ mod tests {
         // String with dollar signs
         assert_eq!(
             shell_kind.try_quote("$variable").unwrap().into_owned(),
-            "\"`$variable\"".to_string()
+            "'$variable'".to_string()
         );
 
         // String with backticks
         assert_eq!(
             shell_kind.try_quote("test`command").unwrap().into_owned(),
-            "\"test``command\"".to_string()
+            "'test`command'".to_string()
         );
 
         // String with multiple special characters
@@ -835,7 +835,7 @@ mod tests {
                 .try_quote("test `\"$var`\" end")
                 .unwrap()
                 .into_owned(),
-            "\"test ```\"`$var```\" end\"".to_string()
+            "'test `\\\"$var`\\\" end'".to_string()
         );
 
         // String with backslashes and colon (path without spaces doesn't need quoting)
@@ -885,7 +885,7 @@ mod tests {
         // String with embedded quote (quote is escaped, backslash before it is doubled)
         assert_eq!(
             shell_kind.try_quote("test\\\"quote").unwrap().into_owned(),
-            "\"test\\\\\\\"quote\"".to_string()
+            "^\"test\\\\\\^\"quote^\"".to_string()
         );
 
         // String with multiple backslashes before embedded quote (all doubled)
@@ -894,7 +894,7 @@ mod tests {
                 .try_quote("test\\\\\"quote")
                 .unwrap()
                 .into_owned(),
-            "\"test\\\\\\\\\\\"quote\"".to_string()
+            "^\"test\\\\\\\\\\^\"quote^\"".to_string()
         );
 
         // String with backslashes not before quotes (path without spaces doesn't need quoting)

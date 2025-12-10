@@ -166,7 +166,7 @@ mod test {
             vec![
                 "-i",
                 "-c",
-                "echo $env.hello $env.world nothing --($env.something) $ ${test"
+                "^echo '$env.hello' '$env.world' nothing '--($env.something)' '$' '${test'"
             ]
         );
     }
