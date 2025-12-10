@@ -3119,209 +3119,83 @@ impl GitPanel {
             self.single_tracked_entry = changed_entries.first().cloned();
         }
 
-        // todo! review the logic here. seems we can simplify here
+        let mut logical_indices = tree_view.then(Vec::new);
+
+        let mut push_entry = |this: &mut Self, entry: GitListEntry, is_visible: bool| {
+            if let Some(estimate) =
+                this.width_estimate_for_list_entry(tree_view, &entry, path_style)
+            {
+                if estimate > max_width_estimate {
+                    max_width_estimate = estimate;
+                    max_width_item_index = Some(this.entries.len());
+                }
+            }
+
+            if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone()) {
+                this.entries_indices.insert(repo_path, this.entries.len());
+            }
+
+            if let (Some(indices), true) = (logical_indices.as_mut(), is_visible) {
+                indices.push(this.entries.len());
+            }
+
+            this.entries.push(entry);
+        };
+
+        macro_rules! take_section_entries {
+            () => {
+                [
+                    (Section::Conflict, std::mem::take(&mut conflict_entries)),
+                    (Section::Tracked, std::mem::take(&mut changed_entries)),
+                    (Section::New, std::mem::take(&mut new_entries)),
+                ]
+            };
+        }
+
         if tree_view {
-            let mut logical_indices = Vec::new();
-
-            let mut push_tree_entry =
-                |entries: &mut Vec<GitListEntry>,
-                 logical_indices: &mut Vec<usize>,
-                 entries_indices: &mut HashMap<RepoPath, usize>,
-                 entry: GitListEntry,
-                 is_visible: bool,
-                 estimate: Option<usize>| {
-                    if let Some(estimate) = estimate {
-                        if estimate > max_width_estimate {
-                            max_width_estimate = estimate;
-                            max_width_item_index = Some(entries.len());
-                        }
-                    }
-
-                    if let Some(repo_path) =
-                        entry.status_entry().map(|status| status.repo_path.clone())
-                    {
-                        entries_indices.insert(repo_path, entries.len());
-                    }
-
-                    if is_visible {
-                        logical_indices.push(entries.len());
-                    }
-
-                    entries.push(entry);
-                };
-
-            if !conflict_entries.is_empty() {
-                push_tree_entry(
-                    &mut self.entries,
-                    &mut logical_indices,
-                    &mut self.entries_indices,
-                    GitListEntry::Header(GitHeaderEntry {
-                        header: Section::Conflict,
-                    }),
-                    true,
-                    None,
-                );
-                for entry in self.build_tree_entries(
-                    Section::Conflict,
-                    conflict_entries,
-                    &repo,
-                    &mut seen_directories,
-                ) {
-                    let estimate =
-                        self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
-                    push_tree_entry(
-                        &mut self.entries,
-                        &mut logical_indices,
-                        &mut self.entries_indices,
-                        entry.0,
-                        entry.1,
-                        estimate,
-                    );
+            for (section, entries) in take_section_entries!() {
+                if entries.is_empty() {
+                    continue;
                 }
-            }
 
-            if !changed_entries.is_empty() {
-                push_tree_entry(
-                    &mut self.entries,
-                    &mut logical_indices,
-                    &mut self.entries_indices,
-                    GitListEntry::Header(GitHeaderEntry {
-                        header: Section::Tracked,
-                    }),
-                    false,
-                    None,
-                );
-                for entry in self.build_tree_entries(
-                    Section::Tracked,
-                    changed_entries,
-                    &repo,
-                    &mut seen_directories,
-                ) {
-                    let estimate =
-                        self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
-                    push_tree_entry(
-                        &mut self.entries,
-                        &mut logical_indices,
-                        &mut self.entries_indices,
-                        entry.0,
-                        entry.1,
-                        estimate,
-                    );
-                }
-            }
-
-            if !new_entries.is_empty() {
-                push_tree_entry(
-                    &mut self.entries,
-                    &mut logical_indices,
-                    &mut self.entries_indices,
-                    GitListEntry::Header(GitHeaderEntry {
-                        header: Section::New,
-                    }),
+                push_entry(
+                    self,
+                    GitListEntry::Header(GitHeaderEntry { header: section }),
                     true,
-                    None,
                 );
-                for entry in
-                    self.build_tree_entries(Section::New, new_entries, &repo, &mut seen_directories)
+
+                for (entry, is_visible) in
+                    self.build_tree_entries(section, entries, &repo, &mut seen_directories)
                 {
-                    let estimate =
-                        self.width_estimate_for_list_entry(tree_view, &entry.0, path_style);
-                    push_tree_entry(
-                        &mut self.entries,
-                        &mut logical_indices,
-                        &mut self.entries_indices,
-                        entry.0,
-                        entry.1,
-                        estimate,
-                    );
+                    push_entry(self, entry, is_visible);
                 }
             }
 
-            self.view_mode = GitPanelViewMode::Tree { logical_indices };
+            self.view_mode = GitPanelViewMode::Tree {
+                logical_indices: logical_indices.unwrap_or_default(),
+            };
             self.expanded_dirs
                 .retain(|key, _| seen_directories.contains(key));
         } else {
-            let mut push_entry = |entries: &mut Vec<GitListEntry>,
-                                  entries_indices: &mut HashMap<RepoPath, usize>,
-                                  entry: GitListEntry,
-                                  estimate: Option<usize>| {
-                if let Some(estimate) = estimate {
-                    if estimate > max_width_estimate {
-                        max_width_estimate = estimate;
-                        max_width_item_index = Some(entries.len());
-                    }
+            for (section, entries) in take_section_entries!() {
+                if entries.is_empty() {
+                    continue;
                 }
 
-                if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone())
-                {
-                    entries_indices.insert(repo_path, entries.len());
-                }
-                entries.push(entry);
-            };
-
-            if !conflict_entries.is_empty() {
-                push_entry(
-                    &mut self.entries,
-                    &mut self.entries_indices,
-                    GitListEntry::Header(GitHeaderEntry {
-                        header: Section::Conflict,
-                    }),
-                    None,
-                );
-                for entry in conflict_entries {
-                    let estimate =
-                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
+                if section != Section::Tracked || !sort_by_path {
                     push_entry(
-                        &mut self.entries,
-                        &mut self.entries_indices,
-                        GitListEntry::Status(entry),
-                        estimate,
+                        self,
+                        GitListEntry::Header(GitHeaderEntry { header: section }),
+                        true,
                     );
+                }
+
+                for entry in entries {
+                    push_entry(self, GitListEntry::Status(entry), true);
                 }
             }
 
-            if !changed_entries.is_empty() {
-                if !sort_by_path {
-                    push_entry(
-                        &mut self.entries,
-                        &mut self.entries_indices,
-                        GitListEntry::Header(GitHeaderEntry {
-                            header: Section::Tracked,
-                        }),
-                        None,
-                    );
-                }
-                for entry in changed_entries {
-                    let estimate =
-                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
-                    push_entry(
-                        &mut self.entries,
-                        &mut self.entries_indices,
-                        GitListEntry::Status(entry),
-                        estimate,
-                    );
-                }
-            }
-            if !new_entries.is_empty() {
-                push_entry(
-                    &mut self.entries,
-                    &mut self.entries_indices,
-                    GitListEntry::Header(GitHeaderEntry {
-                        header: Section::New,
-                    }),
-                    None,
-                );
-                for entry in new_entries {
-                    let estimate =
-                        Some(self.status_width_estimate(tree_view, &entry, path_style, 0));
-                    push_entry(
-                        &mut self.entries,
-                        &mut self.entries_indices,
-                        GitListEntry::Status(entry),
-                        estimate,
-                    );
-                }
-            }
+            self.view_mode = GitPanelViewMode::Flat;
         }
 
         self.max_width_item_index = max_width_item_index;
