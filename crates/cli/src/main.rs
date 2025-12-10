@@ -765,7 +765,7 @@ mod linux {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
                     let mut args: Vec<OsString> =
-                        vec![path.as_os_str().to_owned(), OsString::from(ipc_url.clone())];
+                        vec![path.as_os_str().to_owned(), OsString::from(ipc_url)];
                     if let Some(dir) = user_data_dir {
                         args.push(OsString::from("--user-data-dir"));
                         args.push(OsString::from(dir));
