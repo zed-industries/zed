@@ -325,7 +325,27 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::ReplResult(_) => self.highlight_styles.inlay_hint,
+                    InlayId::ReplResult(_) => {
+                        let text = inlay.text().to_string();
+                        renderer = Some(ChunkRenderer {
+                            id: ChunkRendererId::Inlay(inlay.id),
+                            render: Arc::new(move |cx| {
+                                let colors = cx.theme().colors();
+                                div()
+                                    .ml_2()
+                                    .px_1()
+                                    .rounded_sm()
+                                    .bg(colors.surface_background)
+                                    .text_color(colors.text_muted)
+                                    .text_xs()
+                                    .child(text.trim().to_string())
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                            measured_width: None,
+                        });
+                        self.highlight_styles.inlay_hint
+                    }
                     InlayId::Color(_) => {
                         if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {
