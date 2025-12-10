@@ -7,7 +7,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use language_model::ApiKeyState;
+use language_model::{ApiKeyState, EnvVar};
 use project::{Project, ProjectPath};
 use std::{
     collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
@@ -300,7 +300,7 @@ pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
     // todo! see todo on sweep load
     _ = key.load_if_needed(
         MERCURY_CREDENTIALS_URL.into(),
-        &zed_env_vars::EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
+        &EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
         |ep_store| &mut ep_store.sweep_ai.api_token,
         cx,
     );

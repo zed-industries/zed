@@ -9,7 +9,7 @@ use google_ai::{
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModelCompletionError,
+    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
 };
@@ -31,7 +31,6 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::EnvVar;
 
 use language_model::{ApiKey, ApiKeyState};
 

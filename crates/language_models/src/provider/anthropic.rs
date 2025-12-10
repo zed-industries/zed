@@ -8,13 +8,13 @@ use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::B
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason, env_var,
 };
-use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -23,9 +23,6 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
-
-use language_model::ApiKeyState;
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 

@@ -7,7 +7,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
-use language_model::ApiKeyState;
+use language_model::{ApiKeyState, EnvVar};
 use lsp::DiagnosticSeverity;
 use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use zed_env_vars::EnvVar;
 
 use crate::{
     EditPredictionId, EditPredictionInputs, EditPredictionStore, prediction::EditPredictionResult,

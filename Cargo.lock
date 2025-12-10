@@ -5160,7 +5160,6 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
- "zed_env_vars",
  "zlog",
 ]
 
@@ -8888,7 +8887,6 @@ dependencies = [
  "util",
  "vercel",
  "x_ai",
- "zed_env_vars",
 ]
 
 [[package]]

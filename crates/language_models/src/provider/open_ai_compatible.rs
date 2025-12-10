@@ -4,10 +4,10 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -16,10 +16,8 @@ use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::EnvVar;
 
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
-use language_model::ApiKeyState;
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
