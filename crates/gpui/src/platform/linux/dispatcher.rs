@@ -1,7 +1,7 @@
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
     PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
-    ThreadTaskTimings,
+    ThreadTaskTimings, profiler,
 };
 use calloop::{
     EventLoop, PostAction,
@@ -54,7 +54,7 @@ impl LinuxDispatcher {
                                         start,
                                         end: None,
                                     };
-                                    Self::add_task_timing(timing);
+                                    profiler::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -66,7 +66,7 @@ impl LinuxDispatcher {
                                         start,
                                         end: None,
                                     };
-                                    Self::add_task_timing(timing);
+                                    profiler::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -75,7 +75,7 @@ impl LinuxDispatcher {
 
                             let end = Instant::now();
                             location.end = Some(end);
-                            Self::add_task_timing(location);
+                            profiler::add_task_timing(location);
 
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
@@ -116,7 +116,7 @@ impl LinuxDispatcher {
                                                         start,
                                                         end: None,
                                                     };
-                                                    Self::add_task_timing(timing);
+                                                    profiler::add_task_timing(timing);
 
                                                     runnable.run();
                                                     timing
@@ -127,7 +127,7 @@ impl LinuxDispatcher {
                                                         start,
                                                         end: None,
                                                     };
-                                                    Self::add_task_timing(timing);
+                                                    profiler::add_task_timing(timing);
 
                                                     runnable.run();
                                                     timing
@@ -136,7 +136,7 @@ impl LinuxDispatcher {
                                             let end = Instant::now();
 
                                             timing.end = Some(end);
-                                            Self::add_task_timing(timing);
+                                            profiler::add_task_timing(timing);
                                         }
                                         TimeoutAction::Drop
                                     },
@@ -159,22 +159,6 @@ impl LinuxDispatcher {
             _background_threads: background_threads,
             main_thread_id: thread::current().id(),
         }
-    }
-
-    pub(crate) fn add_task_timing(timing: TaskTiming) {
-        THREAD_TIMINGS.with(|timings| {
-            let mut timings = timings.lock();
-            let timings = &mut timings.timings;
-
-            if let Some(last_timing) = timings.iter_mut().rev().next() {
-                if last_timing.location == timing.location {
-                    last_timing.end = timing.end;
-                    return;
-                }
-            }
-
-            timings.push_back(timing);
-        });
     }
 }
 
