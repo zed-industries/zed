@@ -17,7 +17,6 @@ impl CopilotEditPredictionDelegate {
     pub fn new(copilot: Entity<Copilot>) -> Self {
         Self {
             completion: None,
-
             pending_refresh: None,
             copilot,
         }
@@ -170,6 +169,7 @@ fn trim_completion(
         Some((completion_range, Arc::from(completion_text)))
     }
 }
+
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
     a.zip(b)
         .take_while(|(a, b)| a == b)

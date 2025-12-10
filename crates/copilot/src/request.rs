@@ -139,22 +139,6 @@ impl lsp::request::Request for GetCompletionsCycling {
     const METHOD: &'static str = "getCompletionsCycling";
 }
 
-pub enum LogMessage {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogMessageParams {
-    pub level: u8,
-    pub message: String,
-    pub metadata_str: String,
-    pub extra: Vec<String>,
-}
-
-impl lsp::notification::Notification for LogMessage {
-    type Params = LogMessageParams;
-    const METHOD: &'static str = "LogMessage";
-}
-
 pub enum StatusNotification {}
 
 #[derive(Debug, Serialize, Deserialize)]
