@@ -2,6 +2,40 @@
 
 (identifier) @variable
 
+(call_expression
+  function: (member_expression
+    object: (identifier) @type.builtin
+    (#any-of?
+      @type.builtin
+      "Promise"
+      "Array"
+      "Object"
+      "Map"
+      "Set"
+      "WeakMap"
+      "WeakSet"
+      "Date"
+      "Error"
+      "TypeError"
+      "RangeError"
+      "SyntaxError"
+      "ReferenceError"
+      "EvalError"
+      "URIError"
+      "RegExp"
+      "Function"
+      "Number"
+      "String"
+      "Boolean"
+      "Symbol"
+      "BigInt"
+      "Proxy"
+      "ArrayBuffer"
+      "DataView"
+    )
+  )
+)
+
 ; Special identifiers
 
 (type_annotation) @type
@@ -97,6 +131,9 @@
 (private_property_identifier) @property
 
 ; Function and method calls
+
+(nested_type_identifier
+  module: (identifier) @type)
 
 (call_expression
   function: (identifier) @function)
