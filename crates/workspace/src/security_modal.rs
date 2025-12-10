@@ -46,15 +46,11 @@ impl Focusable for SecurityModal {
 impl EventEmitter<DismissEvent> for SecurityModal {}
 
 impl ModalView for SecurityModal {
-    fn on_before_dismiss(
-        &mut self,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> DismissDecision {
-        DismissDecision::Dismiss(self.dismissed)
+    fn fade_out_background(&self) -> bool {
+        true
     }
 
-    fn fade_out_background(&self) -> bool {
+    fn undismissable(&self) -> bool {
         true
     }
 }
@@ -78,15 +74,15 @@ impl Render for SecurityModal {
         let focus_handle = self.focus_handle(cx);
 
         AlertModal::new("security-modal")
+            .width(rems(40.))
             .key_context("SecurityModal")
             .track_focus(&focus_handle)
-             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
+            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
                 this.trust_and_dismiss(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
                 this.dismiss(cx);
             }))
-            .width(rems(40.))
             .header(
                 v_flex()
                     .p_3()
