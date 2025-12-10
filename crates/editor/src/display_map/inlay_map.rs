@@ -332,13 +332,19 @@ impl<'a> Iterator for InlayChunks<'a> {
                             render: Arc::new(move |cx| {
                                 let colors = cx.theme().colors();
                                 div()
-                                    .ml_4()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .bg(colors.surface_background)
-                                    .text_color(colors.text_muted)
-                                    .text_xs()
-                                    .child(text.trim().to_string())
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .child(div().w_4())
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .rounded_sm()
+                                            .bg(colors.surface_background)
+                                            .text_color(colors.text_muted)
+                                            .text_xs()
+                                            .child(text.trim().to_string()),
+                                    )
                                     .into_any_element()
                             }),
                             constrain_width: false,

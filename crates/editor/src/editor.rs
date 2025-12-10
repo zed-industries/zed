@@ -732,6 +732,15 @@ type BackgroundHighlight = (
 );
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
+#[derive(Clone)]
+pub struct GutterAnnotation {
+    pub position: Anchor, //row
+    pub label: SharedString,
+    pub color: fn(&App) -> Hsla,
+}
+
+type GutterAnnotations = Vec<GutterAnnotation>;
+
 #[derive(Default)]
 struct ScrollbarMarkerState {
     scrollbar_size: Size<Pixels>,
@@ -1084,6 +1093,7 @@ pub struct Editor {
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    gutter_annotations: HashMap<TypeId, GutterAnnotations>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -2250,6 +2260,7 @@ impl Editor {
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
             gutter_highlights: HashMap::default(),
+            gutter_annotations: HashMap::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -21488,6 +21499,51 @@ impl Editor {
         });
         self.gutter_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, gutter_highlights));
+    }
+
+    pub fn insert_gutter_annotation<T: 'static>(
+        &mut self,
+        position: Anchor,
+        label: impl Into<SharedString>,
+        color: fn(&App) -> Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        let annotation = GutterAnnotation {
+            position,
+            label: label.into(),
+            color,
+        };
+        let annotations = self
+            .gutter_annotations
+            .entry(TypeId::of::<T>())
+            .or_default();
+        annotations.push(annotation);
+        cx.notify();
+    }
+
+    pub fn remove_gutter_annotations<T: 'static>(
+        &mut self,
+        positions_to_remove: Vec<Anchor>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        if let Some(annotations) = self.gutter_annotations.get_mut(&TypeId::of::<T>()) {
+            annotations.retain(|annotation| {
+                !positions_to_remove.iter().any(|pos| {
+                    annotation.position.cmp(pos, &snapshot) == Ordering::Equal
+                })
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn clear_gutter_annotations<T: 'static>(&mut self, cx: &mut Context<Self>) {
+        self.gutter_annotations.remove(&TypeId::of::<T>());
+        cx.notify();
+    }
+
+    pub fn gutter_annotations(&self) -> impl Iterator<Item = &GutterAnnotation> {
+        self.gutter_annotations.values().flatten()
     }
 
     #[cfg(feature = "test-support")]
