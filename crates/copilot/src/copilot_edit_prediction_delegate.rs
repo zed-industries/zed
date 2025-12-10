@@ -1,6 +1,6 @@
 use crate::{Copilot, CopilotEditPrediction};
 use anyhow::Result;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate, interpolate_edits};
 use gpui::{App, Context, Entity, Task};
 use language::{Anchor, Buffer, EditPreview, OffsetRangeExt};
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -123,18 +123,22 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let (completion, edit_preview) = self.active_completion()?;
+
         if Some(buffer_id) != Some(completion.buffer.entity_id())
             || !completion.range.start.is_valid(buffer)
             || !completion.range.end.is_valid(buffer)
         {
             return None;
         }
+        let edits = vec![(
+            completion.range.clone(),
+            Arc::from(completion.text.as_ref()),
+        )];
+        let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)?;
+
         Some(EditPrediction::Local {
             id: None,
-            edits: vec![(
-                completion.range.clone(),
-                Arc::from(completion.text.as_ref()),
-            )],
+            edits,
             edit_preview: Some(edit_preview.clone()),
         })
     }

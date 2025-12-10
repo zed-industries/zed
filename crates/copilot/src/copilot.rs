@@ -324,12 +324,12 @@ struct GlobalCopilot(Entity<Copilot>);
 impl Global for GlobalCopilot {}
 
 /// Copilot's NextEditSuggestion response, with coordinates converted to Anchors.
-#[derive(Debug)]
 struct CopilotEditPrediction {
     buffer: Entity<Buffer>,
     range: Range<Anchor>,
     text: String,
     command: Option<lsp::Command>,
+    snapshot: BufferSnapshot,
 }
 
 impl Copilot {
@@ -918,6 +918,7 @@ impl Copilot {
                         range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
                         text: completion.text,
                         command: completion.command,
+                        snapshot: snapshot.clone(),
                     }
                 })
                 .collect();
