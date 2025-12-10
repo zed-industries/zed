@@ -157,8 +157,10 @@ media.workspace = true
 objc.workspace = true
 objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
+mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
+flume = "0.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
