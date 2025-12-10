@@ -22,11 +22,11 @@ use util::command::{new_smol_command, new_std_command};
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, PriorityQueueCalloopReceiver, ClipboardItem,
-    CursorStyle, DisplayId, ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant,
-    Task, WindowAppearance, WindowParams, px,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
+    RunnableVariant, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
