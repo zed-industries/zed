@@ -621,8 +621,9 @@ impl HeadlessProject {
                     .payload
                     .trusted_paths
                     .into_iter()
-                    .filter_map(|proto_path| PathTrust::from_proto(proto_path, None))
+                    .filter_map(PathTrust::from_proto)
                     .collect(),
+                None,
                 cx,
             );
         })?;
@@ -646,9 +647,9 @@ impl HeadlessProject {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             if envelope.payload.restrict_global {
-                restricted_paths.insert(PathTrust::Global(None));
+                restricted_paths.insert(PathTrust::Global);
             }
-            trusted_worktrees.restrict(restricted_paths, cx);
+            trusted_worktrees.restrict(restricted_paths, None, cx);
         })?;
         Ok(proto::Ack {})
     }

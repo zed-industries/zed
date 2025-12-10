@@ -3,7 +3,6 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use indoc::indoc;
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},

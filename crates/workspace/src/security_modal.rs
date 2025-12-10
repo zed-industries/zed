@@ -18,7 +18,7 @@ use ui::{
     AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, prelude::*,
 };
 
-use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
+use crate::{ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
@@ -274,7 +274,7 @@ impl SecurityModal {
                     .keys()
                     .map(|worktree_id| match worktree_id {
                         Some(worktree_id) => PathTrust::Worktree(*worktree_id),
-                        None => PathTrust::Global(self.remote_host.clone()),
+                        None => PathTrust::Global,
                     })
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
@@ -285,15 +285,11 @@ impl SecurityModal {
                             }
                             let parent_abs_path =
                                 restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
-                            Some(PathTrust::AbsPath(
-                                parent_abs_path,
-                                restricted_paths.host.clone(),
-                            ))
+                            Some(PathTrust::AbsPath(parent_abs_path))
                         },
                     ));
                 }
-
-                trusted_worktrees.trust(paths_to_trust, cx);
+                trusted_worktrees.trust(paths_to_trust, self.remote_host.clone(), cx);
             });
         }
 
@@ -338,7 +334,9 @@ impl SecurityModal {
                         Some(restricted_path)
                     })
                     .collect::<HashMap<_, _>>();
-                // Do not clutter the UI: agreeing on local events assumes the global are agreed to either, on the same host.
+                // Do not clutter the UI:
+                // * trusting regular local worktrees assumes the global is trusted either, on the same host.
+                // * trusting a global worktree trusts all single-file worktrees on the same host.
                 if new_restricted_worktrees.len() > 1 {
                     new_restricted_worktrees.remove(&None);
                 }

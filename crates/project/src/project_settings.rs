@@ -634,7 +634,7 @@ impl SettingsObserver {
                 cx.subscribe(
                     &trusted_worktrees,
                     move |settings_observer, _, e, cx| match e {
-                        TrustedWorktreesEvent::Trusted(trusted_paths) => {
+                        TrustedWorktreesEvent::Trusted(_, trusted_paths) => {
                             for trusted_path in trusted_paths {
                                 if let Some(pending_local_settings) = settings_observer
                                     .pending_local_settings
@@ -672,7 +672,7 @@ impl SettingsObserver {
                                 }
                             }
                         }
-                        TrustedWorktreesEvent::Restricted(_) => {}
+                        TrustedWorktreesEvent::Restricted(..) => {}
                     },
                 )
             });
