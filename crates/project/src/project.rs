@@ -1074,13 +1074,7 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
             if init_worktree_trust {
-                trusted_worktrees::init_global(
-                    worktree_store.clone(),
-                    None::<RemoteConnectionOptions>,
-                    None,
-                    None,
-                    cx,
-                );
+                trusted_worktrees::init_global(worktree_store.clone(), None, None, None, cx);
             }
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
@@ -1281,7 +1275,7 @@ impl Project {
             });
             trusted_worktrees::init_global(
                 worktree_store.clone(),
-                Some(connection_options),
+                Some(RemoteHostLocation::from(connection_options)),
                 None,
                 Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
                 cx,
@@ -4832,10 +4826,9 @@ impl Project {
                     .payload
                     .trusted_paths
                     .into_iter()
-                    .filter_map(|proto_path| {
-                        PathTrust::from_proto(proto_path, remote_host.as_ref())
-                    })
+                    .filter_map(|proto_path| PathTrust::from_proto(proto_path))
                     .collect(),
+                remote_host,
                 cx,
             );
         })?;
@@ -4859,13 +4852,13 @@ impl Project {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             if envelope.payload.restrict_global {
-                let remote_host = this
-                    .read(cx)
-                    .remote_connection_options(cx)
-                    .map(RemoteHostLocation::from);
-                restricted_paths.insert(PathTrust::Global(remote_host));
+                restricted_paths.insert(PathTrust::Global);
             }
-            trusted_worktrees.restrict(restricted_paths, cx);
+            let remote_host = this
+                .read(cx)
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            trusted_worktrees.restrict(restricted_paths, remote_host, cx);
         })?;
         Ok(proto::Ack {})
     }

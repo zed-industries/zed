@@ -40,7 +40,7 @@ db::static_connection!(PROJECT_DB, ProjectDb, []);
 impl ProjectDb {
     pub(crate) async fn save_trusted_worktrees(
         &self,
-        trusted_worktrees: HashMap<PathBuf, Option<RemoteHostLocation>>,
+        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
         trusted_globals: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         PROJECT_DB
@@ -50,7 +50,11 @@ impl ProjectDb {
 
         let trusted_worktrees = trusted_worktrees
             .into_iter()
-            .map(|(abs_path, host)| (Some(abs_path), host))
+            .flat_map(|(host, abs_paths)| {
+                abs_paths
+                    .into_iter()
+                    .map(move |abs_path| (Some(abs_path), host.clone()))
+            })
             .chain(trusted_globals.into_iter().map(|host| (None, host)))
             .collect::<Vec<_>>();
         let mut first_worktree;
@@ -112,7 +116,7 @@ VALUES {placeholders};"#
         worktree_store: Entity<WorktreeStore>,
         host: Option<RemoteHostLocation>,
         cx: &App,
-    ) -> anyhow::Result<HashSet<PathTrust>> {
+    ) -> anyhow::Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
         let trusted_worktrees = PROJECT_DB.trusted_worktrees()?;
         Ok(trusted_worktrees
             .into_iter()
@@ -132,17 +136,23 @@ VALUES {placeholders};"#
                 match abs_path {
                     Some(abs_path) => {
                         if db_host != host {
-                            PathTrust::AbsPath(abs_path, db_host)
+                            (db_host, PathTrust::AbsPath(abs_path))
                         } else {
                             find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
                                 .map(PathTrust::Worktree)
-                                .unwrap_or_else(|| PathTrust::AbsPath(abs_path, db_host))
+                                .map(|trusted_worktree| (host.clone(), trusted_worktree))
+                                .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
                         }
                     }
-                    None => PathTrust::Global(db_host),
+                    None => (db_host, PathTrust::Global),
                 }
             })
-            .collect())
+            .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
+                acc.entry(remote_host)
+                    .or_insert_with(HashSet::default)
+                    .insert(path_trust);
+                acc
+            }))
     }
 
     query! {

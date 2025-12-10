@@ -798,7 +798,7 @@ pub async fn open_remote_project(
                         // TODO kb remote modal also leaks actions, so this is not secure?
                         trusted_worktrees::init_global(
                             workspace.project().read(cx).worktree_store(),
-                            None::<RemoteConnectionOptions>,
+                            None,
                             None,
                             None,
                             cx,

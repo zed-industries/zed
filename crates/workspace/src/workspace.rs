@@ -77,7 +77,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{TrustedWorktrees, TrustedWorktreesEvent},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, TrustedWorktreesEvent},
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -1225,16 +1225,30 @@ impl Workspace {
             cx.subscribe_in(
                 &trusted_worktrees,
                 window,
-                move |workspace, _, e, window, cx| match e {
-                    TrustedWorktreesEvent::Trusted(_) => {
-                        if let Some(security_modal) = workspace.active_modal::<SecurityModal>(cx) {
-                            security_modal.update(cx, |security_modal, cx| {
-                                security_modal.refresh_restricted_paths(cx);
-                            });
+                move |workspace, _, e, window, cx| {
+                    let current_host = workspace
+                        .project()
+                        .read(cx)
+                        .remote_connection_options(cx)
+                        .map(RemoteHostLocation::from);
+
+                    match e {
+                        TrustedWorktreesEvent::Trusted(remote_host, _) => {
+                            if remote_host.as_ref() == current_host.as_ref() {
+                                if let Some(security_modal) =
+                                    workspace.active_modal::<SecurityModal>(cx)
+                                {
+                                    security_modal.update(cx, |security_modal, cx| {
+                                        security_modal.refresh_restricted_paths(cx);
+                                    });
+                                }
+                            }
                         }
-                    }
-                    TrustedWorktreesEvent::Restricted(_) => {
-                        workspace.show_worktree_trust_security_modal(false, window, cx)
+                        TrustedWorktreesEvent::Restricted(remote_host, _) => {
+                            if remote_host.as_ref() == current_host.as_ref() {
+                                workspace.show_worktree_trust_security_modal(false, window, cx)
+                            }
+                        }
                     }
                 },
             )
@@ -1515,7 +1529,11 @@ impl Workspace {
             if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                 let can_trust_global = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                     trusted_worktrees.can_trust_global(
-                        workspace.project().read(cx).remote_connection_options(cx),
+                        workspace
+                            .project()
+                            .read(cx)
+                            .remote_connection_options(cx)
+                            .map(RemoteHostLocation::from),
                         cx,
                     )
                 });

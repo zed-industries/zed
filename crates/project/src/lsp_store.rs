@@ -397,7 +397,7 @@ impl LocalLspStore {
                         hash_map::Entry::Vacant(v) => {
                             let (tx, rx) = smol::channel::bounded::<()>(1);
                             let subscription = cx.subscribe(&trusted_worktrees, move |_, e, _| {
-                                if let TrustedWorktreesEvent::Trusted(trusted_paths) = e {
+                                if let TrustedWorktreesEvent::Trusted(_, trusted_paths) = e {
                                     if trusted_paths.contains(&PathTrust::Worktree(worktree_id)) {
                                         tx.send_blocking(()).ok();
                                     }
