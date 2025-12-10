@@ -80,6 +80,7 @@ pub enum Priority {
 }
 
 impl Priority {
+    #[allow(dead_code)]
     pub(crate) const fn probability(&self) -> u32 {
         match self {
             // realtime priorities are not considered for probability scheduling
