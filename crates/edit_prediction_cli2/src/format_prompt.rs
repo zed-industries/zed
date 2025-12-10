@@ -215,9 +215,11 @@ impl PromptParser for TeacherPrompt {
         // 2. Context retriever just didn't include cursor line.
         //
         // In that case, fallback to using `cursor_position` as excerpt.
-        let cursor_excerpt = find_context_excerpt_under_cursor(example)
-            .map_or(&example.cursor_position, |e| &e.text)
-            .replace("<|user_cursor|>", "");
+        let cursor_file = &example
+            .buffer
+            .as_ref()
+            .expect("`buffer` should be filled in in the context collection step")
+            .content;
 
         // Extract updated (new) editable region from the model response
         let new_editable_region = extract_last_codeblock(response);
@@ -225,13 +227,14 @@ impl PromptParser for TeacherPrompt {
         // Reconstruct old editable region we sent to the model
         let old_editable_region = Self::format_editable_region(example);
         let old_editable_region = Self::extract_editable_region(&old_editable_region);
+        if !cursor_file.contains(&old_editable_region) {
+            panic!("Something's wrong: editable_region is not found in the cursor file")
+        }
 
         // Apply editable region to a larger context and compute diff.
         // This is needed to get a better context lines around the editable region
-        // TODO: Report an error when old_editable_region not found in cursor_excerpt
-        let edited_cursor_excerpt =
-            cursor_excerpt.replace(&old_editable_region, &new_editable_region);
-        let diff = language::unified_diff(&cursor_excerpt, &edited_cursor_excerpt);
+        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
+        let diff = language::unified_diff(&cursor_file, &edited_file);
 
         let diff = indoc::formatdoc! {"
             --- a/{path}
