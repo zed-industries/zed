@@ -426,14 +426,21 @@ impl CommitView {
             None
         };
 
+        let editor = self.editor.read(cx);
+        let gutter_width = editor.last_gutter_dimensions().full_width();
+        // hide elements until editor renders once
+        let loading = gutter_width < px(1.);
+
         h_flex()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
+            .w_full()
             .child(
                 h_flex()
-                    .w(self.editor.read(cx).last_gutter_dimensions().full_width())
+                    .w(gutter_width)
                     .justify_center()
-                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx)),
+                    .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx))
+                    .when(loading, |this| this.opacity(0.)),
             )
             .child(
                 h_flex()
@@ -481,7 +488,8 @@ impl CommitView {
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(move |_, _, cx| cx.open_url(&url))
-                    })),
+                    }))
+                    .when(loading, |this| this.opacity(0.)),
             )
     }
 
@@ -1020,7 +1028,9 @@ impl Render for CommitView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
-            .child(div().flex_grow().child(self.editor.clone()))
+            .when(!self.editor.read(cx).is_empty(cx), |this| {
+                this.child(div().flex_grow().child(self.editor.clone()))
+            })
     }
 }
 
