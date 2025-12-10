@@ -3273,7 +3273,7 @@ impl Window {
     /// Refer to the [crate::FragmentShader] documentation for information on what the main body
     /// and extra items can contain. If this function fails to compile, it returns a
     /// String containing the compilation error message and a boolean indicating whether
-    /// this was the first attempt to compile this shader.
+    /// this was the first attempt to paint this shader.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_shader<T: ShaderUniform>(

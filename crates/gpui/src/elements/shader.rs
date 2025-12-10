@@ -8,7 +8,7 @@ use crate::{
     StyleRefinement, Window, fill, point, rgb,
 };
 
-/// A custom shader which can be rendered using `shader_element` or `shader_element_with_data`.
+/// A custom shader which can be drawn using [shader_element] or [shader_element_with_data].
 #[derive(Clone)]
 pub struct FragmentShader<T: ShaderUniform> {
     main_body: SharedString,
@@ -38,8 +38,8 @@ impl<T: ShaderUniform> FragmentShader<T> {
     ///   *device pixels*. You will need to divide by `scale_factor` if you
     ///   require the same units as `position`.
     ///
-    /// Additionally, any functions or types defined using [with_item] will be
-    /// accessible within the main body.
+    /// Additionally, any functions or types defined using [FragmentShader::with_item]
+    /// will be accessible within the main body.
     pub fn new(main_body: &'static str) -> Self {
         Self {
             main_body: SharedString::new_static(main_body),
@@ -56,7 +56,7 @@ impl<T: ShaderUniform> FragmentShader<T> {
 }
 
 /// An element which can render an instance of a fragment shader.
-/// Use `shader_element` or `shader_element_with_data` to construct.
+/// Use [shader_element] or [shader_element_with_data] to construct.
 pub struct ShaderElement<T: ShaderUniform> {
     shader: FragmentShader<T>,
     data: T,
@@ -95,7 +95,8 @@ impl<T: ShaderUniform> InteractiveElement for ShaderElement<T> {
     }
 }
 
-/// Constructs a `ShaderElement` which renders a shader which *doesn't* take instance data.
+/// Constructs a [ShaderElement] which renders a shader which *doesn't* take
+/// instance data.
 pub fn shader_element(shader: FragmentShader<()>) -> ShaderElement<()> {
     ShaderElement {
         shader,
@@ -104,7 +105,7 @@ pub fn shader_element(shader: FragmentShader<()>) -> ShaderElement<()> {
     }
 }
 
-/// Constructs a `ShaderElement` which renders the shader while exposing `data`
+/// Constructs a [ShaderElement] which renders the shader while exposing `data`
 /// within the shader's main body.
 pub fn shader_element_with_data<T: ShaderUniform>(
     shader: FragmentShader<T>,

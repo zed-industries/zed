@@ -60,8 +60,8 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
 /// To fix any alignment issues, move types with larger alignments (such as `[f32; 4]`) to
 /// the start of the struct and insert padding fields if issues are still encountered.
 ///
-/// Note: if a field within your struct isn't a primitive, then you may need
-/// to include its definition within your fragment shader using
+/// Note: if a field within your struct is also a struct, then you may need to
+/// include the field type's definition within your fragment shader using
 /// `.with_item(MyOtherStruct::DEFINITION.unwrap())`, since it isn't included automatically.
 #[proc_macro_derive(ShaderUniform)]
 pub fn derive_shader_uniform(input: TokenStream) -> TokenStream {
