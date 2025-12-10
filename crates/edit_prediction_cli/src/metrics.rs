@@ -56,24 +56,6 @@ impl ClassificationMetrics {
         }
     }
 
-    pub fn to_markdown(&self) -> String {
-        format!(
-            "
-Precision       : {:.4}
-Recall          : {:.4}
-F1 Score        : {:.4}
-True Positives  : {}
-False Positives : {}
-False Negatives : {}",
-            self.precision(),
-            self.recall(),
-            self.f1_score(),
-            self.true_positives,
-            self.false_positives,
-            self.false_negatives
-        )
-    }
-
     pub fn aggregate<'a>(
         scores: impl Iterator<Item = &'a ClassificationMetrics>,
     ) -> ClassificationMetrics {
