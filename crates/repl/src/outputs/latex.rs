@@ -280,8 +280,8 @@ mod tests {
     #[test]
     fn test_simple_fraction() {
         let result = render_latex_to_svg(r"\frac{1}{2}", 14.0, test_color());
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("<svg"));
+        let svg = result.expect("render_latex_to_svg failed");
+        assert!(svg.contains("<svg"));
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_square_root() {
         let result = render_latex_to_svg(r"\sqrt{\pi}", 14.0, test_color());
-        assert!(result.is_ok());
+        result.expect("render_latex_to_svg failed");
     }
 
     #[test]
