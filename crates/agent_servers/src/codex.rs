@@ -23,8 +23,8 @@ pub(crate) mod tests {
 }
 
 impl AgentServer for Codex {
-    fn telemetry_id(&self) -> &'static str {
-        "codex"
+    fn telemetry_id(&self) -> SharedString {
+        "codex".into()
     }
 
     fn name(&self) -> SharedString {

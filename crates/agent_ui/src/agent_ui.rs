@@ -161,7 +161,7 @@ pub enum ExternalAgent {
 
 impl ExternalAgent {
     pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
-        match server.telemetry_id() {
+        match server.telemetry_id().as_str() {
             "gemini-cli" => Some(Self::Gemini),
             "claude-code" => Some(Self::ClaudeCode),
             "codex" => Some(Self::Codex),

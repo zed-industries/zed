@@ -22,8 +22,8 @@ pub struct AgentServerLoginCommand {
 }
 
 impl AgentServer for ClaudeCode {
-    fn telemetry_id(&self) -> &'static str {
-        "claude-code"
+    fn telemetry_id(&self) -> SharedString {
+        "claude-code".into()
     }
 
     fn name(&self) -> SharedString {

@@ -6475,8 +6475,8 @@ pub(crate) mod tests {
     where
         C: 'static + AgentConnection + Send + Clone,
     {
-        fn telemetry_id(&self) -> &'static str {
-            "test"
+        fn telemetry_id(&self) -> SharedString {
+            "test".into()
         }
 
         fn logo(&self) -> ui::IconName {
@@ -6505,8 +6505,8 @@ pub(crate) mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "saboteur"
+        fn telemetry_id(&self) -> SharedString {
+            "saboteur".into()
         }
 
         fn new_thread(
@@ -6569,8 +6569,8 @@ pub(crate) mod tests {
     struct RefusalAgentConnection;
 
     impl AgentConnection for RefusalAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "refusal"
+        fn telemetry_id(&self) -> SharedString {
+            "refusal".into()
         }
 
         fn new_thread(

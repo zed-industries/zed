@@ -21,8 +21,8 @@ impl CustomAgentServer {
 }
 
 impl crate::AgentServer for CustomAgentServer {
-    fn telemetry_id(&self) -> &'static str {
-        "custom"
+    fn telemetry_id(&self) -> SharedString {
+        "custom".into()
     }
 
     fn name(&self) -> SharedString {

@@ -29,7 +29,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
-    telemetry_id: &'static str,
+    telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
@@ -54,7 +54,7 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
-    telemetry_id: &'static str,
+    telemetry_id: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -81,7 +81,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
-        telemetry_id: &'static str,
+        telemetry_id: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -233,8 +233,8 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
-    fn telemetry_id(&self) -> &'static str {
-        self.telemetry_id
+    fn telemetry_id(&self) -> SharedString {
+        self.telemetry_id.clone()
     }
 
     fn new_thread(

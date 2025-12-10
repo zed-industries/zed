@@ -3556,8 +3556,8 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "fake"
+        fn telemetry_id(&self) -> SharedString {
+            "fake".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {

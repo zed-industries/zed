@@ -12,8 +12,8 @@ use project::agent_server_store::GEMINI_NAME;
 pub struct Gemini;
 
 impl AgentServer for Gemini {
-    fn telemetry_id(&self) -> &'static str {
-        "gemini-cli"
+    fn telemetry_id(&self) -> SharedString {
+        "gemini-cli".into()
     }
 
     fn name(&self) -> SharedString {
