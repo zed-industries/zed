@@ -1,7 +1,6 @@
-use std::sync::Arc;
-
 use anyhow::{Context as _, Result};
 use gpui::{App, ClipboardItem, Pixels, RenderImage, Window, img, px};
+use std::sync::Arc;
 use ui::{IntoElement, Styled, div, prelude::*};
 
 use crate::outputs::OutputContent;

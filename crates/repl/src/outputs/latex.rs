@@ -1,8 +1,7 @@
-use std::sync::{Arc, OnceLock};
-
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, ClipboardItem, Hsla, Pixels, RenderImage, Window, img, px};
 use settings::Settings;
+use std::sync::{Arc, OnceLock};
 use theme::ThemeSettings;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime};
