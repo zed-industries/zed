@@ -1801,6 +1801,9 @@
         "allowed": false
       }
     },
+    "CSharp": {
+      "language_servers": ["omnisharp", "!roslyn", "..."]
+    },
     "CSS": {
       "prettier": {
         "allowed": true
