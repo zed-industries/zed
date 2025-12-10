@@ -20,7 +20,7 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
-use crate::{MoveDown, MoveUp};
+use crate::{MoveDown, MoveDownByItem, MoveUp, MoveUpByItem};
 use crate::{
     MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
@@ -470,6 +470,32 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn scroll_up_by_item(
+        &mut self,
+        _: &MoveUpByItem,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            self.list_state.scroll_by(-bounds.size.height);
+        }
+        cx.notify();
+    }
+
+    fn scroll_down_by_item(
+        &mut self,
+        _: &MoveDownByItem,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            self.list_state.scroll_by(bounds.size.height);
+        }
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -524,6 +550,8 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

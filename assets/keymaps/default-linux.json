@@ -1190,7 +1190,11 @@
     "context": "MarkdownPreview",
     "bindings": {
       "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown"
+      "pagedown": "markdown::MovePageDown",
+      "up": "markdown::MoveUp",
+      "down": "markdown::MoveDown",
+      "alt-up": "markdown::MoveUpByItem",
+      "alt-down": "markdown::MoveDownByItem"
     }
   },
   {

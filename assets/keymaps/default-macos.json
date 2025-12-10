@@ -1296,8 +1296,10 @@
     "bindings": {
       "pageup": "markdown::MovePageUp",
       "pagedown": "markdown::MovePageDown",
+      "up": "markdown::MoveUp",
       "down": "markdown::MoveDown",
-      "up": "markdown::MoveUp"
+      "alt-up": "markdown::MoveUpByItem",
+      "alt-down": "markdown::MoveDownByItem"
     }
   },
   {
