@@ -566,76 +566,17 @@ impl zed::Extension for OpenRouterProvider {
         llm_get_credential("open_router").is_some()
     }
 
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        if llm_get_credential("open_router").is_some() {
+            Ok(())
+        } else {
+            Err("No API key configured".to_string())
+        }
+    }
+
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            r#"# OpenRouter Setup
-
-Welcome to **OpenRouter**! Access multiple AI models through a single API.
-
-## Configuration
-
-Enter your OpenRouter API key below. Get your API key at [openrouter.ai/keys](https://openrouter.ai/keys).
-
-## Available Models
-
-### Anthropic
-| Model | Context | Output |
-|-------|---------|--------|
-| Claude Sonnet 4 | 200K | 8K |
-| Claude Opus 4 | 200K | 8K |
-| Claude Haiku 4 | 200K | 8K |
-| Claude 3.5 Sonnet | 200K | 8K |
-
-### OpenAI
-| Model | Context | Output |
-|-------|---------|--------|
-| GPT-4o | 128K | 16K |
-| GPT-4o Mini | 128K | 16K |
-| o1 | 200K | 100K |
-| o3-mini | 200K | 100K |
-
-### Google
-| Model | Context | Output |
-|-------|---------|--------|
-| Gemini 2.0 Flash | 1M | 8K |
-| Gemini 2.5 Pro | 1M | 8K |
-
-### Meta
-| Model | Context | Output |
-|-------|---------|--------|
-| Llama 3.3 70B | 128K | 4K |
-| Llama 4 Maverick | 128K | 4K |
-
-### Mistral
-| Model | Context | Output |
-|-------|---------|--------|
-| Mistral Large | 128K | 4K |
-| Codestral | 32K | 4K |
-
-### DeepSeek
-| Model | Context | Output |
-|-------|---------|--------|
-| DeepSeek V3 | 64K | 8K |
-| DeepSeek R1 | 64K | 8K |
-
-### Qwen
-| Model | Context | Output |
-|-------|---------|--------|
-| Qwen 3 235B | 40K | 8K |
-
-## Features
-
-- ✅ Full streaming support
-- ✅ Tool/function calling (model dependent)
-- ✅ Vision (model dependent)
-- ✅ Access to 200+ models
-- ✅ Unified billing
-
-## Pricing
-
-Pay-per-use based on model. See [openrouter.ai/models](https://openrouter.ai/models) for pricing.
-"#
-            .to_string(),
+            "To use OpenRouter, you need an API key. You can create one [here](https://openrouter.ai/keys).".to_string(),
         )
     }
 

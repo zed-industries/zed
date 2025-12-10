@@ -521,44 +521,17 @@ impl zed::Extension for AnthropicProvider {
         llm_get_credential("anthropic").is_some()
     }
 
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        if llm_get_credential("anthropic").is_some() {
+            Ok(())
+        } else {
+            Err("No API key configured".to_string())
+        }
+    }
+
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            r#"# Anthropic Setup
-
-Welcome to **Anthropic**! This extension provides access to Claude models.
-
-## Configuration
-
-Enter your Anthropic API key below. You can get your API key at [console.anthropic.com](https://console.anthropic.com/).
-
-## Available Models
-
-| Display Name | Real Model | Context | Output |
-|--------------|------------|---------|--------|
-| Claude Opus 4.5 | claude-opus-4-5 | 200K | 8K |
-| Claude Opus 4.5 Thinking | claude-opus-4-5 | 200K | 8K |
-| Claude Sonnet 4.5 | claude-sonnet-4-5 | 200K | 8K |
-| Claude Sonnet 4.5 Thinking | claude-sonnet-4-5 | 200K | 8K |
-| Claude Sonnet 4 | claude-sonnet-4 | 200K | 8K |
-| Claude Sonnet 4 Thinking | claude-sonnet-4 | 200K | 8K |
-| Claude Haiku 4.5 | claude-haiku-4-5 | 200K | 64K |
-| Claude Haiku 4.5 Thinking | claude-haiku-4-5 | 200K | 64K |
-| Claude 3.5 Sonnet | claude-3-5-sonnet | 200K | 8K |
-| Claude 3.5 Haiku | claude-3-5-haiku | 200K | 8K |
-
-## Features
-
-- ✅ Full streaming support
-- ✅ Tool/function calling
-- ✅ Vision (image inputs)
-- ✅ Extended thinking support
-- ✅ All Claude models
-
-## Pricing
-
-Uses your Anthropic API credits. See [Anthropic pricing](https://www.anthropic.com/pricing) for details.
-"#
-            .to_string(),
+            "To use Anthropic, you need an API key. You can create one [here](https://console.anthropic.com/settings/keys).".to_string(),
         )
     }
 

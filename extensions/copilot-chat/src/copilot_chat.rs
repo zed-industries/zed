@@ -447,41 +447,7 @@ impl zed::Extension for CopilotChatProvider {
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            r#"# Copilot Chat Setup
-
-Welcome to **Copilot Chat**! This extension provides access to GitHub Copilot's chat models.
-
-## Authentication
-
-Click **Sign in with GitHub** to authenticate with your GitHub account. You'll be redirected to GitHub to authorize access. This requires an active GitHub Copilot subscription.
-
-Alternatively, you can set the `GH_COPILOT_TOKEN` environment variable with your token.
-
-## Available Models
-
-| Model | Context | Output |
-|-------|---------|--------|
-| GPT-4o | 128K | 16K |
-| GPT-4o Mini | 128K | 16K |
-| GPT-4.1 | 1M | 32K |
-| o1 | 200K | 100K |
-| o3-mini | 200K | 100K |
-| Claude 3.5 Sonnet | 200K | 8K |
-| Claude 3.7 Sonnet | 200K | 8K |
-| Gemini 2.0 Flash | 1M | 8K |
-
-## Features
-
-- ✅ Full streaming support
-- ✅ Tool/function calling
-- ✅ Vision (image inputs)
-- ✅ Multiple model providers via Copilot
-
-## Note
-
-This extension requires an active GitHub Copilot subscription.
-"#
-            .to_string(),
+            "To use Copilot Chat, sign in with your GitHub account. This requires an active [GitHub Copilot subscription](https://github.com/features/copilot).".to_string(),
         )
     }
 

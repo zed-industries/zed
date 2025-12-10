@@ -476,42 +476,17 @@ impl zed::Extension for OpenAiProvider {
         llm_get_credential("openai").is_some()
     }
 
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        if llm_get_credential("openai").is_some() {
+            Ok(())
+        } else {
+            Err("No API key configured".to_string())
+        }
+    }
+
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            r#"# OpenAI Setup
-
-Welcome to **OpenAI**! This extension provides access to OpenAI GPT models.
-
-## Configuration
-
-Enter your OpenAI API key below. You can find your API key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
-
-## Available Models
-
-| Display Name | Real Model | Context | Output |
-|--------------|------------|---------|--------|
-| GPT-4o | gpt-4o | 128K | 16K |
-| GPT-4o-mini | gpt-4o-mini | 128K | 16K |
-| GPT-4.1 | gpt-4.1 | 1M | 32K |
-| GPT-4.1-mini | gpt-4.1-mini | 1M | 32K |
-| GPT-5 | gpt-5 | 272K | 32K |
-| GPT-5-mini | gpt-5-mini | 272K | 32K |
-| o1 | o1 | 200K | 100K |
-| o3 | o3 | 200K | 100K |
-| o3-mini | o3-mini | 200K | 100K |
-
-## Features
-
-- ✅ Full streaming support
-- ✅ Tool/function calling
-- ✅ Vision (image inputs)
-- ✅ All OpenAI models
-
-## Pricing
-
-Uses your OpenAI API credits. See [OpenAI pricing](https://openai.com/pricing) for details.
-"#
-            .to_string(),
+            "To use OpenAI, you need an API key. You can create one [here](https://platform.openai.com/api-keys).".to_string(),
         )
     }
 

@@ -598,38 +598,17 @@ impl zed::Extension for GoogleAiProvider {
         llm_get_credential("google-ai").is_some()
     }
 
+    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
+        if llm_get_credential("google-ai").is_some() {
+            Ok(())
+        } else {
+            Err("No API key configured".to_string())
+        }
+    }
+
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            r#"# Google AI Setup
-
-Welcome to **Google AI**! This extension provides access to Google Gemini models.
-
-## Configuration
-
-Enter your Google AI API key below. You can get your API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-
-## Available Models
-
-| Display Name | Real Model | Context | Output |
-|--------------|------------|---------|--------|
-| Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 1M | 65K |
-| Gemini 2.5 Flash | gemini-2.5-flash | 1M | 65K |
-| Gemini 2.5 Pro | gemini-2.5-pro | 1M | 65K |
-| Gemini 3 Pro | gemini-3-pro-preview | 1M | 65K |
-
-## Features
-
-- ✅ Full streaming support
-- ✅ Tool/function calling with thought signatures
-- ✅ Vision (image inputs)
-- ✅ Extended thinking support
-- ✅ All Gemini models
-
-## Pricing
-
-Uses your Google AI API credits. See [Google AI pricing](https://ai.google.dev/pricing) for details.
-"#
-            .to_string(),
+            "To use Google AI, you need an API key. You can create one [here](https://aistudio.google.com/apikey).".to_string(),
         )
     }
 
