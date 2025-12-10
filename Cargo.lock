@@ -5226,6 +5226,7 @@ dependencies = [
  "cloud_zeta2_prompt",
  "collections",
  "debug_adapter_extension",
+ "dirs 4.0.0",
  "edit_prediction",
  "edit_prediction_context",
  "extension",

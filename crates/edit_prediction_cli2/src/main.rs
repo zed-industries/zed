@@ -52,6 +52,8 @@ enum Command {
     Score(ScoreArgs),
     /// Print aggregated scores
     Eval(ScoreArgs),
+    /// Remove git repositories and worktrees
+    Clean,
 }
 
 #[derive(Debug, Args)]
@@ -94,6 +96,15 @@ fn main() {
     }
 
     let command = args.command.unwrap();
+
+    match &command {
+        Command::Clean => {
+            std::fs::remove_dir_all(&*crate::paths::DATA_DIR).unwrap();
+            return;
+        }
+        _ => {}
+    }
+
     let mut examples = read_examples(&args.inputs);
 
     let http_client = Arc::new(ReqwestClient::new());
@@ -130,6 +141,9 @@ fn main() {
                             }
                             Command::Score(args) | Command::Eval(args) => {
                                 run_scoring(example, &args).await;
+                            }
+                            Command::Clean => {
+                                unreachable!()
                             }
                         }
                     });
