@@ -1,6 +1,7 @@
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    ThreadTaskTimings,
 };
 use calloop::{
     EventLoop, PostAction,
@@ -226,6 +227,31 @@ impl PlatformDispatcher for LinuxDispatcher {
             .send(TimerAfter { duration, runnable })
             .ok();
     }
+
+    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
+        std::thread::spawn(move || {
+            // SAFETY: always safe to call
+            let thread_id = unsafe { libc::pthread_self() };
+
+            let policy = match priority {
+                RealtimePriority::Audio => libc::SCHED_FIFO,
+                RealtimePriority::Other => libc::SCHED_OTHER,
+            };
+            let sched_priority = match priority {
+                RealtimePriority::Audio => 80,
+                RealtimePriority::Other => 80,
+            };
+
+            let sched_param = libc::sched_param { sched_priority };
+            // SAFETY: sched_param is a valid initialized structure
+            let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
+            if result != 0 {
+                log::warn!("failed to set realtime thread priority to {:?}", priority);
+            }
+
+            f();
+        });
+    }
 }
 
 pub struct PriorityQueueCalloopSender<T> {
@@ -324,10 +350,10 @@ impl<T> calloop::EventSource for PriorityQueueCalloopReceiver<T> {
                         Ok(r) => {
                             callback(Event::Msg(r), &mut ());
                             is_empty = false;
-                        },
+                        }
                         Err(_) => {
                             disconnected = true;
-                        },
+                        }
                     }
                 }
 

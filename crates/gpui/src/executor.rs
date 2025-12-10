@@ -47,10 +47,25 @@ pub struct ForegroundExecutor {
     not_send: PhantomData<Rc<()>>,
 }
 
+/// Realtime task priority
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RealtimePriority {
+    /// Audio task
+    Audio,
+    /// Other realtime task
+    #[default]
+    Other,
+}
+
 /// Task priority
-#[derive(Clone, Copy, Debug, Default, Ord, PartialOrd, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Priority {
+    /// Realtime priority
+    ///
+    /// Spawning a task with this priority will spin it off on a separate thread dedicated just to that task.
+    Realtime(RealtimePriority),
     /// High priority
     ///
     /// Only use for tasks that are critical to the user experience / responsiveness of the editor.
@@ -68,6 +83,8 @@ pub enum Priority {
 impl Priority {
     pub(crate) const fn probability(&self) -> u32 {
         match self {
+            // realtime priorities are not considered for probability scheduling
+            Priority::Realtime(_) => 0,
             Priority::High => 60,
             Priority::Medium => 30,
             Priority::Low => 10,
@@ -269,15 +286,39 @@ impl BackgroundExecutor {
         priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        let location = core::panic::Location::caller();
-        let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
-            .spawn(
-                move |_| future,
-                move |runnable| {
-                    dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
-                },
+        let (runnable, task) = if let Priority::Realtime(realtime) = priority {
+            let location = core::panic::Location::caller();
+            let (mut tx, rx) = flume::bounded::<Runnable<RunnableMeta>>(1);
+
+            dispatcher.spawn_realtime(
+                realtime,
+                Box::new(move || {
+                    while let Ok(runnable) = rx.recv() {
+                        runnable.run();
+                    }
+                }),
             );
+
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn(
+                    move |_| future,
+                    move |runnable| {
+                        tx.send(runnable);
+                    },
+                )
+        } else {
+            let location = core::panic::Location::caller();
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn(
+                    move |_| future,
+                    move |runnable| {
+                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
+                    },
+                )
+        };
+
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
