@@ -332,7 +332,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                             render: Arc::new(move |cx| {
                                 let colors = cx.theme().colors();
                                 div()
-                                    .ml_2()
+                                    .ml_4()
                                     .px_1()
                                     .rounded_sm()
                                     .bg(colors.surface_background)
