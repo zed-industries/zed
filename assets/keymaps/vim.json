@@ -902,7 +902,11 @@
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
-      "g /": "pane::DeploySearch"
+      "g /": "pane::DeploySearch",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0]
     }
   },
   {
