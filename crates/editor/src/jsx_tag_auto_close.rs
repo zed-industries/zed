@@ -614,6 +614,8 @@ pub(crate) fn handle_from(
 
 #[cfg(test)]
 mod jsx_tag_autoclose_tests {
+    use std::sync::Arc;
+
     use crate::{
         editor_tests::init_test,
         test::{build_editor, editor_test_context::EditorTestContext},
@@ -621,11 +623,12 @@ mod jsx_tag_autoclose_tests {
 
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
+    use language::Language;
     use languages::language;
     use multi_buffer::{ExcerptRange, MultiBufferOffset};
     use text::Selection;
 
-    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
+    async fn test_setup(language: Arc<Language>, cx: &mut TestAppContext) -> EditorTestContext {
         init_test(cx, |settings| {
             settings
                 .defaults
@@ -635,136 +638,217 @@ mod jsx_tag_autoclose_tests {
         });
 
         let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| {
-            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
-
-            buffer.set_language(Some(language), cx)
-        });
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
         cx
     }
 
-    macro_rules! check {
-        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
-            #[gpui::test]
-            async fn $name(cx: &mut TestAppContext) {
-                let mut cx = test_setup(cx).await;
-                cx.set_state($initial);
-                cx.run_until_parked();
+    macro_rules! assert_autoclose {
+        ($cx:ident, $initial:literal + $input:literal => $expected:expr) => {
+            $cx.set_state($initial);
+            $cx.run_until_parked();
 
-                cx.update_editor(|editor, window, cx| {
-                    editor.handle_input($input, window, cx);
-                });
-                cx.run_until_parked();
-                cx.assert_editor_state($expected);
-            }
+            $cx.update_editor(|editor, window, cx| {
+                editor.handle_input($input, window, cx);
+            });
+            $cx.run_until_parked();
+            $cx.assert_editor_state($expected);
         };
     }
 
-    check!(
-        test_basic,
-        "<divˇ" + ">" => "<div>ˇ</div>"
-    );
+    #[gpui::test]
+    async fn test_basic(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<divˇ" + ">" => "<div>ˇ</div>"
+        );
+    }
 
-    check!(
-        test_basic_nested,
-        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
-    );
+    #[gpui::test]
+    async fn test_basic_nested(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
+        );
+    }
 
-    check!(
-        test_basic_ignore_already_closed,
-        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
-    );
+    #[gpui::test]
+    async fn test_basic_ignore_already_closed(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
+        );
+    }
 
-    check!(
-        test_doesnt_autoclose_closing_tag,
-        "</divˇ" + ">" => "</div>ˇ"
-    );
+    #[gpui::test]
+    async fn test_doesnt_autoclose_closing_tag(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "</divˇ" + ">" => "</div>ˇ"
+        );
+    }
 
-    check!(
-        test_jsx_attr,
-        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
-    );
+    #[gpui::test]
+    async fn test_jsx_attr(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
+        );
+    }
 
-    check!(
-        test_ignores_closing_tags_in_expr_block,
-        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
-    );
+    #[gpui::test]
+    async fn test_ignores_closing_tags_in_expr_block(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
+        );
+    }
 
-    check!(
-        test_doesnt_autoclose_on_gt_in_expr,
-        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
-    );
+    #[gpui::test]
+    async fn test_doesnt_autoclose_on_gt_in_expr(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
+        );
+    }
 
-    check!(
-        test_ignores_closing_tags_with_different_tag_names,
-        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
-    );
+    #[gpui::test]
+    async fn test_ignores_closing_tags_with_different_tag_names(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
+        );
+    }
 
-    check!(
-        test_autocloses_in_jsx_expression,
-        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
+    #[gpui::test]
+    async fn test_autocloses_in_jsx_expression(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+        );
+    }
 
-    check!(
-        test_doesnt_autoclose_already_closed_in_jsx_expression,
-        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
+    #[gpui::test]
+    async fn test_doesnt_autoclose_already_closed_in_jsx_expression(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+        );
+    }
 
-    check!(
-        test_autocloses_fragment,
-        "<ˇ" + ">" => "<>ˇ</>"
-    );
+    #[gpui::test]
+    async fn test_autocloses_fragment(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<ˇ" + ">" => "<>ˇ</>"
+        );
+    }
 
-    check!(
-        test_does_not_include_type_argument_in_autoclose_tag_name,
-        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
-    );
+    #[gpui::test]
+    async fn test_does_not_include_type_argument_in_autoclose_tag_name(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
+        );
+    }
 
-    check!(
-        test_does_not_autoclose_doctype,
-        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
-    );
+    #[gpui::test]
+    async fn test_does_not_autoclose_doctype(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
+        );
+    }
 
-    check!(
-        test_does_not_autoclose_comment,
-        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
-    );
+    #[gpui::test]
+    async fn test_does_not_autoclose_comment(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
+        );
+    }
 
-    check!(
-        test_autocloses_dot_separated_component,
-        "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
-    );
+    #[gpui::test]
+    async fn test_autocloses_dot_separated_component(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
+        );
+    }
 
-    check!(
-        test_multi_cursor_autoclose_same_tag,
-        r#"
+    #[gpui::test]
+    async fn test_multi_cursor_autoclose_same_tag(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            r#"
         <divˇ
         <divˇ
         "#
-        + ">" =>
-        r#"
+            + ">" =>
+            r#"
         <div>ˇ</div>
         <div>ˇ</div>
         "#
-    );
+        );
+    }
 
-    check!(
-        test_multi_cursor_autoclose_different_tags,
-        r#"
+    #[gpui::test]
+    async fn test_multi_cursor_autoclose_different_tags(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            r#"
         <divˇ
         <spanˇ
         "#
-        + ">" =>
-        r#"
+            + ">" =>
+            r#"
         <div>ˇ</div>
         <span>ˇ</span>
         "#
-    );
+        );
+    }
 
-    check!(
-        test_multi_cursor_autoclose_some_dont_autoclose_others,
-        r#"
+    #[gpui::test]
+    async fn test_multi_cursor_autoclose_some_dont_autoclose_others(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            r#"
         <divˇ
         <div /ˇ
         <spanˇ</span>
@@ -773,8 +857,8 @@ mod jsx_tag_autoclose_tests {
         <Component<T>ˇ
         ˇ
         "#
-        + ">" =>
-        r#"
+            + ">" =>
+            r#"
         <div>ˇ</div>
         <div />ˇ
         <span>ˇ</span>
@@ -783,12 +867,18 @@ mod jsx_tag_autoclose_tests {
         <Component<T>>ˇ</Component>
         >ˇ
         "#
-    );
+        );
+    }
 
-    check!(
-        test_doesnt_mess_up_trailing_text,
-        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
-    );
+    #[gpui::test]
+    async fn test_doesnt_mess_up_trailing_text(cx: &mut TestAppContext) {
+        let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+        let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
+        );
+    }
 
     #[gpui::test]
     async fn test_multibuffer(cx: &mut TestAppContext) {

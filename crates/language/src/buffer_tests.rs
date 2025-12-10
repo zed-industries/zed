@@ -3725,6 +3725,20 @@ fn ruby_lang() -> Language {
     .unwrap()
 }
 
+fn vue_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Vue".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["vue".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_vue::language()),
+    )
+}
+
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
