@@ -202,7 +202,6 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/edit_prediction_cli",
-    "crates/edit_prediction_cli2",
     "crates/zlog",
     "crates/zlog_settings",
     "crates/ztracing",
