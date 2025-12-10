@@ -899,10 +899,7 @@ impl Copilot {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
-                    text_document: lsp::VersionedTextDocumentIdentifier {
-                        uri,
-                        version: version.try_into().unwrap(),
-                    },
+                    text_document: lsp::VersionedTextDocumentIdentifier { uri, version },
                     position: point_to_lsp(position),
                 })
                 .await
