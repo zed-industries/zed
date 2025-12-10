@@ -815,6 +815,15 @@ mod jsx_tag_autoclose_tests {
                     path_suffixes: vec!["vue".to_string()],
                     ..Default::default()
                 },
+                jsx_tag_auto_close: Some(JsxTagAutoCloseConfig {
+                    open_tag_node_name: "start_tag".into(),
+                    close_tag_node_name: "end_tag".into(),
+                    jsx_element_node_name: "element".into(),
+                    tag_name_node_name: "tag_name".into(),
+                    tag_name_node_name_alternates: vec![],
+                    erroneous_close_tag_node_name: Some("erroneous_end_tag".into()),
+                    erroneous_close_tag_name_node_name: Some("erroneous_end_tag_name".into()),
+                }),
                 ..Default::default()
             },
             Some(tree_sitter_vue::language()),
