@@ -2,11 +2,12 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
-    trusted_worktrees::wait_for_worktree_trust,
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_worktree_trust},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -263,6 +264,17 @@ impl AgentType {
             Self::Custom { .. } => Some(IconName::Terminal),
         }
     }
+
+    fn is_mcp(&self) -> bool {
+        match self {
+            Self::NativeAgent => false,
+            Self::TextThread => false,
+            Self::Custom { .. } => false,
+            Self::Gemini => true,
+            Self::ClaudeCode => true,
+            Self::Codex => true,
+        }
+    }
 }
 
 impl From<ExternalAgent> for AgentType {
@@ -288,7 +300,7 @@ impl ActiveView {
         }
     }
 
-    pub fn native_agent(
+    fn native_agent(
         fs: Arc<dyn Fs>,
         prompt_store: Option<Entity<PromptStore>>,
         history_store: Entity<agent::HistoryStore>,
@@ -445,6 +457,7 @@ pub struct AgentPanel {
     selected_agent: AgentType,
     new_agent_thread_task: Task<()>,
     show_trust_workspace_message: bool,
+    _worktree_trust_subscription: Option<Subscription>,
 }
 
 impl AgentPanel {
@@ -668,6 +681,48 @@ impl AgentPanel {
             None
         };
 
+        let mut show_trust_workspace_message = false;
+        let worktree_trust_subscription =
+            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
+                let has_global_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust_global(
+                        project
+                            .read(cx)
+                            .remote_connection_options(cx)
+                            .map(RemoteHostLocation::from),
+                        cx,
+                    )
+                });
+                if has_global_trust {
+                    None
+                } else {
+                    show_trust_workspace_message = true;
+                    let project = project.clone();
+                    Some(cx.subscribe(
+                        &trusted_worktrees,
+                        move |agent_panel, trusted_worktrees, _, cx| {
+                            let new_show_trust_workspace_message =
+                                !trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                    trusted_worktrees.can_trust_global(
+                                        project
+                                            .read(cx)
+                                            .remote_connection_options(cx)
+                                            .map(RemoteHostLocation::from),
+                                        cx,
+                                    )
+                                });
+                            if new_show_trust_workspace_message
+                                != agent_panel.show_trust_workspace_message
+                            {
+                                agent_panel.show_trust_workspace_message =
+                                    new_show_trust_workspace_message;
+                                cx.notify();
+                            };
+                        },
+                    ))
+                }
+            });
+
         let mut panel = Self {
             active_view,
             workspace,
@@ -696,7 +751,8 @@ impl AgentPanel {
             history_store,
             selected_agent: AgentType::default(),
             loading: false,
-            show_trust_workspace_message: false,
+            show_trust_workspace_message,
+            _worktree_trust_subscription: worktree_trust_subscription,
         };
 
         // Initial sync of agent servers from extensions
@@ -889,37 +945,59 @@ impl AgentPanel {
                 }
             };
 
-            let server = ext_agent.server(fs, history);
-
-            this.update_in(cx, |this, window, cx| {
-                let selected_agent = ext_agent.into();
-                if this.selected_agent != selected_agent {
-                    this.selected_agent = selected_agent;
-                    this.serialize(cx);
+            if ext_agent.is_mcp() {
+                let wait_task = this.update(cx, |agent_panel, cx| {
+                    agent_panel.project.update(cx, |project, cx| {
+                        wait_for_worktree_trust(project.remote_connection_options(cx), cx)
+                    })
+                })?;
+                if let Some(wait_task) = wait_task {
+                    this.update_in(cx, |agent_panel, window, cx| {
+                        agent_panel.show_trust_workspace_message = true;
+                        cx.notify();
+                        agent_panel.new_agent_thread_task =
+                            cx.spawn_in(window, async move |agent_panel, cx| {
+                                wait_task.await;
+                                let server = ext_agent.server(fs, history);
+                                agent_panel
+                                    .update_in(cx, |agent_panel, window, cx| {
+                                        agent_panel.show_trust_workspace_message = false;
+                                        cx.notify();
+                                        agent_panel._external_thread(
+                                            server,
+                                            resume_thread,
+                                            summarize_thread,
+                                            workspace,
+                                            project,
+                                            loading,
+                                            ext_agent,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            });
+                    })?;
+                    return Ok(());
                 }
+            }
 
-                let thread_view = cx.new(|cx| {
-                    crate::acp::AcpThreadView::new(
-                        server,
-                        resume_thread,
-                        summarize_thread,
-                        workspace.clone(),
-                        project,
-                        this.history_store.clone(),
-                        this.prompt_store.clone(),
-                        !loading,
-                        window,
-                        cx,
-                    )
-                });
-
-                this.set_active_view(
-                    ActiveView::ExternalAgentThread { thread_view },
-                    !loading,
+            let server = ext_agent.server(fs, history);
+            this.update_in(cx, |agent_panel, window, cx| {
+                agent_panel._external_thread(
+                    server,
+                    resume_thread,
+                    summarize_thread,
+                    workspace,
+                    project,
+                    loading,
+                    ext_agent,
                     window,
                     cx,
                 );
-            })
+            })?;
+
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -1428,10 +1506,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let wait_task = self.project.update(cx, |project, cx| {
-            let remote_host = project.remote_connection_options(cx);
-            wait_for_worktree_trust(remote_host, cx)
-        });
+        let wait_task = if agent.is_mcp() {
+            self.project.update(cx, |project, cx| {
+                wait_for_worktree_trust(project.remote_connection_options(cx), cx)
+            })
+        } else {
+            None
+        };
         if let Some(wait_task) = wait_task {
             self.show_trust_workspace_message = true;
             cx.notify();
@@ -1501,6 +1582,47 @@ impl AgentPanel {
             Some(ExternalAgent::NativeAgent),
             Some(thread),
             None,
+            window,
+            cx,
+        );
+    }
+
+    fn _external_thread(
+        &mut self,
+        server: Rc<dyn AgentServer>,
+        resume_thread: Option<DbThreadMetadata>,
+        summarize_thread: Option<DbThreadMetadata>,
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        loading: bool,
+        ext_agent: ExternalAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_agent = AgentType::from(ext_agent);
+        if self.selected_agent != selected_agent {
+            self.selected_agent = selected_agent;
+            self.serialize(cx);
+        }
+
+        let thread_view = cx.new(|cx| {
+            crate::acp::AcpThreadView::new(
+                server,
+                resume_thread,
+                summarize_thread,
+                workspace.clone(),
+                project,
+                self.history_store.clone(),
+                self.prompt_store.clone(),
+                !loading,
+                window,
+                cx,
+            )
+        });
+
+        self.set_active_view(
+            ActiveView::ExternalAgentThread { thread_view },
+            !loading,
             window,
             cx,
         );

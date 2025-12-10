@@ -276,6 +276,15 @@ impl TrustedWorktreesStorage {
         cx: &mut Context<Self>,
     ) {
         // TODO kb unit test all this logic
+        // let global_trusted = self
+        //     .trusted_paths
+        //     .get(&remote_host)
+        //     .is_some_and(|trusted_paths| trusted_paths.contains(&PathTrust::Global));
+        // let new_global_trusted = trusted_paths.contains(&PathTrust::Global);
+
+        // let mut single_file_worktrees = HashSet::default();
+        // let mut resulting_trusted_paths = trusted_paths.clone();
+        // let mut restricted_paths = HashSet::default();
 
         // TODO kb clean up and re-trust more.
         let mut re_trusted_worktrees = HashSet::default();
