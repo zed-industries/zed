@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 /// When true, Zed will use in-memory databases instead of persistent storage.
 pub static ZED_STATELESS: LazyLock<bool> = bool_env_var!("ZED_STATELESS");
 
+#[derive(Clone)]
 pub struct EnvVar {
     pub name: SharedString,
     /// Value of the environment variable. Also `None` when set to an empty string.

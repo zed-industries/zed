@@ -61,12 +61,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = MistralLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 
     fn authenticate_codestral(
@@ -75,7 +71,6 @@ impl State {
     ) -> Task<Result<(), AuthenticateError>> {
         self.codestral_api_key_state.load_if_needed(
             CODESTRAL_API_URL.into(),
-            &CODESTRAL_API_KEY_ENV_VAR,
             |this| &mut this.codestral_api_key_state,
             cx,
         )
@@ -99,18 +94,17 @@ impl MistralLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
-                codestral_api_key_state: ApiKeyState::new(CODESTRAL_API_URL.into()),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                codestral_api_key_state: ApiKeyState::new(
+                    CODESTRAL_API_URL.into(),
+                    (*CODESTRAL_API_KEY_ENV_VAR).clone(),
+                ),
             }
         });
 

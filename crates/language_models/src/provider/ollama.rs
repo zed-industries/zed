@@ -80,12 +80,9 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        );
+        let task = self
+            .api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
 
         // Always try to fetch models - if no API key is needed (local Ollama), it will work
         // If API key is needed and provided, it will work
@@ -185,7 +182,7 @@ impl OllamaLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
-                    api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                    api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 }
             }),
         };

@@ -296,11 +296,13 @@ pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
 pub const MERCURY_TOKEN_ENV_VAR: &str = "MERCURY_AI_TOKEN";
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL.into());
+    let mut key = ApiKeyState::new(
+        MERCURY_CREDENTIALS_URL.into(),
+        EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
+    );
     // todo! see todo on sweep load
     _ = key.load_if_needed(
         MERCURY_CREDENTIALS_URL.into(),
-        &EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
         |ep_store| &mut ep_store.sweep_ai.api_token,
         cx,
     );

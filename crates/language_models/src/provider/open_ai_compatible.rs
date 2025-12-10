@@ -36,7 +36,6 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 
 pub struct State {
     id: Arc<str>,
-    api_key_env_var: EnvVar,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
 }
@@ -54,12 +53,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state.load_if_needed(
-            api_url,
-            &self.api_key_env_var,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -81,7 +76,6 @@ impl OpenAiCompatibleLanguageModelProvider {
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
-                        &this.api_key_env_var,
                         |this| &mut this.api_key_state,
                         cx,
                     );
@@ -93,8 +87,10 @@ impl OpenAiCompatibleLanguageModelProvider {
             let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
             State {
                 id: id.clone(),
-                api_key_env_var: EnvVar::new(api_key_env_var_name),
-                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                api_key_state: ApiKeyState::new(
+                    SharedString::new(settings.api_url.as_str()),
+                    EnvVar::new(api_key_env_var_name),
+                ),
                 settings,
             }
         });
@@ -435,7 +431,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
-        let env_var_name = &state.api_key_env_var.name;
+        let env_var_name = state.api_key_state.env_var_name();
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()

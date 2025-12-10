@@ -59,12 +59,9 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        let task = self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        );
+        let task = self
+            .api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -132,7 +129,7 @@ impl OpenRouterLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,

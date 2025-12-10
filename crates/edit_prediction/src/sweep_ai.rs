@@ -283,11 +283,13 @@ pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
 pub const SWEEP_AI_TOKEN_ENV_VAR: &str = "SWEEP_AI_TOKEN";
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(SWEEP_CREDENTIALS_URL.into());
+    let mut key = ApiKeyState::new(
+        SWEEP_CREDENTIALS_URL.into(),
+        EnvVar::new(SWEEP_AI_TOKEN_ENV_VAR.into()),
+    );
     // todo! load in call to provider, update API to have nicer key behavior
     _ = key.load_if_needed(
         SWEEP_CREDENTIALS_URL.into(),
-        &EnvVar::new(SWEEP_AI_TOKEN_ENV_VAR.into()),
         |ep_store| &mut ep_store.sweep_ai.api_token,
         cx,
     );
