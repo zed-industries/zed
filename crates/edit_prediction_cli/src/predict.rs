@@ -37,7 +37,7 @@ pub async fn run_prediction(
 
     if matches!(provider, PredictionProvider::Teacher) {
         if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher).await;
+            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
         }
 
         let batched = true;

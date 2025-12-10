@@ -1,7 +1,7 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat};
+use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
     EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
@@ -69,7 +69,6 @@ use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
-pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
 pub use telemetry_events::EditPredictionRating;
@@ -184,8 +183,8 @@ pub struct EditPredictionModelInput {
     buffer: Entity<Buffer>,
     snapshot: BufferSnapshot,
     position: Anchor,
-    events: Vec<Arc<Event>>,
-    related_files: Vec<RelatedFile>,
+    events: Vec<Arc<zeta_prompt::Event>>,
+    related_files: Arc<[RelatedFile]>,
     recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
@@ -238,7 +237,7 @@ pub struct EditPredictionFinishedDebugEvent {
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ProjectState {
-    events: VecDeque<Arc<cloud_llm_client::predict_edits_v3::Event>>,
+    events: VecDeque<Arc<zeta_prompt::Event>>,
     last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -254,7 +253,7 @@ struct ProjectState {
 }
 
 impl ProjectState {
-    pub fn events(&self, cx: &App) -> Vec<Arc<cloud_llm_client::predict_edits_v3::Event>> {
+    pub fn events(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
         self.events
             .iter()
             .cloned()
@@ -389,7 +388,7 @@ impl LastEvent {
         &self,
         license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
         cx: &App,
-    ) -> Option<Arc<predict_edits_v3::Event>> {
+    ) -> Option<Arc<zeta_prompt::Event>> {
         let path = buffer_path_with_id_fallback(&self.new_snapshot, cx);
         let old_path = buffer_path_with_id_fallback(&self.old_snapshot, cx);
 
@@ -409,7 +408,7 @@ impl LastEvent {
         if path == old_path && diff.is_empty() {
             None
         } else {
-            Some(Arc::new(predict_edits_v3::Event::BufferChange {
+            Some(Arc::new(zeta_prompt::Event::BufferChange {
                 old_path,
                 path,
                 diff,
@@ -566,15 +565,35 @@ impl EditPredictionStore {
         }
     }
 
+    pub fn edit_history_for_project(
+        &self,
+        project: &Entity<Project>,
+    ) -> Vec<Arc<zeta_prompt::Event>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| project_state.events.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
         cx: &'a App,
-    ) -> &'a [RelatedFile] {
+    ) -> Arc<[RelatedFile]> {
         self.projects
             .get(&project.entity_id())
             .map(|project| project.context.read(cx).related_files())
-            .unwrap_or(&[])
+            .unwrap_or_else(|| vec![].into())
+    }
+
+    pub fn context_for_project_with_buffers<'a>(
+        &'a self,
+        project: &Entity<Project>,
+        cx: &'a App,
+    ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project| project.context.read(cx).related_files_with_buffers())
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -1367,9 +1386,9 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = if self.use_context {
-            self.context_for_project(&project, cx).to_vec()
+            self.context_for_project(&project, cx)
         } else {
-            Vec::new()
+            Vec::new().into()
         };
 
         let inputs = EditPredictionModelInput {
@@ -1727,14 +1746,14 @@ impl EditPredictionStore {
         self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, events: &[Arc<Event>]) -> bool {
+    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>]) -> bool {
         if !self.data_collection_choice.is_enabled() {
             return false;
         }
         events.iter().all(|event| {
             matches!(
                 event.as_ref(),
-                Event::BufferChange {
+                zeta_prompt::Event::BufferChange {
                     in_open_source_repo: true,
                     ..
                 }

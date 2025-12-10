@@ -1,18 +1,47 @@
 use crate::{
     PromptFormat,
     example::{Example, ExamplePrompt},
+    headless::EpAppState,
+    retrieve_context::run_context_retrieval,
 };
-use std::borrow::Cow;
-use zeta_prompt::{
-    Zeta2Prompt, ZetaPromptContext, ZetaPromptContextFile, ZetaPromptExcerpt, ZetaPromptInput,
-};
+use edit_prediction::{EditPredictionStore, zeta2::zeta2_prompt_input};
+use gpui::AsyncApp;
+use std::sync::Arc;
+use zeta_prompt::format_zeta_prompt;
 
-pub async fn run_format_prompt(example: &mut Example, prompt_format: PromptFormat) {
+pub async fn run_format_prompt(
+    example: &mut Example,
+    prompt_format: PromptFormat,
+    app_state: Arc<EpAppState>,
+    mut cx: AsyncApp,
+) {
+    run_context_retrieval(example, app_state, cx.clone()).await;
+
     let prompt = match prompt_format {
         PromptFormat::Teacher => TeacherPrompt::format(example),
         PromptFormat::Zeta2 => {
-            let input = example_to_zeta_prompt_input(example);
-            Zeta2Prompt::format(&input)
+            let ep_store = cx
+                .update(|cx| EditPredictionStore::try_global(cx).unwrap())
+                .unwrap();
+
+            let state = example.state.as_ref().unwrap();
+            let snapshot = state
+                .buffer
+                .read_with(&cx, |buffer, _| buffer.snapshot())
+                .unwrap();
+            let project = state.project.clone();
+            let (_, input) = ep_store
+                .update(&mut cx, |ep_store, _cx| {
+                    zeta2_prompt_input(
+                        &snapshot,
+                        example.context.as_ref().unwrap().files.clone(),
+                        ep_store.edit_history_for_project(&project),
+                        example.cursor_path.clone(),
+                        example.buffer.as_ref().unwrap().cursor_offset,
+                    )
+                })
+                .unwrap();
+            format_zeta_prompt(&input)
         }
     };
 
@@ -21,33 +50,6 @@ pub async fn run_format_prompt(example: &mut Example, prompt_format: PromptForma
         expected_output: example.expected_patch.clone(), // TODO
         format: prompt_format,
     });
-}
-
-fn example_to_zeta_prompt_input(example: &Example) -> ZetaPromptInput<'_> {
-    let context = example.context.as_ref().map(|ctx| ZetaPromptContext {
-        files: ctx
-            .files
-            .iter()
-            .map(|file| ZetaPromptContextFile {
-                rel_path: Cow::Borrowed(&file.rel_path),
-                excerpts: file
-                    .excerpts
-                    .iter()
-                    .map(|excerpt| ZetaPromptExcerpt {
-                        row_range: excerpt.row_range.clone(),
-                        text: Cow::Borrowed(&excerpt.text),
-                    })
-                    .collect(),
-            })
-            .collect(),
-    });
-
-    ZetaPromptInput {
-        cursor_path: Cow::Borrowed(&example.cursor_path),
-        cursor_position: Cow::Borrowed(&example.cursor_position),
-        edit_history: Cow::Borrowed(&example.edit_history),
-        context,
-    }
 }
 
 pub trait PromptFormatter {
@@ -116,9 +118,8 @@ impl TeacherPrompt {
             panic!("Missing context retriever step");
         }
 
-        let input = example_to_zeta_prompt_input(example);
         let mut prompt = String::new();
-        Zeta2Prompt::write_context_section(&mut prompt, &input);
+        zeta_prompt::write_related_files(&mut prompt, &example.context.as_ref().unwrap().files);
 
         prompt
     }

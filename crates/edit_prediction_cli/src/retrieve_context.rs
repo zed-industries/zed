@@ -1,5 +1,5 @@
 use crate::{
-    example::{Example, ExampleContext, ExampleContextExcerpt, ExampleContextFile},
+    example::{Example, ExampleContext},
     headless::EpAppState,
     load_project::run_load_project,
 };
@@ -57,23 +57,7 @@ pub async fn run_context_retrieval(
     }
 
     let context_files = ep_store
-        .update(&mut cx, |store, cx| {
-            store
-                .context_for_project(&project, cx)
-                .iter()
-                .map(|related_file| ExampleContextFile {
-                    rel_path: related_file.path.path.as_std_path().to_path_buf(),
-                    excerpts: related_file
-                        .excerpts
-                        .iter()
-                        .map(|excerpt| ExampleContextExcerpt {
-                            row_range: excerpt.point_range.start.row..excerpt.point_range.end.row,
-                            text: excerpt.text.to_string(),
-                        })
-                        .collect(),
-                })
-                .collect()
-        })
+        .update(&mut cx, |store, cx| store.context_for_project(&project, cx))
         .unwrap();
 
     example.context = Some(ExampleContext {

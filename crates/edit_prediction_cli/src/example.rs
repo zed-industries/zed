@@ -10,13 +10,14 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::{Read, Write},
     mem,
-    ops::Range,
     path::{Path, PathBuf},
 };
+use zeta_prompt::RelatedFile;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
@@ -25,7 +26,7 @@ pub struct Example {
     pub repository_url: String,
     pub revision: String,
     pub uncommitted_diff: String,
-    pub cursor_path: PathBuf,
+    pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
@@ -68,7 +69,7 @@ pub struct ExampleState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleContext {
-    pub files: Vec<ExampleContextFile>,
+    pub files: Arc<[RelatedFile]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,18 +78,6 @@ pub struct ExampleBuffer {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleContextFile {
-    pub rel_path: PathBuf,
-    pub excerpts: Vec<ExampleContextExcerpt>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleContextExcerpt {
-    pub row_range: Range<u32>,
-    pub text: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -262,7 +251,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         repository_url: String::new(),
         revision: String::new(),
         uncommitted_diff: String::new(),
-        cursor_path: PathBuf::new(),
+        cursor_path: PathBuf::new().into(),
         cursor_position: String::new(),
         edit_history: String::new(),
         expected_patch: String::new(),
@@ -364,7 +353,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
                         example.edit_history.push_str(&mem::take(&mut text));
                     }
                     Section::CursorPosition => {
-                        example.cursor_path = block_info.into();
+                        example.cursor_path = Path::new(block_info).into();
                         example.cursor_position = mem::take(&mut text);
                     }
                     Section::ExpectedExcerpts => {
@@ -379,7 +368,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
             _ => {}
         }
     }
-    if example.cursor_path.as_path() == Path::new("") || example.cursor_position.is_empty() {
+    if example.cursor_path.as_ref() == Path::new("") || example.cursor_position.is_empty() {
         anyhow::bail!("Missing cursor position codeblock");
     }
 

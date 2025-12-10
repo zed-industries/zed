@@ -4,32 +4,28 @@ use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
 use crate::{
     DebugEvent, EDIT_PREDICTIONS_MODEL_ID, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionInputs, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
 };
-use anyhow::{Result, anyhow, bail};
-use cloud_llm_client::{
-    EditPredictionRejectReason,
-    predict_edits_v3::{self, PromptFormat},
-};
+use anyhow::{Result, anyhow};
+use cloud_llm_client::EditPredictionRejectReason;
 use cloud_zeta2_prompt::CURSOR_MARKER;
-use edit_prediction_context::{EditPredictionExcerpt, Line, RelatedExcerpt, RelatedFile};
 use gpui::{Task, prelude::*};
-use language::{Point, ToOffset as _, ToPoint};
-use project::ProjectItem as _;
+use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use release_channel::AppVersion;
 use std::{path::Path, sync::Arc, time::Instant};
+use zeta_prompt::format_zeta_prompt;
+
+const MAX_CONTEXT_TOKENS: usize = 150;
+const MAX_REWRITE_TOKENS: usize = 350;
 
 pub fn request_prediction_with_zeta2(
     store: &mut EditPredictionStore,
     EditPredictionModelInput {
-        project,
         buffer,
         snapshot,
         position,
-        mut related_files,
+        related_files,
         events,
-        trigger,
         debug_tx,
         ..
     }: EditPredictionModelInput,
@@ -38,10 +34,9 @@ pub fn request_prediction_with_zeta2(
     let options = store.options.clone();
     let buffer_snapshotted_at = Instant::now();
 
-    let Some((excerpt_path, active_project_path)) = snapshot
+    let Some(excerpt_path) = snapshot
         .file()
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-        .zip(buffer.read(cx).project_path(cx))
     else {
         return Task::ready(Err(anyhow!("No file path for excerpt")));
     };
@@ -50,15 +45,6 @@ pub fn request_prediction_with_zeta2(
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
-    let file = buffer.read(cx).file();
-
-    let active_file_full_path = file.as_ref().map(|f| f.full_path(cx));
-
-    // TODO data collection
-    let can_collect_data = file
-        .as_ref()
-        .map_or(false, |file| store.can_collect_file(&project, file, cx));
-
     #[cfg(feature = "eval-support")]
     let eval_cache = store.eval_cache.clone();
 
@@ -66,90 +52,15 @@ pub fn request_prediction_with_zeta2(
         let active_buffer = buffer.clone();
         async move {
             let cursor_offset = position.to_offset(&snapshot);
-            let cursor_point = cursor_offset.to_point(&snapshot);
-
-            let excerpt_options = options.context;
-
-            let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
-                cursor_point,
+            let (editable_offset_range, prompt_input) = zeta2_prompt_input(
                 &snapshot,
-                &excerpt_options,
-            ) else {
-                return Ok((None, None));
-            };
-
-            let excerpt_anchor_range = snapshot.anchor_after(excerpt.range.start)
-                ..snapshot.anchor_before(excerpt.range.end);
-            let related_excerpt = RelatedExcerpt {
-                anchor_range: excerpt_anchor_range.clone(),
-                point_range: Point::new(excerpt.line_range.start.0, 0)
-                    ..Point::new(excerpt.line_range.end.0, 0),
-                text: snapshot.as_rope().slice(excerpt.range),
-            };
-
-            if let Some(buffer_ix) = related_files
-                .iter()
-                .position(|file| file.buffer.entity_id() == active_buffer.entity_id())
-            {
-                let file = &mut related_files[buffer_ix];
-                file.excerpts.push(related_excerpt);
-                file.merge_excerpts();
-                let last_ix = related_files.len() - 1;
-                related_files.swap(buffer_ix, last_ix);
-            } else {
-                let active_file = RelatedFile {
-                    path: active_project_path,
-                    buffer: active_buffer.downgrade(),
-                    excerpts: vec![related_excerpt],
-                    max_row: snapshot.max_point().row,
-                };
-                related_files.push(active_file);
-            }
-
-            let related_files = related_files
-                .iter()
-                .map(|related_file| predict_edits_v3::RelatedFile {
-                    path: Arc::from(related_file.path.path.as_std_path()),
-                    max_row: Line(related_file.max_row),
-                    excerpts: related_file
-                        .excerpts
-                        .iter()
-                        .map(|excerpt| predict_edits_v3::Excerpt {
-                            start_line: Line(excerpt.point_range.start.row),
-                            text: excerpt.text.to_string().into(),
-                        })
-                        .collect(),
-                })
-                .collect::<Vec<_>>();
-
-            let cloud_request = predict_edits_v3::PredictEditsRequest {
-                excerpt_path,
-                excerpt: String::new(),
-                excerpt_line_range: Line(0)..Line(0),
-                excerpt_range: 0..0,
-                cursor_point: predict_edits_v3::Point {
-                    line: predict_edits_v3::Line(cursor_point.row),
-                    column: cursor_point.column,
-                },
                 related_files,
                 events,
-                can_collect_data,
-                debug_info: debug_tx.is_some(),
-                prompt_max_bytes: Some(options.max_prompt_bytes),
-                prompt_format: options.prompt_format,
-                excerpt_parent: None,
-                git_info: None,
-                trigger,
-            };
+                excerpt_path,
+                cursor_offset,
+            );
 
-            let prompt = cloud_zeta2_prompt::build_prompt(&cloud_request)?;
-
-            let inputs = EditPredictionInputs {
-                included_files: cloud_request.related_files,
-                events: cloud_request.events,
-                cursor_point: cloud_request.cursor_point,
-                cursor_path: cloud_request.excerpt_path,
-            };
+            let prompt = format_zeta_prompt(&prompt_input);
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
@@ -163,8 +74,7 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            let generation_params =
-                cloud_zeta2_prompt::generation_params(cloud_request.prompt_format);
+            let generation_params = cloud_zeta2_prompt::generation_params(options.prompt_format);
             let request = open_ai::Request {
                 model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                 messages: vec![open_ai::RequestMessage::User {
@@ -221,36 +131,25 @@ pub fn request_prediction_with_zeta2(
                 output_text = output_text.replace(CURSOR_MARKER, "");
             }
 
-            let get_buffer_from_context = |path: &Path| {
-                if Some(path) == active_file_full_path.as_deref() {
-                    Some((&snapshot, std::slice::from_ref(&excerpt_anchor_range)))
-                } else {
-                    None
-                }
-            };
-
-            let (_, edits) = match options.prompt_format {
-                PromptFormat::Minimal | PromptFormat::MinimalQwen | PromptFormat::SeedCoder1120 => {
-                    if output_text.contains("--- a/\n+++ b/\nNo edits") {
-                        let edits = vec![];
-                        (&snapshot, edits)
-                    } else {
-                        todo!("udiff parsing will be removed")
-                    }
-                }
-                PromptFormat::OldTextNewText => {
-                    crate::xml_edits::parse_xml_edits(&output_text, get_buffer_from_context).await?
-                }
-                _ => {
-                    bail!("unsupported prompt format {}", options.prompt_format)
-                }
-            };
+            let old_text = snapshot
+                .text_for_range(editable_offset_range.clone())
+                .collect::<String>();
+            let edits: Vec<_> = language::text_diff(&old_text, &output_text)
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        snapshot.anchor_after(editable_offset_range.start + range.start)
+                            ..snapshot.anchor_before(editable_offset_range.start + range.end),
+                        text,
+                    )
+                })
+                .collect();
 
             anyhow::Ok((
                 Some((
                     request_id,
                     Some((
-                        inputs,
+                        prompt_input,
                         active_buffer,
                         snapshot.clone(),
                         edits,
@@ -292,4 +191,41 @@ pub fn request_prediction_with_zeta2(
             .await,
         ))
     })
+}
+
+pub fn zeta2_prompt_input(
+    snapshot: &language::BufferSnapshot,
+    related_files: Arc<[zeta_prompt::RelatedFile]>,
+    events: Vec<Arc<zeta_prompt::Event>>,
+    excerpt_path: Arc<Path>,
+    cursor_offset: usize,
+) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
+    let cursor_point = cursor_offset.to_point(snapshot);
+
+    let (editable_range, context_range) =
+        crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
+            cursor_point,
+            snapshot,
+            MAX_CONTEXT_TOKENS,
+            MAX_REWRITE_TOKENS,
+        );
+
+    let context_start_offset = context_range.start.to_offset(snapshot);
+    let editable_offset_range = editable_range.to_offset(snapshot);
+    let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
+    let editable_range_in_excerpt = (editable_offset_range.start - context_start_offset)
+        ..(editable_offset_range.end - context_start_offset);
+
+    let prompt_input = zeta_prompt::ZetaPromptInput {
+        cursor_path: excerpt_path,
+        cursor_excerpt: snapshot
+            .text_for_range(context_range)
+            .collect::<String>()
+            .into(),
+        editable_range_in_excerpt,
+        cursor_offset_in_excerpt,
+        events,
+        related_files,
+    };
+    (editable_offset_range, prompt_input)
 }

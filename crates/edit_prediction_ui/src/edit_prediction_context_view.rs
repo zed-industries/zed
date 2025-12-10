@@ -17,7 +17,7 @@ use gpui::{
 };
 use multi_buffer::MultiBuffer;
 use project::Project;
-use text::OffsetRangeExt;
+use text::Point;
 use ui::{
     ButtonCommon, Clickable, Disableable, FluentBuilder as _, IconButton, IconName,
     StyledTypography as _, h_flex, v_flex,
@@ -153,12 +153,11 @@ impl EditPredictionContextView {
         run.finished_at = Some(info.timestamp);
         run.metadata = info.metadata;
 
-        let project = self.project.clone();
         let related_files = self
             .store
             .read(cx)
-            .context_for_project(&self.project, cx)
-            .to_vec();
+            .context_for_project_with_buffers(&self.project, cx)
+            .map_or(Vec::new(), |files| files.collect());
 
         let editor = run.editor.clone();
         let multibuffer = run.editor.read(cx).buffer().clone();
@@ -169,33 +168,14 @@ impl EditPredictionContextView {
 
         cx.spawn_in(window, async move |this, cx| {
             let mut paths = Vec::new();
-            for related_file in related_files {
-                let (buffer, point_ranges): (_, Vec<_>) =
-                    if let Some(buffer) = related_file.buffer.upgrade() {
-                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-
-                        (
-                            buffer,
-                            related_file
-                                .excerpts
-                                .iter()
-                                .map(|excerpt| excerpt.anchor_range.to_point(&snapshot))
-                                .collect(),
-                        )
-                    } else {
-                        (
-                            project
-                                .update(cx, |project, cx| {
-                                    project.open_buffer(related_file.path.clone(), cx)
-                                })?
-                                .await?,
-                            related_file
-                                .excerpts
-                                .iter()
-                                .map(|excerpt| excerpt.point_range.clone())
-                                .collect(),
-                        )
-                    };
+            for (related_file, buffer) in related_files {
+                let point_ranges = related_file
+                    .excerpts
+                    .iter()
+                    .map(|excerpt| {
+                        Point::new(excerpt.row_range.start, 0)..Point::new(excerpt.row_range.end, 0)
+                    })
+                    .collect::<Vec<_>>();
                 cx.update(|_, cx| {
                     let path = PathKey::for_buffer(&buffer, cx);
                     paths.push((path, buffer, point_ranges));

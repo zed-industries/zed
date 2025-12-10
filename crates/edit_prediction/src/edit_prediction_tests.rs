@@ -7,7 +7,6 @@ use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
 };
-use edit_prediction_context::Line;
 use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -28,6 +27,7 @@ use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
 use util::{path, rel_path::rel_path};
 use uuid::Uuid;
+use zeta_prompt::ZetaPromptInput;
 
 use crate::{BufferEditPrediction, EditPredictionId, EditPredictionStore, REJECT_REQUEST_DEBOUNCE};
 
@@ -1160,20 +1160,19 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
         .await;
 
-    let completion = EditPrediction {
+    let prediction = EditPrediction {
         edits,
         edit_preview,
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
         id: EditPredictionId("the-id".into()),
-        inputs: EditPredictionInputs {
+        inputs: ZetaPromptInput {
             events: Default::default(),
-            included_files: Default::default(),
-            cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                line: Line(0),
-                column: 0,
-            },
+            related_files: Default::default(),
             cursor_path: Path::new("").into(),
+            cursor_excerpt: "".into(),
+            editable_range_in_excerpt: 0..0,
+            cursor_offset_in_excerpt: 0,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
@@ -1182,7 +1181,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
     cx.update(|cx| {
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1192,7 +1191,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1202,7 +1201,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.undo(cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1212,7 +1211,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1222,7 +1221,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1232,7 +1231,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1242,7 +1241,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1252,7 +1251,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
         assert_eq!(
             from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                 &buffer,
                 cx
             ),
@@ -1260,7 +1259,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
-        assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
+        assert_eq!(prediction.interpolate(&buffer.read(cx).snapshot()), None);
     })
 }
 

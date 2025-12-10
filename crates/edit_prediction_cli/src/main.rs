@@ -64,6 +64,7 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct FormatPromptArgs {
+    #[clap(long)]
     prompt_format: PromptFormat,
 }
 
@@ -166,7 +167,7 @@ fn main() {
                                 run_context_retrieval(example, app_state, cx).await;
                             }
                             Command::FormatPrompt(args) => {
-                                run_format_prompt(example, args.prompt_format).await;
+                                run_format_prompt(example, args.prompt_format, app_state, cx).await;
                             }
                             Command::Predict(args) => {
                                 run_prediction(

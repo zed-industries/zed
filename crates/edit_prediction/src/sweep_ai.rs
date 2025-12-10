@@ -5,7 +5,7 @@ use gpui::{
     App, AppContext as _, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Point, ToOffset as _, ToPoint as _};
+use language::{Point, ToOffset as _};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,10 +15,7 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
-    prediction::EditPredictionResult,
-};
+use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -78,7 +75,6 @@ impl SweepAi {
             .take(3)
             .collect::<Vec<_>>();
 
-        let cursor_point = inputs.position.to_point(&inputs.snapshot);
         let buffer_snapshotted_at = Instant::now();
 
         let result = cx.background_spawn(async move {
@@ -119,9 +115,9 @@ impl SweepAi {
                 .iter()
                 .flat_map(|related_file| {
                     related_file.excerpts.iter().map(|excerpt| FileChunk {
-                        file_path: related_file.path.path.as_unix_str().to_string(),
-                        start_line: excerpt.point_range.start.row as usize,
-                        end_line: excerpt.point_range.end.row as usize,
+                        file_path: related_file.path.to_string_lossy().to_string(),
+                        start_line: excerpt.row_range.start as usize,
+                        end_line: excerpt.row_range.end as usize,
                         content: excerpt.text.to_string(),
                         timestamp: None,
                     })
@@ -190,23 +186,14 @@ impl SweepAi {
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
-            let ep_inputs = EditPredictionInputs {
+            let ep_inputs = zeta_prompt::ZetaPromptInput {
                 events: inputs.events,
-                included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
-                    path: full_path.clone(),
-                    max_row: cloud_llm_client::predict_edits_v3::Line(
-                        inputs.snapshot.max_point().row,
-                    ),
-                    excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
-                        start_line: cloud_llm_client::predict_edits_v3::Line(0),
-                        text: request_body.file_contents.into(),
-                    }],
-                }],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    column: cursor_point.column,
-                    line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
-                },
+                related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
+                cursor_excerpt: request_body.file_contents.into(),
+                // we actually don't know
+                editable_range_in_excerpt: 0..inputs.snapshot.len(),
+                cursor_offset_in_excerpt: request_body.cursor_position,
             };
 
             let request = http_client::Request::builder()
@@ -405,12 +392,9 @@ struct AdditionalCompletion {
     pub finish_reason: Option<String>,
 }
 
-fn write_event(
-    event: &cloud_llm_client::predict_edits_v3::Event,
-    f: &mut impl fmt::Write,
-) -> fmt::Result {
+fn write_event(event: &zeta_prompt::Event, f: &mut impl fmt::Write) -> fmt::Result {
     match event {
-        cloud_llm_client::predict_edits_v3::Event::BufferChange {
+        zeta_prompt::Event::BufferChange {
             old_path,
             path,
             diff,
