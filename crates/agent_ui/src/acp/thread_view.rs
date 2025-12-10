@@ -5384,43 +5384,39 @@ impl AcpThreadView {
         )
     }
 
-    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        Some(
-            Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .title("Codex on Windows")
-                .description(
-                    "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
-                )
-                .actions_slot(
-                    Button::new("open-wsl-modal", "Open in WSL")
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .on_click(cx.listener({
-                            move |_, _, _window, cx| {
-                                #[cfg(windows)]
-                                _window.dispatch_action(
-                                    zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
-                                    cx,
-                                );
-                                cx.notify();
-                            }
-                        })),
-                )
-                .dismiss_action(
-                    IconButton::new("dismiss", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Dismiss Warning"))
-                        .on_click(cx.listener({
-                            move |this, _, _, cx| {
-                                this.show_codex_windows_warning = false;
-                                cx.notify();
-                            }
-                        })),
-                ),
-        )
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
+        Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .title("Codex on Windows")
+            .description("For best performance, run Codex in Windows Subsystem for Linux (WSL2)")
+            .actions_slot(
+                Button::new("open-wsl-modal", "Open in WSL")
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener({
+                        move |_, _, _window, cx| {
+                            #[cfg(windows)]
+                            _window.dispatch_action(
+                                zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                cx,
+                            );
+                            cx.notify();
+                        }
+                    })),
+            )
+            .dismiss_action(
+                IconButton::new("dismiss", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Dismiss Warning"))
+                    .on_click(cx.listener({
+                        move |this, _, _, cx| {
+                            this.show_codex_windows_warning = false;
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
@@ -5940,12 +5936,8 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
-            .children({
-                if self.show_codex_windows_warning {
-                    self.render_codex_windows_warning(cx)
-                } else {
-                    None
-                }
+            .when(self.show_codex_windows_warning, |this| {
+                this.child(self.render_codex_windows_warning(cx))
             })
             .children(self.render_thread_error(window, cx))
             .when_some(
