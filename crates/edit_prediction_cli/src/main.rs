@@ -10,7 +10,7 @@ mod report;
 mod retrieve_context;
 mod score;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use edit_prediction::EditPredictionStore;
 use gpui::Application;
 use reqwest_client::ReqwestClient;
@@ -120,7 +120,13 @@ fn main() {
     }
 
     let output = args.output_path();
-    let command = args.command.unwrap();
+    let command = match args.command {
+        Some(cmd) => cmd,
+        None => {
+            EpArgs::command().print_help().unwrap();
+            return;
+        }
+    };
 
     match &command {
         Command::Clean => {
