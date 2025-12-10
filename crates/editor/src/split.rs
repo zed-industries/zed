@@ -39,6 +39,7 @@ struct SplitDiff;
 struct UnsplitDiff;
 
 pub struct SplittableEditor {
+    primary_multibuffer: Entity<MultiBuffer>,
     primary_editor: Entity<Editor>,
     secondary: Option<SecondaryEditor>,
     panes: PaneGroup,
@@ -47,6 +48,7 @@ pub struct SplittableEditor {
 }
 
 struct SecondaryEditor {
+    multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     pane: Entity<Pane>,
     has_latest_selection: bool,
@@ -69,14 +71,20 @@ impl SplittableEditor {
     }
 
     pub fn new_unsplit(
-        buffer: Entity<MultiBuffer>,
+        primary_multibuffer: Entity<MultiBuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let primary_editor =
-            cx.new(|cx| Editor::for_multibuffer(buffer, Some(project.clone()), window, cx));
+        let primary_editor = cx.new(|cx| {
+            Editor::for_multibuffer(
+                primary_multibuffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        });
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(
                 workspace.downgrade(),
@@ -121,6 +129,7 @@ impl SplittableEditor {
         });
         Self {
             primary_editor,
+            primary_multibuffer,
             secondary: None,
             panes,
             workspace: workspace.downgrade(),
@@ -140,14 +149,18 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
 
+        let secondary_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
         let secondary_editor = cx.new(|cx| {
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
-                multibuffer.set_all_diff_hunks_expanded(cx);
-                multibuffer
-            });
-            let mut editor =
-                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            let mut editor = Editor::for_multibuffer(
+                secondary_multibuffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            );
             editor.number_deleted_lines = true;
             editor
         });
@@ -187,6 +200,7 @@ impl SplittableEditor {
             ];
         let mut secondary = SecondaryEditor {
             editor: secondary_editor,
+            multibuffer: secondary_multibuffer,
             pane: secondary_pane.clone(),
             has_latest_selection: false,
             _subscriptions: subscriptions,
@@ -273,61 +287,104 @@ impl SplittableEditor {
         })
     }
 
-    fn expand_primary_excerpts(
+    /// Expands excerpts in both sides.
+    ///
+    /// While the left multibuffer does have separate excerpts with separate
+    /// IDs, this is an implementation detail. We do not expose the left excerpt
+    /// IDs in the public API of [`SplittableEditor`].
+    pub fn expand_excerpts(
         &mut self,
         excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
         lines: u32,
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        self.update_primary_multibuffer(cx, |multibuffer, cx| {
+        self.primary_multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.expand_excerpts(excerpt_ids.clone(), lines, direction, cx);
         });
-        let paths: Vec<PathKey> = excerpt_ids
+        let paths: Vec<(ExcerptId, PathKey)> = excerpt_ids
             .flat_map(|excerpt_id| {
-                self.primary_multibuffer(cx)
+                let path = self
+                    .primary_multibuffer
+                    .read(cx)
                     .path_for_excerpt(excerpt_id)
-                    .cloned()
+                    .cloned()?;
+                Some((excerpt_id, path))
             })
             .collect();
 
-        if let Some(secondary) = &self.secondary {
-            self.update_primary_multibuffer(cx, |multibuffer, cx| {
-                let snapshot = primary_multibuffer.snapshot(cx);
-                for path in paths {
-                    let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
-                    let diff = primary_multibuffer.diff_for(buffer.remote_id()).unwrap();
-                    secondary.sync_path_excerpts(path, multibuffer, diff, cx);
-                }
+        if let Some(secondary) = &mut self.secondary {
+            self.primary_editor.update(cx, |editor, cx| {
+                editor.buffer().update(cx, |multibuffer, cx| {
+                    let snapshot = multibuffer.snapshot(cx);
+                    for (excerpt_id, path) in paths {
+                        let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
+                        let diff = multibuffer.diff_for(buffer.remote_id()).unwrap();
+                        secondary.sync_path_excerpts(path, multibuffer, diff, cx);
+                    }
+                })
             })
         }
     }
 
-    fn primary_multibuffer<'a>(&'a self, cx: &'a Context<Self>) -> &'a MultiBuffer {
-        self.primary_editor.read(cx).buffer.read(cx)
+    pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
+        self.primary_multibuffer.update(cx, |buffer, cx| {
+            buffer.remove_excerpts_for_path(path.clone(), cx)
+        });
+        if let Some(secondary) = &self.secondary {
+            secondary
+                .multibuffer
+                .update(cx, |buffer, cx| buffer.remove_excerpts_for_path(path, cx))
+        }
     }
+}
 
-    fn update_primary_multibuffer<R>(
-        &mut self,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut MultiBuffer, &mut Context<MultiBuffer>) -> R,
-    ) -> R {
-        self.primary_editor
-            .update(cx, |editor, cx| editor.buffer().update(cx, f))
-    }
-
-    #[cfg(test)]
+#[cfg(test)]
+impl SplittableEditor {
     fn check_invariants(&self, cx: &App) {
-        todo!()
+        let Some(secondary) = &self.secondary else {
+            return;
+        };
+
+        let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
+        let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
+        assert_eq!(primary_excerpts.len(), secondary_excerpts.len());
+
+        // self.primary_multibuffer.read(cx).check_invariants(cx);
+        // secondary.multibuffer.read(cx).check_invariants(cx);
+        // Assertions:...
+        //
+        // left.display_lines().filter(is_unmodified) == right.display_lines().filter(is_unmodified)
+        //
+        // left excerpts and right excerpts bijectivity
+        //
+        //
+
+        // let primary_buffer_text = self
+        //     .primary_multibuffer
+        //     .read(cx)
+        //     .text_summary_for_range(Anchor::min()..Anchor::max());
+        // let secondary_buffer_text = secondary
+        //     .multibuffer
+        //     .read(cx)
+        //     .text_summary_for_range(Anchor::min()..Anchor::max());
+        // let primary_buffer_base_text = self
+        //     .primary_multibuffer
+        //     .read(cx)
+        //     .base_text_summary_for_range(Anchor::min()..Anchor::max());
+        // let secondary_buffer_base_text = secondary
+        //     .multibuffer
+        //     .read(cx)
+        //     .base_text_summary_for_range(Anchor::min()..Anchor::max());
     }
 
-    #[cfg(test)]
     fn randomly_edit_excerpts(
         &mut self,
         rng: &mut impl rand::Rng,
         mutation_count: usize,
         cx: &mut Context<Self>,
     ) {
+        use collections::HashSet;
         use rand::prelude::*;
         use std::env;
         use util::RandomCharIter;
@@ -336,19 +393,21 @@ impl SplittableEditor {
             .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
             .unwrap_or(5);
 
-        let excerpt_ids = self.primary_multibuffer(cx).excerpt_ids();
+        let paths = self
+            .primary_multibuffer
+            .read(cx)
+            .paths()
+            .collect::<Vec<_>>();
+        let excerpt_ids = self.primary_multibuffer.read(cx).excerpt_ids();
 
-        let mut buffers = Vec::new();
         for _ in 0..mutation_count {
             if rng.random_bool(0.05) {
                 log::info!("Clearing multi-buffer");
-                self.update_primary_multibuffer(cx, |multibuffer, cx| {
+                self.primary_multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
                 });
                 continue;
             } else if rng.random_bool(0.1) && !excerpt_ids.is_empty() {
-                use collections::HashSet;
-
                 let mut excerpts = HashSet::default();
                 for _ in 0..rng.random_range(0..excerpt_ids.len()) {
                     excerpts.extend(excerpt_ids.choose(rng).copied());
@@ -358,8 +417,7 @@ impl SplittableEditor {
 
                 log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
 
-                // FIXME we need an expand_excerpts API on the splittable editor that does a sync
-                self.expand_primary_excerpts(
+                self.expand_excerpts(
                     excerpts.iter().cloned(),
                     line_count,
                     ExpandExcerptDirection::UpAndDown,
@@ -369,58 +427,50 @@ impl SplittableEditor {
             }
 
             if excerpt_ids.is_empty() || (rng.random() && excerpt_ids.len() < max_excerpts) {
-                let buffer_handle = if rng.random() || self.buffers.is_empty() {
-                    let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
-                    buffers.push(cx.new(|cx| Buffer::local(text, cx)));
-                    let buffer = buffers.last().unwrap().read(cx);
+                let existing_buffers = self.primary_multibuffer.read(cx).all_buffers();
+                let buffer = if rng.random() || existing_buffers.is_empty() {
+                    let len = rng.random_range(0..500);
+                    let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
+                    let buffer = cx.new(|cx| Buffer::local(text, cx));
                     log::info!(
                         "Creating new buffer {} with text: {:?}",
-                        buffer.remote_id(),
-                        buffer.text()
+                        buffer.read(cx).remote_id(),
+                        buffer.read(cx).text()
                     );
-                    buffers.last().unwrap().clone()
+                    buffer
                 } else {
-                    self.buffers.values().choose(rng).unwrap().buffer.clone()
+                    existing_buffers.iter().choose(rng).unwrap().clone()
                 };
 
-                let buffer = buffer_handle.read(cx);
-                let buffer_text = buffer.text();
-                let ranges = (0..rng.random_range(0..5))
-                    .map(|_| {
-                        let end_ix =
-                            buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Right);
-                        let start_ix = buffer.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
-                        ExcerptRange::new(start_ix..end_ix)
-                    })
-                    .collect::<Vec<_>>();
-                log::info!(
-                    "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
-                    buffer_handle.read(cx).remote_id(),
-                    ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
-                    ranges
-                        .iter()
-                        .map(|r| &buffer_text[r.context.clone()])
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_snapshot, cx));
+                // Create some initial diff hunks.
+                buffer.update(cx, |buffer, cx| {
+                    buffer.randomly_edit(rng, 2, cx);
+                });
+                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                let ranges = diff.update(cx, |diff, cx| {
+                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                    diff.snapshot(cx)
+                        .hunks(&buffer_snapshot)
+                        .map(|hunk| hunk.range.clone())
                         .collect::<Vec<_>>()
-                );
-
-                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
-                log::info!("Inserted with ids: {:?}", excerpt_id);
+                });
+                let path = PathKey::for_buffer(&buffer, cx);
+                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
             } else {
-                let remove_count = rng.random_range(1..=excerpt_ids.len());
-                let mut excerpts_to_remove = excerpt_ids
+                let remove_count = rng.random_range(1..=paths.len());
+                let paths_to_remove = paths
                     .choose_multiple(rng, remove_count)
                     .cloned()
                     .collect::<Vec<_>>();
-                let snapshot = self.snapshot.borrow();
-                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
-                drop(snapshot);
-                log::info!("Removing excerpts {:?}", excerpts_to_remove);
-                self.remove_excerpts(excerpts_to_remove, cx);
+                for path in paths_to_remove {
+                    self.remove_excerpts_for_path(path, cx);
+                }
             }
         }
     }
 
-    #[cfg(test)]
     fn randomly_mutate(
         &mut self,
         rng: &mut impl rand::Rng,
@@ -442,12 +492,31 @@ impl SplittableEditor {
                     }
                 });
             } else {
-                self.update_primary_multibuffer(cx, |multibuffer, cx| {
+                self.primary_multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer.randomly_edit(rng, mutation_count, cx);
                 });
             }
-        } else {
+        } else if rng.random() {
             self.randomly_edit_excerpts(rng, mutation_count, cx);
+        } else {
+            for buffer in self.primary_multibuffer.read(cx).all_buffers() {
+                let diff = self
+                    .primary_multibuffer
+                    .read(cx)
+                    .diff_for(buffer.read(cx).remote_id())
+                    .unwrap();
+                let buffer_snapshot = buffer.read(cx).text_snapshot();
+                diff.update(cx, |diff, cx| {
+                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                });
+                // TODO(split-diff) might be a good idea to try to separate the diff recalculation from the excerpt recalculation
+                let diff_snapshot = diff.read(cx).snapshot(cx);
+                let ranges = diff_snapshot
+                    .hunks(&buffer_snapshot)
+                    .map(|hunk| hunk.range.clone());
+                let path = PathKey::for_buffer(&buffer, cx);
+                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+            }
         }
 
         self.check_invariants(cx);
@@ -516,16 +585,15 @@ impl SecondaryEditor {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
                     let start_row =
                         diff_snapshot.row_to_base_text_row(range.start.row, main_buffer);
-                    let start_column = 0;
                     let end_row = diff_snapshot.row_to_base_text_row(range.end.row, main_buffer);
                     let end_column = diff_snapshot.base_text().line_len(end_row);
-                    Point::new(start_row, start_column)..Point::new(end_row, end_column)
+                    Point::new(start_row, 0)..Point::new(end_row, end_column)
                 };
                 let primary = excerpt_range.primary.to_point(main_buffer);
                 let context = excerpt_range.context.to_point(main_buffer);
                 ExcerptRange {
-                    primary: point_range_to_base_text_point_range(primary),
-                    context: point_range_to_base_text_point_range(context),
+                    primary: point_range_to_base_text_point_range(dbg!(primary)),
+                    context: point_range_to_base_text_point_range(dbg!(context)),
                 }
             })
             .collect();
@@ -556,21 +624,25 @@ mod tests {
     use language::{Buffer, Capability};
     use multi_buffer::MultiBuffer;
     use project::Project;
-    use rand::rngs::StdRng;
+    use rand::{Rng, rngs::StdRng};
     use settings::SettingsStore;
     use ui::VisualContext as _;
     use workspace::Workspace;
 
     use crate::SplittableEditor;
 
-    #[gpui::test]
-    async fn test_basic_excerpts(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+    fn init_test(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             theme::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_basic_excerpts(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+        init_test(cx);
         let base_text = indoc! {"
             hello
         "};
@@ -589,9 +661,9 @@ mod tests {
             SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
         });
 
-        let mutation_count = rng.gen_range(0..100);
+        let mutation_count = rng.random_range(0..100);
         editor.update(cx, |editor, cx| {
-            editor.randomly_mutate(rng, mutation_count, cx);
+            editor.randomly_mutate(&mut rng, mutation_count, cx);
         })
 
         // for _ in 0..random() {
@@ -605,208 +677,4 @@ mod tests {
 
         // editor.read(cx).primary_editor().read(cx).display_map.read(cx)
     }
-
-    // MultiB
-
-    // FIXME restore these tests in some form
-    // #[gpui::test]
-    // async fn test_filtered_editor_pair(cx: &mut gpui::TestAppContext) {
-    //     init_test(cx, |_| {});
-    //     let mut leader_cx = EditorTestContext::new(cx).await;
-
-    //     let diff_base = indoc!(
-    //         r#"
-    //         one
-    //         two
-    //         three
-    //         four
-    //         five
-    //         six
-    //         "#
-    //     );
-
-    //     let initial_state = indoc!(
-    //         r#"
-    //         ˇone
-    //         two
-    //         THREE
-    //         four
-    //         five
-    //         six
-    //         "#
-    //     );
-
-    //     leader_cx.set_state(initial_state);
-
-    //     leader_cx.set_head_text(&diff_base);
-    //     leader_cx.run_until_parked();
-
-    //     let follower = leader_cx.update_multibuffer(|leader, cx| {
-    //         leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-    //         leader.set_all_diff_hunks_expanded(cx);
-    //         leader.get_or_create_follower(cx)
-    //     });
-    //     follower.update(cx, |follower, cx| {
-    //         follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-    //         follower.set_all_diff_hunks_expanded(cx);
-    //     });
-
-    //     let follower_editor =
-    //         leader_cx.new_window_entity(|window, cx| build_editor(follower, window, cx));
-    //     // leader_cx.window.focus(&follower_editor.focus_handle(cx));
-
-    //     let mut follower_cx = EditorTestContext::for_editor_in(follower_editor, &mut leader_cx).await;
-    //     cx.run_until_parked();
-
-    //     leader_cx.assert_editor_state(initial_state);
-    //     follower_cx.assert_editor_state(indoc! {
-    //         r#"
-    //         ˇone
-    //         two
-    //         three
-    //         four
-    //         five
-    //         six
-    //         "#
-    //     });
-
-    //     follower_cx.editor(|editor, _window, cx| {
-    //         assert!(editor.read_only(cx));
-    //     });
-
-    //     leader_cx.update_editor(|editor, _window, cx| {
-    //         editor.edit([(Point::new(4, 0)..Point::new(5, 0), "FIVE\n")], cx);
-    //     });
-    //     cx.run_until_parked();
-
-    //     leader_cx.assert_editor_state(indoc! {
-    //         r#"
-    //         ˇone
-    //         two
-    //         THREE
-    //         four
-    //         FIVE
-    //         six
-    //         "#
-    //     });
-
-    //     follower_cx.assert_editor_state(indoc! {
-    //         r#"
-    //         ˇone
-    //         two
-    //         three
-    //         four
-    //         five
-    //         six
-    //         "#
-    //     });
-
-    //     leader_cx.update_editor(|editor, _window, cx| {
-    //         editor.edit([(Point::new(6, 0)..Point::new(6, 0), "SEVEN")], cx);
-    //     });
-    //     cx.run_until_parked();
-
-    //     leader_cx.assert_editor_state(indoc! {
-    //         r#"
-    //         ˇone
-    //         two
-    //         THREE
-    //         four
-    //         FIVE
-    //         six
-    //         SEVEN"#
-    //     });
-
-    //     follower_cx.assert_editor_state(indoc! {
-    //         r#"
-    //         ˇone
-    //         two
-    //         three
-    //         four
-    //         five
-    //         six
-    //         "#
-    //     });
-
-    //     leader_cx.update_editor(|editor, window, cx| {
-    //         editor.move_down(&MoveDown, window, cx);
-    //         editor.refresh_selected_text_highlights(true, window, cx);
-    //     });
-    //     leader_cx.run_until_parked();
-    // }
-
-    // #[gpui::test]
-    // async fn test_filtered_editor_pair_complex(cx: &mut gpui::TestAppContext) {
-    //     init_test(cx, |_| {});
-    //     let base_text = "base\n";
-    //     let buffer_text = "buffer\n";
-
-    //     let buffer1 = cx.new(|cx| Buffer::local(buffer_text, cx));
-    //     let diff1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer1, cx));
-
-    //     let extra_buffer_1 = cx.new(|cx| Buffer::local("dummy text 1\n", cx));
-    //     let extra_diff_1 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_1, cx));
-    //     let extra_buffer_2 = cx.new(|cx| Buffer::local("dummy text 2\n", cx));
-    //     let extra_diff_2 = cx.new(|cx| BufferDiff::new_with_base_text("", &extra_buffer_2, cx));
-
-    //     let leader = cx.new(|cx| {
-    //         let mut leader = MultiBuffer::new(Capability::ReadWrite);
-    //         leader.set_all_diff_hunks_expanded(cx);
-    //         leader.set_filter_mode(Some(MultiBufferFilterMode::KeepInsertions));
-    //         leader
-    //     });
-    //     let follower = leader.update(cx, |leader, cx| leader.get_or_create_follower(cx));
-    //     follower.update(cx, |follower, _| {
-    //         follower.set_filter_mode(Some(MultiBufferFilterMode::KeepDeletions));
-    //     });
-
-    //     leader.update(cx, |leader, cx| {
-    //         leader.insert_excerpts_after(
-    //             ExcerptId::min(),
-    //             extra_buffer_2.clone(),
-    //             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-    //             cx,
-    //         );
-    //         leader.add_diff(extra_diff_2.clone(), cx);
-
-    //         leader.insert_excerpts_after(
-    //             ExcerptId::min(),
-    //             extra_buffer_1.clone(),
-    //             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-    //             cx,
-    //         );
-    //         leader.add_diff(extra_diff_1.clone(), cx);
-
-    //         leader.insert_excerpts_after(
-    //             ExcerptId::min(),
-    //             buffer1.clone(),
-    //             vec![ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-    //             cx,
-    //         );
-    //         leader.add_diff(diff1.clone(), cx);
-    //     });
-
-    //     cx.run_until_parked();
-    //     let mut cx = cx.add_empty_window();
-
-    //     let leader_editor = cx
-    //         .new_window_entity(|window, cx| Editor::for_multibuffer(leader.clone(), None, window, cx));
-    //     let follower_editor = cx.new_window_entity(|window, cx| {
-    //         Editor::for_multibuffer(follower.clone(), None, window, cx)
-    //     });
-
-    //     let mut leader_cx = EditorTestContext::for_editor_in(leader_editor.clone(), &mut cx).await;
-    //     leader_cx.assert_editor_state(indoc! {"
-    //        ˇbuffer
-
-    //        dummy text 1
-
-    //        dummy text 2
-    //     "});
-    //     let mut follower_cx = EditorTestContext::for_editor_in(follower_editor.clone(), &mut cx).await;
-    //     follower_cx.assert_editor_state(indoc! {"
-    //         ˇbase
-
-    //     "});
-    // }
 }

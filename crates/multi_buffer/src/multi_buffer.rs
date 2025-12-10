@@ -3708,7 +3708,7 @@ impl MultiBuffer {
         self.check_invariants(cx);
     }
 
-    pub fn check_invariants(&self, cx: &App) {
+    fn check_invariants(&self, cx: &App) {
         self.read(cx).check_invariants();
     }
 }

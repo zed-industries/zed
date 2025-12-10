@@ -46,6 +46,10 @@ impl MultiBuffer {
         self.excerpts_by_path.keys().cloned()
     }
 
+    pub fn path_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<&PathKey> {
+        self.paths_by_excerpt.get(&excerpt_id)
+    }
+
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
