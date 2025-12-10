@@ -273,27 +273,212 @@ impl GitListEntry {
     }
 }
 
-// Represents the current view mode of the Git panel.
-// In tree view, `logical_indices` maps visible indices to actual entry indices
-// since some entries (like collapsed directories) may be hidden.
 enum GitPanelViewMode {
     Flat,
-    Tree {
-        // Maps visible index to actual entry index.
-        // Length equals the number of visible entries.
-        logical_indices: Vec<usize>,
-    },
+    Tree(TreeViewState),
 }
 
 impl GitPanelViewMode {
     fn from_settings(cx: &App) -> Self {
         if GitPanelSettings::get_global(cx).tree_view {
-            GitPanelViewMode::Tree {
-                logical_indices: Vec::new(),
-            }
+            GitPanelViewMode::Tree(TreeViewState::default())
         } else {
             GitPanelViewMode::Flat
         }
+    }
+
+    fn tree_state(&self) -> Option<&TreeViewState> {
+        match self {
+            GitPanelViewMode::Tree(state) => Some(state),
+            GitPanelViewMode::Flat => None,
+        }
+    }
+
+    fn tree_state_mut(&mut self) -> Option<&mut TreeViewState> {
+        match self {
+            GitPanelViewMode::Tree(state) => Some(state),
+            GitPanelViewMode::Flat => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct TreeViewState {
+    // Maps visible index to actual entry index.
+    // Length equals the number of visible entries.
+    // This is needed because some entries (like collapsed directories) may be hidden.
+    logical_indices: Vec<usize>,
+    expanded_dirs: HashMap<TreeKey, bool>,
+    directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
+}
+
+impl TreeViewState {
+    fn build_tree_entries(
+        &mut self,
+        section: Section,
+        mut entries: Vec<GitStatusEntry>,
+        repo: &Repository,
+        seen_directories: &mut HashSet<TreeKey>,
+        optimistic_staging: &HashMap<RepoPath, bool>,
+    ) -> Vec<(GitListEntry, bool)> {
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+        let mut root = TreeNode::default();
+        for entry in entries {
+            let components: Vec<&str> = entry.repo_path.components().collect();
+            if components.is_empty() {
+                root.files.push(entry);
+                continue;
+            }
+
+            let mut current = &mut root;
+            let mut current_path = String::new();
+
+            for (ix, component) in components.iter().enumerate() {
+                if ix == components.len() - 1 {
+                    current.files.push(entry.clone());
+                } else {
+                    if !current_path.is_empty() {
+                        current_path.push('/');
+                    }
+                    current_path.push_str(component);
+                    let dir_path = RepoPath::new(&current_path)
+                        .expect("repo path from status entry component");
+
+                    let component = SharedString::from(component.to_string());
+
+                    current = current
+                        .children
+                        .entry(component.clone())
+                        .or_insert_with(|| TreeNode {
+                            name: component,
+                            path: Some(dir_path),
+                            ..Default::default()
+                        });
+                }
+            }
+        }
+
+        let (flattened, _) = self.flatten_tree(
+            &root,
+            section,
+            0,
+            repo,
+            seen_directories,
+            optimistic_staging,
+        );
+        flattened
+    }
+
+    fn flatten_tree(
+        &mut self,
+        node: &TreeNode,
+        section: Section,
+        depth: usize,
+        repo: &Repository,
+        seen_directories: &mut HashSet<TreeKey>,
+        optimistic_staging: &HashMap<RepoPath, bool>,
+    ) -> (Vec<(GitListEntry, bool)>, Vec<GitStatusEntry>) {
+        let mut all_statuses = Vec::new();
+        let mut flattened = Vec::new();
+
+        for child in node.children.values() {
+            let (terminal, name) = Self::compact_directory_chain(child);
+            let Some(path) = terminal.path.clone().or_else(|| child.path.clone()) else {
+                continue;
+            };
+            let (child_flattened, mut child_statuses) = self.flatten_tree(
+                terminal,
+                section,
+                depth + 1,
+                repo,
+                seen_directories,
+                optimistic_staging,
+            );
+            let key = TreeKey { section, path };
+            let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
+            self.expanded_dirs.entry(key.clone()).or_insert(true);
+            seen_directories.insert(key.clone());
+
+            let staged_count = child_statuses
+                .iter()
+                .filter(|entry| Self::is_entry_staged(entry, repo, optimistic_staging))
+                .count();
+            let staged_state =
+                GitPanel::toggle_state_for_counts(staged_count, child_statuses.len());
+
+            self.directory_descendants
+                .insert(key.clone(), child_statuses.clone());
+
+            flattened.push((
+                GitListEntry::Directory(GitTreeDirEntry {
+                    key,
+                    name,
+                    depth,
+                    staged_state,
+                    expanded,
+                }),
+                true,
+            ));
+
+            if expanded {
+                flattened.extend(child_flattened);
+            } else {
+                flattened.extend(child_flattened.into_iter().map(|(child, _)| (child, false)));
+            }
+
+            all_statuses.append(&mut child_statuses);
+        }
+
+        for file in &node.files {
+            all_statuses.push(file.clone());
+            flattened.push((
+                GitListEntry::TreeStatus(GitTreeStatusEntry {
+                    entry: file.clone(),
+                    depth,
+                }),
+                true,
+            ));
+        }
+
+        (flattened, all_statuses)
+    }
+
+    fn compact_directory_chain(mut node: &TreeNode) -> (&TreeNode, SharedString) {
+        let mut parts = vec![node.name.clone()];
+        while node.files.is_empty() && node.children.len() == 1 {
+            let Some(child) = node.children.values().next() else {
+                continue;
+            };
+            if child.path.is_none() {
+                break;
+            }
+            parts.push(child.name.clone());
+            node = child;
+        }
+        let name = parts.join("/");
+        (node, SharedString::from(name))
+    }
+
+    fn is_entry_staged(
+        entry: &GitStatusEntry,
+        repo: &Repository,
+        optimistic_staging: &HashMap<RepoPath, bool>,
+    ) -> bool {
+        if let Some(optimistic) = optimistic_staging.get(&entry.repo_path) {
+            return *optimistic;
+        }
+        repo.pending_ops_for_path(&entry.repo_path)
+            .map(|ops| ops.staging() || ops.staged())
+            .or_else(|| {
+                repo.status_for_path(&entry.repo_path)
+                    .and_then(|status| status.status.staging().as_bool())
+            })
+            .unwrap_or(entry.staging.has_staged())
     }
 }
 
@@ -451,8 +636,6 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    expanded_dirs: HashMap<TreeKey, bool>,
-    directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
     optimistic_staging: HashMap<RepoPath, bool>,
     _settings_subscription: Subscription,
 }
@@ -623,8 +806,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                expanded_dirs: HashMap::default(),
-                directory_descendants: HashMap::default(),
                 optimistic_staging: HashMap::default(),
                 _settings_subscription,
             };
@@ -1474,8 +1655,9 @@ impl GitPanel {
                 GitListEntry::Directory(entry) => {
                     let goal_staged_state = entry.staged_state != ToggleState::Selected;
                     let entries = self
-                        .directory_descendants
-                        .get(&entry.key)
+                        .view_mode
+                        .tree_state()
+                        .and_then(|state| state.directory_descendants.get(&entry.key))
                         .cloned()
                         .unwrap_or_default()
                         .into_iter()
@@ -1572,8 +1754,11 @@ impl GitPanel {
             .extend(entries.iter().map(|entry| (entry.repo_path.clone(), stage)));
 
         let staged_states: HashMap<TreeKey, ToggleState> = self
-            .directory_descendants
-            .iter()
+            .view_mode
+            .tree_state()
+            .map(|state| state.directory_descendants.iter())
+            .into_iter()
+            .flatten()
             .map(|(key, descendants)| {
                 let staged_count = descendants
                     .iter()
@@ -2902,9 +3087,13 @@ impl GitPanel {
     }
 
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
-        let expanded = self.expanded_dirs.entry(key.clone()).or_insert(true);
-        *expanded = !*expanded;
-        self.update_visible_entries(window, cx);
+        if let Some(state) = self.view_mode.tree_state_mut() {
+            let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
+            *expanded = !*expanded;
+            self.update_visible_entries(window, cx);
+        } else {
+            util::debug_panic!("Attempted to toggle directory in flat Git Panel state");
+        }
     }
 
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
@@ -3020,7 +3209,6 @@ impl GitPanel {
 
         self.entries.clear();
         self.entries_indices.clear();
-        self.directory_descendants.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
         self.conflicted_count = 0;
@@ -3034,8 +3222,8 @@ impl GitPanel {
         self.max_width_item_index = None;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-        let tree_view = matches!(self.view_mode, GitPanelViewMode::Tree { .. });
-        let group_by_status = tree_view || !sort_by_path;
+        let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
+        let group_by_status = is_tree_view || !sort_by_path;
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -3119,28 +3307,31 @@ impl GitPanel {
             self.single_tracked_entry = changed_entries.first().cloned();
         }
 
-        let mut logical_indices = tree_view.then(Vec::new);
-
-        let mut push_entry = |this: &mut Self, entry: GitListEntry, is_visible: bool| {
-            if let Some(estimate) =
-                this.width_estimate_for_list_entry(tree_view, &entry, path_style)
-            {
-                if estimate > max_width_estimate {
-                    max_width_estimate = estimate;
-                    max_width_item_index = Some(this.entries.len());
+        let mut push_entry =
+            |this: &mut Self,
+             entry: GitListEntry,
+             is_visible: bool,
+             logical_indices: Option<&mut Vec<usize>>| {
+                if let Some(estimate) =
+                    this.width_estimate_for_list_entry(is_tree_view, &entry, path_style)
+                {
+                    if estimate > max_width_estimate {
+                        max_width_estimate = estimate;
+                        max_width_item_index = Some(this.entries.len());
+                    }
                 }
-            }
 
-            if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone()) {
-                this.entries_indices.insert(repo_path, this.entries.len());
-            }
+                if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone())
+                {
+                    this.entries_indices.insert(repo_path, this.entries.len());
+                }
 
-            if let (Some(indices), true) = (logical_indices.as_mut(), is_visible) {
-                indices.push(this.entries.len());
-            }
+                if let (Some(indices), true) = (logical_indices, is_visible) {
+                    indices.push(this.entries.len());
+                }
 
-            this.entries.push(entry);
-        };
+                this.entries.push(entry);
+            };
 
         macro_rules! take_section_entries {
             () => {
@@ -3152,50 +3343,68 @@ impl GitPanel {
             };
         }
 
-        if tree_view {
-            for (section, entries) in take_section_entries!() {
-                if entries.is_empty() {
-                    continue;
-                }
+        match &mut self.view_mode {
+            GitPanelViewMode::Tree(tree_state) => {
+                tree_state.logical_indices.clear();
+                tree_state.directory_descendants.clear();
 
-                push_entry(
-                    self,
-                    GitListEntry::Header(GitHeaderEntry { header: section }),
-                    true,
-                );
+                // This is just to get around the borrow checker
+                // because push_entry mutably borrows self
+                let mut tree_state = std::mem::take(tree_state);
 
-                for (entry, is_visible) in
-                    self.build_tree_entries(section, entries, &repo, &mut seen_directories)
-                {
-                    push_entry(self, entry, is_visible);
-                }
-            }
+                for (section, entries) in take_section_entries!() {
+                    if entries.is_empty() {
+                        continue;
+                    }
 
-            self.view_mode = GitPanelViewMode::Tree {
-                logical_indices: logical_indices.unwrap_or_default(),
-            };
-            self.expanded_dirs
-                .retain(|key, _| seen_directories.contains(key));
-        } else {
-            for (section, entries) in take_section_entries!() {
-                if entries.is_empty() {
-                    continue;
-                }
-
-                if section != Section::Tracked || !sort_by_path {
                     push_entry(
                         self,
                         GitListEntry::Header(GitHeaderEntry { header: section }),
                         true,
+                        Some(&mut tree_state.logical_indices),
                     );
+
+                    for (entry, is_visible) in tree_state.build_tree_entries(
+                        section,
+                        entries,
+                        &repo,
+                        &mut seen_directories,
+                        &self.optimistic_staging,
+                    ) {
+                        push_entry(
+                            self,
+                            entry,
+                            is_visible,
+                            Some(&mut tree_state.logical_indices),
+                        );
+                    }
                 }
 
-                for entry in entries {
-                    push_entry(self, GitListEntry::Status(entry), true);
+                tree_state
+                    .expanded_dirs
+                    .retain(|key, _| seen_directories.contains(key));
+                self.view_mode = GitPanelViewMode::Tree(tree_state);
+            }
+            GitPanelViewMode::Flat => {
+                for (section, entries) in take_section_entries!() {
+                    if entries.is_empty() {
+                        continue;
+                    }
+
+                    if section != Section::Tracked || !sort_by_path {
+                        push_entry(
+                            self,
+                            GitListEntry::Header(GitHeaderEntry { header: section }),
+                            true,
+                            None,
+                        );
+                    }
+
+                    for entry in entries {
+                        push_entry(self, GitListEntry::Status(entry), true, None);
+                    }
                 }
             }
-
-            self.view_mode = GitPanelViewMode::Flat;
         }
 
         self.max_width_item_index = max_width_item_index;
@@ -3376,146 +3585,7 @@ impl GitPanel {
         self.has_staged_changes()
     }
 
-    fn build_tree_entries(
-        &mut self,
-        section: Section,
-        mut entries: Vec<GitStatusEntry>,
-        repo: &Repository,
-        seen_directories: &mut HashSet<TreeKey>,
-    ) -> Vec<(GitListEntry, bool)> {
-        if entries.is_empty() {
-            return Vec::new();
-        }
-
-        // Tree view can only sort by path. I don't think sort by status makes sense in Tree View
-        // todo! look into this more: Anthony
-        entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
-
-        let mut root = TreeNode::default();
-        for entry in entries {
-            let components: Vec<&str> = entry.repo_path.components().collect();
-            if components.is_empty() {
-                root.files.push(entry);
-                continue;
-            }
-
-            let mut current = &mut root;
-            let mut current_path = String::new();
-
-            for (ix, component) in components.iter().enumerate() {
-                if ix == components.len() - 1 {
-                    current.files.push(entry.clone());
-                } else {
-                    if !current_path.is_empty() {
-                        current_path.push('/');
-                    }
-                    current_path.push_str(component);
-                    let dir_path = RepoPath::new(&current_path)
-                        .expect("repo path from status entry component");
-
-                    let component = SharedString::from(component.to_string());
-
-                    current = current
-                        .children
-                        .entry(component.clone())
-                        .or_insert_with(|| TreeNode {
-                            name: component,
-                            path: Some(dir_path),
-                            ..Default::default()
-                        });
-                }
-            }
-        }
-
-        let (flattened, _) = self.flatten_tree(&root, section, 0, repo, seen_directories);
-        flattened
-    }
-
-    fn compact_directory_chain(mut node: &TreeNode) -> (&TreeNode, SharedString) {
-        let mut parts = vec![node.name.clone()];
-        while node.files.is_empty() && node.children.len() == 1 {
-            let Some(child) = node.children.values().next() else {
-                continue;
-            };
-            if child.path.is_none() {
-                break;
-            }
-            parts.push(child.name.clone());
-            node = child;
-        }
-        let name = parts.join("/");
-        (node, SharedString::from(name))
-    }
-
-    fn flatten_tree(
-        &mut self,
-        node: &TreeNode,
-        section: Section,
-        depth: usize,
-        repo: &Repository,
-        seen_directories: &mut HashSet<TreeKey>,
-    ) -> (Vec<(GitListEntry, bool)>, Vec<GitStatusEntry>) {
-        let mut all_statuses = Vec::new();
-        let mut flattened = Vec::new();
-
-        for child in node.children.values() {
-            let (terminal, name) = Self::compact_directory_chain(child);
-            let Some(path) = terminal.path.clone().or_else(|| child.path.clone()) else {
-                continue;
-            };
-            let (child_flattened, mut child_statuses) =
-                self.flatten_tree(terminal, section, depth + 1, repo, seen_directories);
-            let key = TreeKey { section, path };
-            let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
-
-            self.expanded_dirs.entry(key.clone()).or_insert(true);
-            seen_directories.insert(key.clone());
-
-            let staged_count = child_statuses
-                .iter()
-                .filter(|entry| self.is_entry_staged(entry, repo))
-                .count();
-            let staged_state = Self::toggle_state_for_counts(staged_count, child_statuses.len());
-
-            self.directory_descendants
-                .insert(key.clone(), child_statuses.clone());
-
-            flattened.push((
-                GitListEntry::Directory(GitTreeDirEntry {
-                    key,
-                    name,
-                    depth,
-                    staged_state,
-                    expanded,
-                }),
-                true,
-            ));
-
-            if expanded {
-                flattened.extend(child_flattened);
-            } else {
-                flattened.extend(child_flattened.into_iter().map(|(child, _)| (child, false)));
-            }
-
-            all_statuses.append(&mut child_statuses);
-        }
-
-        for file in &node.files {
-            all_statuses.push(file.clone());
-            flattened.push((
-                GitListEntry::TreeStatus(GitTreeStatusEntry {
-                    entry: file.clone(),
-                    depth,
-                }),
-                true,
-            ));
-        }
-
-        (flattened, all_statuses)
-    }
-
     fn status_width_estimate(
-        &self,
         tree_view: bool,
         entry: &GitStatusEntry,
         path_style: PathStyle,
@@ -3539,12 +3609,15 @@ impl GitPanel {
         path_style: PathStyle,
     ) -> Option<usize> {
         match entry {
-            GitListEntry::Status(status) => {
-                Some(self.status_width_estimate(tree_view, status, path_style, 0))
-            }
-            GitListEntry::TreeStatus(status) => {
-                Some(self.status_width_estimate(tree_view, &status.entry, path_style, status.depth))
-            }
+            GitListEntry::Status(status) => Some(Self::status_width_estimate(
+                tree_view, status, path_style, 0,
+            )),
+            GitListEntry::TreeStatus(status) => Some(Self::status_width_estimate(
+                tree_view,
+                &status.entry,
+                path_style,
+                status.depth,
+            )),
             GitListEntry::Directory(dir) => {
                 Some(Self::item_width_estimate(0, dir.name.len(), dir.depth))
             }
@@ -4292,7 +4365,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (is_tree_view, entry_count) = match &self.view_mode {
-            GitPanelViewMode::Tree { logical_indices } => (true, logical_indices.len()),
+            GitPanelViewMode::Tree(state) => (true, state.logical_indices.len()),
             GitPanelViewMode::Flat => (false, self.entries.len()),
         };
 
@@ -4315,9 +4388,7 @@ impl GitPanel {
                                 let mut items = Vec::with_capacity(range.end - range.start);
 
                                 for ix in range.into_iter().map(|ix| match &this.view_mode {
-                                    GitPanelViewMode::Tree { logical_indices } => {
-                                        logical_indices[ix]
-                                    }
+                                    GitPanelViewMode::Tree(state) => state.logical_indices[ix],
                                     GitPanelViewMode::Flat => ix,
                                 }) {
                                     match &this.entries.get(ix) {
