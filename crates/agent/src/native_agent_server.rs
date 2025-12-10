@@ -21,10 +21,6 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
-    }
-
     fn name(&self) -> SharedString {
         "Zed Agent".into()
     }
