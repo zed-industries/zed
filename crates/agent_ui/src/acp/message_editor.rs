@@ -565,8 +565,26 @@ impl MessageEditor {
             if let Some((workspace, selections)) =
                 self.workspace.upgrade().zip(editor_clipboard_selections)
             {
-                cx.stop_propagation();
+                let Some(first_selection) = selections.first() else {
+                    return;
+                };
+                if let Some(file_path) = &first_selection.file_path {
+                    // In case someone pastes selections from another window
+                    // with a different project, we don't want to insert the
+                    // crease (containing the absolute path) since the agent
+                    // cannot access files outside the project.
+                    let is_in_project = workspace
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .project_path_for_absolute_path(file_path, cx)
+                        .is_some();
+                    if !is_in_project {
+                        return;
+                    }
+                }
 
+                cx.stop_propagation();
                 let insertion_target = self
                     .editor
                     .read(cx)
