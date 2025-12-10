@@ -3,6 +3,7 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use indoc::indoc;
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
@@ -221,7 +222,6 @@ enum ActiveView {
     },
     History,
     Configuration,
-    Message(SharedString),
 }
 
 enum WhichFontSize {
@@ -286,7 +286,6 @@ impl ActiveView {
             }
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
-            ActiveView::Message(_) => WhichFontSize::AgentFont,
         }
     }
 
@@ -446,6 +445,7 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     new_agent_thread_task: Task<()>,
+    show_trust_workspace_message: bool,
 }
 
 impl AgentPanel {
@@ -697,6 +697,7 @@ impl AgentPanel {
             history_store,
             selected_agent: AgentType::default(),
             loading: false,
+            show_trust_workspace_message: false,
         };
 
         // Initial sync of agent servers from extensions
@@ -752,10 +753,7 @@ impl AgentPanel {
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
-            ActiveView::TextThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration
-            | ActiveView::Message(_) => None,
+            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
         }
     }
 
@@ -1043,9 +1041,7 @@ impl AgentPanel {
                         } => {
                             text_thread_editor.focus_handle(cx).focus(window);
                         }
-                        ActiveView::History
-                        | ActiveView::Configuration
-                        | ActiveView::Message(_) => {}
+                        ActiveView::History | ActiveView::Configuration => {}
                     }
                 }
                 cx.notify();
@@ -1213,10 +1209,7 @@ impl AgentPanel {
                     })
                     .detach_and_log_err(cx);
             }
-            ActiveView::TextThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration
-            | ActiveView::Message(_) => {}
+            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
     }
 
@@ -1315,7 +1308,7 @@ impl AgentPanel {
                 }
             }),
             ActiveView::ExternalAgentThread { .. } => {}
-            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
+            ActiveView::History | ActiveView::Configuration => {}
         }
 
         if current_is_special && !new_is_special {
@@ -1441,18 +1434,14 @@ impl AgentPanel {
             wait_for_worktree_trust(remote_host, cx)
         });
         if let Some(wait_task) = wait_task {
-            self.set_active_view(
-                ActiveView::Message(SharedString::new(
-                    "Waiting for global startup to be trusted before starting context servers",
-                )),
-                false,
-                window,
-                cx,
-            );
+            self.show_trust_workspace_message = true;
+            cx.notify();
             self.new_agent_thread_task = cx.spawn_in(window, async move |agent_panel, cx| {
                 wait_task.await;
                 agent_panel
                     .update_in(cx, |agent_panel, window, cx| {
+                        agent_panel.show_trust_workspace_message = false;
+                        cx.notify();
                         agent_panel._new_agent_thread(agent, window, cx);
                     })
                     .ok();
@@ -1534,7 +1523,6 @@ impl Focusable for AgentPanel {
                     cx.focus_handle()
                 }
             }
-            ActiveView::Message(_) => cx.focus_handle(),
         }
     }
 }
@@ -1712,7 +1700,6 @@ impl AgentPanel {
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
-            ActiveView::Message(_) => Label::new("Restricted mode").truncate().into_any_element(),
         };
 
         h_flex()
@@ -1907,10 +1894,7 @@ impl AgentPanel {
             ActiveView::ExternalAgentThread { thread_view } => {
                 thread_view.read(cx).as_native_thread(cx)
             }
-            ActiveView::TextThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration
-            | ActiveView::Message(_) => None,
+            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
         };
 
         let new_thread_menu = PopoverMenu::new("new_thread_menu")
@@ -2295,8 +2279,7 @@ impl AgentPanel {
             }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
-            | ActiveView::Configuration
-            | ActiveView::Message(_) => return false,
+            | ActiveView::Configuration => return false,
         }
 
         let plan = self.user_store.read(cx).plan();
@@ -2598,8 +2581,55 @@ impl AgentPanel {
                     );
                 });
             }
-            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
+            ActiveView::History | ActiveView::Configuration => {}
         }
+    }
+
+    fn render_workspace_trust_message(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        if !self.show_trust_workspace_message {
+            return None;
+        }
+
+        let description = indoc! {
+            "To protect your system, this workspace is currently open in Restricted Mode. \
+            To unlock the agent panel, mark this workspace as trusted."
+        };
+
+        Some(
+            v_flex()
+                .occlude()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .bg(cx.theme().colors().editor_background.opacity(0.8))
+                .child(
+                    v_flex()
+                        .p_6()
+                        .gap_1()
+                        .items_center()
+                        .justify_center()
+                        .text_center()
+                        .child(Label::new("Restricted Mode"))
+                        .child(Label::new(description).color(Color::Muted).mb_1p5())
+                        .child(
+                            Button::new("restricted_mode_trigger", "Configure Workspace Trust")
+                                .style(ButtonStyle::Outlined)
+                                .on_click({
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace.show_worktree_trust_security_modal(
+                                                    true, window, cx,
+                                                )
+                                            })
+                                            .log_err();
+                                    })
+                                }),
+                        ),
+                ),
+        )
     }
 
     fn key_context(&self) -> KeyContext {
@@ -2608,7 +2638,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::ExternalAgentThread { .. } => key_context.add("acp_thread"),
             ActiveView::TextThread { .. } => key_context.add("text_thread"),
-            ActiveView::History | ActiveView::Configuration | ActiveView::Message(_) => {}
+            ActiveView::History | ActiveView::Configuration => {}
         }
         key_context
     }
@@ -2691,12 +2721,9 @@ impl Render for AgentPanel {
                         ))
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
-                ActiveView::Message(message) => {
-                    // TODO kb better design
-                    parent.child(v_flex().size_full().justify_center().child(message.clone()))
-                }
             })
-            .children(self.render_trial_end_upsell(window, cx));
+            .children(self.render_trial_end_upsell(window, cx))
+            .children(self.render_workspace_trust_message(cx));
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
