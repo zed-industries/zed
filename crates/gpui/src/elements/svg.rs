@@ -132,25 +132,12 @@ impl Element for Svg {
                 } else if let Some((path, color)) =
                     self.external_path.as_ref().zip(style.text.color)
                 {
-                    log::info!(
-                        "ICON_DEBUG svg.rs external_path={}, color={:?}",
-                        path,
-                        color
-                    );
-                    let Some(bytes) = window.use_asset::<SvgAsset>(path, cx).and_then(|asset| {
-                        if let Err(ref e) = asset {
-                            log::error!("ICON_DEBUG svg.rs FAILED path={}: {:?}", path, e);
-                        }
-                        asset.log_err()
-                    }) else {
-                        log::warn!("ICON_DEBUG svg.rs NO_BYTES path={}", path);
+                    let Some(bytes) = window
+                        .use_asset::<SvgAsset>(path, cx)
+                        .and_then(|asset| asset.log_err())
+                    else {
                         return;
                     };
-                    log::info!(
-                        "ICON_DEBUG svg.rs loaded {} bytes path={}",
-                        bytes.len(),
-                        path
-                    );
 
                     let transformation = self
                         .transformation

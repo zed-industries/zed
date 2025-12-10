@@ -115,7 +115,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName::from(self.provider_info.name.clone())
+        LanguageModelProviderName::from(format!("(Extension) {}", self.provider_info.name))
     }
 
     fn icon(&self) -> ui::IconName {
@@ -123,13 +123,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn icon_path(&self) -> Option<SharedString> {
-        let path = self.icon_path.clone();
-        log::info!(
-            "LLM provider {} icon_path() returning: {:?}",
-            self.provider_info.id,
-            path
-        );
-        path
+        self.icon_path.clone()
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -185,7 +179,30 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated
+        // First check cached state
+        if self.state.read(cx).is_authenticated {
+            return true;
+        }
+
+        // Also check env var dynamically (in case migration happened after provider creation)
+        if let Some(ref auth_config) = self.auth_config {
+            if let Some(ref env_var_name) = auth_config.env_var {
+                let provider_id_string = self.provider_id_string();
+                let env_var_allowed = ExtensionSettings::get_global(cx)
+                    .allowed_env_var_providers
+                    .contains(provider_id_string.as_str());
+
+                if env_var_allowed {
+                    if let Ok(value) = std::env::var(env_var_name) {
+                        if !value.is_empty() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {

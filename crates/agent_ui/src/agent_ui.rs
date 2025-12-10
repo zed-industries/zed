@@ -348,7 +348,8 @@ fn init_language_model_settings(cx: &mut App) {
         |_, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+            | language_model::Event::RemovedProvider(_)
+            | language_model::Event::ProvidersChanged => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}

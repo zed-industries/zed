@@ -414,17 +414,9 @@ impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
         cx: &mut App,
     ) {
         let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
-            log::warn!(
-                "ExtensionHostProxy::register_language_model_provider: no proxy set for provider {}",
-                provider_id
-            );
             return;
         };
 
-        log::info!(
-            "ExtensionHostProxy::register_language_model_provider: delegating to proxy for {}",
-            provider_id
-        );
         proxy.register_language_model_provider(provider_id, register_fn, cx)
     }
 

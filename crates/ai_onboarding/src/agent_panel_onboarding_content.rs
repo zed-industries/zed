@@ -27,7 +27,8 @@ impl AgentPanelOnboarding {
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
                 language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
-                | language_model::Event::RemovedProvider(_) => {
+                | language_model::Event::RemovedProvider(_)
+                | language_model::Event::ProvidersChanged => {
                     this.has_configured_providers = Self::has_configured_providers(cx)
                 }
                 _ => {}
@@ -45,7 +46,7 @@ impl AgentPanelOnboarding {
 
     fn has_configured_providers(cx: &App) -> bool {
         LanguageModelRegistry::read_global(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .any(|provider| provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID)
     }

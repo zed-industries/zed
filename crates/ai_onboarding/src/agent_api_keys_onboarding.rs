@@ -29,7 +29,8 @@ impl ApiKeysWithProviders {
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
                 language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
-                | language_model::Event::RemovedProvider(_) => {
+                | language_model::Event::RemovedProvider(_)
+                | language_model::Event::ProvidersChanged => {
                     this.configured_providers = Self::compute_configured_providers(cx)
                 }
                 _ => {}
@@ -44,7 +45,7 @@ impl ApiKeysWithProviders {
 
     fn compute_configured_providers(cx: &App) -> Vec<(ProviderIcon, SharedString)> {
         LanguageModelRegistry::read_global(cx)
-            .providers()
+            .visible_providers()
             .iter()
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID

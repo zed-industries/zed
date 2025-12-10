@@ -42,11 +42,6 @@ impl ExtensionLanguageModelProviderProxy for LanguageModelProviderRegistryProxy 
         register_fn: LanguageModelProviderRegistration,
         cx: &mut App,
     ) {
-        log::info!(
-            "LanguageModelProviderRegistryProxy::register_language_model_provider called for: {}",
-            provider_id
-        );
-        // The register_fn closure will call registry.register_provider internally
         register_fn(cx);
     }
 
@@ -63,9 +58,6 @@ impl ExtensionLanguageModelProviderProxy for LanguageModelProviderRegistryProxy 
 pub fn init_proxy(cx: &mut App) {
     let proxy = ExtensionHostProxy::default_global(cx);
     let registry = LanguageModelRegistry::global(cx);
-    log::info!(
-        "language_models::extension::init_proxy: registering LanguageModelProviderRegistryProxy"
-    );
 
     // Set the function that determines which built-in providers should be hidden
     registry.update(cx, |registry, _cx| {

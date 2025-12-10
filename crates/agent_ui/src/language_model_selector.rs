@@ -149,6 +149,9 @@ impl LanguageModelPickerDelegate {
                     language_model::Event::RemovedProvider(_) => {
                         refresh_tx.unbounded_send(()).ok();
                     }
+                    language_model::Event::ProvidersChanged => {
+                        refresh_tx.unbounded_send(()).ok();
+                    }
                     _ => {}
                 })
                 .detach();
@@ -425,7 +428,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let configured_providers = language_model_registry
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -538,14 +541,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .w_full()
                                 .gap_1p5()
                                 .child(match &model_info.icon {
-                                    ProviderIcon::Name(icon_name) => {
-                                        log::info!("ICON_DEBUG model_selector using Icon::new for {:?}", icon_name);
-                                        Icon::new(*icon_name)
-                                            .color(model_icon_color)
-                                            .size(IconSize::Small)
-                                    }
+                                    ProviderIcon::Name(icon_name) => Icon::new(*icon_name)
+                                        .color(model_icon_color)
+                                        .size(IconSize::Small),
                                     ProviderIcon::Path(icon_path) => {
-                                        log::info!("ICON_DEBUG model_selector using from_external_svg path={}", icon_path);
                                         Icon::from_external_svg(icon_path.clone())
                                             .color(model_icon_color)
                                             .size(IconSize::Small)
