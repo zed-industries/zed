@@ -358,12 +358,7 @@ impl SecondaryEditor {
                     new,
                     cx,
                 );
-                buffer.add_inverted_diff(
-                    base_text_buffer_snapshot.remote_id(),
-                    diff,
-                    main_buffer,
-                    cx,
-                );
+                buffer.add_inverted_diff(diff, main_buffer, cx);
             })
         });
     }

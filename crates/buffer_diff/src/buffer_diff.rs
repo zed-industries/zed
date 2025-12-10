@@ -226,7 +226,12 @@ impl BufferDiffSnapshot {
         range: Range<Anchor>,
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner.hunks_intersecting_range_rev(range, buffer)
+        let filter = move |summary: &DiffHunkSummary| {
+            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+            !before_start && !after_end
+        };
+        self.inner.hunks_intersecting_range_rev_impl(filter, buffer)
     }
 
     pub fn hunks_intersecting_base_text_range<'a>(
@@ -242,6 +247,20 @@ impl BufferDiffSnapshot {
         };
         self.inner
             .hunks_intersecting_range_impl(filter, main_buffer, unstaged_counterpart)
+    }
+
+    pub fn hunks_intersecting_base_text_range_rev<'a>(
+        &'a self,
+        range: Range<usize>,
+        main_buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let filter = move |summary: &DiffHunkSummary| {
+            let before_start = summary.diff_base_byte_range.end.cmp(&range.start).is_lt();
+            let after_end = summary.diff_base_byte_range.start.cmp(&range.end).is_gt();
+            !before_start && !after_end
+        };
+        self.inner
+            .hunks_intersecting_range_rev_impl(filter, main_buffer)
     }
 
     pub fn hunks<'a>(
@@ -705,18 +724,12 @@ impl BufferDiffInner {
         })
     }
 
-    fn hunks_intersecting_range_rev<'a>(
+    fn hunks_intersecting_range_rev_impl<'a>(
         &'a self,
-        range: Range<Anchor>,
+        filter: impl 'a + Fn(&DiffHunkSummary) -> bool,
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let mut cursor = self
-            .hunks
-            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
-                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
-                !before_start && !after_end
-            });
+        let mut cursor = self.hunks.filter::<_, DiffHunkSummary>(buffer, filter);
 
         iter::from_fn(move || {
             cursor.prev();
