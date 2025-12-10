@@ -1,4 +1,4 @@
-use edit_prediction::udiff::DiffLine;
+use crate::udiff::DiffLine;
 
 use crate::{
     ScoreArgs,

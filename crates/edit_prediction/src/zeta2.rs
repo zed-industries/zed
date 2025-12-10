@@ -235,7 +235,7 @@ pub fn request_prediction_with_zeta2(
                         let edits = vec![];
                         (&snapshot, edits)
                     } else {
-                        crate::udiff::parse_diff(&output_text, get_buffer_from_context).await?
+                        todo!("udiff parsing will be removed")
                     }
                 }
                 PromptFormat::OldTextNewText => {

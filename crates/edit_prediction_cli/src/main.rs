@@ -9,6 +9,7 @@ mod predict;
 mod report;
 mod retrieve_context;
 mod score;
+mod udiff;
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use edit_prediction::EditPredictionStore;

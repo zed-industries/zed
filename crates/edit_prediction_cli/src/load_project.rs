@@ -1,3 +1,4 @@
+use crate::udiff::OpenedBuffers;
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
@@ -5,7 +6,6 @@ use crate::{
 use anyhow::{Result, anyhow};
 use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
-use edit_prediction::udiff::OpenedBuffers;
 use futures::{
     AsyncWriteExt as _,
     lock::{Mutex, OwnedMutexGuard},
@@ -255,7 +255,7 @@ async fn apply_edit_history(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
-    edit_prediction::udiff::apply_diff(&example.edit_history, project, cx).await
+    crate::udiff::apply_diff(&example.edit_history, project, cx).await
 }
 
 thread_local! {
