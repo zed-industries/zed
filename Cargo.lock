@@ -8601,8 +8601,7 @@ dependencies = [
 [[package]]
 name = "jupyter-protocol"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c047f6b5e551563af2ddb13dafed833f0ec5a5b0f9621d5ad740a9ff1e1095"
+source = "git+https://github.com/auriium2/runtimed#c91f5873a6d76891059c88e772ba48bae4cf4bff"
 dependencies = [
  "async-trait",
  "bytes 1.10.1",
