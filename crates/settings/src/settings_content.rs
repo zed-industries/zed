@@ -900,7 +900,6 @@ pub struct RemoteSettingsContent {
 pub struct DevContainerConnection {
     pub name: SharedString,
     pub container_id: SharedString,
-    pub working_directory: SharedString,
 }
 
 #[with_fallible_options]

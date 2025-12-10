@@ -33,7 +33,6 @@ pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub upload_binary_over_docker_exec: bool,
-    pub working_directory: String,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -79,12 +78,7 @@ impl DockerExecConnection {
 
         this.shell = Some(this.discover_shell().await);
 
-        this.remote_dir_for_server = this
-            .docker_user_home_dir()
-            .await
-            .unwrap_or(this.connection_options.working_directory.clone())
-            .trim()
-            .to_string();
+        this.remote_dir_for_server = this.docker_user_home_dir().await?.trim().to_string();
 
         this.remote_binary_relpath = Some(
             this.ensure_server_binary(
@@ -104,12 +98,7 @@ impl DockerExecConnection {
     async fn discover_shell(&self) -> String {
         let default_shell = "sh";
         match self
-            .run_docker_exec(
-                "sh",
-                &self.connection_options.working_directory,
-                &Default::default(),
-                &["-c", "echo $SHELL"],
-            )
+            .run_docker_exec("sh", None, &Default::default(), &["-c", "echo $SHELL"])
             .await
         {
             Ok(shell) => match shell.trim() {
@@ -128,12 +117,7 @@ impl DockerExecConnection {
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
         let uname = self
-            .run_docker_exec(
-                "uname",
-                &self.connection_options.working_directory,
-                &Default::default(),
-                &["-sm"],
-            )
+            .run_docker_exec("uname", None, &Default::default(), &["-sm"])
             .await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
@@ -223,7 +207,7 @@ impl DockerExecConnection {
         if self
             .run_docker_exec(
                 &dst_path.display(self.path_style()),
-                &remote_dir_for_server,
+                Some(&remote_dir_for_server),
                 &Default::default(),
                 &["version"],
             )
@@ -310,7 +294,7 @@ impl DockerExecConnection {
         let inner_program = self.shell();
         self.run_docker_exec(
             &inner_program,
-            "",
+            None,
             &Default::default(),
             &["-c", "echo $HOME"],
         )
@@ -351,9 +335,14 @@ impl DockerExecConnection {
             format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
         let args = shell_kind.args_for_shell(false, script.to_string());
-        self.run_docker_exec("sh", &remote_dir_for_server, &Default::default(), &args)
-            .await
-            .log_err();
+        self.run_docker_exec(
+            "sh",
+            Some(&remote_dir_for_server),
+            &Default::default(),
+            &args,
+        )
+        .await
+        .log_err();
         Ok(())
     }
 
@@ -368,7 +357,7 @@ impl DockerExecConnection {
         if let Some(parent) = tmp_path_gz.parent() {
             self.run_docker_exec(
                 "mkdir",
-                remote_dir_for_server,
+                Some(remote_dir_for_server),
                 &Default::default(),
                 &["-p", parent.display(self.path_style()).as_ref()],
             )
@@ -452,11 +441,14 @@ impl DockerExecConnection {
     async fn run_docker_exec(
         &self,
         inner_program: &str,
-        working_directory: &str,
+        working_directory: Option<&str>,
         env: &HashMap<String, String>,
         program_args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut args = vec!["-w".to_string(), working_directory.to_string()];
+        let mut args = match working_directory {
+            Some(dir) => vec!["-w".to_string(), dir.to_string()],
+            None => vec![],
+        };
 
         for (k, v) in env.iter() {
             args.push("-e".to_string());
@@ -484,7 +476,7 @@ impl DockerExecConnection {
         if let Some(parent) = tmp_path_gz.parent() {
             self.run_docker_exec(
                 "mkdir",
-                remote_dir_for_server,
+                Some(remote_dir_for_server),
                 &Default::default(),
                 &["-p", parent.display(self.path_style()).as_ref()],
             )
@@ -496,7 +488,7 @@ impl DockerExecConnection {
         match self
             .run_docker_exec(
                 "curl",
-                remote_dir_for_server,
+                Some(remote_dir_for_server),
                 &Default::default(),
                 &[
                     "-f",
@@ -511,12 +503,7 @@ impl DockerExecConnection {
             Ok(_) => {}
             Err(e) => {
                 if self
-                    .run_docker_exec(
-                        "which",
-                        remote_dir_for_server,
-                        &Default::default(),
-                        &["curl"],
-                    )
+                    .run_docker_exec("which", None, &Default::default(), &["curl"])
                     .await
                     .is_ok()
                 {
@@ -527,7 +514,7 @@ impl DockerExecConnection {
                 match self
                     .run_docker_exec(
                         "wget",
-                        remote_dir_for_server,
+                        Some(remote_dir_for_server),
                         &Default::default(),
                         &[url, "-O", &tmp_path_gz.display(self.path_style())],
                     )
@@ -536,12 +523,7 @@ impl DockerExecConnection {
                     Ok(_) => {}
                     Err(e) => {
                         if self
-                            .run_docker_exec(
-                                "which",
-                                remote_dir_for_server,
-                                &Default::default(),
-                                &["wget"],
-                            )
+                            .run_docker_exec("which", None, &Default::default(), &["wget"])
                             .await
                             .is_ok()
                         {

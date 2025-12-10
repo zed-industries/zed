@@ -247,7 +247,6 @@ pub(crate) async fn start_dev_container(
         let connection = Connection::DevContainer(DevContainerConnection {
             name: project_name.into(),
             container_id: container_id.into(),
-            working_directory: remote_workspace_folder.clone().into(),
         });
 
         Ok((connection, remote_workspace_folder))

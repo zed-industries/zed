@@ -707,7 +707,6 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN name TEXT;
             ALTER TABLE remote_connections ADD COLUMN container_id TEXT;
-            ALTER TABLE remote_connections ADD COLUMN working_directory TEXT;
         ),
     ];
 
@@ -1134,7 +1133,6 @@ impl WorkspaceDb {
         let mut distro = None;
         let mut name = None;
         let mut container_id = None;
-        let mut working_directory = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1151,7 +1149,6 @@ impl WorkspaceDb {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
-                working_directory = Some(options.working_directory);
             }
         }
         Self::get_or_create_remote_connection_query(
@@ -1163,7 +1160,6 @@ impl WorkspaceDb {
             distro,
             name,
             container_id,
-            working_directory,
         )
     }
 
@@ -1176,7 +1172,6 @@ impl WorkspaceDb {
         distro: Option<String>,
         name: Option<String>,
         container_id: Option<String>,
-        working_directory: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1188,8 +1183,7 @@ impl WorkspaceDb {
                 user IS ? AND
                 distro IS ? AND
                 name IS ? AND
-                container_id IS ? AND
-                working_directory IS ?
+                container_id IS ?
             LIMIT 1
         ))?((
             kind.serialize(),
@@ -1199,7 +1193,6 @@ impl WorkspaceDb {
             distro.clone(),
             name.clone(),
             container_id.clone(),
-            working_directory.clone(),
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -1211,9 +1204,8 @@ impl WorkspaceDb {
                     user,
                     distro,
                     name,
-                    container_id,
-                    working_directory
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    container_id
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1223,7 +1215,6 @@ impl WorkspaceDb {
                 distro,
                 name,
                 container_id,
-                working_directory,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1307,28 +1298,25 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, working_directory
+                id, kind, host, port, user, distro, container_id, name
             FROM
                 remote_connections
         ))?()?
         .into_iter()
-        .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, working_directory)| {
-                Some((
-                    RemoteConnectionId(id),
-                    Self::remote_connection_from_row(
-                        kind,
-                        host,
-                        port,
-                        user,
-                        distro,
-                        container_id,
-                        name,
-                        working_directory,
-                    )?,
-                ))
-            },
-        )
+        .filter_map(|(id, kind, host, port, user, distro, container_id, name)| {
+            Some((
+                RemoteConnectionId(id),
+                Self::remote_connection_from_row(
+                    kind,
+                    host,
+                    port,
+                    user,
+                    distro,
+                    container_id,
+                    name,
+                )?,
+            ))
+        })
         .collect())
     }
 
@@ -1336,24 +1324,14 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, working_directory) =
-            self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, working_directory
-                FROM remote_connections
-                WHERE id = ?
-            ))?(id.0)?
-            .context("no such remote connection")?;
-        Self::remote_connection_from_row(
-            kind,
-            host,
-            port,
-            user,
-            distro,
-            container_id,
-            name,
-            working_directory,
-        )
-        .context("invalid remote_connection row")
+        let (kind, host, port, user, distro, container_id, name) = self.select_row_bound(sql!(
+            SELECT kind, host, port, user, distro, container_id, name
+            FROM remote_connections
+            WHERE id = ?
+        ))?(id.0)?
+        .context("no such remote connection")?;
+        Self::remote_connection_from_row(kind, host, port, user, distro, container_id, name)
+            .context("invalid remote_connection row")
     }
 
     fn remote_connection_from_row(
@@ -1364,7 +1342,6 @@ impl WorkspaceDb {
         distro: Option<String>,
         container_id: Option<String>,
         name: Option<String>,
-        working_directory: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1381,8 +1358,7 @@ impl WorkspaceDb {
                 Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
-                    upload_binary_over_docker_exec: false, // TODO
-                    working_directory: working_directory?,
+                    upload_binary_over_docker_exec: false,
                 }))
             }
         }
