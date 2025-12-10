@@ -1,4 +1,4 @@
-use settings::{RegisterSetting, Settings};
+use settings::{CellMarkerStyle, RegisterSetting, Settings};
 
 /// Settings for configuring REPL display and behavior.
 #[derive(Clone, Debug, RegisterSetting)]
@@ -13,6 +13,10 @@ pub struct ReplSettings {
     ///
     /// Default: 128
     pub max_columns: usize,
+    /// How cell markers are interpreted in source files.
+    ///
+    /// Default: Jupytext
+    pub cell_marker_style: CellMarkerStyle,
 }
 
 impl Settings for ReplSettings {
@@ -22,6 +26,7 @@ impl Settings for ReplSettings {
         Self {
             max_lines: repl.max_lines.unwrap(),
             max_columns: repl.max_columns.unwrap(),
+            cell_marker_style: repl.cell_marker_style.unwrap_or_default(),
         }
     }
 }
