@@ -3155,7 +3155,7 @@ mod tests {
                 vec![path!("/dir1"), path!("/dir2/b.txt")]
                     .into_iter()
                     .map(Path::new)
-                    .collect(),
+                    .collect::<HashSet<_>>(),
             );
             assert_eq!(
                 workspace
@@ -3205,7 +3205,7 @@ mod tests {
                 vec![path!("/dir1"), path!("/dir2/b.txt"), path!("/dir3")]
                     .into_iter()
                     .map(Path::new)
-                    .collect(),
+                    .collect::<HashSet<_>>(),
             );
             assert_eq!(
                 workspace
@@ -3255,7 +3255,7 @@ mod tests {
                 ]
                 .into_iter()
                 .map(Path::new)
-                .collect(),
+                .collect::<HashSet<_>>(),
             );
 
             let visible_worktree_roots = workspace
@@ -3267,7 +3267,7 @@ mod tests {
                 vec![path!("/dir1"), path!("/dir2/b.txt"), path!("/dir3")]
                     .into_iter()
                     .map(Path::new)
-                    .collect(),
+                    .collect::<HashSet<_>>(),
             );
 
             assert_eq!(
