@@ -262,7 +262,7 @@ impl BatchingLlmClient {
                         }
                     }
                 }
-                log::info!("Uploaded {} successful requests", success_count);
+                log::info!("Downloaded {} successful requests", success_count);
             }
         }
 

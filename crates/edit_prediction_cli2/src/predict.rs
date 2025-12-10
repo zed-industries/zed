@@ -2,6 +2,7 @@ use crate::{
     PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
+    format_prompt::{PromptParser, TeacherPrompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
@@ -227,19 +228,42 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
         .await
         .unwrap()
     else {
+        // Request stashed for batched processing
         return;
     };
 
+    let actual_output = response
+        .content
+        .into_iter()
+        .filter_map(|content| match content {
+            anthropic::ResponseContent::Text { text } => Some(text),
+            _ => None,
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let actual_patch = TeacherPrompt::parse(example, &actual_output);
+
     let prediction = ExamplePrediction {
-        actual_patch: todo!(),
-        actual_output: todo!(),
+        actual_patch,
+        actual_output,
         provider: PredictionProvider::AnthropicBatched,
     };
 
     example.predictions.push(prediction);
 }
 
-pub async fn teardown_predictions(provider: &PredictionProvider) {
+/// Should be called before the first example in the batch is processed
+pub async fn on_batch_start(provider: &PredictionProvider) {
+    sync_batches(provider).await;
+}
+
+/// Should be called after the last example
+pub async fn on_batch_end(provider: &PredictionProvider) {
+    sync_batches(provider).await;
+}
+
+async fn sync_batches(provider: &PredictionProvider) {
     match provider {
         PredictionProvider::AnthropicBatched => {
             let cache_path = crate::paths::LLM_CACHE_DB.as_ref();

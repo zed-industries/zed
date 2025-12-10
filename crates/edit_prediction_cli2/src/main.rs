@@ -19,7 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 use crate::example::{read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
-use crate::predict::{run_prediction, teardown_predictions};
+use crate::predict::run_prediction;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 
@@ -120,6 +120,11 @@ fn main() {
         EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
 
         cx.spawn(async move |cx| {
+            match &command {
+                Command::Predict(args) => predict::on_batch_start(&args.provider).await,
+                _ => (),
+            };
+
             for data in examples.chunks_mut(args.max_parallelism) {
                 let mut futures = Vec::new();
                 for example in data.iter_mut() {
@@ -160,7 +165,7 @@ fn main() {
             }
 
             match &command {
-                Command::Predict(args) => teardown_predictions(&args.provider).await,
+                Command::Predict(args) => predict::on_batch_end(&args.provider).await,
                 _ => (),
             };
 

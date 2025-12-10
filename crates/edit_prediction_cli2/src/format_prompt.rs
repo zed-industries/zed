@@ -1,6 +1,6 @@
 use crate::{
     PromptFormat,
-    example::{Example, ExamplePrompt},
+    example::{Example, ExampleContextExcerpt, ExamplePrompt},
 };
 use std::fmt::Write;
 
@@ -17,12 +17,17 @@ pub async fn run_format_prompt(example: &mut Example, prompt_format: PromptForma
     });
 }
 
-trait PromptFormatter {
+pub trait PromptFormatter {
     fn format(example: &Example) -> String;
 }
 
-struct Zeta2Prompt;
-struct TeacherPrompt;
+pub trait PromptParser {
+    /// Return unified diff patch of prediction given raw LLM response
+    fn parse(example: &Example, response: &str) -> String;
+}
+
+pub struct Zeta2Prompt;
+pub struct TeacherPrompt;
 
 impl PromptFormatter for Zeta2Prompt {
     fn format(example: &Example) -> String {
@@ -166,7 +171,7 @@ impl TeacherPrompt {
 
         let path_str = example.cursor_path.to_string_lossy();
         result.push_str(&format!("`````path=\"{path_str}\"\n"));
-        result.push_str(&format!("{}\n", Self::EDITABLE_REGION_START));
+        result.push_str(&format!("{}", Self::EDITABLE_REGION_START));
 
         // TODO: control number of lines around cursor
         result.push_str(&example.cursor_position);
@@ -180,6 +185,17 @@ impl TeacherPrompt {
         result
     }
 
+    fn extract_editable_region(text: &str) -> String {
+        let start = text
+            .find(Self::EDITABLE_REGION_START)
+            .map_or(0, |pos| pos + Self::EDITABLE_REGION_START.len());
+        let end = text.find(Self::EDITABLE_REGION_END).unwrap_or(text.len());
+
+        let region = &text[start..end];
+
+        region.replace("<|user_cursor|>", "")
+    }
+
     fn is_udiff_content_line(s: &str) -> bool {
         s.starts_with("-")
             || s.starts_with("+")
@@ -188,4 +204,84 @@ impl TeacherPrompt {
             || s.starts_with("+++")
             || s.starts_with("@@")
     }
+}
+
+impl PromptParser for TeacherPrompt {
+    fn parse(example: &Example, response: &str) -> String {
+        // Ideally, we should always be able to find cursor position in the retrieved context.
+        // In reality, sometimes we don't find it for these reasons:
+        // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
+        //    (can be fixed by getting cursor coordinates at the load_example stage)
+        // 2. Context retriever just didn't include cursor line.
+        //
+        // In that case, fallback to using `cursor_position` as excerpt.
+        let cursor_excerpt = find_context_excerpt_under_cursor(example)
+            .map_or(&example.cursor_position, |e| &e.text)
+            .replace("<|user_cursor|>", "");
+
+        // Extract updated (new) editable region from the model response
+        let new_editable_region = extract_last_codeblock(response);
+
+        // Reconstruct old editable region we sent to the model
+        let old_editable_region = Self::format_editable_region(example);
+        let old_editable_region = Self::extract_editable_region(&old_editable_region);
+
+        // Apply editable region to a larger context and compute diff.
+        // This is needed to get a better context lines around the editable region
+        // TODO: Report an error when old_editable_region not found in cursor_excerpt
+        let edited_cursor_excerpt =
+            cursor_excerpt.replace(&old_editable_region, &new_editable_region);
+        let diff = language::unified_diff(&cursor_excerpt, &edited_cursor_excerpt);
+
+        diff
+    }
+}
+
+fn extract_last_codeblock(text: &str) -> String {
+    let mut last_block = None;
+    let mut search_start = 0;
+
+    while let Some(start) = text[search_start..].find("```") {
+        let start = start + search_start;
+        let bytes = text.as_bytes();
+        let mut backtick_end = start;
+
+        while backtick_end < bytes.len() && bytes[backtick_end] == b'`' {
+            backtick_end += 1;
+        }
+
+        let backtick_count = backtick_end - start;
+        let closing_backticks = "`".repeat(backtick_count);
+
+        while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
+            backtick_end += 1;
+        }
+
+        if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos - 1];
+            last_block = Some(code_block.to_string());
+            search_start = backtick_end + end_pos + backtick_count;
+        } else {
+            break;
+        }
+    }
+
+    last_block.unwrap_or_else(|| text.to_string())
+}
+
+fn find_context_excerpt_under_cursor(example: &Example) -> Option<&ExampleContextExcerpt> {
+    let context = example.context.as_ref().expect("Context must be provided");
+    let cursor_position = example.cursor_position.replace("<|user_cursor|>", "");
+    let cursor_file = context
+        .files
+        .iter()
+        .filter(|f| f.rel_path == example.cursor_path)
+        .next()?;
+    let cursor_excerpt = cursor_file
+        .excerpts
+        .iter()
+        .filter(|e| e.text.contains(&cursor_position))
+        .next()?;
+
+    Some(cursor_excerpt)
 }
