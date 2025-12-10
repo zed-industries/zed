@@ -1155,7 +1155,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     Button::new("open-split", "Open in Split")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::SecondaryConfirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(11.))),
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
@@ -1165,7 +1165,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     Button::new("open", "Open")
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(11.))),
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx);
