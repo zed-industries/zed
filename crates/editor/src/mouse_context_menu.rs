@@ -59,7 +59,7 @@ impl MouseContextMenu {
                 x: editor.gutter_dimensions.width,
                 y: Pixels::ZERO,
             };
-        let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, window, cx)?;
         let menu_position = MenuPosition::PinnedToEditor {
             source,
             offset: position - (source_position + content_origin),
