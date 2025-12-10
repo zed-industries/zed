@@ -21,7 +21,7 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn telemetry_id(&self) -> SharedString {
+    fn fallback_telemetry_id(&self) -> SharedString {
         "zed".into()
     }
 

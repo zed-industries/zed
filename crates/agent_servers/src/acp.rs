@@ -54,7 +54,7 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
-    telemetry_id: SharedString,
+    fallback_telemetry_id: SharedString,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -64,7 +64,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
-        telemetry_id,
+        fallback_telemetry_id,
         command.clone(),
         root_dir,
         default_mode,
@@ -81,7 +81,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
-        telemetry_id: SharedString,
+        fallback_telemetry_id: SharedString,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -204,7 +204,7 @@ impl AcpConnection {
             root_dir: root_dir.to_owned(),
             connection,
             server_name,
-            telemetry_id,
+            telemetry_id: fallback_telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
             default_mode,

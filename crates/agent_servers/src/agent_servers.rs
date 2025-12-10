@@ -56,7 +56,7 @@ impl AgentServerDelegate {
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
     fn name(&self) -> SharedString;
-    fn telemetry_id(&self) -> SharedString;
+    fn fallback_telemetry_id(&self) -> SharedString;
     fn default_mode(&self, _cx: &mut App) -> Option<agent_client_protocol::SessionModeId> {
         None
     }

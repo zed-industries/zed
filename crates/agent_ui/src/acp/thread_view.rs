@@ -391,8 +391,7 @@ impl AcpThreadView {
             ),
         ];
 
-        let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
-            == Some(crate::ExternalAgent::Codex);
+        let show_codex_windows_warning = agent.clone().downcast::<agent_servers::Codex>().is_some();
 
         Self {
             agent: agent.clone(),
@@ -1133,8 +1132,8 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
-        let agent_telemetry_id = self.agent.telemetry_id();
         let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
@@ -1512,6 +1511,7 @@ impl AcpThreadView {
         else {
             return;
         };
+        let agent_telemetry_id = connection.telemetry_id();
 
         // Check for the experimental "terminal-auth" _meta field
         let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
@@ -1579,19 +1579,18 @@ impl AcpThreadView {
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
-                                let agent = self.agent.clone();
                                 async move |this, cx| {
                                     let result = authenticate.await;
 
                                     match &result {
                                         Ok(_) => telemetry::event!(
                                             "Authenticate Agent Succeeded",
-                                            agent = agent.telemetry_id()
+                                            agent = agent_telemetry_id
                                         ),
                                         Err(_) => {
                                             telemetry::event!(
                                                 "Authenticate Agent Failed",
-                                                agent = agent.telemetry_id(),
+                                                agent = agent_telemetry_id,
                                             )
                                         }
                                     }
@@ -1730,43 +1729,38 @@ impl AcpThreadView {
             connection.authenticate(method, cx)
         };
         cx.notify();
-        self.auth_task =
-            Some(cx.spawn_in(window, {
-                let agent = self.agent.clone();
-                async move |this, cx| {
-                    let result = authenticate.await;
+        self.auth_task = Some(cx.spawn_in(window, {
+            async move |this, cx| {
+                let result = authenticate.await;
 
-                    match &result {
-                        Ok(_) => telemetry::event!(
-                            "Authenticate Agent Succeeded",
-                            agent = agent.telemetry_id()
-                        ),
-                        Err(_) => {
-                            telemetry::event!(
-                                "Authenticate Agent Failed",
-                                agent = agent.telemetry_id(),
-                            )
-                        }
+                match &result {
+                    Ok(_) => telemetry::event!(
+                        "Authenticate Agent Succeeded",
+                        agent = agent_telemetry_id
+                    ),
+                    Err(_) => {
+                        telemetry::event!("Authenticate Agent Failed", agent = agent_telemetry_id,)
                     }
-
-                    this.update_in(cx, |this, window, cx| {
-                        if let Err(err) = result {
-                            if let ThreadState::Unauthenticated {
-                                pending_auth_method,
-                                ..
-                            } = &mut this.thread_state
-                            {
-                                pending_auth_method.take();
-                            }
-                            this.handle_thread_error(err, cx);
-                        } else {
-                            this.reset(window, cx);
-                        }
-                        this.auth_task.take()
-                    })
-                    .ok();
                 }
-            }));
+
+                this.update_in(cx, |this, window, cx| {
+                    if let Err(err) = result {
+                        if let ThreadState::Unauthenticated {
+                            pending_auth_method,
+                            ..
+                        } = &mut this.thread_state
+                        {
+                            pending_auth_method.take();
+                        }
+                        this.handle_thread_error(err, cx);
+                    } else {
+                        this.reset(window, cx);
+                    }
+                    this.auth_task.take()
+                })
+                .ok();
+            }
+        }));
     }
 
     fn spawn_external_agent_login(
@@ -1896,10 +1890,11 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
 
         telemetry::event!(
             "Agent Tool Call Authorized",
-            agent = self.agent.telemetry_id(),
+            agent = agent_telemetry_id,
             session = thread.read(cx).session_id(),
             option = option_kind
         );
@@ -3509,6 +3504,8 @@ impl AcpThreadView {
                                         (method.id.0.clone(), method.name.clone())
                                     };
 
+                                    let agent_telemetry_id = connection.telemetry_id();
+
                                     Button::new(method_id.clone(), name)
                                         .label_size(LabelSize::Small)
                                         .map(|this| {
@@ -3528,7 +3525,7 @@ impl AcpThreadView {
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
                                                     "Authenticate Agent Started",
-                                                    agent = this.agent.telemetry_id(),
+                                                    agent = agent_telemetry_id,
                                                     method = method_id
                                                 );
 
@@ -6475,7 +6472,7 @@ pub(crate) mod tests {
     where
         C: 'static + AgentConnection + Send + Clone,
     {
-        fn telemetry_id(&self) -> SharedString {
+        fn fallback_telemetry_id(&self) -> SharedString {
             "test".into()
         }
 

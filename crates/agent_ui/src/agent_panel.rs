@@ -886,7 +886,10 @@ impl AgentPanel {
             let server = ext_agent.server(fs, history);
 
             if !loading {
-                telemetry::event!("Agent Thread Started", agent = server.telemetry_id());
+                telemetry::event!(
+                    "Agent Thread Started",
+                    agent = server.fallback_telemetry_id()
+                );
             }
 
             this.update_in(cx, |this, window, cx| {
