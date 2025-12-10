@@ -202,7 +202,7 @@ pub async fn run_prediction(
         .unwrap();
 }
 
-async fn predict_anthropic(example: &mut Example, repetition_count: usize, batched: bool) {
+async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batched: bool) {
     let llm_model_name = "claude-sonnet-4-5";
     let max_tokens = 16384;
     let llm_client = if batched {

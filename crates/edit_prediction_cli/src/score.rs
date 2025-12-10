@@ -1,12 +1,29 @@
-use crate::udiff::DiffLine;
-
 use crate::{
-    ScoreArgs,
+    PredictArgs,
     example::{Example, ExampleScore},
+    headless::EpAppState,
     metrics::{self, ClassificationMetrics},
+    predict::run_prediction,
+    udiff::DiffLine,
 };
+use gpui::AsyncApp;
+use std::sync::Arc;
 
-pub async fn run_scoring(example: &mut Example, _score_args: &ScoreArgs) {
+pub async fn run_scoring(
+    example: &mut Example,
+    args: &PredictArgs,
+    app_state: Arc<EpAppState>,
+    cx: AsyncApp,
+) {
+    run_prediction(
+        example,
+        Some(args.provider),
+        args.repetitions,
+        app_state,
+        cx,
+    )
+    .await;
+
     let expected_patch = parse_patch(&example.expected_patch);
 
     let mut scores = vec![];
@@ -30,34 +47,27 @@ fn parse_patch(patch: &str) -> Vec<DiffLine<'_>> {
 }
 
 pub fn print_report(examples: &[Example]) {
-    println!(
-        "────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    eprintln!(
+        "──────────────────────────────────────────────────────────────────────────────────────"
     );
-    println!(
-        "{:<30} {:<18} {:>4} {:>4} {:>4} {:>10} {:>8} {:>8} {:>10}",
-        "Example name", "Provider", "TP", "FP", "FN", "Precision", "Recall", "F1", "DeltaChrF"
+    eprintln!(
+        "{:<30} {:>4} {:>4} {:>4} {:>10} {:>8} {:>8} {:>10}",
+        "Example name", "TP", "FP", "FN", "Precision", "Recall", "F1", "DeltaChrF"
     );
-    println!(
-        "────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    eprintln!(
+        "──────────────────────────────────────────────────────────────────────────────────────"
     );
 
     let mut all_line_match_scores = Vec::new();
     let mut all_delta_chr_f_scores = Vec::new();
 
     for example in examples {
-        for (idx, score) in example.score.iter().enumerate() {
-            let provider_name = if let Some(pred) = example.predictions.get(idx) {
-                format!("{:?}", pred.provider)
-            } else {
-                "Unknown".to_string()
-            };
-
+        for score in example.score.iter() {
             let line_match = &score.line_match;
 
-            println!(
-                "{:<30} {:<18} {:>4} {:>4} {:>4} {:>9.2}% {:>7.2}% {:>7.2}% {:>9.2}",
+            eprintln!(
+                "{:<30} {:>4} {:>4} {:>4} {:>9.2}% {:>7.2}% {:>7.2}% {:>9.2}",
                 truncate_name(&example.name, 30),
-                truncate_name(&provider_name, 18),
                 line_match.true_positives,
                 line_match.false_positives,
                 line_match.false_negatives,
@@ -72,8 +82,8 @@ pub fn print_report(examples: &[Example]) {
         }
     }
 
-    println!(
-        "────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    eprintln!(
+        "──────────────────────────────────────────────────────────────────────────────────────"
     );
 
     if !all_line_match_scores.is_empty() {
@@ -81,10 +91,9 @@ pub fn print_report(examples: &[Example]) {
         let avg_delta_chr_f: f32 =
             all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32;
 
-        println!(
-            "{:<30} {:<18} {:>4} {:>4} {:>4} {:>9.2}% {:>7.2}% {:>7.2}% {:>9.2}",
+        eprintln!(
+            "{:<30} {:>4} {:>4} {:>4} {:>9.2}% {:>7.2}% {:>7.2}% {:>9.2}",
             "TOTAL",
-            "",
             total_line_match.true_positives,
             total_line_match.false_positives,
             total_line_match.false_negatives,
@@ -93,12 +102,12 @@ pub fn print_report(examples: &[Example]) {
             total_line_match.f1_score() * 100.0,
             avg_delta_chr_f
         );
-        println!(
-            "────────────────────────────────────────────────────────────────────────────────────────────────────────"
+        eprintln!(
+            "──────────────────────────────────────────────────────────────────────────────────────"
         );
     }
 
-    println!("\n");
+    eprintln!("\n");
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {

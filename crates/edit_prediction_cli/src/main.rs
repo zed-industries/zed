@@ -6,7 +6,6 @@ mod load_project;
 mod metrics;
 mod paths;
 mod predict;
-mod report;
 mod retrieve_context;
 mod score;
 mod udiff;
@@ -55,9 +54,9 @@ enum Command {
     /// Runs edit prediction
     Predict(PredictArgs),
     /// Computes a score based on actual and expected patches
-    Score(ScoreArgs),
+    Score(PredictArgs),
     /// Print aggregated scores
-    Eval(ScoreArgs),
+    Eval(PredictArgs),
     /// Remove git repositories and worktrees
     Clean,
 }
@@ -89,12 +88,6 @@ enum PredictionProvider {
     Zeta1,
     Zeta2,
     Teacher,
-}
-
-#[derive(Debug, Args)]
-struct ScoreArgs {
-    #[clap(long)]
-    provider: Option<PredictionProvider>,
 }
 
 impl EpArgs {
@@ -180,7 +173,7 @@ fn main() {
                                 .await;
                             }
                             Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(example, &args).await;
+                                run_scoring(example, &args, app_state, cx).await;
                             }
                             Command::Clean => {
                                 unreachable!()
@@ -191,11 +184,13 @@ fn main() {
                 futures::future::join_all(futures).await;
             }
 
-            write_examples(&examples, output.as_ref());
+            if args.output.is_some() || !matches!(command, Command::Eval(_)) {
+                write_examples(&examples, output.as_ref());
+            }
 
             match &command {
                 Command::Predict(args) => predict::sync_batches(&args.provider).await,
-                Command::Score(_) | Command::Eval(_) => score::print_report(&examples),
+                Command::Eval(_) => score::print_report(&examples),
                 _ => (),
             };
 
