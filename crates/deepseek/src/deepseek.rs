@@ -248,6 +248,7 @@ pub struct StreamDelta {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ToolCallChunk {
+    #[serde(default)]
     pub index: usize,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
