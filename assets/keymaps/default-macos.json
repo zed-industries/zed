@@ -878,7 +878,9 @@
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "cmd-shift-enter": "inline_assistant::ThumbsUpResult",
+      "cmd-shift-backspace": "inline_assistant::ThumbsDownResult"
     }
   },
   {

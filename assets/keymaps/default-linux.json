@@ -811,7 +811,10 @@
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "ctrl-shift-enter": "inline_assistant::ThumbsUpResult",
+      "ctrl-shift-backspace": "inline_assistant::ThumbsDownResult"
+
     }
   },
   {
