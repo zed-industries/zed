@@ -171,15 +171,14 @@ impl Render for ModalLayer {
         };
 
         div()
-            .occlude()
             .absolute()
             .size_full()
-            .top_0()
-            .left_0()
-            .when(active_modal.modal.fade_out_background(cx), |el| {
+            .inset_0()
+            .occlude()
+            .when(active_modal.modal.fade_out_background(cx), |this| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
-                el.bg(background)
+                this.bg(background)
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -191,8 +190,6 @@ impl Render for ModalLayer {
                 v_flex()
                     .h(px(0.0))
                     .top_20()
-                    .flex()
-                    .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
                     .child(

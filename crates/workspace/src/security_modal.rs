@@ -59,8 +59,8 @@ impl ModalView for SecurityModal {
     }
 }
 
-// TODO kb keyboard navigation (ESC to dismiss?)
 // TODO kb captures events from other windows, bad
+// TODO dl hover and other regular keybindings still trigger elements underneath the alert modal
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
@@ -92,7 +92,7 @@ impl Render for SecurityModal {
                     .p_3()
                     .gap_1()
                     .rounded_t_md()
-                    .bg(cx.theme().colors().background.opacity(0.4))
+                    .bg(cx.theme().colors().editor_background.opacity(0.5))
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(
@@ -168,7 +168,7 @@ impl Render for SecurityModal {
                             .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
                             .child(ListBulletItem::new("Project settings from being applied"))
                             .child(ListBulletItem::new("Language servers from running"))
-                            .child(ListBulletItem::new("MCP integrations from installing")),
+                            .child(ListBulletItem::new("MCP Server integrations from installing")),
                     )
                     .map(|this| match trust_label {
                         Some(trust_label) => this.justify_between().child(
@@ -191,7 +191,7 @@ impl Render for SecurityModal {
                     .gap_1()
                     .justify_end()
                     .child(
-                        Button::new("rm", "Continue with Restricted Mode")
+                        Button::new("rm", "Open in Restricted Mode")
                             .key_binding(
                                 KeyBinding::for_action_in(
                                     &ToggleWorktreeSecurity,
