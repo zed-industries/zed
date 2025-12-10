@@ -74,6 +74,8 @@ pub struct ExampleContext {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleBuffer {
     pub content: String,
+    pub cursor_row: u32,
+    pub cursor_column: u32,
     pub cursor_offset: usize,
 }
 

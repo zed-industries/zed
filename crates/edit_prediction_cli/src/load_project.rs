@@ -11,7 +11,7 @@ use futures::{
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, ToOffset};
+use language::{Anchor, Buffer, ToOffset, ToPoint};
 use project::{Project, ProjectPath};
 use std::{
     cell::RefCell,
@@ -33,8 +33,11 @@ pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>,
     let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await;
     example.buffer = buffer
         .read_with(&cx, |buffer, _cx| {
+            let cursor_point = cursor_position.to_point(&buffer);
             Some(ExampleBuffer {
                 content: buffer.text(),
+                cursor_row: cursor_point.row,
+                cursor_column: cursor_point.column,
                 cursor_offset: cursor_position.to_offset(&buffer),
             })
         })
