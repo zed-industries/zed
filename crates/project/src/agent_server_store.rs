@@ -137,6 +137,7 @@ pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
     agent_icons: HashMap<ExternalAgentServerName, SharedString>,
+    agent_display_names: HashMap<ExternalAgentServerName, SharedString>,
 }
 
 pub struct AgentServersUpdated;
@@ -155,6 +156,7 @@ mod ext_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -258,6 +260,7 @@ impl AgentServerStore {
         self.external_agents.retain(|name, agent| {
             if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
                 self.agent_icons.remove(name);
+                self.agent_display_names.remove(name);
                 false
             } else {
                 // Keep the hardcoded external agents that don't come from extensions
@@ -275,6 +278,12 @@ impl AgentServerStore {
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
@@ -310,6 +319,12 @@ impl AgentServerStore {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
@@ -367,6 +382,10 @@ impl AgentServerStore {
 
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
+    }
+
+    pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+        self.agent_display_names.get(name).cloned()
     }
 
     pub fn init_remote(session: &AnyProtoClient) {
@@ -559,6 +578,7 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -609,6 +629,7 @@ impl AgentServerStore {
             },
             external_agents: external_agents.into_iter().collect(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -617,6 +638,7 @@ impl AgentServerStore {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         }
     }
 
@@ -2040,6 +2062,7 @@ mod extension_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         };
 
         // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")
