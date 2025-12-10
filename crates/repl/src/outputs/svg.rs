@@ -1,7 +1,7 @@
 use anyhow::Result;
-use gpui::{img, App, ClipboardItem, RenderImage, Window};
+use gpui::{App, ClipboardItem, RenderImage, Window, img};
 use std::sync::Arc;
-use ui::{div, prelude::*, IntoElement, Styled};
+use ui::{IntoElement, Styled, div, prelude::*};
 
 use crate::outputs::OutputContent;
 
