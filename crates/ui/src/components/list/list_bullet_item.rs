@@ -19,7 +19,7 @@ impl ListBulletItem {
     }
 
     pub fn label_color(mut self, color: Color) -> Self {
-        self.label_color = Some(color.into());
+        self.label_color = Some(color);
         self
     }
 }

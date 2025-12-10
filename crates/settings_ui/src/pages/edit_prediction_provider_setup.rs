@@ -36,7 +36,7 @@ impl Render for EditPredictionSetupPage {
                     )
                     .into_any_element(),
                     |ep_store| &mut ep_store.mercury.api_token,
-                    |_cx| MERCURY_CREDENTIALS_URL.clone(),
+                    |_cx| MERCURY_CREDENTIALS_URL,
                     ep_store.clone(),
                     window,
                     cx,
@@ -49,7 +49,7 @@ impl Render for EditPredictionSetupPage {
                     "Sweep",
                     ButtonLink::new("Sweep's console", "https://app.sweep.dev/").into_any_element(),
                     |ep_store| &mut ep_store.sweep_ai.api_token,
-                    |_cx| SWEEP_CREDENTIALS_URL.clone(),
+                    |_cx| SWEEP_CREDENTIALS_URL,
                     ep_store.clone(),
                     window,
                     cx,

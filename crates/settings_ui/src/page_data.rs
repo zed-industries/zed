@@ -2332,7 +2332,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 items.extend(all_language_names(cx).into_iter().map(|language_name| {
                     let link = format!("languages.{language_name}");
                     SettingsPageItem::SubPageLink(SubPageLink {
-                        title: language_name.clone(),
+                        title: language_name,
                         description: None,
                         json_path: Some(link.leak()),
                         in_json: true,

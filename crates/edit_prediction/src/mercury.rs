@@ -294,13 +294,13 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
-pub const MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
+pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
     let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone());
     // todo! see todo on sweep load
     _ = key.load_if_needed(
-        MERCURY_CREDENTIALS_URL.clone(),
+        MERCURY_CREDENTIALS_URL,
         |ep_store| &mut ep_store.sweep_ai.api_token,
         cx,
     );

@@ -400,12 +400,12 @@ impl Render for EditPredictionButton {
                                 if show_editor_predictions {
                                     tooltip_meta
                                 } else if user.is_none() {
-                                    "Sign In To Use".into()
+                                    "Sign In To Use"
                                 } else {
-                                    "Hidden For This File".into()
+                                    "Hidden For This File"
                                 }
                             } else {
-                                "Disabled For This File".into()
+                                "Disabled For This File"
                             };
 
                             Tooltip::with_meta(
