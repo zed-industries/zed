@@ -52,11 +52,6 @@
   function: (member_expression
       property: [(property_identifier) (private_property_identifier)] @function.method))
 
-(call_expression
-  function: (member_expression
-    object: (identifier) @type
-    (#match? @type "^[A-Z][a-z]")))
-
 (new_expression
   constructor: (identifier) @type)
 

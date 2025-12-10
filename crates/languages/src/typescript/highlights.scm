@@ -132,9 +132,6 @@
 
 ; Function and method calls
 
-(nested_type_identifier
-  module: (identifier) @type)
-
 (call_expression
   function: (identifier) @function)
 
@@ -142,13 +139,11 @@
   function: (member_expression
     property: [(property_identifier) (private_property_identifier)] @function.method))
 
-(call_expression
-  function: (member_expression
-    object: (identifier) @type
-    (#match? @type "^[A-Z][a-z]")))
-
 (new_expression
-    constructor: (identifier) @type)
+  constructor: (identifier) @type)
+
+(nested_type_identifier
+  module: (identifier) @type)
 
 ; Function and method definitions
 
