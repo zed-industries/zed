@@ -2,7 +2,6 @@ use std::{cmp::Reverse, sync::Arc};
 
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
-use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
@@ -13,7 +12,7 @@ use language_model::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::{LanguageModelSelection, Settings, update_settings_file};
+use settings::Settings;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::OpenSettings;
 
@@ -25,7 +24,8 @@ pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
 pub fn language_model_selector(
     get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
     on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-    fs: Arc<dyn Fs>,
+    on_add_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+    on_remove_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
     popover_styles: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -34,7 +34,8 @@ pub fn language_model_selector(
     let delegate = LanguageModelPickerDelegate::new(
         get_active_model,
         on_model_changed,
-        fs,
+        on_add_favorite_model,
+        on_remove_favorite_model,
         popover_styles,
         focus_handle,
         window,
@@ -117,6 +118,8 @@ impl ModelInfo {
 pub struct LanguageModelPickerDelegate {
     on_model_changed: OnModelChanged,
     get_active_model: GetActiveModel,
+    on_add_favorite_model: Arc<dyn Fn(Arc<dyn LanguageModel>, &App)>,
+    on_remove_favorite_model: Arc<dyn Fn(Arc<dyn LanguageModel>, &App)>,
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
@@ -124,14 +127,14 @@ pub struct LanguageModelPickerDelegate {
     _subscriptions: Vec<Subscription>,
     popover_styles: bool,
     focus_handle: FocusHandle,
-    fs: Arc<dyn Fs>,
 }
 
 impl LanguageModelPickerDelegate {
     fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
-        fs: Arc<dyn Fs>,
+        on_add_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        on_remove_favorite_model: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
         popover_styles: bool,
         focus_handle: FocusHandle,
         window: &mut Window,
@@ -147,6 +150,8 @@ impl LanguageModelPickerDelegate {
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
+            on_add_favorite_model: Arc::new(on_add_favorite_model),
+            on_remove_favorite_model: Arc::new(on_remove_favorite_model),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
@@ -168,7 +173,6 @@ impl LanguageModelPickerDelegate {
             )],
             popover_styles,
             focus_handle,
-            fs,
         }
     }
 
@@ -584,26 +588,18 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 };
 
                 let handle_action_click = {
-                    let fs = self.fs.clone();
                     let action = *action;
-                    let model = LanguageModelSelection {
-                        provider: model_info.model.provider_id().to_string().into(),
-                        model: model_info.model.id().0.to_string(),
-                    };
-                    move |cx: &App| {
-                        let fs = fs.clone();
-                        let model = model.clone();
-                        update_settings_file(fs, cx, move |settings, _| match action {
-                            LanguageModelPickerEntryAction::Favorite => settings
-                                .agent
-                                .get_or_insert_default()
-                                .add_favorite_model(model),
-                            LanguageModelPickerEntryAction::Unfavorite
-                            | LanguageModelPickerEntryAction::RemoveFromFavorites => settings
-                                .agent
-                                .get_or_insert_default()
-                                .remove_favorite_model(&model),
-                        });
+                    let model = model_info.model.clone();
+                    let on_add_favorite_model = self.on_add_favorite_model.clone();
+                    let on_remove_favorite_model = self.on_remove_favorite_model.clone();
+                    move |cx: &App| match action {
+                        LanguageModelPickerEntryAction::Favorite => {
+                            on_add_favorite_model(model.clone(), cx)
+                        }
+                        LanguageModelPickerEntryAction::Unfavorite
+                        | LanguageModelPickerEntryAction::RemoveFromFavorites => {
+                            on_remove_favorite_model(model.clone(), cx)
+                        }
                     }
                 };
 

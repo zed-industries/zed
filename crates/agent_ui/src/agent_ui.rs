@@ -9,6 +9,7 @@ mod context;
 mod context_server_configuration;
 #[cfg(test)]
 mod evals;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;

@@ -254,7 +254,15 @@ impl ManageProfilesModal {
                         });
                     }
                 },
-                fs,
+                {
+                    let fs = fs.clone();
+                    move |model, cx| {
+                        crate::favorite_models::add_to_settings(model, fs.clone(), cx);
+                    }
+                },
+                move |model, cx| {
+                    crate::favorite_models::remove_from_settings(model, fs.clone(), cx);
+                },
                 false, // Do not use popover styles for the model picker
                 self.focus_handle.clone(),
                 window,

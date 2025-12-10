@@ -51,7 +51,15 @@ impl AgentModelSelector {
                             }
                         }
                     },
-                    fs,
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            crate::favorite_models::add_to_settings(model, fs.clone(), cx);
+                        }
+                    },
+                    move |model, cx| {
+                        crate::favorite_models::remove_from_settings(model, fs.clone(), cx);
+                    },
                     true, // Use popover styles for picker
                     focus_handle_clone,
                     window,
