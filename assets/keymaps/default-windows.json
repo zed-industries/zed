@@ -816,7 +816,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "ctrl-shift-enter": "inline_assistant::ThumbsUpResult",
+      "ctrl-shift-delete": "inline_assistant::ThumbsDownResult"
     }
   },
   {

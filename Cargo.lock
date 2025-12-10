@@ -401,6 +401,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "watch",
  "workspace",
  "zed_actions",
@@ -5247,6 +5248,7 @@ dependencies = [
  "client",
  "gpui",
  "language",
+ "text",
 ]
 
 [[package]]
@@ -7755,7 +7757,6 @@ dependencies = [
  "tempfile",
  "url",
  "util",
- "zed-reqwest",
 ]
 
 [[package]]
