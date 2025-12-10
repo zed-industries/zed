@@ -9,6 +9,10 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use settings::Settings as _;
+use task::ShellBuilder;
+#[cfg(windows)]
+use task::ShellKind;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -21,7 +25,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape};
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -86,9 +90,26 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path);
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
+        let builder = ShellBuilder::new(&shell, cfg!(windows));
+        #[cfg(windows)]
+        let kind = builder.kind();
+        let (cmd, args) = builder.build(Some(command.path.display().to_string()), &command.args);
+
+        let mut child = util::command::new_smol_command(cmd);
+        #[cfg(windows)]
+        if kind == ShellKind::Cmd {
+            use smol::process::windows::CommandExt;
+            for arg in args {
+                child.raw_arg(arg);
+            }
+        } else {
+            child.args(args);
+        }
+        #[cfg(not(windows))]
+        child.args(args);
+
         child
-            .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
