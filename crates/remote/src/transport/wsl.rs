@@ -14,7 +14,6 @@ use semver::Version;
 use smol::{fs, process};
 use std::{
     ffi::OsStr,
-    fmt::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -423,39 +422,31 @@ impl RemoteConnection for WslRemoteConnection {
             bail!("WSL shares the network interface with the host system");
         }
 
-        let shell_kind = self.shell_kind;
         let working_dir = working_dir
             .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
 
-        let mut exec = String::from("exec env ");
+        let mut shell_builder_args = Vec::new();
+        shell_builder_args.push("env".to_owned());
 
         for (k, v) in env.iter() {
-            write!(
-                exec,
-                "{}={} ",
-                k,
-                shell_kind.try_quote(v).context("shell quoting")?
-            )?;
+            shell_builder_args.push(format!("{}={}", k, v));
         }
 
         if let Some(program) = program {
-            write!(
-                exec,
-                "{}",
-                shell_kind
-                    .try_quote_prefix_aware(&program)
-                    .context("shell quoting")?
-            )?;
-            for arg in args {
-                let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
-                write!(exec, " {}", &arg)?;
-            }
+            shell_builder_args.push(program);
+            shell_builder_args.extend(args.into_iter().cloned())
         } else {
-            write!(&mut exec, "{} -l", self.shell)?;
+            let (command, args) =
+                ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build_login_shell();
+            shell_builder_args.push(command);
+            shell_builder_args.extend(args);
         }
-        let (command, args) =
-            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
+        let (command, args) = ShellBuilder::new(
+            &Shell::Program(self.shell.clone()),
+            /* not important as we do not supploy `Shell::System` */ false,
+        )
+        .build(Some("exec".to_owned()), &[]);
 
         let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![
