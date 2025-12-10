@@ -2590,44 +2590,29 @@ impl AgentPanel {
             return None;
         }
 
-        let description = indoc! {
-            "To protect your system, this workspace is currently open in Restricted Mode. \
-            To unlock the agent panel, mark this workspace as trusted."
-        };
+        let description = "To protect your system, third-party code—like MCP servers—won't run until you mark this workspace as safe.";
 
         Some(
-            v_flex()
-                .occlude()
-                .absolute()
-                .inset_0()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .bg(cx.theme().colors().editor_background.opacity(0.8))
-                .child(
-                    v_flex()
-                        .p_6()
-                        .gap_1()
-                        .items_center()
-                        .justify_center()
-                        .text_center()
-                        .child(Label::new("Restricted Mode"))
-                        .child(Label::new(description).color(Color::Muted).mb_1p5())
-                        .child(
-                            Button::new("restricted_mode_trigger", "Configure Workspace Trust")
-                                .style(ButtonStyle::Outlined)
-                                .on_click({
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace.show_worktree_trust_security_modal(
-                                                    true, window, cx,
-                                                )
-                                            })
-                                            .log_err();
+            Callout::new()
+                .icon(IconName::Warning)
+                .severity(Severity::Warning)
+                .border_position(ui::BorderPosition::Bottom)
+                .title("You're in Restricted Mode")
+                .description(description)
+                .actions_slot(
+                    Button::new("open-trust-modal", "Configure Workspace Trust")
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .on_click({
+                            cx.listener(move |this, _, window, cx| {
+                                this.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .show_worktree_trust_security_modal(true, window, cx)
                                     })
-                                }),
-                        ),
+                                    .log_err();
+                            })
+                        }),
                 ),
         )
     }
@@ -2684,6 +2669,7 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
@@ -2722,8 +2708,7 @@ impl Render for AgentPanel {
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
-            .children(self.render_trial_end_upsell(window, cx))
-            .children(self.render_workspace_trust_message(cx));
+            .children(self.render_trial_end_upsell(window, cx));
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
