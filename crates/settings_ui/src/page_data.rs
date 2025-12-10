@@ -6031,24 +6031,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             metadata: None,
                             files: USER | PROJECT,
                         }),
-                        SettingsPageItem::SettingItem(SettingItem {
-                            title: "Codestral Provider",
-                            description: "Use Mistral's Codestral as your edit prediction provider.",
-                            field: Box::new(
-                                SettingField {
-                                    json_path: Some("edit_prediction.codestral_provider"),
-                                    pick: |settings_content| {
-                                        settings_content.project.all_languages.edit_predictions.as_ref()?.codestral.as_ref()
-                                    },
-                                    write: |settings_content, value| {
-                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().codestral = value;
-                                    },
-                                }
-                                .unimplemented(),
-                            ),
-                            metadata: None,
-                            files: USER | PROJECT,
-                        }),
                     ]
                 );
                 items
