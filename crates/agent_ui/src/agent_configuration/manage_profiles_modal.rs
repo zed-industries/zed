@@ -207,7 +207,6 @@ impl ManageProfilesModal {
         let profile_id_for_closure = profile_id.clone();
 
         let model_picker = cx.new(|cx| {
-            let fs = fs.clone();
             let profile_id = profile_id_for_closure.clone();
 
             language_model_selector(

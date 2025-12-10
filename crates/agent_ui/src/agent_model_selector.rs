@@ -29,7 +29,6 @@ impl AgentModelSelector {
 
         Self {
             selector: cx.new(move |cx| {
-                let fs = fs.clone();
                 language_model_selector(
                     {
                         let model_context = model_usage_context.clone();
