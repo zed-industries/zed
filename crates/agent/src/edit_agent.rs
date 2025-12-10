@@ -401,22 +401,45 @@ impl EditAgent {
 
             let mut parser = EditParser::new(edit_format);
             let mut raw_edits = String::new();
+            log::info!(
+                "parse_edit_chunks: Starting to parse LLM output with format {:?}",
+                edit_format
+            );
+
             while let Some(chunk) = chunks.next().await {
                 match chunk {
                     Ok(chunk) => {
+                        log::debug!(
+                            "parse_edit_chunks: Received chunk (length {}): {:?}",
+                            chunk.len(),
+                            chunk
+                        );
                         raw_edits.push_str(&chunk);
-                        for event in parser.push(&chunk) {
+                        let events = parser.push(&chunk);
+                        log::debug!("parse_edit_chunks: Parser emitted {} events", events.len());
+                        for event in events {
+                            log::debug!("parse_edit_chunks: Parser event: {:?}", event);
                             tx.unbounded_send(Ok(event))?;
                         }
                     }
                     Err(error) => {
+                        log::error!("parse_edit_chunks: Error in chunk stream: {:?}", error);
                         tx.unbounded_send(Err(error.into()))?;
                     }
                 }
             }
+
+            let metrics = parser.finish();
+            log::info!(
+                "parse_edit_chunks: Finished parsing. Total raw_edits length: {}, metrics: {:?}",
+                raw_edits.len(),
+                metrics
+            );
+            log::debug!("parse_edit_chunks: Full raw_edits content:\n{}", raw_edits);
+
             Ok(EditAgentOutput {
                 raw_edits,
-                parser_metrics: parser.finish(),
+                parser_metrics: metrics,
             })
         });
         (output, rx)

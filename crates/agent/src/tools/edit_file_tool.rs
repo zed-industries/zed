@@ -12,6 +12,7 @@ use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
 use language_model::LanguageModelToolResultContent;
+use log;
 use paths;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
@@ -271,6 +272,13 @@ impl AgentTool for EditFileTool {
             Ok(path) => path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
+
+        log::info!(
+            "EditFileTool called - path: {:?}, mode: {:?}, description: {:?}",
+            input.path,
+            input.mode,
+            input.display_description
+        );
         let abs_path = project.read(cx).absolute_path(&project_path, cx);
         if let Some(abs_path) = abs_path.clone() {
             event_stream.update_fields(
@@ -421,6 +429,13 @@ impl AgentTool for EditFileTool {
                 .unwrap_or(false);
 
             let edit_agent_output = output.await?;
+
+            log::info!(
+                "EditAgent output - path: {:?}, raw_edits length: {}, parser_metrics: {:?}",
+                input.path,
+                edit_agent_output.raw_edits.len(),
+                edit_agent_output.parser_metrics
+            );
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
