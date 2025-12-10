@@ -96,6 +96,7 @@ pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
+    pub context_window: Option<u64>,
 }
 
 #[with_fallible_options]
