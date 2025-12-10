@@ -3715,11 +3715,6 @@ fn format_diff(
 //         .join("\n")
 // }
 
-// FIXME test:
-// - multibuffer with multiple excerpts having inverted diffs
-//   - via randomized test?
-// - diff hunk navigation when diff is inverted
-// - inverted diff language changing
 #[gpui::test]
 async fn test_inverted_diff(cx: &mut TestAppContext) {
     let text = indoc!(

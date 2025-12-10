@@ -3595,7 +3595,6 @@ impl MultiBuffer {
         let max_excerpts = env::var("MAX_EXCERPTS")
             .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
             .unwrap_or(5);
-        let use_path_excerpts = !self.excerpts_by_path.is_empty();
 
         let mut buffers = Vec::new();
         for _ in 0..mutation_count {
@@ -3709,7 +3708,7 @@ impl MultiBuffer {
         self.check_invariants(cx);
     }
 
-    fn check_invariants(&self, cx: &App) {
+    pub fn check_invariants(&self, cx: &App) {
         self.read(cx).check_invariants();
     }
 }

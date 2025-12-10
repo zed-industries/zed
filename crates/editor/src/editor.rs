@@ -16300,7 +16300,6 @@ impl Editor {
         &mut self,
         lines: u32,
         direction: ExpandExcerptDirection,
-
         cx: &mut Context<Self>,
     ) {
         let selections = self.selections.disjoint_anchors_arc();

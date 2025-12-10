@@ -1,12 +1,12 @@
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use buffer_diff::BufferDiff;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     Action, AppContext as _, Entity, EventEmitter, Focusable, NoAction, Subscription, WeakEntity,
 };
-use language::{Buffer, Capability, LanguageRegistry};
-use multi_buffer::{Anchor, ExcerptRange, MultiBuffer, PathKey};
+use language::{Buffer, Capability};
+use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
 use project::Project;
 use rope::Point;
 use text::OffsetRangeExt as _;
@@ -272,6 +272,186 @@ impl SplittableEditor {
             })
         })
     }
+
+    fn expand_primary_excerpts(
+        &mut self,
+        excerpt_ids: impl Iterator<Item = ExcerptId> + Clone,
+        lines: u32,
+        direction: ExpandExcerptDirection,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_primary_multibuffer(cx, |multibuffer, cx| {
+            multibuffer.expand_excerpts(excerpt_ids.clone(), lines, direction, cx);
+        });
+        let paths: Vec<PathKey> = excerpt_ids
+            .flat_map(|excerpt_id| {
+                self.primary_multibuffer(cx)
+                    .path_for_excerpt(excerpt_id)
+                    .cloned()
+            })
+            .collect();
+
+        if let Some(secondary) = &self.secondary {
+            self.update_primary_multibuffer(cx, |multibuffer, cx| {
+                let snapshot = primary_multibuffer.snapshot(cx);
+                for path in paths {
+                    let buffer = snapshot.buffer_for_excerpt(excerpt_id).unwrap();
+                    let diff = primary_multibuffer.diff_for(buffer.remote_id()).unwrap();
+                    secondary.sync_path_excerpts(path, multibuffer, diff, cx);
+                }
+            })
+        }
+    }
+
+    fn primary_multibuffer<'a>(&'a self, cx: &'a Context<Self>) -> &'a MultiBuffer {
+        self.primary_editor.read(cx).buffer.read(cx)
+    }
+
+    fn update_primary_multibuffer<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut MultiBuffer, &mut Context<MultiBuffer>) -> R,
+    ) -> R {
+        self.primary_editor
+            .update(cx, |editor, cx| editor.buffer().update(cx, f))
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&self, cx: &App) {
+        todo!()
+    }
+
+    #[cfg(test)]
+    fn randomly_edit_excerpts(
+        &mut self,
+        rng: &mut impl rand::Rng,
+        mutation_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use rand::prelude::*;
+        use std::env;
+        use util::RandomCharIter;
+
+        let max_excerpts = env::var("MAX_EXCERPTS")
+            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
+            .unwrap_or(5);
+
+        let excerpt_ids = self.primary_multibuffer(cx).excerpt_ids();
+
+        let mut buffers = Vec::new();
+        for _ in 0..mutation_count {
+            if rng.random_bool(0.05) {
+                log::info!("Clearing multi-buffer");
+                self.update_primary_multibuffer(cx, |multibuffer, cx| {
+                    multibuffer.clear(cx);
+                });
+                continue;
+            } else if rng.random_bool(0.1) && !excerpt_ids.is_empty() {
+                use collections::HashSet;
+
+                let mut excerpts = HashSet::default();
+                for _ in 0..rng.random_range(0..excerpt_ids.len()) {
+                    excerpts.extend(excerpt_ids.choose(rng).copied());
+                }
+
+                let line_count = rng.random_range(0..5);
+
+                log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
+
+                // FIXME we need an expand_excerpts API on the splittable editor that does a sync
+                self.expand_primary_excerpts(
+                    excerpts.iter().cloned(),
+                    line_count,
+                    ExpandExcerptDirection::UpAndDown,
+                    cx,
+                );
+                continue;
+            }
+
+            if excerpt_ids.is_empty() || (rng.random() && excerpt_ids.len() < max_excerpts) {
+                let buffer_handle = if rng.random() || self.buffers.is_empty() {
+                    let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
+                    buffers.push(cx.new(|cx| Buffer::local(text, cx)));
+                    let buffer = buffers.last().unwrap().read(cx);
+                    log::info!(
+                        "Creating new buffer {} with text: {:?}",
+                        buffer.remote_id(),
+                        buffer.text()
+                    );
+                    buffers.last().unwrap().clone()
+                } else {
+                    self.buffers.values().choose(rng).unwrap().buffer.clone()
+                };
+
+                let buffer = buffer_handle.read(cx);
+                let buffer_text = buffer.text();
+                let ranges = (0..rng.random_range(0..5))
+                    .map(|_| {
+                        let end_ix =
+                            buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Right);
+                        let start_ix = buffer.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
+                        ExcerptRange::new(start_ix..end_ix)
+                    })
+                    .collect::<Vec<_>>();
+                log::info!(
+                    "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
+                    buffer_handle.read(cx).remote_id(),
+                    ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
+                    ranges
+                        .iter()
+                        .map(|r| &buffer_text[r.context.clone()])
+                        .collect::<Vec<_>>()
+                );
+
+                let excerpt_id = self.push_excerpts(buffer_handle.clone(), ranges, cx);
+                log::info!("Inserted with ids: {:?}", excerpt_id);
+            } else {
+                let remove_count = rng.random_range(1..=excerpt_ids.len());
+                let mut excerpts_to_remove = excerpt_ids
+                    .choose_multiple(rng, remove_count)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let snapshot = self.snapshot.borrow();
+                excerpts_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
+                drop(snapshot);
+                log::info!("Removing excerpts {:?}", excerpts_to_remove);
+                self.remove_excerpts(excerpts_to_remove, cx);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn randomly_mutate(
+        &mut self,
+        rng: &mut impl rand::Rng,
+        mutation_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use rand::prelude::*;
+
+        if rng.random_bool(0.7) {
+            let buffers = self.primary_editor.read(cx).buffer().read(cx).all_buffers();
+            let buffer = buffers.iter().choose(rng);
+
+            if let Some(buffer) = buffer {
+                buffer.update(cx, |buffer, cx| {
+                    if rng.random() {
+                        buffer.randomly_edit(rng, mutation_count, cx);
+                    } else {
+                        buffer.randomly_undo_redo(rng, cx);
+                    }
+                });
+            } else {
+                self.update_primary_multibuffer(cx, |multibuffer, cx| {
+                    multibuffer.randomly_edit(rng, mutation_count, cx);
+                });
+            }
+        } else {
+            self.randomly_edit_excerpts(rng, mutation_count, cx);
+        }
+
+        self.check_invariants(cx);
+    }
 }
 
 impl EventEmitter<EditorEvent> for SplittableEditor {}
@@ -376,6 +556,7 @@ mod tests {
     use language::{Buffer, Capability};
     use multi_buffer::MultiBuffer;
     use project::Project;
+    use rand::rngs::StdRng;
     use settings::SettingsStore;
     use ui::VisualContext as _;
     use workspace::Workspace;
@@ -383,7 +564,7 @@ mod tests {
     use crate::SplittableEditor;
 
     #[gpui::test]
-    async fn test_basic_excerpts(cx: &mut gpui::TestAppContext) {
+    async fn test_basic_excerpts(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
@@ -407,6 +588,11 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
         });
+
+        let mutation_count = rng.gen_range(0..100);
+        editor.update(cx, |editor, cx| {
+            editor.randomly_mutate(rng, mutation_count, cx);
+        })
 
         // for _ in 0..random() {
         //     editor.update(cx, |editor, cx| {
