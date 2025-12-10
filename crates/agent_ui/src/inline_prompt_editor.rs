@@ -48,6 +48,10 @@ pub struct InlineAssistRatingFeatureFlag;
 
 impl FeatureFlag for InlineAssistRatingFeatureFlag {
     const NAME: &'static str = "inline-assist-rating";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 enum RatingState {
