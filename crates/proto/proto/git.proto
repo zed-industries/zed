@@ -580,7 +580,7 @@ message GitCreateWorktree {
 message RunGitHook {
     enum GitHook {
         PRE_COMMIT = 0;
-        PRE_PUSH = 1;
+        reserved 1;
     }
 
     uint64 project_id = 1;
