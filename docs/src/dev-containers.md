@@ -33,7 +33,7 @@ If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild 
 
 ## Working in a Dev Container
 
-Once connected, Zed operates inside the container environment for tasks, terminals, and language servers. 
+Once connected, Zed operates inside the container environment for tasks, terminals, and language servers.
 Files are linked from your workspace into the container according to the dev container specification.
 
 ## Known Limitations
@@ -43,7 +43,6 @@ Files are linked from your workspace into the container according to the dev con
 - **Extensions:** Zed does not yet manage extensions separately for container environments. The host's extensions are used as-is.
 - **Port forwarding:** Only the `appPort` field is supported. `forwardPorts` and other advanced port-forwarding features are not implemented.
 - **Configuration changes:** Updates to `devcontainer.json` do not trigger automatic rebuilds or reloads; containers must be manually restarted.
-
 
 ## See also
 
