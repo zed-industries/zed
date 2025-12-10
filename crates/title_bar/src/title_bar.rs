@@ -165,7 +165,6 @@ impl Render for TitleBar {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
                                     title_bar
-                                        .pl_2()
                                         .children(self.render_restricted_mode(cx))
                                         .children(self.render_project_host(cx))
                                         .child(self.render_project_name(cx))
@@ -424,11 +423,11 @@ impl TitleBar {
         Some(
             IconButton::new("restricted_mode_trigger", IconName::Warning)
                 .icon_color(Color::Warning)
-                .tooltip(Tooltip::text("Restricted Mode".to_string()))
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Restricted Mode"))
                 .on_click({
-                    cx.listener(move |title_bar, _, window, cx| {
-                        title_bar
-                            .workspace
+                    cx.listener(move |this, _, window, cx| {
+                        this.workspace
                             .update(cx, |workspace, cx| {
                                 workspace.show_worktree_trust_security_modal(true, window, cx)
                             })
