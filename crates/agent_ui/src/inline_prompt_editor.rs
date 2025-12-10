@@ -584,6 +584,13 @@ impl<T: 'static> PromptEditor<T> {
 
         let (rating_id, completion) = self.rated.rate();
 
+        let selected_text = match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => {
+                codegen.read(cx).selected_text(cx).map(|s| s.to_string())
+            }
+            PromptEditorMode::Terminal { .. } => None,
+        };
+
         let model_info = self.model_selector.read(cx).active_model(cx);
         let model_id = {
             let Some(configured_model) = model_info else {
@@ -602,6 +609,7 @@ impl<T: 'static> PromptEditor<T> {
             model = model_id,
             prompt = prompt,
             completion = completion,
+            selected_text = selected_text,
             rating_id = rating_id.to_string()
         );
 
@@ -619,6 +627,13 @@ impl<T: 'static> PromptEditor<T> {
         }
 
         let (rating_id, completion) = self.rated.rate();
+
+        let selected_text = match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => {
+                codegen.read(cx).selected_text(cx).map(|s| s.to_string())
+            }
+            PromptEditorMode::Terminal { .. } => None,
+        };
 
         let model_info = self.model_selector.read(cx).active_model(cx);
         let model_telemetry_id = {
@@ -638,6 +653,7 @@ impl<T: 'static> PromptEditor<T> {
             model = model_telemetry_id,
             prompt = prompt,
             completion = completion,
+            selected_text = selected_text,
             rating_id = rating_id.to_string()
         );
 
