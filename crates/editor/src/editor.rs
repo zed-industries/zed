@@ -1192,6 +1192,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
+    number_deleted_lines: bool,
 
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
@@ -1237,6 +1238,7 @@ pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
     show_line_numbers: Option<bool>,
+    number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
@@ -2350,6 +2352,7 @@ impl Editor {
             applicable_language_settings: HashMap::default(),
             accent_overrides: Vec::new(),
             fetched_tree_sitter_chunks: HashMap::default(),
+            number_deleted_lines: false,
         };
 
         if is_minimap {
@@ -2881,6 +2884,7 @@ impl Editor {
             mode: self.mode.clone(),
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
+            number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,

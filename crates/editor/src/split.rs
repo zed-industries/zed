@@ -146,7 +146,10 @@ impl SplittableEditor {
                 multibuffer.set_all_diff_hunks_expanded(cx);
                 multibuffer
             });
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            editor.number_deleted_lines = true;
+            editor
         });
         let secondary_pane = cx.new(|cx| {
             let mut pane = Pane::new(

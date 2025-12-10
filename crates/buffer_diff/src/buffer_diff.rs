@@ -2135,6 +2135,11 @@ mod tests {
             compare_hunks(&diff_1.inner.hunks, &empty_diff.inner.hunks, &buffer);
         let range = range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
+        let base_text_range = base_text_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_1.base_text()),
+            Point::new(0, 0)..Point::new(10, 0)
+        );
 
         // Edit does not affect the diff.
         buffer.edit_via_marked_text(
@@ -2171,11 +2176,15 @@ mod tests {
             .unindent(),
         );
         let diff_3 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        // FIXME assert the other range
         let (range, base_text_range) =
             compare_hunks(&diff_3.inner.hunks, &diff_2.inner.hunks, &buffer);
         let range = range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+        let base_text_range = base_text_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_3.base_text()),
+            Point::new(2, 0)..Point::new(4, 0)
+        );
 
         // Edit turns a modification hunk into a deletion.
         buffer.edit_via_marked_text(
@@ -2195,6 +2204,11 @@ mod tests {
             compare_hunks(&diff_4.inner.hunks, &diff_3.inner.hunks, &buffer);
         let range = range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
+        let base_text_range = base_text_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_4.base_text()),
+            Point::new(6, 0)..Point::new(7, 0)
+        );
 
         // Edit introduces a new insertion hunk.
         buffer.edit_via_marked_text(
@@ -2215,6 +2229,11 @@ mod tests {
             compare_hunks(&diff_5.inner.hunks, &diff_4.inner.hunks, &buffer);
         let range = range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
+        let base_text_range = base_text_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_5.base_text()),
+            Point::new(5, 0)..Point::new(5, 0)
+        );
 
         // Edit removes a hunk.
         buffer.edit_via_marked_text(
@@ -2235,6 +2254,11 @@ mod tests {
             compare_hunks(&diff_6.inner.hunks, &diff_5.inner.hunks, &buffer);
         let range = range.unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
+        let base_text_range = base_text_range.unwrap();
+        assert_eq!(
+            base_text_range.to_point(diff_6.base_text()),
+            Point::new(9, 0)..Point::new(10, 0)
+        );
     }
 
     #[gpui::test(iterations = 100)]
