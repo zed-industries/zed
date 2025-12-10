@@ -66,7 +66,7 @@ pub enum Priority {
 }
 
 impl Priority {
-    pub(crate) const fn ticket_count(&self) -> u32 {
+    pub(crate) const fn probability(&self) -> u32 {
         match self {
             Priority::High => 60,
             Priority::Medium => 30,

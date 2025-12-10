@@ -109,8 +109,7 @@ pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
-pub use queue::*;
-
+pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
 use std::{any::Any, future::Future};
 use taffy::TaffyLayoutEngine;
 
