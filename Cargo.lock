@@ -8774,7 +8774,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "tree-sitter-vue",
  "unicase",
  "unindent",
  "util",

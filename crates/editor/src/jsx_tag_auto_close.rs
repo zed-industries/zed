@@ -623,7 +623,7 @@ mod jsx_tag_autoclose_tests {
 
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
-    use language::Language;
+    use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::language;
     use multi_buffer::{ExcerptRange, MultiBufferOffset};
     use text::Selection;
@@ -800,6 +800,26 @@ mod jsx_tag_autoclose_tests {
     async fn test_autocloses_dot_separated_component(cx: &mut TestAppContext) {
         let ts_lang = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
         let mut cx = test_setup(ts_lang, cx).await;
+        assert_autoclose!(
+            cx,
+            "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_autocloses_dot_separated_component_for_vue(cx: &mut TestAppContext) {
+        let vue_lang = Arc::from(Language::new(
+            LanguageConfig {
+                name: "Vue".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["vue".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_vue::language()),
+        ));
+        let mut cx = test_setup(vue_lang, cx).await;
         assert_autoclose!(
             cx,
             "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
