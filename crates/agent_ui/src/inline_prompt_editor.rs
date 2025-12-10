@@ -20,10 +20,10 @@ use parking_lot::Mutex;
 use project::Project;
 use prompt_store::PromptStore;
 use settings::Settings;
-use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::{cmp, mem};
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
@@ -52,7 +52,7 @@ impl FeatureFlag for InlineAssistRatingFeatureFlag {
 
 enum RatingState {
     Pending,
-    Done,
+    GeneratedCompletion(Option<String>),
     Rated(Uuid),
 }
 
@@ -64,23 +64,29 @@ impl RatingState {
     fn rating_id(&self) -> Option<Uuid> {
         match self {
             RatingState::Pending => None,
-            RatingState::Done => None,
+            RatingState::GeneratedCompletion(_) => None,
             RatingState::Rated(id) => Some(*id),
         }
     }
 
-    fn rate(&mut self) -> Uuid {
+    fn rate(&mut self) -> (Uuid, Option<String>) {
         let id = Uuid::new_v4();
-        *self = RatingState::Rated(id);
-        id
+        let old_state = mem::replace(self, RatingState::Rated(id));
+        let completion = match old_state {
+            RatingState::Pending => None,
+            RatingState::GeneratedCompletion(completion) => completion,
+            RatingState::Rated(_) => None,
+        };
+
+        (id, completion)
     }
 
     fn reset(&mut self) {
         *self = RatingState::Pending;
     }
 
-    fn done(&mut self) {
-        *self = RatingState::Done;
+    fn generated_completion(&mut self, generated_completion: Option<String>) {
+        *self = RatingState::GeneratedCompletion(generated_completion);
     }
 }
 
@@ -576,7 +582,7 @@ impl<T: 'static> PromptEditor<T> {
             return;
         }
 
-        let rating_id = self.rated.rate();
+        let (rating_id, completion) = self.rated.rate();
 
         let model_info = self.model_selector.read(cx).active_model(cx);
         let model_id = {
@@ -595,6 +601,7 @@ impl<T: 'static> PromptEditor<T> {
             rating = "positive",
             model = model_id,
             prompt = prompt,
+            completion = completion,
             rating_id = rating_id.to_string()
         );
 
@@ -611,7 +618,7 @@ impl<T: 'static> PromptEditor<T> {
             return;
         }
 
-        let rating_id = self.rated.rate();
+        let (rating_id, completion) = self.rated.rate();
 
         let model_info = self.model_selector.read(cx).active_model(cx);
         let model_telemetry_id = {
@@ -630,6 +637,7 @@ impl<T: 'static> PromptEditor<T> {
             rating = "negative",
             model = model_telemetry_id,
             prompt = prompt,
+            completion = completion,
             rating_id = rating_id.to_string()
         );
 
@@ -1173,7 +1181,7 @@ impl PromptEditor<BufferCodegen> {
 
     fn handle_codegen_changed(
         &mut self,
-        _: Entity<BufferCodegen>,
+        codegen: Entity<BufferCodegen>,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) {
         match self.codegen_status(cx) {
@@ -1187,7 +1195,8 @@ impl PromptEditor<BufferCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done => {
-                self.rated.done();
+                let completion = codegen.read(cx).active_completion(cx);
+                self.rated.generated_completion(completion);
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1341,7 +1350,7 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Entity<TerminalCodegen>, cx: &mut Context<Self>) {
+    fn handle_codegen_changed(&mut self, codegen: Entity<TerminalCodegen>, cx: &mut Context<Self>) {
         match &self.codegen().read(cx).status {
             CodegenStatus::Idle => {
                 self.editor
@@ -1353,7 +1362,8 @@ impl PromptEditor<TerminalCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(true));
             }
             CodegenStatus::Done | CodegenStatus::Error(_) => {
-                self.rated.done();
+                self.rated
+                    .generated_completion(codegen.read(cx).completion());
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));

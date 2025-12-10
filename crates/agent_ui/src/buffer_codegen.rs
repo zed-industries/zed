@@ -119,6 +119,10 @@ impl BufferCodegen {
             .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
     }
 
+    pub fn active_completion(&self, cx: &App) -> Option<String> {
+        self.active_alternative().read(cx).current_completion()
+    }
+
     pub fn active_alternative(&self) -> &Entity<CodegenAlternative> {
         &self.alternatives[self.active_alternative]
     }
@@ -866,6 +870,10 @@ impl CodegenAlternative {
                 .ok();
         });
         cx.notify();
+    }
+
+    pub fn current_completion(&self) -> Option<String> {
+        self.completion.clone()
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
