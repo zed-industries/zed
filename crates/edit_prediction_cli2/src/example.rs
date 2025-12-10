@@ -44,12 +44,12 @@ pub struct Example {
     pub prompt: Option<ExamplePrompt>,
 
     /// The actual predictions from the model.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub predictions: Vec<ExamplePrediction>,
 
     /// The scores, for how well the actual predictions match the expected
     /// predictions.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
 
     /// The application state used to process this example.
@@ -164,8 +164,10 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
             .unwrap_or_else(|| panic!("{} should have an extension", path.display()));
         match ext.to_string_lossy().as_ref() {
             "json" => {
-                let mut example = serde_json::from_str::<Example>(&content)
-                    .unwrap_or_else(|_| panic!("Failed to parse example file: {}", path.display()));
+                let mut example =
+                    serde_json::from_str::<Example>(&content).unwrap_or_else(|error| {
+                        panic!("Failed to parse example file: {}\n{error}", path.display())
+                    });
                 if example.name.is_empty() {
                     example.name = filename;
                 }
