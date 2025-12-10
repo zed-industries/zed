@@ -286,7 +286,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_inline_transformation_prompt_v2(
+    pub fn generate_inline_transformation_prompt_tools(
         &self,
         language_name: Option<&LanguageName>,
         buffer: BufferSnapshot,
