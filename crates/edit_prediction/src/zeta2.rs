@@ -49,7 +49,6 @@ pub fn request_prediction_with_zeta2(
     let eval_cache = store.eval_cache.clone();
 
     let request_task = cx.background_spawn({
-        let active_buffer = buffer.clone();
         async move {
             let cursor_offset = position.to_offset(&snapshot);
             let (editable_offset_range, prompt_input) = zeta2_prompt_input(
@@ -66,7 +65,7 @@ pub fn request_prediction_with_zeta2(
                 debug_tx
                     .unbounded_send(DebugEvent::EditPredictionStarted(
                         EditPredictionStartedDebugEvent {
-                            buffer: active_buffer.downgrade(),
+                            buffer: buffer.downgrade(),
                             prompt: Some(prompt.clone()),
                             position,
                         },
@@ -118,7 +117,7 @@ pub fn request_prediction_with_zeta2(
                 debug_tx
                     .unbounded_send(DebugEvent::EditPredictionFinished(
                         EditPredictionFinishedDebugEvent {
-                            buffer: active_buffer.downgrade(),
+                            buffer: buffer.downgrade(),
                             position,
                             model_output: Some(output_text.clone()),
                         },
@@ -150,7 +149,7 @@ pub fn request_prediction_with_zeta2(
                     request_id,
                     Some((
                         prompt_input,
-                        active_buffer,
+                        buffer,
                         snapshot.clone(),
                         edits,
                         received_response_at,

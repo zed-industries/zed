@@ -42,7 +42,6 @@ pub(crate) fn request_prediction_with_zeta1(
     }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
-    let buffer = buffer.clone();
     let buffer_snapshotted_at = Instant::now();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
