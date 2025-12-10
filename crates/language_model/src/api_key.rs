@@ -2,13 +2,14 @@ use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, future};
 use gpui::{AsyncApp, Context, SharedString, Task};
-use language_model::AuthenticateError;
 use std::{
     fmt::{Display, Formatter},
     sync::Arc,
 };
 use util::ResultExt as _;
 use zed_env_vars::EnvVar;
+
+use crate::AuthenticateError;
 
 /// Manages a single API key for a language model provider. API keys either come from environment
 /// variables or the system keychain.

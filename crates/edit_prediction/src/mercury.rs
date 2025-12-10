@@ -7,7 +7,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use language_models::api_key::ApiKeyState;
+use language_model::ApiKeyState;
 use project::{Project, ProjectPath};
 use std::{
     collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,

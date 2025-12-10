@@ -20,7 +20,7 @@ use util::ResultExt;
 use x_ai::{Model, XAI_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::api_key::ApiKeyState;
+use language_model::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");

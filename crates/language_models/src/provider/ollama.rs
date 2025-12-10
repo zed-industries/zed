@@ -30,7 +30,7 @@ use ui_input::InputField;
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
-use crate::api_key::ApiKeyState;
+use language_model::ApiKeyState;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";

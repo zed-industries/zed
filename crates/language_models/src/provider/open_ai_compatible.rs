@@ -18,8 +18,8 @@ use ui_input::InputField;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
-use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use language_model::ApiKeyState;
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 

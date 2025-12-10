@@ -75,7 +75,7 @@ pub use crate::prediction::EditPredictionId;
 pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
-pub use language_models::api_key::ApiKeyState;
+pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 

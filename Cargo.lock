@@ -5133,7 +5133,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "language_models",
  "log",
  "lsp",
  "menu",
@@ -8813,6 +8812,7 @@ dependencies = [
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
+ "credentials_provider",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -8831,6 +8831,7 @@ dependencies = [
  "telemetry_events",
  "thiserror 2.0.17",
  "util",
+ "zed_env_vars",
 ]
 
 [[package]]

@@ -20,7 +20,7 @@ use util::ResultExt;
 use vercel::{Model, VERCEL_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::api_key::ApiKeyState;
+use language_model::ApiKeyState;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");

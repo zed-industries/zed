@@ -7,7 +7,6 @@ use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
-pub mod api_key;
 pub mod provider;
 mod settings;
 

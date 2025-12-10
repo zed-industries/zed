@@ -7,7 +7,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
-use language_models::api_key::ApiKeyState;
+use language_model::ApiKeyState;
 use lsp::DiagnosticSeverity;
 use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
