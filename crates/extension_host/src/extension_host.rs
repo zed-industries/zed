@@ -58,7 +58,7 @@ use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
@@ -1298,11 +1298,6 @@ impl ExtensionStore {
             return Task::ready(());
         }
 
-        let reload_count = extensions_to_unload
-            .iter()
-            .filter(|id| extensions_to_load.contains(id))
-            .count();
-
         let extension_ids = extensions_to_load
             .iter()
             .filter_map(|id| {
@@ -1786,7 +1781,6 @@ impl ExtensionStore {
         let index_path = self.index_path.clone();
         let proxy = self.proxy.clone();
         cx.background_spawn(async move {
-            let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
 
             fs.create_dir(&work_dir).await.log_err();

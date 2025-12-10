@@ -891,6 +891,12 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                 let button_label = oauth_config
                     .and_then(|c| c.sign_in_button_label.clone())
                     .unwrap_or_else(|| "Sign In".to_string());
+                let button_icon = oauth_config
+                    .and_then(|c| c.sign_in_button_icon.as_ref())
+                    .and_then(|icon_name| match icon_name.as_str() {
+                        "github" => Some(ui::IconName::Github),
+                        _ => None,
+                    });
 
                 let oauth_in_progress = self.oauth_in_progress;
 
@@ -899,14 +905,23 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                 content = content.child(
                     v_flex()
                         .gap_2()
-                        .child(
-                            ui::Button::new("oauth-sign-in", button_label)
-                                .style(ui::ButtonStyle::Filled)
+                        .child({
+                            let mut button = ui::Button::new("oauth-sign-in", button_label)
+                                .full_width()
+                                .style(ui::ButtonStyle::Outlined)
                                 .disabled(oauth_in_progress)
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.start_oauth_sign_in(cx);
-                                })),
-                        )
+                                }));
+                            if let Some(icon) = button_icon {
+                                button = button
+                                    .icon(icon)
+                                    .icon_position(ui::IconPosition::Start)
+                                    .icon_size(ui::IconSize::Small)
+                                    .icon_color(Color::Muted);
+                            }
+                            button
+                        })
                         .when(oauth_in_progress, |this| {
                             let user_code = self.device_user_code.clone();
                             this.child(

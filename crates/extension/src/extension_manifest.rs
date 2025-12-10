@@ -350,6 +350,9 @@ pub struct OAuthConfig {
     /// The text to display on the sign-in button (e.g., "Sign in with GitHub").
     #[serde(default)]
     pub sign_in_button_label: Option<String>,
+    /// The icon to display on the sign-in button (e.g., "github").
+    #[serde(default)]
+    pub sign_in_button_icon: Option<String>,
 }
 
 impl ExtensionManifest {
