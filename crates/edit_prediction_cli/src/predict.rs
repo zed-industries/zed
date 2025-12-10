@@ -75,7 +75,7 @@ pub async fn run_prediction(
                 PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
                 PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
                 PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-                PredictionProvider::Teacher => todo!(),
+                PredictionProvider::Teacher => unreachable!(),
             };
             store.set_edit_prediction_model(model);
         })
@@ -244,10 +244,7 @@ async fn predict_anthropic(example: &mut Example, repetition_count: usize, batch
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = match prompt.format {
-        crate::PromptFormat::Teacher => TeacherPrompt::parse(example, &actual_output),
-        crate::PromptFormat::Zeta2 => todo!(),
-    };
+    let actual_patch = TeacherPrompt::parse(example, &actual_output);
 
     let prediction = ExamplePrediction {
         actual_patch,
