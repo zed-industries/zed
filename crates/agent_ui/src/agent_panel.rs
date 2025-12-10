@@ -2600,7 +2600,7 @@ impl AgentPanel {
                 .title("You're in Restricted Mode")
                 .description(description)
                 .actions_slot(
-                    Button::new("open-trust-modal", "Configure Workspace Trust")
+                    Button::new("open-trust-modal", "Configure Project Trust")
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .on_click({
