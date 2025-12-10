@@ -2074,7 +2074,7 @@
     // Whether to show the LSP servers button in the status bar.
     "button": true,
     "notifications": {
-      // Wether to automatically dismiss language server notifications.
+      // Whether to automatically dismiss language server notifications.
       "auto_dismiss": "always"
     }
   },
