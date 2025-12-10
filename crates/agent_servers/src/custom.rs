@@ -1,4 +1,4 @@
-use crate::{AgentServerDelegate, load_proxy_env};
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -20,7 +20,7 @@ impl CustomAgentServer {
     }
 }
 
-impl crate::AgentServer for CustomAgentServer {
+impl AgentServer for CustomAgentServer {
     fn telemetry_id(&self) -> SharedString {
         "custom".into()
     }

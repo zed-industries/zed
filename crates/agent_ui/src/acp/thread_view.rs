@@ -170,7 +170,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
-        let agent = thread.read(cx).connection().telemetry_id();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
             ThreadFeedback::Positive => "positive",
@@ -180,7 +180,7 @@ impl ThreadFeedbackState {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Rated",
-                agent = agent,
+                agent = agent_telemetry_id,
                 session_id = session_id,
                 rating = rating,
                 thread = thread
@@ -207,13 +207,13 @@ impl ThreadFeedbackState {
         self.comments_editor.take();
 
         let session_id = thread.read(cx).session_id().clone();
-        let agent = thread.read(cx).connection().telemetry_id();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         cx.background_spawn(async move {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Feedback Comments",
-                agent = agent,
+                agent = agent_telemetry_id,
                 session_id = session_id,
                 comments = comments,
                 thread = thread
