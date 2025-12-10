@@ -30,7 +30,16 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libx11-xcb-dev
     libxkbcommon-x11-dev
+    libxfixes-dev
+    libxdamage-dev
+    libxrandr-dev
+    libxcomposite-dev
+    libxext-dev
+    libdrm-dev
+    libgbm-dev
+    libglib2.0-dev
     libssl-dev
+    libva-dev
     libzstd-dev
     libvulkan1
     libgit2-dev
@@ -81,6 +90,14 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     wayland-devel
     libxcb-devel
     libxkbcommon-x11-devel
+    libXcomposite-devel
+    libXdamage-devel
+    libXext-devel
+    libXrandr-devel
+    libdrm-devel
+    libva-devel
+    mesa-libgbm-devel
+    glib2-devel
     openssl-devel
     libzstd-devel
     vulkan-loader
