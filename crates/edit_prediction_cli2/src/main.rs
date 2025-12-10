@@ -9,6 +9,7 @@ mod retrieve_context;
 mod score;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use edit_prediction::EditPredictionStore;
 use gpui::Application;
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use std::{path::PathBuf, sync::Arc};
 use crate::example::{read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
-use crate::predict::run_predictions;
+use crate::predict::run_prediction;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 
@@ -70,11 +71,14 @@ enum PromptFormat {
 #[derive(Debug, Args)]
 struct PredictArgs {
     provider: PredictionProvider,
+    #[clap(long, default_value_t = 1)]
+    repetitions: usize,
+    cache: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum, Serialize, Deserialize)]
 enum PredictionProvider {
-    SweepAi,
+    Sweep,
     Mercury,
     Zeta2,
     AnthropicBatched,
@@ -99,19 +103,20 @@ fn main() {
 
     match &command {
         Command::Clean => {
-            std::fs::remove_dir_all(&*crate::paths::DATA_DIR).unwrap();
+            std::fs::remove_dir_all(&*paths::DATA_DIR).unwrap();
             return;
         }
         _ => {}
     }
 
     let mut examples = read_examples(&args.inputs);
-
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
+        EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
+
         cx.spawn(async move |cx| {
             for data in examples.chunks_mut(args.max_parallelism) {
                 let mut futures = Vec::new();
@@ -131,9 +136,10 @@ fn main() {
                                 run_format_prompt(example, args.prompt_format).await;
                             }
                             Command::Predict(args) => {
-                                run_predictions(
+                                run_prediction(
                                     example,
                                     Some(args.provider),
+                                    args.repetitions,
                                     app_state.clone(),
                                     cx,
                                 )

@@ -89,7 +89,7 @@ async fn cursor_position(
                 "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
             );
         });
-        assert!(matches.next().is_none(), "More than one cursor position match found for {}", &example.id);
+        assert!(matches.next().is_none(), "More than one cursor position match found for {}", &example.name);
         excerpt_offset
     }).unwrap();
 
@@ -196,12 +196,21 @@ pub async fn setup_worktree(example: &Example) {
             .unwrap();
     } else {
         let worktree_path_string = worktree_path.to_string_lossy();
-        run_git(&repo_dir, &["branch", "-f", &example.id, revision.as_str()])
-            .await
-            .unwrap();
         run_git(
             &repo_dir,
-            &["worktree", "add", "-f", &worktree_path_string, &example.id],
+            &["branch", "-f", &example.name, revision.as_str()],
+        )
+        .await
+        .unwrap();
+        run_git(
+            &repo_dir,
+            &[
+                "worktree",
+                "add",
+                "-f",
+                &worktree_path_string,
+                &example.name,
+            ],
         )
         .await
         .unwrap();

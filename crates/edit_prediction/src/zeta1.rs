@@ -1,7 +1,7 @@
 use std::{fmt::Write, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, EditPredictionStore, ZedUpdateRequiredError,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStore, ZedUpdateRequiredError,
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::{EditPredictionInputs, EditPredictionResult},
 };
@@ -29,12 +29,15 @@ pub(crate) const MAX_EVENT_TOKENS: usize = 500;
 
 pub(crate) fn request_prediction_with_zeta1(
     store: &mut EditPredictionStore,
-    project: &Entity<Project>,
-    buffer: &Entity<Buffer>,
-    snapshot: BufferSnapshot,
-    position: language::Anchor,
-    events: Vec<Arc<Event>>,
-    trigger: PredictEditsRequestTrigger,
+    EditPredictionModelInput {
+        project,
+        buffer,
+        snapshot,
+        position,
+        events,
+        trigger,
+        ..
+    }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer = buffer.clone();
@@ -44,9 +47,9 @@ pub(crate) fn request_prediction_with_zeta1(
     let app_version = AppVersion::global(cx);
 
     let (git_info, can_collect_file) = if let Some(file) = snapshot.file() {
-        let can_collect_file = store.can_collect_file(project, file, cx);
+        let can_collect_file = store.can_collect_file(&project, file, cx);
         let git_info = if can_collect_file {
-            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+            git_info_for_file(&project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
             None
         };
@@ -139,14 +142,6 @@ pub(crate) fn request_prediction_with_zeta1(
             },
             cursor_path: full_path,
         };
-
-        // let response = perform_predict_edits(PerformPredictEditsParams {
-        //     client,
-        //     llm_token,
-        //     app_version,
-        //     body,
-        // })
-        // .await;
 
         let (response, usage) = match response {
             Ok(response) => response,

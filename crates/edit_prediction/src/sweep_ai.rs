@@ -1,26 +1,24 @@
 use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
 use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
 use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, Entity, Task,
+    App, AppContext as _, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
+use language::{Point, ToOffset as _, ToPoint as _};
 use lsp::DiagnosticSeverity;
-use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::VecDeque,
     fmt::{self, Write as _},
-    ops::Range,
     path::Path,
     sync::Arc,
     time::Instant,
 };
 
-use crate::{EditPredictionId, EditPredictionInputs, prediction::EditPredictionResult};
+use crate::{
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
+    prediction::EditPredictionResult,
+};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
@@ -44,40 +42,34 @@ impl SweepAi {
 
     pub fn request_prediction_with_sweep(
         &self,
-        project: &Entity<Project>,
-        active_buffer: &Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        position: language::Anchor,
-        events: Vec<Arc<Event>>,
-        recent_paths: &VecDeque<ProjectPath>,
-        related_files: Vec<RelatedFile>,
-        diagnostic_search_range: Range<Point>,
+        inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
         let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
             return Task::ready(Ok(None));
         };
-        let full_path: Arc<Path> = snapshot
+        let full_path: Arc<Path> = inputs
+            .snapshot
             .file()
             .map(|file| file.full_path(cx))
             .unwrap_or_else(|| "untitled".into())
             .into();
 
-        let project_file = project::File::from_dyn(snapshot.file());
+        let project_file = project::File::from_dyn(inputs.snapshot.file());
         let repo_name = project_file
             .map(|file| file.worktree.read(cx).root_name_str())
             .unwrap_or("untitled")
             .into();
-        let offset = position.to_offset(&snapshot);
+        let offset = inputs.position.to_offset(&inputs.snapshot);
 
-        let recent_buffers = recent_paths.iter().cloned();
+        let recent_buffers = inputs.recent_paths.iter().cloned();
         let http_client = cx.http_client();
 
         let recent_buffer_snapshots = recent_buffers
             .filter_map(|project_path| {
-                let buffer = project.read(cx).get_open_buffer(&project_path, cx)?;
-                if active_buffer == &buffer {
+                let buffer = inputs.project.read(cx).get_open_buffer(&project_path, cx)?;
+                if inputs.buffer == buffer {
                     None
                 } else {
                     Some(buffer.read(cx).snapshot())
@@ -86,14 +78,14 @@ impl SweepAi {
             .take(3)
             .collect::<Vec<_>>();
 
-        let cursor_point = position.to_point(&snapshot);
+        let cursor_point = inputs.position.to_point(&inputs.snapshot);
         let buffer_snapshotted_at = Instant::now();
 
         let result = cx.background_spawn(async move {
-            let text = snapshot.text();
+            let text = inputs.snapshot.text();
 
             let mut recent_changes = String::new();
-            for event in &events {
+            for event in &inputs.events {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
             }
 
@@ -122,7 +114,8 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = related_files
+            let retrieval_chunks = inputs
+                .related_files
                 .iter()
                 .flat_map(|related_file| {
                     related_file.excerpts.iter().map(|excerpt| FileChunk {
@@ -135,7 +128,9 @@ impl SweepAi {
                 })
                 .collect();
 
-            let diagnostic_entries = snapshot.diagnostics_in_range(diagnostic_search_range, false);
+            let diagnostic_entries = inputs
+                .snapshot
+                .diagnostics_in_range(inputs.diagnostic_search_range, false);
             let mut diagnostic_content = String::new();
             let mut diagnostic_count = 0;
 
@@ -195,11 +190,13 @@ impl SweepAi {
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
-            let inputs = EditPredictionInputs {
-                events,
+            let ep_inputs = EditPredictionInputs {
+                events: inputs.events,
                 included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
                     path: full_path.clone(),
-                    max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
+                    max_row: cloud_llm_client::predict_edits_v3::Line(
+                        inputs.snapshot.max_point().row,
+                    ),
                     excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
                         start_line: cloud_llm_client::predict_edits_v3::Line(0),
                         text: request_body.file_contents.into(),
@@ -237,15 +234,20 @@ impl SweepAi {
 
             let response: AutocompleteResponse = serde_json::from_slice(&body)?;
 
-            let old_text = snapshot
+            let old_text = inputs
+                .snapshot
                 .text_for_range(response.start_index..response.end_index)
                 .collect::<String>();
             let edits = language::text_diff(&old_text, &response.completion)
                 .into_iter()
                 .map(|(range, text)| {
                     (
-                        snapshot.anchor_after(response.start_index + range.start)
-                            ..snapshot.anchor_before(response.start_index + range.end),
+                        inputs
+                            .snapshot
+                            .anchor_after(response.start_index + range.start)
+                            ..inputs
+                                .snapshot
+                                .anchor_before(response.start_index + range.end),
                         text,
                     )
                 })
@@ -254,13 +256,13 @@ impl SweepAi {
             anyhow::Ok((
                 response.autocomplete_id,
                 edits,
-                snapshot,
+                inputs.snapshot,
                 response_received_at,
-                inputs,
+                ep_inputs,
             ))
         });
 
-        let buffer = active_buffer.clone();
+        let buffer = inputs.buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;

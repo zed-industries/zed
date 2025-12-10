@@ -5,8 +5,7 @@ use crate::{
     CacheMode, PredictArguments, PredictionOptions, PredictionProvider, PredictionsOutputFormat,
 };
 use ::serde::Serialize;
-use anyhow::{Context, Result, anyhow};
-use cloud_zeta2_prompt::{CURSOR_MARKER, write_codeblock};
+use anyhow::{Context, Result};
 use edit_prediction::{EditPredictionStore, EvalCache, EvalCacheEntryKind, EvalCacheKey};
 use futures::StreamExt as _;
 use gpui::{AppContext, AsyncApp, Entity};
@@ -135,13 +134,11 @@ pub async fn perform_predict(
     let mut debug_task = gpui::Task::ready(Ok(()));
 
     if options.provider == crate::PredictionProvider::Zeta2 {
-        let mut debug_rx = store.update(cx, |store, _| store.debug_info())?;
+        let mut debug_rx = store.update(cx, |store, cx| store.debug_info(&project, cx))?;
 
         debug_task = cx.background_spawn({
-            let result = result.clone();
             async move {
                 let mut start_time = None;
-                let mut retrieval_finished_at = None;
                 while let Some(event) = debug_rx.next().await {
                     match event {
                         edit_prediction::DebugEvent::ContextRetrievalStarted(info) => {
@@ -152,7 +149,6 @@ pub async fn perform_predict(
                             )?;
                         }
                         edit_prediction::DebugEvent::ContextRetrievalFinished(info) => {
-                            retrieval_finished_at = Some(info.timestamp);
                             for (key, value) in &info.metadata {
                                 if *key == "search_queries" {
                                     fs::write(
@@ -162,55 +158,13 @@ pub async fn perform_predict(
                                 }
                             }
                         }
-                        edit_prediction::DebugEvent::EditPredictionRequested(request) => {
+                        edit_prediction::DebugEvent::EditPredictionStarted(request) => {
                             let prediction_started_at = Instant::now();
                             start_time.get_or_insert(prediction_started_at);
-                            let prompt = request.local_prompt.unwrap_or_default();
+                            let prompt = request.prompt.unwrap_or_default();
                             fs::write(example_run_dir.join("prediction_prompt.md"), &prompt)?;
-
-                            {
-                                let mut result = result.lock().unwrap();
-                                result.prompt_len = prompt.chars().count();
-
-                                for included_file in request.inputs.included_files {
-                                    let insertions =
-                                        vec![(request.inputs.cursor_point, CURSOR_MARKER)];
-                                    result.excerpts.extend(included_file.excerpts.iter().map(
-                                        |excerpt| ActualExcerpt {
-                                            path: included_file.path.components().skip(1).collect(),
-                                            text: String::from(excerpt.text.as_ref()),
-                                        },
-                                    ));
-                                    write_codeblock(
-                                        &included_file.path,
-                                        included_file.excerpts.iter(),
-                                        if included_file.path == request.inputs.cursor_path {
-                                            &insertions
-                                        } else {
-                                            &[]
-                                        },
-                                        included_file.max_row,
-                                        false,
-                                        &mut result.excerpts_text,
-                                    );
-                                }
-                            }
-
-                            let response =
-                                request.response_rx.await?.0.map_err(|err| anyhow!(err))?;
-                            let response =
-                                edit_prediction::open_ai_response::text_from_response(response)
-                                    .unwrap_or_default();
-                            let prediction_finished_at = Instant::now();
-                            fs::write(example_run_dir.join("prediction_response.md"), &response)?;
-
-                            let mut result = result.lock().unwrap();
-                            result.generated_len = response.chars().count();
-                            result.retrieval_time =
-                                retrieval_finished_at.unwrap() - start_time.unwrap();
-                            result.prediction_time = prediction_finished_at - prediction_started_at;
-                            result.total_time = prediction_finished_at - start_time.unwrap();
-
+                        }
+                        edit_prediction::DebugEvent::EditPredictionFinished(_) => {
                             break;
                         }
                     }

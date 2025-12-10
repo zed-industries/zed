@@ -20,7 +20,7 @@ use std::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
     #[serde(default)]
-    pub id: String,
+    pub name: String,
     pub repository_url: String,
     pub revision: String,
     pub uncommitted_diff: String,
@@ -29,17 +29,30 @@ pub struct Example {
     pub edit_history: String,
     pub expected_patch: String,
 
+    /// The full content of the file where an edit is being predicted, and the
+    /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub buffer: Option<ExampleBuffer>,
+
+    /// The context retrieved for the prediction. This requires the worktree to
+    /// be loaded and the language server to be started.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ExampleContext>,
+
+    /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<ExamplePrompt>,
+
+    /// The actual predictions from the model.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub prediction: Vec<ExamplePrediction>,
+    pub predictions: Vec<ExamplePrediction>,
+
+    /// The scores, for how well the actual predictions match the expected
+    /// predictions.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub score: Vec<ExampleScore>,
 
+    /// The application state used to process this example.
     #[serde(skip)]
     pub state: Option<ExampleState>,
 }
@@ -130,7 +143,7 @@ impl Example {
 
     pub fn worktree_path(&self) -> PathBuf {
         WORKTREES_DIR
-            .join(&self.id)
+            .join(&self.name)
             .join(self.repo_name().unwrap().1.as_ref())
     }
 
@@ -153,8 +166,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
             "json" => {
                 let mut example = serde_json::from_str::<Example>(&content)
                     .unwrap_or_else(|_| panic!("Failed to parse example file: {}", path.display()));
-                if example.id.is_empty() {
-                    example.id = filename;
+                if example.name.is_empty() {
+                    example.name = filename;
                 }
                 examples.push(example);
             }
@@ -171,8 +184,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                                     line_ix + 1
                                 )
                             });
-                        if example.id.is_empty() {
-                            example.id = format!("example-{line_ix}")
+                        if example.name.is_empty() {
+                            example.name = format!("{filename}-{line_ix}")
                         }
                         example
                     })
@@ -217,7 +230,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
     let parser = Parser::new(input);
 
     let mut example = Example {
-        id,
+        name: id,
         repository_url: String::new(),
         revision: String::new(),
         uncommitted_diff: String::new(),
@@ -228,7 +241,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         buffer: None,
         context: None,
         prompt: None,
-        prediction: Vec::new(),
+        predictions: Vec::new(),
         score: Vec::new(),
         state: None,
     };

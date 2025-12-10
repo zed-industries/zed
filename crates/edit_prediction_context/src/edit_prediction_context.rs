@@ -197,6 +197,10 @@ impl RelatedExcerptStore {
         &self.related_files
     }
 
+    pub fn set_related_files(&mut self, files: Vec<RelatedFile>) {
+        self.related_files = files;
+    }
+
     async fn fetch_excerpts(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,

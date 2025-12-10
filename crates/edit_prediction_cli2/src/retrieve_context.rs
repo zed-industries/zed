@@ -17,6 +17,10 @@ pub async fn run_context_retrieval(
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) {
+    if example.context.is_some() {
+        return;
+    }
+
     run_load_project(example, app_state.clone(), cx.clone()).await;
 
     let state = example.state.as_ref().unwrap();
@@ -31,7 +35,7 @@ pub async fn run_context_retrieval(
     wait_for_language_server_to_start(example, &project, &state.buffer, &mut cx).await;
 
     let ep_store = cx
-        .update(|cx| EditPredictionStore::global(&app_state.client, &app_state.user_store, cx))
+        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
         .unwrap();
 
     ep_store
@@ -39,11 +43,10 @@ pub async fn run_context_retrieval(
             store.register_buffer(&state.buffer, &project, cx);
             store.set_use_context(true);
             store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
-            store.project_context_updates(&project)
+            store.debug_info(&project, cx)
         })
         .unwrap()
-        .unwrap()
-        .recv()
+        .next()
         .await
         .unwrap();
 
@@ -101,7 +104,7 @@ async fn wait_for_language_server_to_start(
     };
 
     let mut ready_languages = HashSet::default();
-    let log_prefix = format!("{} | ", example.id);
+    let log_prefix = format!("{} | ", example.name);
     if !ready_languages.contains(&language_id) {
         wait_for_lang_server(&project, &buffer, log_prefix, cx)
             .await

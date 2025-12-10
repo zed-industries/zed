@@ -23,6 +23,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction::udiff::DiffLine;
 use edit_prediction_context::EditPredictionExcerptOptions;
+use futures::StreamExt as _;
 use gpui::{Application, AsyncApp, Entity, prelude::*};
 use language::{Bias, Buffer, BufferSnapshot, Point};
 use metrics::delta_chr_f;
@@ -391,14 +392,14 @@ async fn zeta2_context(
                 store.register_buffer(&buffer, &project, cx);
             });
             cx.spawn(async move |cx| {
-                let updates_rx = store.update(cx, |store, cx| {
+                let mut updates_rx = store.update(cx, |store, cx| {
                     let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
                     store.set_use_context(true);
                     store.refresh_context(&project, &buffer, cursor, cx);
-                    store.project_context_updates(&project).unwrap()
+                    store.debug_info(&project, cx)
                 })?;
 
-                updates_rx.recv().await.ok();
+                updates_rx.next().await;
 
                 let context = store.update(cx, |store, cx| {
                     store.context_for_project(&project, cx).to_vec()

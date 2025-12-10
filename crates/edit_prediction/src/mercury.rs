@@ -4,18 +4,15 @@ use credentials_provider::CredentialsProvider;
 use edit_prediction_context::RelatedFile;
 use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, Entity, Task,
+    App, AppContext as _, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use project::{Project, ProjectPath};
-use std::{
-    collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
-};
+use language::{BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
+use std::{fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant};
 
 use crate::{
-    EditPredictionId, EditPredictionInputs, open_ai_response::text_from_response,
-    prediction::EditPredictionResult,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
+    open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
@@ -38,16 +35,16 @@ impl Mercury {
         store_api_token_in_keychain(api_token, cx)
     }
 
-    pub fn request_prediction(
+    pub(crate) fn request_prediction(
         &self,
-        _project: &Entity<Project>,
-        active_buffer: &Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        position: language::Anchor,
-        events: Vec<Arc<Event>>,
-        _recent_paths: &VecDeque<ProjectPath>,
-        related_files: Vec<RelatedFile>,
-        _diagnostic_search_range: Range<Point>,
+        EditPredictionModelInput {
+            buffer,
+            snapshot,
+            position,
+            events,
+            related_files,
+            ..
+        }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
@@ -186,7 +183,7 @@ impl Mercury {
             anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
         });
 
-        let buffer = active_buffer.clone();
+        let buffer = buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) =

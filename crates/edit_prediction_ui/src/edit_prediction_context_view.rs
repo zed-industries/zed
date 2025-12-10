@@ -66,7 +66,7 @@ impl EditPredictionContextView {
     ) -> Self {
         let store = EditPredictionStore::global(client, user_store, cx);
 
-        let mut debug_rx = store.update(cx, |store, _| store.debug_info());
+        let mut debug_rx = store.update(cx, |store, cx| store.debug_info(&project, cx));
         let _update_task = cx.spawn_in(window, async move |this, cx| {
             while let Some(event) = debug_rx.next().await {
                 this.update_in(cx, |this, window, cx| {
@@ -103,7 +103,8 @@ impl EditPredictionContextView {
                     self.handle_context_retrieval_finished(info, window, cx);
                 }
             }
-            DebugEvent::EditPredictionRequested(_) => {}
+            DebugEvent::EditPredictionStarted(_) => {}
+            DebugEvent::EditPredictionFinished(_) => {}
         }
     }
 
