@@ -285,3 +285,50 @@ fn find_context_excerpt_under_cursor(example: &Example) -> Option<&ExampleContex
 
     Some(cursor_excerpt)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_last_code_block() {
+        let text = indoc::indoc! {"
+            Some thinking
+
+            ```
+            first block
+            ```
+
+            `````path='something' lines=1:2
+            last block
+            `````
+            "};
+        let last_block = extract_last_codeblock(text);
+        assert_eq!(last_block, "last block");
+    }
+
+    #[test]
+    fn test_extract_editable_region() {
+        let text = indoc::indoc! {"
+            some lines
+            are
+            here
+            <|editable_region_start|>
+            one
+            two three
+
+            <|editable_region_end|>
+            more
+            lines here
+            "};
+        let parsed = TeacherPrompt::extract_editable_region(text);
+        assert_eq!(
+            parsed,
+            indoc::indoc! {"
+            one
+            two three
+
+            "}
+        );
+    }
+}
