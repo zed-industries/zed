@@ -57,6 +57,7 @@ util.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["eval-support"] }
 wasmtime.workspace = true
+zeta_prompt.workspace = true
 zlog.workspace = true
 
 [dev-dependencies]

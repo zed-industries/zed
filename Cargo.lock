@@ -5212,6 +5212,7 @@ dependencies = [
  "util",
  "wasmtime",
  "watch",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -20928,6 +20929,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "zeta_prompt"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

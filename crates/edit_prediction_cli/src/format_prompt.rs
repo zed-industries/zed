@@ -1,13 +1,19 @@
 use crate::{
     PromptFormat,
-    example::{Example, ExampleContextExcerpt, ExamplePrompt},
+    example::{Example, ExamplePrompt},
 };
-use std::fmt::Write;
+use std::borrow::Cow;
+use zeta_prompt::{
+    Zeta2Prompt, ZetaPromptContext, ZetaPromptContextFile, ZetaPromptExcerpt, ZetaPromptInput,
+};
 
 pub async fn run_format_prompt(example: &mut Example, prompt_format: PromptFormat) {
     let prompt = match prompt_format {
         PromptFormat::Teacher => TeacherPrompt::format(example),
-        PromptFormat::Zeta2 => Zeta2Prompt::format(example),
+        PromptFormat::Zeta2 => {
+            let input = example_to_zeta_prompt_input(example);
+            Zeta2Prompt::format(&input)
+        }
     };
 
     example.prompt = Some(ExamplePrompt {
@@ -15,6 +21,33 @@ pub async fn run_format_prompt(example: &mut Example, prompt_format: PromptForma
         expected_output: example.expected_patch.clone(), // TODO
         format: prompt_format,
     });
+}
+
+fn example_to_zeta_prompt_input(example: &Example) -> ZetaPromptInput<'_> {
+    let context = example.context.as_ref().map(|ctx| ZetaPromptContext {
+        files: ctx
+            .files
+            .iter()
+            .map(|file| ZetaPromptContextFile {
+                rel_path: Cow::Borrowed(&file.rel_path),
+                excerpts: file
+                    .excerpts
+                    .iter()
+                    .map(|excerpt| ZetaPromptExcerpt {
+                        row_range: excerpt.row_range.clone(),
+                        text: Cow::Borrowed(&excerpt.text),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    });
+
+    ZetaPromptInput {
+        cursor_path: Cow::Borrowed(&example.cursor_path),
+        cursor_position: Cow::Borrowed(&example.cursor_position),
+        edit_history: Cow::Borrowed(&example.edit_history),
+        context,
+    }
 }
 
 pub trait PromptFormatter {
@@ -26,84 +59,7 @@ pub trait PromptParser {
     fn parse(example: &Example, response: &str) -> String;
 }
 
-pub struct Zeta2Prompt;
 pub struct TeacherPrompt;
-
-impl PromptFormatter for Zeta2Prompt {
-    fn format(example: &Example) -> String {
-        let mut prompt = String::new();
-        Self::write_context_section(&mut prompt, example);
-        Self::write_edit_history_section(&mut prompt, example);
-        Self::write_cursor_excerpt_section(&mut prompt, example);
-        prompt
-    }
-}
-
-impl Zeta2Prompt {
-    pub(crate) fn write_context_section(prompt: &mut String, example: &Example) {
-        prompt.push_str("<context>\n");
-
-        if let Some(context) = &example.context {
-            for file in &context.files {
-                let path_str = file.rel_path.to_string_lossy();
-                writeln!(prompt, "<file path=\"{}\">", path_str).unwrap();
-
-                for excerpt in &file.excerpts {
-                    writeln!(
-                        prompt,
-                        "<excerpt lines=\"{}-{}\">",
-                        excerpt.row_range.start + 1,
-                        excerpt.row_range.end + 1
-                    )
-                    .unwrap();
-                    prompt.push_str(&excerpt.text);
-                    if !excerpt.text.ends_with('\n') {
-                        prompt.push('\n');
-                    }
-                    prompt.push_str("</excerpt>\n");
-                }
-
-                prompt.push_str("</file>\n");
-            }
-        }
-
-        prompt.push_str("</context>\n\n");
-    }
-
-    pub(crate) fn write_edit_history_section(prompt: &mut String, example: &Example) {
-        prompt.push_str("<edit_history>\n");
-
-        if example.edit_history.is_empty() {
-            prompt.push_str("(No edit history)\n");
-        } else {
-            prompt.push_str(&example.edit_history);
-            if !example.edit_history.ends_with('\n') {
-                prompt.push('\n');
-            }
-        }
-
-        prompt.push_str("</edit_history>\n\n");
-    }
-
-    pub(crate) fn write_cursor_excerpt_section(prompt: &mut String, example: &Example) {
-        prompt.push_str("<cursor_excerpt>\n");
-
-        let path_str = example.cursor_path.to_string_lossy();
-        writeln!(prompt, "<file path=\"{}\">", path_str).unwrap();
-
-        prompt.push_str("<editable_region>\n");
-
-        prompt.push_str(&example.cursor_position);
-        if !example.cursor_position.ends_with('\n') {
-            prompt.push('\n');
-        }
-
-        prompt.push_str("</editable_region>\n");
-        prompt.push_str("</file>\n");
-
-        prompt.push_str("</cursor_excerpt>\n");
-    }
-}
 
 impl PromptFormatter for TeacherPrompt {
     fn format(example: &Example) -> String {
@@ -160,8 +116,9 @@ impl TeacherPrompt {
             panic!("Missing context retriever step");
         }
 
+        let input = example_to_zeta_prompt_input(example);
         let mut prompt = String::new();
-        Zeta2Prompt::write_context_section(&mut prompt, example);
+        Zeta2Prompt::write_context_section(&mut prompt, &input);
 
         prompt
     }
@@ -279,23 +236,6 @@ fn extract_last_codeblock(text: &str) -> String {
     }
 
     last_block.unwrap_or_else(|| text.to_string())
-}
-
-fn find_context_excerpt_under_cursor(example: &Example) -> Option<&ExampleContextExcerpt> {
-    let context = example.context.as_ref().expect("Context must be provided");
-    let cursor_position = example.cursor_position.replace("<|user_cursor|>", "");
-    let cursor_file = context
-        .files
-        .iter()
-        .filter(|f| f.rel_path == example.cursor_path)
-        .next()?;
-    let cursor_excerpt = cursor_file
-        .excerpts
-        .iter()
-        .filter(|e| e.text.contains(&cursor_position))
-        .next()?;
-
-    Some(cursor_excerpt)
 }
 
 #[cfg(test)]
