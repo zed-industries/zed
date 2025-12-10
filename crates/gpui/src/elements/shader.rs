@@ -27,7 +27,7 @@ impl<T: ShaderUniform> FragmentShader<T> {
     /// Within this function, you have access to the following parameters:
     ///
     /// - `position` (`vec2<f32>`): The absolute position of the pixel within
-    ///   the window. The units are in unscaled pixels, *not* device pixels.
+    ///   the window. The units are in logical pixels, *not* device pixels.
     /// - `bounds` (`Bounds { origin: vec2<f32>, size: vec2<f32> }`): The bounds
     ///   of this shader, in the same units as `position`.
     /// - `scale_factor` (`f32`): See [Window::scale_factor()]. This can be used
@@ -36,7 +36,7 @@ impl<T: ShaderUniform> FragmentShader<T> {
     ///   Its type is whatever type the instance data is.
     /// - `globals.viewport_size` (`vec2<f32>`): The size of the surface in
     ///   *device pixels*. You will need to divide by `scale_factor` if you
-    ///   require the same units as `position`.
+    ///   require logical pixels.
     ///
     /// Additionally, any functions or types defined using [FragmentShader::with_item]
     /// will be accessible within the main body.
@@ -96,7 +96,7 @@ impl<T: ShaderUniform> InteractiveElement for ShaderElement<T> {
 }
 
 /// Constructs a [ShaderElement] which renders a shader which *doesn't* take
-/// instance data.
+/// instance data. If you need to pass data to your shader, use [shader_element_with_data].
 pub fn shader_element(shader: FragmentShader<()>) -> ShaderElement<()> {
     ShaderElement {
         shader,
