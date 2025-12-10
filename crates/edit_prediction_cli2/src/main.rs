@@ -3,6 +3,7 @@ mod example;
 mod format_prompt;
 mod headless;
 mod load_project;
+mod metrics;
 mod paths;
 mod predict;
 mod report;
@@ -88,6 +89,7 @@ enum PredictionProvider {
 
 #[derive(Debug, Args)]
 struct ScoreArgs {
+    #[clap(long)]
     provider: Option<PredictionProvider>,
 }
 

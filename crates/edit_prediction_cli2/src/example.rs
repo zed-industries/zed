@@ -1,5 +1,6 @@
 use crate::{
     PredictionProvider, PromptFormat,
+    metrics::ClassificationMetrics,
     paths::{REPOS_DIR, WORKTREES_DIR},
 };
 use anyhow::{Context as _, Result};
@@ -104,7 +105,8 @@ pub struct ExamplePrediction {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
-    pub score: f32,
+    pub delta_chr_f: f32,
+    pub line_match: ClassificationMetrics,
 }
 
 impl Example {
