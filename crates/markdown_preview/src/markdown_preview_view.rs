@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -19,6 +20,7 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
+use crate::{MoveDown, MoveUp};
 use crate::{
     MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
@@ -444,6 +446,30 @@ impl MarkdownPreviewView {
         self.list_state.scroll_by(viewport_height);
         cx.notify();
     }
+
+    fn scroll_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            let item_height = bounds.size.height;
+            // Scroll no more than the rough equivalent of a large headline
+            let max_height = window.rem_size() * 2;
+            let scroll_height = min(item_height, max_height);
+            self.list_state.scroll_by(-scroll_height);
+        }
+        cx.notify();
+    }
+
+    fn scroll_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        let scroll_top = self.list_state.logical_scroll_top();
+        if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
+            let item_height = bounds.size.height;
+            // Scroll no more than the rough equivalent of a large headline
+            let max_height = window.rem_size() * 2;
+            let scroll_height = min(item_height, max_height);
+            self.list_state.scroll_by(scroll_height);
+        }
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -496,6 +522,8 @@ impl Render for MarkdownPreviewView {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
             .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_up))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

@@ -1295,7 +1295,9 @@
     "context": "MarkdownPreview",
     "bindings": {
       "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown"
+      "pagedown": "markdown::MovePageDown",
+      "down": "markdown::MoveDown",
+      "up": "markdown::MoveUp"
     }
   },
   {

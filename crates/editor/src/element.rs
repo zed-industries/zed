@@ -300,7 +300,7 @@ impl EditorElement {
         register_action(editor, window, Editor::scroll_cursor_bottom);
         register_action(editor, window, Editor::scroll_cursor_center_top_bottom);
         register_action(editor, window, |editor, _: &LineDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(1.), window, cx)
+            editor.scroll_screen(&ScrollAmount::Line(1.), window, cx) // Could probably just start by making this the j/down command in markdown preview
         });
         register_action(editor, window, |editor, _: &LineUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Line(-1.), window, cx)
