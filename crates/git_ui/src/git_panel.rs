@@ -3259,23 +3259,16 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
 
-        for git_status in repo.cached_status() {
-            let staging = git_status.status.staging();
-
-            let entry = GitStatusEntry {
-                repo_path: git_status.repo_path.clone(),
-                status: git_status.status,
-                staging,
-            };
+        for status_entry in self.entries.iter().filter_map(|entry| entry.status_entry()) {
             self.entry_count += 1;
+            let is_staging_or_staged = self.is_entry_staged(status_entry, repo);
 
-            let is_staging_or_staged = self.is_entry_staged(&entry, repo);
-            if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
+            if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
                 if is_staging_or_staged {
                     self.conflicted_staged_count += 1;
                 }
-            } else if entry.status.is_created() {
+            } else if status_entry.status.is_created() {
                 self.new_count += 1;
                 if is_staging_or_staged {
                     self.new_staged_count += 1;
