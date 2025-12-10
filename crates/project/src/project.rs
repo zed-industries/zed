@@ -1273,15 +1273,20 @@ impl Project {
                     path_style,
                 )
             });
-            trusted_worktrees::init_global(
-                worktree_store.clone(),
-                Some(RemoteHostLocation::from(connection_options)),
-                None,
-                Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
-                cx,
-            );
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+            match &connection_options {
+                RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
+                    trusted_worktrees::init_global(
+                        worktree_store.clone(),
+                        Some(RemoteHostLocation::from(connection_options)),
+                        None,
+                        Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                        cx,
+                    );
+                }
+                RemoteConnectionOptions::Docker(..) => {}
+            }
 
             let weak_self = cx.weak_entity();
             let context_server_store =
