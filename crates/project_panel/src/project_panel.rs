@@ -1142,7 +1142,7 @@ impl ProjectPanel {
                             )
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .action("File History", Box::new(git::FileHistory))
+                                    .action("View File History", Box::new(git::FileHistory))
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
