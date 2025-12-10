@@ -1931,6 +1931,11 @@ pub enum CustomAgentServerSettings {
         /// Default: None
         default_model: Option<String>,
         /// Additional paths outside the project that this agent can read and write.
+        ///
+        /// Example:
+        ///   - ~/.claude/plans
+        ///
+        /// Default: None
         allowed_paths: Vec<PathBuf>,
     },
     Extension {
