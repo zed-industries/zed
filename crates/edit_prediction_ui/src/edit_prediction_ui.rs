@@ -1,6 +1,5 @@
 mod edit_prediction_button;
 mod edit_prediction_context_view;
-mod external_provider_api_token_modal;
 mod rate_prediction_modal;
 
 use std::any::{Any as _, TypeId};
@@ -17,7 +16,6 @@ use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
 pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
-pub use external_provider_api_token_modal::ExternalProviderApiKeyModal;
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 

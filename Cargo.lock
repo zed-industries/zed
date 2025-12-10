@@ -5161,6 +5161,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_env_vars",
  "zlog",
 ]
 
@@ -5271,6 +5272,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "language_models",
  "lsp",
  "markdown",
  "menu",
@@ -14791,6 +14793,7 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "language",
+ "language_models",
  "log",
  "menu",
  "node_runtime",

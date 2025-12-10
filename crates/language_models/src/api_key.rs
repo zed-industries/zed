@@ -16,7 +16,7 @@ use zed_env_vars::EnvVar;
 /// Keys from the system keychain are associated with a provider URL, and this ensures that they are
 /// only used with that URL.
 pub struct ApiKeyState {
-    url: SharedString,
+    pub url: SharedString,
     load_status: LoadStatus,
     load_task: Option<future::Shared<Task<()>>>,
 }

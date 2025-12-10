@@ -1,21 +1,21 @@
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3::Event;
-use credentials_provider::CredentialsProvider;
 use edit_prediction_context::RelatedFile;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
+use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, Task,
+    App, AppContext as _, Context, Entity, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
+use language_models::api_key::ApiKeyState;
 use project::{Project, ProjectPath};
 use std::{
     collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
 };
 
 use crate::{
-    EditPredictionId, EditPredictionInputs, open_ai_response::text_from_response,
-    prediction::EditPredictionResult,
+    EditPredictionId, EditPredictionInputs, EditPredictionStore,
+    open_ai_response::text_from_response, prediction::EditPredictionResult,
 };
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
@@ -23,19 +23,14 @@ const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 
 pub struct Mercury {
-    pub api_token: Shared<Task<Option<String>>>,
+    pub api_token: ApiKeyState,
 }
 
 impl Mercury {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &mut Context<EditPredictionStore>) -> Self {
         Mercury {
-            api_token: load_api_token(cx).shared(),
+            api_token: load_api_token(cx),
         }
-    }
-
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
     }
 
     pub fn request_prediction(
@@ -50,7 +45,7 @@ impl Mercury {
         _diagnostic_search_range: Range<Point>,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
+        let Some(api_token) = self.api_token.key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = snapshot
@@ -298,43 +293,16 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 
 pub const MERCURY_CREDENTIALS_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
+pub const MERCURY_TOKEN_ENV_VAR: &str = "MERCURY_AI_TOKEN";
 
-pub fn load_api_token(cx: &App) -> Task<Option<String>> {
-    if let Some(api_token) = std::env::var("MERCURY_AI_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Task::ready(Some(api_token));
-    }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-    cx.spawn(async move |cx| {
-        let (_, credentials) = credentials_provider
-            .read_credentials(MERCURY_CREDENTIALS_URL, &cx)
-            .await
-            .ok()??;
-        String::from_utf8(credentials).ok()
-    })
-}
-
-fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-
-    cx.spawn(async move |cx| {
-        if let Some(api_token) = api_token {
-            credentials_provider
-                .write_credentials(
-                    MERCURY_CREDENTIALS_URL,
-                    MERCURY_CREDENTIALS_USERNAME,
-                    api_token.as_bytes(),
-                    cx,
-                )
-                .await
-                .context("Failed to save Mercury API token to system keychain")
-        } else {
-            credentials_provider
-                .delete_credentials(MERCURY_CREDENTIALS_URL, cx)
-                .await
-                .context("Failed to delete Mercury API token from system keychain")
-        }
-    })
+pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
+    let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL.into());
+    // todo! see todo on sweep load
+    _ = key.load_if_needed(
+        MERCURY_CREDENTIALS_URL.into(),
+        &zed_env_vars::EnvVar::new(MERCURY_TOKEN_ENV_VAR.into()),
+        |ep_store| &mut ep_store.sweep_ai.api_token,
+        cx,
+    );
+    key
 }

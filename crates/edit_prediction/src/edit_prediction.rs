@@ -75,6 +75,7 @@ pub use crate::prediction::EditPredictionId;
 pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use language_models::api_key::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 
@@ -514,21 +515,13 @@ impl EditPredictionStore {
     }
 
     pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+        // todo!
+        self.sweep_ai.api_token.has_key()
     }
 
     pub fn has_mercury_api_token(&self) -> bool {
-        self.mercury
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+        // todo!
+        self.mercury.api_token.has_key()
     }
 
     #[cfg(feature = "eval-support")]

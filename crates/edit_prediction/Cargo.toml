@@ -63,6 +63,7 @@ uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

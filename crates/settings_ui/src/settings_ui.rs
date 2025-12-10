@@ -862,12 +862,6 @@ impl SettingsPageItem {
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => v_flex()
-                .when(
-                    sub_page_link
-                        .hide
-                        .is_some_and(|should_hide| should_hide(cx)),
-                    |this| this.hidden(),
-                )
                 .group("setting-item")
                 .px_8()
                 .child(
@@ -1214,7 +1208,6 @@ struct SubPageLink {
     /// Whether or not the settings in this sub page are configurable in settings.json
     /// Removes the "Edit in settings.json" button from the page.
     in_json: bool,
-    hide: Option<fn(cx: &App) -> bool>,
     files: FileMask,
     render: Arc<
         dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
@@ -1875,6 +1868,7 @@ impl SettingsWindow {
                         header_str = *header;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
+                        json_path = sub_page_link.json_path;
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, sub_page_link.title.as_ref()]
