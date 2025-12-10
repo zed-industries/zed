@@ -42,47 +42,45 @@ impl LinuxDispatcher {
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
-                        while let Ok(runnables) = receiver.pop() {
-                            for runnable in runnables {
-                                let start = Instant::now();
+                        for runnable in receiver.iter() {
+                            let start = Instant::now();
 
-                                let mut location = match runnable {
-                                    RunnableVariant::Meta(runnable) => {
-                                        let location = runnable.metadata().location;
-                                        let timing = TaskTiming {
-                                            location,
-                                            start,
-                                            end: None,
-                                        };
-                                        Self::add_task_timing(timing);
+                            let mut location = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    Self::add_task_timing(timing);
 
-                                        runnable.run();
-                                        timing
-                                    }
-                                    RunnableVariant::Compat(runnable) => {
-                                        let location = core::panic::Location::caller();
-                                        let timing = TaskTiming {
-                                            location,
-                                            start,
-                                            end: None,
-                                        };
-                                        Self::add_task_timing(timing);
+                                    runnable.run();
+                                    timing
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    let location = core::panic::Location::caller();
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    Self::add_task_timing(timing);
 
-                                        runnable.run();
-                                        timing
-                                    }
-                                };
+                                    runnable.run();
+                                    timing
+                                }
+                            };
 
-                                let end = Instant::now();
-                                location.end = Some(end);
-                                Self::add_task_timing(location);
+                            let end = Instant::now();
+                            location.end = Some(end);
+                            Self::add_task_timing(location);
 
-                                log::trace!(
-                                    "background thread {}: ran runnable. took: {:?}",
-                                    i,
-                                    start.elapsed()
-                                );
-                            }
+                            log::trace!(
+                                "background thread {}: ran runnable. took: {:?}",
+                                i,
+                                start.elapsed()
+                            );
                         }
                     })
                     .unwrap()
@@ -318,16 +316,23 @@ impl<T> calloop::EventSource for PriorityQueueCalloopReceiver<T> {
         let action = self
             .source
             .process_events(readiness, token, |(), &mut ()| {
-                let Ok(runnables) = self.receiver.try_pop() else {
-                    disconnected = true;
-                    callback(Event::Closed, &mut ());
-                    return;
-                };
-
                 let mut is_empty = true;
-                for runnable in runnables {
-                    callback(Event::Msg(runnable), &mut ());
-                    is_empty = false;
+
+                let receiver = self.receiver.clone();
+                for runnable in receiver.try_iter() {
+                    match runnable {
+                        Ok(r) => {
+                            callback(Event::Msg(r), &mut ());
+                            is_empty = false;
+                        },
+                        Err(_) => {
+                            disconnected = true;
+                        },
+                    }
+                }
+
+                if disconnected {
+                    callback(Event::Closed, &mut ());
                 }
 
                 if is_empty {

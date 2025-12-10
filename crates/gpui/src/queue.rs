@@ -1,4 +1,4 @@
-use rand::{Rng, SeedableRng, rand_core::block, rngs::SmallRng};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 
 use crate::Priority;
 
@@ -33,7 +33,7 @@ impl<T> Clone for PriorityQueueReceiver<T> {
     fn clone(&self) -> Self {
         Self {
             receiver: self.receiver.clone(),
-            rand: SmallRng::from_os_rng(),
+            rand: SmallRng::seed_from_u64(0),
             high_priority: Vec::new(),
             medium_priority: Vec::new(),
             low_priority: Vec::new(),
@@ -42,11 +42,10 @@ impl<T> Clone for PriorityQueueReceiver<T> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ReceiverDisconnected;
 
 impl<T> PriorityQueueReceiver<T> {
-    const TICKET_COUNT: usize = 100;
-
     pub(crate) fn new() -> (PriorityQueueSender<T>, Self) {
         let (tx, rx) = flume::unbounded();
 
@@ -54,7 +53,7 @@ impl<T> PriorityQueueReceiver<T> {
 
         let receiver = PriorityQueueReceiver {
             receiver: rx,
-            rand: SmallRng::from_os_rng(),
+            rand: SmallRng::seed_from_u64(0),
             high_priority: Vec::new(),
             medium_priority: Vec::new(),
             low_priority: Vec::new(),
@@ -72,7 +71,7 @@ impl<T> PriorityQueueReceiver<T> {
     /// # Errors
     ///
     /// If the sender was dropped
-    pub(crate) fn try_pop(&mut self) -> Result<T, ReceiverDisconnected> {
+    pub(crate) fn try_pop(&mut self) -> Result<Option<T>, ReceiverDisconnected> {
         self.pop_inner(false)
     }
 
@@ -83,35 +82,44 @@ impl<T> PriorityQueueReceiver<T> {
     ///
     /// If the sender was dropped
     pub(crate) fn pop(&mut self) -> Result<T, ReceiverDisconnected> {
-        self.pop_inner(true)
+        self.pop_inner(true).map(|e| e.unwrap())
+    }
+
+    /// Returns an iterator over the elements of the queue
+    /// this iterator will end when all elements have been consumed and will not wait for new ones.
+    pub(crate) fn try_iter(self) -> TryIter<T> {
+        TryIter(self)
+    }
+
+    /// Returns an iterator over the elements of the queue
+    /// this iterator will wait for new elements if the queue is empty.
+    pub(crate) fn iter(self) -> Iter<T> {
+        Iter(self)
     }
 
     fn collect_new(&mut self, block: bool) {
-        let mut add_element = |(priority, item): (Priority, T)| match priority {
-            Priority::High => self.high_priority.push(item),
-            Priority::Medium => self.medium_priority.push(item),
-            Priority::Low => self.low_priority.push(item),
+        let mut add_element = |this: &mut Self, (priority, item): (Priority, T)| match priority {
+            Priority::High => this.high_priority.push(item),
+            Priority::Medium => this.medium_priority.push(item),
+            Priority::Low => this.low_priority.push(item),
         };
 
-        let mut max_count = Self::TICKET_COUNT;
         if block && self.is_empty() {
             match self.receiver.recv() {
-                Ok(e) => add_element(e),
+                Ok(e) => {
+                    add_element(self, e);
+                }
                 Err(flume::RecvError::Disconnected) => {
                     self.disconnected = true;
                 }
             };
-            max_count -= 1;
         }
 
-        loop {
+        // dont starve by getting stuck here
+        for _ in 0..100 {
             match self.receiver.try_recv() {
                 Ok(e) => {
-                    max_count -= 1;
-                    add_element(e);
-                    if max_count == 0 {
-                        break;
-                    }
+                    add_element(self, e);
                 }
                 Err(flume::TryRecvError::Empty) => {
                     break;
@@ -125,78 +133,51 @@ impl<T> PriorityQueueReceiver<T> {
     }
 
     #[inline(always)]
+    // algorithm is the loaded die from biased coin from
+    // https://www.keithschwarz.com/darts-dice-coins/
     fn pop_inner(&mut self, block: bool) -> Result<Option<T>, ReceiverDisconnected> {
-        if self.disconnected {
+        use Priority as P;
+        if self.disconnected && self.is_empty() {
             return Err(ReceiverDisconnected);
         }
 
         self.collect_new(block);
-        // let total_items =
-        //     self.high_priority.len() + self.medium_priority.len() + self.low_priority.len();
 
-        // let value = self.rand.random_range::<u32, _>(0..total_tickets);
+        let high = P::High.probability() * !self.high_priority.is_empty() as u32;
+        let medium = P::Medium.probability() * !self.medium_priority.is_empty() as u32;
+        let low = P::Low.probability() * !self.low_priority.is_empty() as u32;
+        let mut mass = high + medium + low; //%
 
-        let mut value = self.rand.random_range::<u32, _>(0..100);
-        loop {
-            match value {
-                0..10 if !self.low_priority.is_empty() => ,
-                0..10 if => value = 10,
-                10..30 if !self.medium_priority.is_empty() => ();
-            10..30 => value = 30
-                30..100 if !self.high_priority.is_empty() => ();
-                30..100 => return Ok(None)
+        if !self.high_priority.is_empty() {
+            let flip = self.rand.random_ratio(P::High.probability(), mass);
+            if flip {
+                return Ok(self.high_priority.pop());
+            }
+            mass -= P::High.probability();
+        }
+
+        if !self.medium_priority.is_empty() {
+            let flip = self.rand.random_ratio(P::Medium.probability(), mass);
+            if flip {
+                return Ok(self.medium_priority.pop());
+            }
+            mass -= P::Medium.probability();
+        }
+
+        if !self.low_priority.is_empty() {
+            let flip = self
+                .rand
+                .random_ratio(P::Low.probability(), mass);
+            if flip {
+                return Ok(self.low_priority.pop());
             }
         }
 
-
-
-        let mut ticket_count = Self::TICKET_COUNT;
-
-        let high_tickets = Priority::High.ticket_count() * !self.high_priority.is_empty() as u32;
-        let medium_tickets =
-            Priority::Medium.ticket_count() * !self.medium_priority.is_empty() as u32;
-        let low_tickets = Priority::High.ticket_count() * !self.low_priority.is_empty() as u32;
-        let total_tickets = high_tickets + medium_tickets + low_tickets;
-
-        let value = self.rand.random_range::<u32, _>(0..total_tickets);
-        if value < low_tickets && low_tickets > 0 {
-            return self.low_priority.pop().unwrap();
-        } else if value < medium_tickets && medium_tickets > 0 {
-            return self.medium_priority.pop().unwrap();
-        } else if value < high_tickets && high_tickets > 0 {
-            return self.high_priority.pop().unwrap();
-        }
-
-        return None;
-
-
-        let high_percentage = Priority::High.ticket_percentage();
-        let medium_percentage = Priority::Medium.ticket_percentage() / (1.0f32 - high_percentage);
-        let low_percentage = (Priority::Low.ticket_percentage() / (1.0f32 - high_percentage))
-            / (1.0f32 - medium_percentage);
-
-        let high_taken = (ticket_count as f32 * high_percentage).ceil() as usize;
-        ticket_count -= high_taken;
-
-        let medium_taken = (ticket_count as f32 * medium_percentage).ceil() as usize;
-        ticket_count -= medium_taken;
-
-        let low_taken = (ticket_count as f32 * low_percentage).ceil() as usize;
-
-        let high_priority = self
-            .high_priority
-            .drain(..high_taken.min(self.high_priority.len()));
-        let medium_priority = self
-            .medium_priority
-            .drain(..medium_taken.min(self.medium_priority.len()));
-        let low_priority = self
-            .low_priority
-            .drain(..low_taken.min(self.low_priority.len()));
-
-        Ok(high_priority
-            .chain(medium_priority)
-            .chain(low_priority)
-            .take(100))
+        debug_assert!(
+            self.is_empty(),
+            "Prio::High + Prio::Medium + Prio::low should be 100"
+        );
+        Ok(None)
     }
 
     fn is_empty(&self) -> bool {
@@ -207,7 +188,7 @@ impl<T> PriorityQueueReceiver<T> {
 }
 
 /// If None is returned the sender disconnected
-struct Iter<T>(PriorityQueueReceiver<T>);
+pub(crate) struct Iter<T>(PriorityQueueReceiver<T>);
 impl<T> Iterator for Iter<T> {
     type Item = T;
 
@@ -216,45 +197,48 @@ impl<T> Iterator for Iter<T> {
     }
 }
 
-/// If None is returned the sender disconnected
-struct TryIter<T>(PriorityQueueReceiver<T>);
+/// If None is returned there are no more elements in the queue
+pub(crate) struct TryIter<T>(PriorityQueueReceiver<T>);
 impl<T> Iterator for TryIter<T> {
-    type Item = T;
+    type Item = Result<T, ReceiverDisconnected>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.try_pop().ok()
+        self.0.try_pop().transpose()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use collections::HashSet;
+
     use super::*;
 
     #[test]
     fn all_tasks_get_yielded() {
         let (tx, mut rx) = PriorityQueueReceiver::new();
-        tx.send(Priority::Medium, 2);
-        tx.send(Priority::High, 3);
-        tx.send(Priority::Low, 1);
-        tx.send(Priority::Medium, 2);
-        tx.send(Priority::High, 3);
+        tx.send(Priority::Medium, 20).unwrap();
+        tx.send(Priority::High, 30).unwrap();
+        tx.send(Priority::Low, 10).unwrap();
+        tx.send(Priority::Medium, 21).unwrap();
+        tx.send(Priority::High, 31).unwrap();
 
-        assert_eq!(rx.pop().unwrap(), 3);
-        assert_eq!(rx.pop().unwrap(), 3);
-        assert_eq!(rx.pop().unwrap(), 2);
-        assert_eq!(rx.pop().unwrap(), 2);
-        assert_eq!(rx.pop().unwrap(), 1);
+        drop(tx);
+
+        assert_eq!(
+            rx.iter().collect::<HashSet<_>>(),
+            [30, 31, 20, 21, 10].into_iter().collect::<HashSet<_>>()
+        )
     }
 
     #[test]
     fn new_high_prio_task_get_scheduled_quickly() {
         let (tx, mut rx) = PriorityQueueReceiver::new();
         for _ in 0..100 {
-            tx.send(Priority::Low, 1);
+            tx.send(Priority::Low, 1).unwrap();
         }
 
         assert_eq!(rx.pop().unwrap(), 1);
-        tx.send(Priority::High, 3);
+        tx.send(Priority::High, 3).unwrap();
         assert_eq!(rx.pop().unwrap(), 3);
         assert_eq!(rx.pop().unwrap(), 1);
     }
