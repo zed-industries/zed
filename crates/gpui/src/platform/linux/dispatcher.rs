@@ -219,11 +219,11 @@ impl PlatformDispatcher for LinuxDispatcher {
 
             let policy = match priority {
                 RealtimePriority::Audio => libc::SCHED_FIFO,
-                RealtimePriority::Other => libc::SCHED_OTHER,
+                RealtimePriority::Other => libc::SCHED_RR,
             };
             let sched_priority = match priority {
-                RealtimePriority::Audio => 80,
-                RealtimePriority::Other => 80,
+                RealtimePriority::Audio => 65,
+                RealtimePriority::Other => 45,
             };
 
             let sched_param = libc::sched_param { sched_priority };
