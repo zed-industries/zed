@@ -2,6 +2,40 @@
 
 (identifier) @variable
 
+(call_expression
+  function: (member_expression
+    object: (identifier) @type.builtin
+    (#any-of?
+      @type.builtin
+      "Promise"
+      "Array"
+      "Object"
+      "Map"
+      "Set"
+      "WeakMap"
+      "WeakSet"
+      "Date"
+      "Error"
+      "TypeError"
+      "RangeError"
+      "SyntaxError"
+      "ReferenceError"
+      "EvalError"
+      "URIError"
+      "RegExp"
+      "Function"
+      "Number"
+      "String"
+      "Boolean"
+      "Symbol"
+      "BigInt"
+      "Proxy"
+      "ArrayBuffer"
+      "DataView"
+    )
+  )
+)
+
 ; Properties
 
 (property_identifier) @property
@@ -24,7 +58,10 @@
     (#match? @type "^[A-Z][a-z]")))
 
 (new_expression
-    constructor: (identifier) @type)
+  constructor: (identifier) @type)
+
+(nested_type_identifier
+  module: (identifier) @type)
 
 ; Function and method definitions
 
@@ -294,9 +331,33 @@
 (jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
-(jsx_opening_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
-(jsx_closing_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
-(jsx_self_closing_element (identifier) @type (#match? @type "^[A-Z][^.]*$"))
+(jsx_opening_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
+(jsx_closing_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
+(jsx_self_closing_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
