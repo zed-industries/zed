@@ -43,6 +43,50 @@ pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
+#[cfg(any(feature = "x11", feature = "wayland"))]
+pub trait ResultExt {
+    type Ok;
+
+    fn notify_err(self, msg: &'static str) -> Self::Ok;
+}
+
+#[cfg(any(feature = "x11", feature = "wayland"))]
+impl<T> ResultExt for anyhow::Result<T> {
+    type Ok = T;
+
+    fn notify_err(self, msg: &'static str) -> T {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
+                use futures::executor::block_on;
+
+                let proxy = block_on(NotificationProxy::new()).expect(msg);
+
+                let notification_id = "dev.zed.Oops";
+                block_on(
+                    proxy.add_notification(
+                        notification_id,
+                        Notification::new("Zed failed to launch")
+                            .body(Some(
+                                format!(
+                                    "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                )
+                                .as_str(),
+                            ))
+                            .priority(Priority::High)
+                            .icon(ashpd::desktop::Icon::with_names(&[
+                                "dialog-question-symbolic",
+                            ])),
+                    )
+                ).expect(msg);
+
+                panic!("{msg}");
+            }
+        }
+    }
+}
+
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;

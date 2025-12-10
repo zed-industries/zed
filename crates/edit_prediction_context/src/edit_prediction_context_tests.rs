@@ -2,12 +2,12 @@ use super::*;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::TestAppContext;
 use indoc::indoc;
-use language::{Language, LanguageConfig, LanguageMatcher, Point, ToPoint as _, tree_sitter_rust};
+use language::{Point, ToPoint as _, rust_lang};
 use lsp::FakeLanguageServer;
 use project::{FakeFs, LocationLink, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{fmt::Write as _, sync::Arc};
+use std::fmt::Write as _;
 use util::{path, test::marked_text_ranges};
 
 #[gpui::test]
@@ -507,24 +507,4 @@ fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
         writeln!(&mut output, "…").unwrap();
     }
     output
-}
-
-pub(crate) fn rust_lang() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    first_line_pattern: None,
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_highlights_query(include_str!("../../languages/src/rust/highlights.scm"))
-        .unwrap()
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap(),
-    )
 }

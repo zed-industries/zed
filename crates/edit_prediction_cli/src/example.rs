@@ -3,6 +3,8 @@ use std::{
     cell::RefCell,
     fmt::{self, Display},
     fs,
+    hash::Hash,
+    hash::Hasher,
     io::Write,
     mem,
     path::{Path, PathBuf},
@@ -43,7 +45,7 @@ pub struct NamedExample {
     pub example: Example,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, Serialize, Deserialize)]
 pub struct Example {
     pub repository_url: String,
     pub revision: String,
@@ -52,6 +54,134 @@ pub struct Example {
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
+}
+
+impl Example {
+    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+        // git@github.com:owner/repo.git
+        if self.repository_url.contains('@') {
+            let (owner, repo) = self
+                .repository_url
+                .split_once(':')
+                .context("expected : in git url")?
+                .1
+                .split_once('/')
+                .context("expected / in git url")?;
+            Ok((
+                Cow::Borrowed(owner),
+                Cow::Borrowed(repo.trim_end_matches(".git")),
+            ))
+        // http://github.com/owner/repo.git
+        } else {
+            let url = Url::parse(&self.repository_url)?;
+            let mut segments = url.path_segments().context("empty http url")?;
+            let owner = segments
+                .next()
+                .context("expected owner path segment")?
+                .to_string();
+            let repo = segments
+                .next()
+                .context("expected repo path segment")?
+                .trim_end_matches(".git")
+                .to_string();
+            assert!(segments.next().is_none());
+
+            Ok((owner.into(), repo.into()))
+        }
+    }
+
+    pub async fn setup_worktree(&self, file_name: String) -> Result<PathBuf> {
+        let (repo_owner, repo_name) = self.repo_name()?;
+
+        let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
+        let repo_lock = lock_repo(&repo_dir).await;
+
+        if !repo_dir.is_dir() {
+            fs::create_dir_all(&repo_dir)?;
+            run_git(&repo_dir, &["init"]).await?;
+            run_git(
+                &repo_dir,
+                &["remote", "add", "origin", &self.repository_url],
+            )
+            .await?;
+        }
+
+        // Resolve the example to a revision, fetching it if needed.
+        let revision = run_git(
+            &repo_dir,
+            &["rev-parse", &format!("{}^{{commit}}", self.revision)],
+        )
+        .await;
+        let revision = if let Ok(revision) = revision {
+            revision
+        } else {
+            if run_git(
+                &repo_dir,
+                &["fetch", "--depth", "1", "origin", &self.revision],
+            )
+            .await
+            .is_err()
+            {
+                run_git(&repo_dir, &["fetch", "origin"]).await?;
+            }
+            let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
+            if revision != self.revision {
+                run_git(&repo_dir, &["tag", &self.revision, &revision]).await?;
+            }
+            revision
+        };
+
+        // Create the worktree for this example if needed.
+        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
+        if worktree_path.is_dir() {
+            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
+        } else {
+            let worktree_path_string = worktree_path.to_string_lossy();
+            run_git(&repo_dir, &["branch", "-f", &file_name, revision.as_str()]).await?;
+            run_git(
+                &repo_dir,
+                &["worktree", "add", "-f", &worktree_path_string, &file_name],
+            )
+            .await?;
+        }
+        drop(repo_lock);
+
+        // Apply the uncommitted diff for this example.
+        if !self.uncommitted_diff.is_empty() {
+            let mut apply_process = smol::process::Command::new("git")
+                .current_dir(&worktree_path)
+                .args(&["apply", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()?;
+
+            let mut stdin = apply_process.stdin.take().unwrap();
+            stdin.write_all(self.uncommitted_diff.as_bytes()).await?;
+            stdin.close().await?;
+            drop(stdin);
+
+            let apply_result = apply_process.output().await?;
+            if !apply_result.status.success() {
+                anyhow::bail!(
+                    "Failed to apply uncommitted diff patch with status: {}\nstderr:\n{}\nstdout:\n{}",
+                    apply_result.status,
+                    String::from_utf8_lossy(&apply_result.stderr),
+                    String::from_utf8_lossy(&apply_result.stdout),
+                );
+            }
+        }
+
+        Ok(worktree_path)
+    }
+
+    pub fn unique_name(&self) -> String {
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.hash(&mut hasher);
+        let disambiguator = hasher.finish();
+        let hash = format!("{:04x}", disambiguator);
+        format!("{}_{}", &self.revision[..8], &hash[..4])
+    }
 }
 
 pub type ActualExcerpt = Excerpt;
@@ -292,90 +422,7 @@ impl NamedExample {
     }
 
     pub async fn setup_worktree(&self) -> Result<PathBuf> {
-        let (repo_owner, repo_name) = self.repo_name()?;
-        let file_name = self.file_name();
-
-        let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
-        let repo_lock = lock_repo(&repo_dir).await;
-
-        if !repo_dir.is_dir() {
-            fs::create_dir_all(&repo_dir)?;
-            run_git(&repo_dir, &["init"]).await?;
-            run_git(
-                &repo_dir,
-                &["remote", "add", "origin", &self.example.repository_url],
-            )
-            .await?;
-        }
-
-        // Resolve the example to a revision, fetching it if needed.
-        let revision = run_git(
-            &repo_dir,
-            &[
-                "rev-parse",
-                &format!("{}^{{commit}}", self.example.revision),
-            ],
-        )
-        .await;
-        let revision = if let Ok(revision) = revision {
-            revision
-        } else {
-            run_git(
-                &repo_dir,
-                &["fetch", "--depth", "1", "origin", &self.example.revision],
-            )
-            .await?;
-            let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"]).await?;
-            if revision != self.example.revision {
-                run_git(&repo_dir, &["tag", &self.example.revision, &revision]).await?;
-            }
-            revision
-        };
-
-        // Create the worktree for this example if needed.
-        let worktree_path = WORKTREES_DIR.join(&file_name).join(repo_name.as_ref());
-        if worktree_path.is_dir() {
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
-        } else {
-            let worktree_path_string = worktree_path.to_string_lossy();
-            run_git(&repo_dir, &["branch", "-f", &file_name, revision.as_str()]).await?;
-            run_git(
-                &repo_dir,
-                &["worktree", "add", "-f", &worktree_path_string, &file_name],
-            )
-            .await?;
-        }
-        drop(repo_lock);
-
-        // Apply the uncommitted diff for this example.
-        if !self.example.uncommitted_diff.is_empty() {
-            let mut apply_process = smol::process::Command::new("git")
-                .current_dir(&worktree_path)
-                .args(&["apply", "-"])
-                .stdin(std::process::Stdio::piped())
-                .spawn()?;
-
-            let mut stdin = apply_process.stdin.take().unwrap();
-            stdin
-                .write_all(self.example.uncommitted_diff.as_bytes())
-                .await?;
-            stdin.close().await?;
-            drop(stdin);
-
-            let apply_result = apply_process.output().await?;
-            if !apply_result.status.success() {
-                anyhow::bail!(
-                    "Failed to apply uncommitted diff patch with status: {}\nstderr:\n{}\nstdout:\n{}",
-                    apply_result.status,
-                    String::from_utf8_lossy(&apply_result.stderr),
-                    String::from_utf8_lossy(&apply_result.stdout),
-                );
-            }
-        }
-
-        Ok(worktree_path)
+        self.example.setup_worktree(self.file_name()).await
     }
 
     pub fn file_name(&self) -> String {
@@ -389,40 +436,6 @@ impl NamedExample {
                 }
             })
             .collect()
-    }
-
-    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
-        // git@github.com:owner/repo.git
-        if self.example.repository_url.contains('@') {
-            let (owner, repo) = self
-                .example
-                .repository_url
-                .split_once(':')
-                .context("expected : in git url")?
-                .1
-                .split_once('/')
-                .context("expected / in git url")?;
-            Ok((
-                Cow::Borrowed(owner),
-                Cow::Borrowed(repo.trim_end_matches(".git")),
-            ))
-        // http://github.com/owner/repo.git
-        } else {
-            let url = Url::parse(&self.example.repository_url)?;
-            let mut segments = url.path_segments().context("empty http url")?;
-            let owner = segments
-                .next()
-                .context("expected owner path segment")?
-                .to_string();
-            let repo = segments
-                .next()
-                .context("expected repo path segment")?
-                .trim_end_matches(".git")
-                .to_string();
-            assert!(segments.next().is_none());
-
-            Ok((owner.into(), repo.into()))
-        }
     }
 
     pub async fn cursor_position(

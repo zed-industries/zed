@@ -75,15 +75,9 @@ impl Terminal {
 
                     let exit_status = exit_status.map(portable_pty::ExitStatus::from);
 
-                    let mut status = acp::TerminalExitStatus::new();
-
-                    if let Some(exit_status) = exit_status.as_ref() {
-                        status = status.exit_code(exit_status.exit_code());
-                        if let Some(signal) = exit_status.signal() {
-                            status = status.signal(signal);
-                        }
-                    }
-                    status
+                    acp::TerminalExitStatus::new()
+                        .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
+                        .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned)))
                 })
                 .shared(),
         }
@@ -105,19 +99,17 @@ impl Terminal {
 
     pub fn current_output(&self, cx: &App) -> acp::TerminalOutputResponse {
         if let Some(output) = self.output.as_ref() {
-            let mut exit_status = acp::TerminalExitStatus::new();
-            if let Some(status) = output.exit_status.map(portable_pty::ExitStatus::from) {
-                exit_status = exit_status.exit_code(status.exit_code());
-                if let Some(signal) = status.signal() {
-                    exit_status = exit_status.signal(signal);
-                }
-            }
+            let exit_status = output.exit_status.map(portable_pty::ExitStatus::from);
 
             acp::TerminalOutputResponse::new(
                 output.content.clone(),
                 output.original_content_len > output.content.len(),
             )
-            .exit_status(exit_status)
+            .exit_status(
+                acp::TerminalExitStatus::new()
+                    .exit_code(exit_status.as_ref().map(|e| e.exit_code()))
+                    .signal(exit_status.and_then(|e| e.signal().map(ToOwned::to_owned))),
+            )
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
             let truncated = current_content.len() < original_len;

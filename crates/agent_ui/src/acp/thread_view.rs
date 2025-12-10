@@ -100,7 +100,7 @@ impl ThreadError {
         {
             Self::ModelRequestLimitReached(error.plan)
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
-            && acp_error.code == acp::ErrorCode::AUTH_REQUIRED.code
+            && acp_error.code == acp::ErrorCode::AuthRequired
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
         } else {
@@ -344,7 +344,7 @@ impl AcpThreadView {
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
@@ -369,7 +369,7 @@ impl AcpThreadView {
         let entry_view_state = cx.new(|_| {
             EntryViewState::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
@@ -3509,7 +3509,7 @@ impl AcpThreadView {
                                         (method.id.0.clone(), method.name.clone())
                                     };
 
-                                    Button::new(SharedString::from(method_id.clone()), name)
+                                    Button::new(method_id.clone(), name)
                                         .label_size(LabelSize::Small)
                                         .map(|this| {
                                             if ix == 0 {
@@ -6243,7 +6243,7 @@ pub(crate) mod tests {
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
                 vec![acp::PermissionOption::new(
-                    "1".into(),
+                    "1",
                     "Allow",
                     acp::PermissionOptionKind::AllowOnce,
                 )],

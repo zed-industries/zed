@@ -136,6 +136,46 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
             },
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                    BracketPair {
+                        start: "'".to_string(),
+                        end: "'".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: false,
+                    },
+                ],
+                disabled_scopes_by_bracket_ix: Default::default(),
+            },
             ..Default::default()
         },
         None,
@@ -982,7 +1022,7 @@ impl<T> Override<T> {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            name: LanguageName::new(""),
+            name: LanguageName::new_static(""),
             code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -2656,7 +2696,28 @@ pub fn rust_lang() -> Arc<Language> {
         text_objects: Some(Cow::from(include_str!(
             "../../languages/src/rust/textobjects.scm"
         ))),
-        ..LanguageQueries::default()
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/rust/highlights.scm"
+        ))),
+        embedding: Some(Cow::from(include_str!(
+            "../../languages/src/rust/embedding.scm"
+        ))),
+        injections: Some(Cow::from(include_str!(
+            "../../languages/src/rust/injections.scm"
+        ))),
+        overrides: Some(Cow::from(include_str!(
+            "../../languages/src/rust/overrides.scm"
+        ))),
+        redactions: None,
+        runnables: Some(Cow::from(include_str!(
+            "../../languages/src/rust/runnables.scm"
+        ))),
+        debugger: Some(Cow::from(include_str!(
+            "../../languages/src/rust/debugger.scm"
+        ))),
+        imports: Some(Cow::from(include_str!(
+            "../../languages/src/rust/imports.scm"
+        ))),
     })
     .expect("Could not parse queries");
     Arc::new(language)
@@ -2684,6 +2745,15 @@ pub fn markdown_lang() -> Arc<Language> {
         ))),
         injections: Some(Cow::from(include_str!(
             "../../languages/src/markdown/injections.scm"
+        ))),
+        highlights: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/highlights.scm"
+        ))),
+        indents: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/indents.scm"
+        ))),
+        outline: Some(Cow::from(include_str!(
+            "../../languages/src/markdown/outline.scm"
         ))),
         ..LanguageQueries::default()
     })
@@ -2726,9 +2796,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2739,9 +2809,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 
@@ -2752,9 +2822,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                LanguageName::new("JSON"),
-                LanguageName::new("Plain Text"),
-                LanguageName::new("Rust"),
+                LanguageName::new_static("JSON"),
+                LanguageName::new_static("Plain Text"),
+                LanguageName::new_static("Rust"),
             ]
         );
 

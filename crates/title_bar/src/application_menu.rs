@@ -151,10 +151,10 @@ impl ApplicationMenu {
 
         // Application menu must have same ids as first menu item in standard menu
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })
@@ -184,10 +184,10 @@ impl ApplicationMenu {
             .collect();
 
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })

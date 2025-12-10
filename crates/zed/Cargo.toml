@@ -10,6 +10,9 @@ authors = ["Zed Team <hi@zed.dev>"]
 [lints]
 workspace = true
 
+[features]
+tracy = ["ztracing/tracy"]
+
 [[bin]]
 name = "zed"
 path = "src/zed-main.rs"
@@ -144,6 +147,8 @@ theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_input.workspace = true
@@ -223,4 +228,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling", "zstd"]
+ignored = ["profiling", "zstd", "tracing"]
