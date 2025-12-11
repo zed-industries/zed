@@ -272,6 +272,47 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
 }
 
 #[gpui::test]
+async fn test_edit_prediction_jump_disabled_when_predictions_disabled(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    // Cursor is 2+ lines above the proposed edit (would normally trigger a jump)
+    cx.set_state(indoc! {"
+        line 0
+        line ˇ1
+        line 2
+        line 3
+        line
+    "});
+
+    propose_edits(
+        &provider,
+        vec![(Point::new(4, 3)..Point::new(4, 3), " 4")],
+        &mut cx,
+    );
+
+    // Disable edit predictions before updating visible prediction
+    cx.update_editor(|editor, window, cx| {
+        editor.set_show_edit_predictions(Some(false), window, cx);
+    });
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    // When edit predictions are disabled, no jump prediction should be shown
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.active_edit_prediction.is_none(),
+            "Jump predictions should not be shown when edit predictions are disabled"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_edit_prediction_preview_cleanup_on_toggle_off(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
