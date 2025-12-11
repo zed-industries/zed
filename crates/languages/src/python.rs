@@ -2517,8 +2517,7 @@ impl LspAdapter for PyreflyLspAdapter {
                     .unwrap_or_default();
 
             if let Some(toolchain) = toolchain
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
+                && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
             {
                 if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
