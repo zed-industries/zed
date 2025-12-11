@@ -52,8 +52,6 @@ extend-exclude = [
     "crates/project_panel/benches/linux_repo_snapshot.txt",
     # Some multibuffer test cases have word fragments that register as typos
     "crates/multi_buffer/src/multi_buffer_tests.rs",
-    # Macos apis
-    "crates/gpui/src/platform/mac/dispatcher.rs",
 ]
 
 [default]
