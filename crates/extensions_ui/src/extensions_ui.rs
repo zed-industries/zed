@@ -442,7 +442,9 @@ impl ExtensionsPage {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         match extension_store.outstanding_operations().get(extension_id) {
-            Some(ExtensionOperation::Install) => ExtensionStatus::Installing,
+            Some(ExtensionOperation::Install) | Some(ExtensionOperation::AutoInstall) => {
+                ExtensionStatus::Installing
+            }
             Some(ExtensionOperation::Remove) => ExtensionStatus::Removing,
             Some(ExtensionOperation::Upgrade) => ExtensionStatus::Upgrading,
             None => match extension_store.installed_extensions().get(extension_id) {
