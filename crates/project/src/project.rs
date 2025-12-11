@@ -5517,7 +5517,9 @@ impl ProjectItem for Buffer {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.file().map(|file| ProjectPath {
+        let file = self.file()?;
+
+        file.disk_state().exists().then(|| ProjectPath {
             worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
