@@ -189,6 +189,7 @@ impl Render for WhichKeyModal {
         };
 
         let content = h_flex()
+            .items_start()
             .id("which-key-content")
             .gap(px(8.))
             .overflow_y_scroll()
