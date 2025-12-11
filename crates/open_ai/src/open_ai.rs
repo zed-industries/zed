@@ -426,10 +426,39 @@ pub struct Choice {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "is_none_or_empty",
+        deserialize_with = "deserialize_tool_calls"
+    )]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub reasoning_content: Option<String>,
+}
+
+fn deserialize_tool_calls<'de, D>(deserializer: D) -> Result<Option<Vec<ToolCallChunk>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ToolCallsHelper {
+        Array(Vec<ToolCallChunk>),
+        Null,
+    }
+    
+    match ToolCallsHelper::deserialize(deserializer)? {
+        ToolCallsHelper::Array(vec) => {
+            if vec.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(vec))
+            }
+        }
+        ToolCallsHelper::Null => Ok(None),
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
