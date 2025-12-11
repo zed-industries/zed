@@ -1,11 +1,14 @@
 use credentials_provider::CredentialsProvider;
 use gpui::App;
-use util::ResultExt as _;
 
 const GOOGLE_AI_EXTENSION_ID: &str = "google-ai";
 const GOOGLE_AI_PROVIDER_ID: &str = "google-ai";
 const GOOGLE_AI_DEFAULT_API_URL: &str = "https://generativelanguage.googleapis.com";
 
+/// Migrates Google AI API credentials from the old built-in provider location
+/// to the new extension-based location.
+///
+/// This should only be called during auto-install of the extension.
 pub fn migrate_google_ai_credentials_if_needed(extension_id: &str, cx: &mut App) {
     if extension_id != GOOGLE_AI_EXTENSION_ID {
         return;
@@ -19,17 +22,7 @@ pub fn migrate_google_ai_credentials_if_needed(extension_id: &str, cx: &mut App)
     let credentials_provider = <dyn CredentialsProvider>::global(cx);
 
     cx.spawn(async move |cx| {
-        let existing_credential = credentials_provider
-            .read_credentials(&extension_credential_key, &cx)
-            .await
-            .ok()
-            .flatten();
-
-        if existing_credential.is_some() {
-            log::debug!("Google AI extension already has credentials, skipping migration");
-            return;
-        }
-
+        // Read from old location
         let old_credential = credentials_provider
             .read_credentials(GOOGLE_AI_DEFAULT_API_URL, &cx)
             .await
@@ -40,8 +33,8 @@ pub fn migrate_google_ai_credentials_if_needed(extension_id: &str, cx: &mut App)
             Some((_, key_bytes)) => match String::from_utf8(key_bytes) {
                 Ok(key) if !key.is_empty() => key,
                 Ok(_) => {
-                    log::debug!("Existing Google AI API key is empty, marking as migrated");
-                    String::new()
+                    log::debug!("Existing Google AI API key is empty, nothing to migrate");
+                    return;
                 }
                 Err(_) => {
                     log::error!("Failed to decode Google AI API key as UTF-8");
@@ -49,19 +42,10 @@ pub fn migrate_google_ai_credentials_if_needed(extension_id: &str, cx: &mut App)
                 }
             },
             None => {
-                log::debug!("No existing Google AI API key found, marking as migrated");
-                String::new()
+                log::debug!("No existing Google AI API key found to migrate");
+                return;
             }
         };
-
-        if api_key.is_empty() {
-            // Write empty credentials as a marker that migration was attempted
-            credentials_provider
-                .write_credentials(&extension_credential_key, "Bearer", b"", &cx)
-                .await
-                .log_err();
-            return;
-        }
 
         log::info!("Migrating existing Google AI API key to Google AI extension");
 
@@ -105,57 +89,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_skips_migration_if_extension_already_has_credentials(cx: &mut TestAppContext) {
-        let old_api_key = "AIzaSy-old-key";
-        let existing_key = "AIzaSy-existing-key";
-
-        cx.write_credentials(GOOGLE_AI_DEFAULT_API_URL, "Bearer", old_api_key.as_bytes());
-        cx.write_credentials(
-            "extension-llm-google-ai:google-ai",
-            "Bearer",
-            existing_key.as_bytes(),
-        );
-
-        cx.update(|cx| {
-            migrate_google_ai_credentials_if_needed(GOOGLE_AI_EXTENSION_ID, cx);
-        });
-
-        cx.run_until_parked();
-
-        let credentials = cx.read_credentials("extension-llm-google-ai:google-ai");
-        let (_, password) = credentials.unwrap();
-        assert_eq!(
-            String::from_utf8(password).unwrap(),
-            existing_key,
-            "Should not overwrite existing credentials"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_skips_migration_if_empty_marker_exists(cx: &mut TestAppContext) {
-        let old_api_key = "AIzaSy-old-key";
-
-        // Old credentials exist
-        cx.write_credentials(GOOGLE_AI_DEFAULT_API_URL, "Bearer", old_api_key.as_bytes());
-        // But empty marker already exists (from previous migration attempt)
-        cx.write_credentials("extension-llm-google-ai:google-ai", "Bearer", b"");
-
-        cx.update(|cx| {
-            migrate_google_ai_credentials_if_needed(GOOGLE_AI_EXTENSION_ID, cx);
-        });
-
-        cx.run_until_parked();
-
-        let credentials = cx.read_credentials("extension-llm-google-ai:google-ai");
-        let (_, password) = credentials.unwrap();
-        assert!(
-            password.is_empty(),
-            "Should not overwrite empty marker with old credentials"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_writes_empty_marker_if_no_old_credentials(cx: &mut TestAppContext) {
+    async fn test_no_migration_if_no_old_credentials(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_google_ai_credentials_if_needed(GOOGLE_AI_EXTENSION_ID, cx);
         });
@@ -164,12 +98,9 @@ mod tests {
 
         let credentials = cx.read_credentials("extension-llm-google-ai:google-ai");
         assert!(
-            credentials.is_some(),
-            "Should write empty credentials as migration marker"
+            credentials.is_none(),
+            "Should not create credentials if none existed"
         );
-        let (username, password) = credentials.unwrap();
-        assert_eq!(username, "Bearer");
-        assert!(password.is_empty(), "Password should be empty marker");
     }
 
     #[gpui::test]

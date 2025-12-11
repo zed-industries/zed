@@ -219,6 +219,8 @@ pub struct ExtensionStore {
 pub enum ExtensionOperation {
     Upgrade,
     Install,
+    /// Auto-install from settings - triggers legacy LLM provider migrations
+    AutoInstall,
     Remove,
 }
 
@@ -755,7 +757,7 @@ impl ExtensionStore {
                 }
 
                 this.update(cx, |this, cx| {
-                    this.install_latest_extension(extension_id.clone(), cx);
+                    this.auto_install_latest_extension(extension_id.clone(), cx);
                 })
                 .ok();
             }
@@ -910,13 +912,11 @@ impl ExtensionStore {
             this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
                 .await;
 
-            if let ExtensionOperation::Install = operation {
+            if matches!(
+                operation,
+                ExtensionOperation::Install | ExtensionOperation::AutoInstall
+            ) {
                 this.update(cx, |this, cx| {
-                    // Check for legacy LLM provider migration
-                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                        migrate_legacy_llm_provider_env_var(&manifest, cx);
-                    }
-
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx)
                         && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
@@ -926,15 +926,26 @@ impl ExtensionStore {
                         });
                     }
 
-                    // Run extension-specific migrations
-                    copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
-                    anthropic_migration::migrate_anthropic_credentials_if_needed(&extension_id, cx);
-                    google_ai_migration::migrate_google_ai_credentials_if_needed(&extension_id, cx);
-                    openai_migration::migrate_openai_credentials_if_needed(&extension_id, cx);
-                    open_router_migration::migrate_open_router_credentials_if_needed(
-                        &extension_id,
-                        cx,
-                    );
+                    // Run legacy LLM provider migrations only for auto-installed extensions
+                    if matches!(operation, ExtensionOperation::AutoInstall) {
+                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                            migrate_legacy_llm_provider_env_var(&manifest, cx);
+                        }
+                        copilot_migration::migrate_copilot_credentials_if_needed(&extension_id, cx);
+                        anthropic_migration::migrate_anthropic_credentials_if_needed(
+                            &extension_id,
+                            cx,
+                        );
+                        google_ai_migration::migrate_google_ai_credentials_if_needed(
+                            &extension_id,
+                            cx,
+                        );
+                        openai_migration::migrate_openai_credentials_if_needed(&extension_id, cx);
+                        open_router_migration::migrate_open_router_credentials_if_needed(
+                            &extension_id,
+                            cx,
+                        );
+                    }
                 })
                 .ok();
             }
@@ -944,6 +955,24 @@ impl ExtensionStore {
     }
 
     pub fn install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+        self.install_latest_extension_with_operation(extension_id, ExtensionOperation::Install, cx);
+    }
+
+    /// Auto-install an extension, triggering legacy LLM provider migrations.
+    fn auto_install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+        self.install_latest_extension_with_operation(
+            extension_id,
+            ExtensionOperation::AutoInstall,
+            cx,
+        );
+    }
+
+    fn install_latest_extension_with_operation(
+        &mut self,
+        extension_id: Arc<str>,
+        operation: ExtensionOperation,
+        cx: &mut Context<Self>,
+    ) {
         let schema_versions = schema_version_range();
         let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
 
@@ -966,13 +995,8 @@ impl ExtensionStore {
             return;
         };
 
-        self.install_or_upgrade_extension_at_endpoint(
-            extension_id,
-            url,
-            ExtensionOperation::Install,
-            cx,
-        )
-        .detach_and_log_err(cx);
+        self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
+            .detach_and_log_err(cx);
     }
 
     pub fn upgrade_extension(
@@ -1171,11 +1195,6 @@ impl ExtensionStore {
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
             this.update(cx, |this, cx| {
-                // Run migration for legacy LLM provider env vars
-                if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                    migrate_legacy_llm_provider_env_var(&manifest, cx);
-                }
-
                 cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx)
                     && let Some(manifest) = this.extension_manifest_for_id(&extension_id)

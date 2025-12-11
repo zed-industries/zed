@@ -1,11 +1,14 @@
 use credentials_provider::CredentialsProvider;
 use gpui::App;
 use std::path::PathBuf;
-use util::ResultExt as _;
 
 const COPILOT_CHAT_EXTENSION_ID: &str = "copilot-chat";
 const COPILOT_CHAT_PROVIDER_ID: &str = "copilot-chat";
 
+/// Migrates Copilot OAuth credentials from the GitHub Copilot config files
+/// to the new extension-based credential location.
+///
+/// This should only be called during auto-install of the extension.
 pub fn migrate_copilot_credentials_if_needed(extension_id: &str, cx: &mut App) {
     if extension_id != COPILOT_CHAT_EXTENSION_ID {
         return;
@@ -18,27 +21,12 @@ pub fn migrate_copilot_credentials_if_needed(extension_id: &str, cx: &mut App) {
 
     let credentials_provider = <dyn CredentialsProvider>::global(cx);
 
-    cx.spawn(async move |cx| {
-        let existing_credential = credentials_provider
-            .read_credentials(&credential_key, &cx)
-            .await
-            .ok()
-            .flatten();
-
-        if existing_credential.is_some() {
-            log::debug!("Copilot Chat extension already has credentials, skipping migration");
-            return;
-        }
-
+    cx.spawn(async move |_cx| {
+        // Read from copilot config files
         let oauth_token = match read_copilot_oauth_token().await {
             Some(token) if !token.is_empty() => token,
             _ => {
-                log::debug!("No existing Copilot OAuth token found, marking as migrated");
-                // Write empty credentials as a marker that migration was attempted
-                credentials_provider
-                    .write_credentials(&credential_key, "api_key", b"", &cx)
-                    .await
-                    .log_err();
+                log::debug!("No existing Copilot OAuth token found to migrate");
                 return;
             }
         };
@@ -46,7 +34,7 @@ pub fn migrate_copilot_credentials_if_needed(extension_id: &str, cx: &mut App) {
         log::info!("Migrating existing Copilot OAuth token to Copilot Chat extension");
 
         match credentials_provider
-            .write_credentials(&credential_key, "api_key", oauth_token.as_bytes(), &cx)
+            .write_credentials(&credential_key, "api_key", oauth_token.as_bytes(), &_cx)
             .await
         {
             Ok(()) => {
@@ -194,31 +182,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_skips_migration_if_extension_already_has_credentials(cx: &mut TestAppContext) {
-        let existing_token = "existing_oauth_token";
-
-        cx.write_credentials(
-            "extension-llm-copilot-chat:copilot-chat",
-            "api_key",
-            existing_token.as_bytes(),
-        );
-
-        cx.update(|cx| {
-            migrate_copilot_credentials_if_needed(COPILOT_CHAT_EXTENSION_ID, cx);
-        });
-
-        cx.run_until_parked();
-
-        let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
-        let (_, password) = credentials.unwrap();
-        assert_eq!(
-            String::from_utf8(password).unwrap(),
-            existing_token,
-            "Should not overwrite existing credentials"
-        );
-    }
-
-    #[gpui::test]
     async fn test_skips_migration_for_other_extensions(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_copilot_credentials_if_needed("some-other-extension", cx);
@@ -235,9 +198,7 @@ mod tests {
 
     // Note: Unlike the other migrations, copilot migration reads from the filesystem
     // (copilot config files), not from the credentials provider. In tests, these files
-    // don't exist, and the smol async filesystem operations don't integrate well with
-    // the GPUI test executor's run_until_parked(). So we test the original behavior:
-    // no config files = no credentials written.
+    // don't exist, so no migration occurs.
     #[gpui::test]
     async fn test_no_credentials_when_no_copilot_config_exists(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -247,11 +208,9 @@ mod tests {
         cx.run_until_parked();
 
         let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
-        // The async task that would write the marker doesn't complete in tests
-        // because smol filesystem operations use a different executor
         assert!(
             credentials.is_none(),
-            "No credentials should be written when copilot config doesn't exist (in test environment)"
+            "No credentials should be written when copilot config doesn't exist"
         );
     }
 }

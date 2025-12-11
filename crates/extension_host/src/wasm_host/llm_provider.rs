@@ -428,10 +428,7 @@ impl ExtensionProviderConfigurationView {
                 .log_err()
                 .flatten();
 
-            // Treat empty credentials as not authenticated (used as migration marker)
-            let has_credentials = credentials
-                .map(|(_, password)| !password.is_empty())
-                .unwrap_or(false);
+            let has_credentials = credentials.is_some();
 
             // Update authentication state based on stored credentials
             cx.update(|cx| {
@@ -539,10 +536,7 @@ impl ExtensionProviderConfigurationView {
                 .log_err()
                 .flatten();
 
-            // Treat empty credentials as not authenticated (used as migration marker)
-            let has_credentials = credentials
-                .map(|(_, password)| !password.is_empty())
-                .unwrap_or(false);
+            let has_credentials = credentials.is_some();
 
             cx.update(|cx| {
                 state.update(cx, |state, cx| {
