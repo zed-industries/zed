@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
 use theme::AccentColors;
 use ui::ActiveTheme as _;
@@ -19,10 +17,12 @@ const LINE_WIDTH: Pixels = px(1.5);
 pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     let top_row = graph.list_state.logical_scroll_top();
     let row_height = graph.row_height;
+    let scroll_offset = top_row.offset_in_item;
+    let first_visible_row = top_row.item_ix;
 
     // todo! Figure out how we can avoid over allocating this data
-    let rows = graph.graph.commits[top_row.item_ix.saturating_sub(1)
-        ..(top_row.item_ix + 50).min(graph.graph.commits.len().saturating_sub(1))]
+    let rows = graph.graph.commits
+        [first_visible_row..(first_visible_row + 50).min(graph.graph.commits.len())]
         .to_vec();
 
     canvas(
@@ -34,8 +34,10 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
 
                 for (row_idx, row) in rows.into_iter().enumerate() {
                     let row_color = accent_colors.color_for_index(row.color_idx as u32);
-                    let row_y_coordinate = bounds.origin.y + row_idx * row_height;
-                    let row_x_coordinate =
+                    let row_y_center =
+                        bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
+                            - scroll_offset;
+                    let _row_x_coordinate =
                         bounds.origin.x + row.lane * LANE_WIDTH + LANE_WIDTH / 2.0;
 
                     for line in row.lines.iter() {
@@ -53,14 +55,14 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                         match line.line_type {
                             LineType::Straight => {
                                 let start_y = if line.continues_from_above {
-                                    row_y_coordinate - row_height / 2.0
+                                    row_y_center - row_height / 2.0
                                 } else {
-                                    row_y_coordinate
+                                    row_y_center
                                 };
                                 let end_y = if line.ends_at_commit {
-                                    row_y_coordinate
+                                    row_y_center
                                 } else {
-                                    row_y_coordinate + row_height
+                                    row_y_center + row_height / 2.0
                                 };
 
                                 draw_straight_line(
@@ -71,9 +73,9 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                                 draw_s_curve(
                                     window,
                                     from_x,
-                                    row_y_coordinate,
+                                    row_y_center,
                                     to_x,
-                                    row_y_coordinate + row_height / 2.0,
+                                    row_y_center + row_height / 2.0,
                                     LINE_WIDTH,
                                     line_color,
                                 );
@@ -92,7 +94,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
                     draw_circle_outline(
                         window,
                         commit_x,
-                        row_y_coordinate,
+                        row_y_center,
                         dot_radius,
                         stroke_width,
                         row_color,
@@ -102,6 +104,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
         },
     )
     .w(px(16.0) * (graph.max_lanes.max(2) as f32) + px(24.0))
+    .h_full()
 }
 
 pub fn render_graph_cell(

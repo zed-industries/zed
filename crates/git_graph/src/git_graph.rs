@@ -212,7 +212,6 @@ impl GitGraph {
         let Some(commit) = self.graph.commits.get(idx) else {
             return div().into_any_element();
         };
-        dbg!("Render commit row");
 
         let subject: SharedString = commit.data.subject.clone().into();
         let author_name: SharedString = commit.data.author_name.clone().into();
@@ -233,6 +232,7 @@ impl GitGraph {
         h_flex()
             .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
             .w_full()
+            .size_full()
             .px_2()
             .gap_4()
             .h(row_height)
@@ -295,6 +295,7 @@ impl GitGraph {
                     .flex_shrink_0()
                     .child(Label::new(short_sha).color(Color::Accent).single_line()),
             )
+            .debug()
             .into_any_element()
     }
 }
@@ -387,12 +388,19 @@ impl Render for GitGraph {
                         ),
                 )
                 .child(
-                    list(
-                        self.list_state.clone(),
-                        cx.processor(Self::render_list_item),
-                    )
-                    .flex_1()
-                    .w_full(),
+                    h_flex()
+                        .flex_1()
+                        .size_full()
+                        .child(div().h_full().overflow_hidden().child(render_graph(&self)))
+                        .child(
+                            list(
+                                self.list_state.clone(),
+                                cx.processor(Self::render_list_item),
+                            )
+                            .flex_1()
+                            .h_full()
+                            .w_full(),
+                        ),
                 )
         };
 
