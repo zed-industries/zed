@@ -89,6 +89,7 @@ struct SyntaxLayerEntry {
     depth: usize,
     range: Range<Anchor>,
     content: SyntaxLayerContent,
+    indent: bool,
 }
 
 #[derive(Clone)]
@@ -129,6 +130,7 @@ pub struct SyntaxLayer<'a> {
     pub(crate) depth: usize,
     tree: &'a Tree,
     pub(crate) offset: (usize, tree_sitter::Point),
+    pub indent: bool,
 }
 
 /// A layer of syntax highlighting. Like [SyntaxLayer], but holding
@@ -176,6 +178,7 @@ struct ParseStep {
     range: Range<Anchor>,
     included_ranges: Vec<tree_sitter::Range>,
     mode: ParseMode,
+    indent: bool,
 }
 
 #[derive(Debug)]
@@ -495,6 +498,7 @@ impl SyntaxSnapshot {
             }],
             range: Anchor::min_max_range_for_buffer(text.remote_id()),
             mode: ParseMode::Single,
+            indent: true,
         });
 
         loop {
@@ -788,6 +792,7 @@ impl SyntaxSnapshot {
                     depth: step.depth,
                     range: step.range,
                     content,
+                    indent: step.indent,
                 },
                 text,
             );
@@ -853,6 +858,7 @@ impl SyntaxSnapshot {
                 included_sub_ranges: None,
                 depth: 0,
                 offset: (0, tree_sitter::Point::new(0, 0)),
+                indent: true,
             }]
             .into_iter(),
             query,
@@ -950,6 +956,7 @@ impl SyntaxSnapshot {
                             included_sub_ranges: included_sub_ranges.as_deref(),
                             depth: layer.depth,
                             offset: (layer_start_offset, layer_start_point),
+                            indent: layer.indent,
                         });
                     }
                 }
@@ -1346,7 +1353,10 @@ fn get_injections(
     language_registry: &Arc<LanguageRegistry>,
     depth: usize,
     changed_ranges: &[Range<usize>],
-    combined_injection_ranges: &mut HashMap<LanguageId, (Arc<Language>, Vec<tree_sitter::Range>)>,
+    combined_injection_ranges: &mut HashMap<
+        LanguageId,
+        (Arc<Language>, Vec<tree_sitter::Range>, bool),
+    >,
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
@@ -1362,7 +1372,7 @@ fn get_injections(
                 .now_or_never()
                 .and_then(|language| language.ok())
         {
-            combined_injection_ranges.insert(language.id, (language, Vec::new()));
+            combined_injection_ranges.insert(language.id, (language, Vec::new(), pattern.indent));
         }
     }
 
@@ -1421,11 +1431,12 @@ fn get_injections(
                     .now_or_never()
                     .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
+                let pattern_indent = config.patterns[mat.pattern_index].indent;
                 if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
                             .entry(language.id)
-                            .or_insert_with(|| (language.clone(), vec![]))
+                            .or_insert_with(|| (language.clone(), vec![], pattern_indent))
                             .1
                             .extend(content_ranges);
                     } else {
@@ -1435,6 +1446,7 @@ fn get_injections(
                             included_ranges: content_ranges,
                             range,
                             mode: ParseMode::Single,
+                            indent: pattern_indent,
                         });
                     }
                 } else {
@@ -1446,13 +1458,14 @@ fn get_injections(
                         included_ranges: content_ranges,
                         range,
                         mode: ParseMode::Single,
+                        indent: pattern_indent,
                     });
                 }
             }
         }
     }
 
-    for (_, (language, mut included_ranges)) in combined_injection_ranges.drain() {
+    for (_, (language, mut included_ranges, indent)) in combined_injection_ranges.drain() {
         included_ranges.sort_unstable_by(|a, b| {
             Ord::cmp(&a.start_byte, &b.start_byte).then_with(|| Ord::cmp(&a.end_byte, &b.end_byte))
         });
@@ -1465,6 +1478,7 @@ fn get_injections(
                 parent_layer_range: node.start_byte()..node.end_byte(),
                 parent_layer_changed_ranges: changed_ranges.to_vec(),
             },
+            indent,
         })
     }
 }
