@@ -78,11 +78,7 @@ fn truncate_preview(text: &str, max_bytes: usize) -> SharedString {
     result.into()
 }
 
-fn extract_file_matches(
-    buf: &Buffer,
-    ranges: &[AnchorRange],
-    cx: &App,
-) -> Option<FileMatchResult> {
+fn extract_file_matches(buf: &Buffer, ranges: &[AnchorRange], cx: &App) -> Option<FileMatchResult> {
     let file = buf.file()?;
     let project_path = ProjectPath {
         worktree_id: file.worktree_id(cx),
@@ -684,7 +680,13 @@ impl QuickSearchModal {
                             .as_ref()
                             .map(|(_, _, ranges)| ranges.as_slice())
                             .unwrap_or(&[]);
-                        Self::navigate_and_highlight_matches(editor, line, match_ranges, window, cx);
+                        Self::navigate_and_highlight_matches(
+                            editor,
+                            line,
+                            match_ranges,
+                            window,
+                            cx,
+                        );
                     });
                 }
                 cx.notify();
@@ -943,7 +945,10 @@ impl QuickSearchDelegate {
     fn rebuild_visible_line_match_indices(&mut self) {
         self.visible_line_match_indices.clear();
         for (visible_idx, &actual_idx) in self.visible_indices.iter().enumerate() {
-            if matches!(self.items.get(actual_idx), Some(QuickSearchItem::LineMatch { .. })) {
+            if matches!(
+                self.items.get(actual_idx),
+                Some(QuickSearchItem::LineMatch { .. })
+            ) {
                 self.visible_line_match_indices.push(visible_idx);
             }
         }
@@ -1562,40 +1567,142 @@ mod tests {
     use std::ops::Deref;
     use util::path;
 
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            editor::init(cx);
-            crate::init(cx);
-        });
+    struct TestFixture {
+        quick_search: Entity<QuickSearchModal>,
+        cx: VisualTestContext,
+    }
+
+    impl TestFixture {
+        async fn new(cx: &mut TestAppContext, files: serde_json::Value) -> Self {
+            Self::new_with_query(cx, files, None).await
+        }
+
+        async fn new_with_query(
+            cx: &mut TestAppContext,
+            files: serde_json::Value,
+            initial_query: Option<String>,
+        ) -> Self {
+            cx.update(|cx| {
+                let settings = SettingsStore::test(cx);
+                cx.set_global(settings);
+                theme::init(theme::LoadThemes::JustBase, cx);
+                editor::init(cx);
+                crate::init(cx);
+            });
+
+            let fs = FakeFs::new(cx.background_executor.clone());
+            fs.insert_tree(path!("/project"), files).await;
+
+            let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+            let window =
+                cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let workspace = window.root(cx).unwrap();
+            let mut visual_cx = VisualTestContext::from_window(*window.deref(), cx);
+
+            let quick_search = visual_cx.new_window_entity({
+                let weak_workspace = workspace.downgrade();
+                move |window, cx| {
+                    QuickSearchModal::new(weak_workspace, project, initial_query, window, cx)
+                }
+            });
+
+            Self {
+                quick_search,
+                cx: visual_cx,
+            }
+        }
+
+        async fn search(&mut self, query: &str) {
+            self.quick_search
+                .update_in(&mut self.cx, |modal, window, cx| {
+                    modal.picker.update(cx, |picker, cx| {
+                        picker
+                            .delegate
+                            .update_matches(query.to_string(), window, cx)
+                    })
+                })
+                .await;
+        }
+
+        fn set_query(&mut self, query: &str) {
+            self.quick_search
+                .update_in(&mut self.cx, |modal, window, cx| {
+                    modal.picker.update(cx, |picker, cx| {
+                        picker.set_query(query, window, cx);
+                    });
+                });
+        }
+
+        fn toggle_option(&mut self, option: SearchOptions) {
+            self.quick_search.update(&mut self.cx, |modal, cx| {
+                modal.picker.update(cx, |picker, _cx| {
+                    picker.delegate.toggle_search_option(option);
+                });
+            });
+        }
+
+        fn set_items(&mut self, items: Vec<QuickSearchItem>) {
+            self.quick_search.update(&mut self.cx, |modal, cx| {
+                modal.picker.update(cx, |picker, _cx| {
+                    picker.delegate.items = items;
+                    picker.delegate.update_visible_indices();
+                });
+            });
+        }
+
+        fn toggle_file_collapsed(&mut self, file_key: &SharedString) {
+            let file_key = file_key.clone();
+            self.quick_search.update(&mut self.cx, |modal, cx| {
+                modal.picker.update(cx, |picker, _cx| {
+                    picker.delegate.toggle_file_collapsed(&file_key);
+                });
+            });
+        }
+
+        fn toggle_all_files_collapsed(&mut self, file_key: &SharedString) {
+            let file_key = file_key.clone();
+            self.quick_search.update(&mut self.cx, |modal, cx| {
+                modal.picker.update(cx, |picker, _cx| {
+                    picker.delegate.toggle_all_files_collapsed(&file_key);
+                });
+            });
+        }
+
+        fn delegate<T>(&mut self, read_fn: impl FnOnce(&QuickSearchDelegate) -> T) -> T {
+            self.quick_search.update(&mut self.cx, |modal, cx| {
+                read_fn(&modal.picker.read(cx).delegate)
+            })
+        }
+    }
+
+    fn file_header(file_name: &str, parent_path: &str) -> QuickSearchItem {
+        let file_key = format_file_key(parent_path, file_name);
+        QuickSearchItem::FileHeader {
+            file_name: SharedString::from(file_name.to_string()),
+            parent_path: SharedString::from(parent_path.to_string()),
+            file_key,
+        }
+    }
+
+    fn line_match(file_key: &str, line: u32, preview: &str) -> QuickSearchItem {
+        QuickSearchItem::LineMatch {
+            project_path: ProjectPath {
+                worktree_id: project::WorktreeId::from_usize(0),
+                path: util::rel_path::rel_path(file_key).into(),
+            },
+            file_key: SharedString::from(file_key.to_string()),
+            line,
+            line_label: SharedString::from((line + 1).to_string()),
+            preview_text: SharedString::from(preview.to_string()),
+            match_ranges: Arc::new(Vec::new()),
+        }
     }
 
     #[gpui::test]
     async fn test_quick_search_modal_creation(cx: &mut TestAppContext) {
-        init_test(cx);
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn main() {}\n"})).await;
 
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                "file.rs": "fn main() {}\n",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-
-        let quick_search = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
+        fixture.quick_search.update(&mut fixture.cx, |modal, cx| {
             assert!(modal.preview_editor.is_none());
             assert!(modal.preview_buffer.is_none());
             assert_eq!(modal.picker.read(cx).delegate.items.len(), 0);
@@ -1604,278 +1711,273 @@ mod tests {
 
     #[gpui::test]
     async fn test_quick_search_empty_query_clears_results(cx: &mut TestAppContext) {
-        init_test(cx);
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn test() {}\n"})).await;
 
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                "file.rs": "fn test() {}\n",
-            }),
-        )
-        .await;
+        fixture.set_query("test");
+        assert_eq!(fixture.delegate(|d| d.pending_search_id), 1);
 
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-
-        let quick_search = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("test", window, cx);
-            });
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
-            assert_eq!(modal.picker.read(cx).delegate.pending_search_id, 1);
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("", window, cx);
-            });
-        });
-
-        cx.background_executor.run_until_parked();
-
-        quick_search.update(&mut cx, |modal, cx| {
-            let delegate = &modal.picker.read(cx).delegate;
-            assert_eq!(delegate.items.len(), 0, "Empty query should clear results");
-            assert_eq!(
-                delegate.pending_search_id, 0,
-                "Empty query should reset search id"
-            );
-        });
-    }
-
-    #[gpui::test]
-    fn test_quick_search_item_types(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let header = QuickSearchItem::FileHeader {
-            file_name: "test.rs".into(),
-            parent_path: "src".into(),
-            file_key: "src/test.rs".into(),
-        };
-        assert!(matches!(header, QuickSearchItem::FileHeader { .. }));
-
-        cx.update(|_cx| {
-            let line_match = QuickSearchItem::LineMatch {
-                project_path: ProjectPath {
-                    worktree_id: project::WorktreeId::from_usize(0),
-                    path: util::rel_path::rel_path("src/test.rs").into(),
-                },
-                file_key: "src/test.rs".into(),
-                line: 0,
-                line_label: "1".into(),
-                preview_text: "fn test()".into(),
-                match_ranges: Arc::new(Vec::new()),
-            };
-            assert!(matches!(line_match, QuickSearchItem::LineMatch { .. }));
+        fixture.search("").await;
+        fixture.delegate(|d| {
+            assert_eq!(d.items.len(), 0);
+            assert_eq!(d.pending_search_id, 0);
         });
     }
 
     #[gpui::test]
     async fn test_quick_search_no_results_for_nonexistent_query(cx: &mut TestAppContext) {
-        init_test(cx);
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn main() {}\n"})).await;
 
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                "file.rs": "fn main() {}\n",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-
-        let quick_search = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("nonexistent_string_xyz_123", window, cx);
-            });
-        });
-
-        cx.executor().advance_clock(Duration::from_millis(150));
-        cx.background_executor.run_until_parked();
-
-        quick_search.update(&mut cx, |modal, cx| {
-            let delegate = &modal.picker.read(cx).delegate;
-            assert_eq!(
-                delegate.items.len(),
-                0,
-                "Should have no results for non-matching query"
-            );
-        });
+        fixture.search("nonexistent_string_xyz_123").await;
+        assert_eq!(fixture.delegate(|d| d.items.len()), 0);
     }
 
     #[gpui::test]
     async fn test_quick_search_query_updates_search_id(cx: &mut TestAppContext) {
-        init_test(cx);
+        let mut fixture =
+            TestFixture::new(cx, json!({"file.rs": "fn hello() {}\nfn world() {}\n"})).await;
 
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
+        assert_eq!(fixture.delegate(|d| d.pending_search_id), 0);
+
+        fixture.set_query("hello");
+        assert_eq!(fixture.delegate(|d| d.pending_search_id), 1);
+
+        fixture.set_query("world");
+        assert_eq!(fixture.delegate(|d| d.pending_search_id), 2);
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_finds_matches(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
             json!({
-                "file.rs": "fn hello() {}\nfn world() {}\n",
+                "src": {
+                    "main.rs": "fn main() {\n    println!(\"hello world\");\n}\n",
+                    "lib.rs": "pub fn hello() {}\npub fn hello_world() {}\n",
+                },
+                "tests": { "test.rs": "fn test_hello() {}\n" }
             }),
         )
         .await;
 
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        fixture.search("hello").await;
 
-        let quick_search = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
-            assert_eq!(modal.picker.read(cx).delegate.pending_search_id, 0);
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("hello", window, cx);
-            });
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
-            assert_eq!(
-                modal.picker.read(cx).delegate.pending_search_id,
-                1,
-                "First search should have id 1"
-            );
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("world", window, cx);
-            });
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
-            assert_eq!(
-                modal.picker.read(cx).delegate.pending_search_id,
-                2,
-                "Second search should have id 2"
-            );
+        fixture.delegate(|d| {
+            assert!(d.match_count >= 3);
+            assert!(d.file_count >= 2);
+            assert!(!d.is_searching);
+            assert!(d.regex_error.is_none());
         });
     }
 
     #[gpui::test]
-    fn test_quick_search_collapse_expand_files(cx: &mut TestAppContext) {
-        init_test(cx);
+    async fn test_quick_search_case_sensitive_option(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({"file.rs": "fn Hello() {}\nfn hello() {}\nfn HELLO() {}\n"}),
+        )
+        .await;
 
-        cx.update(|_cx| {
-            let items = [
-                QuickSearchItem::FileHeader {
-                    file_name: "test.rs".into(),
-                    parent_path: "src".into(),
-                    file_key: "src/test.rs".into(),
-                },
-                QuickSearchItem::LineMatch {
-                    project_path: ProjectPath {
-                        worktree_id: project::WorktreeId::from_usize(0),
-                        path: util::rel_path::rel_path("src/test.rs").into(),
-                    },
-                    file_key: "src/test.rs".into(),
-                    line: 0,
-                    line_label: "1".into(),
-                    preview_text: "fn test()".into(),
-                    match_ranges: Arc::new(Vec::new()),
-                },
-                QuickSearchItem::LineMatch {
-                    project_path: ProjectPath {
-                        worktree_id: project::WorktreeId::from_usize(0),
-                        path: util::rel_path::rel_path("src/test.rs").into(),
-                    },
-                    file_key: "src/test.rs".into(),
-                    line: 1,
-                    line_label: "2".into(),
-                    preview_text: "fn other()".into(),
-                    match_ranges: Arc::new(Vec::new()),
-                },
-            ];
+        fixture.search("Hello").await;
+        let case_insensitive_count = fixture.delegate(|d| d.match_count);
 
-            let mut visible_indices = Vec::new();
-            let mut collapsed_files: HashSet<SharedString> = HashSet::default();
+        fixture.toggle_option(SearchOptions::CASE_SENSITIVE);
+        fixture.search("Hello").await;
 
-            for (idx, item) in items.iter().enumerate() {
-                match item {
-                    QuickSearchItem::FileHeader { .. } => {
-                        visible_indices.push(idx);
-                    }
-                    QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key) {
-                            visible_indices.push(idx);
-                        }
-                    }
-                }
-            }
-
-            assert_eq!(visible_indices.len(), 3, "All 3 items should be visible");
-            assert_eq!(visible_indices, vec![0, 1, 2]);
-
-            let file_key: SharedString = "src/test.rs".into();
-            collapsed_files.insert(file_key.clone());
-            visible_indices.clear();
-            for (idx, item) in items.iter().enumerate() {
-                match item {
-                    QuickSearchItem::FileHeader { .. } => {
-                        visible_indices.push(idx);
-                    }
-                    QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key) {
-                            visible_indices.push(idx);
-                        }
-                    }
-                }
-            }
-
-            assert_eq!(
-                visible_indices.len(),
-                1,
-                "Only file header should be visible after collapse"
-            );
-            assert_eq!(visible_indices, vec![0]);
-
-            collapsed_files.remove(&file_key);
-            visible_indices.clear();
-            for (idx, item) in items.iter().enumerate() {
-                match item {
-                    QuickSearchItem::FileHeader { .. } => {
-                        visible_indices.push(idx);
-                    }
-                    QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key) {
-                            visible_indices.push(idx);
-                        }
-                    }
-                }
-            }
-
-            assert_eq!(
-                visible_indices.len(),
-                3,
-                "All items should be visible after expand"
-            );
-            assert_eq!(visible_indices, vec![0, 1, 2]);
+        fixture.delegate(|d| {
+            assert!(d.search_options.contains(SearchOptions::CASE_SENSITIVE));
+            assert_eq!(d.match_count, 1);
+            assert!(case_insensitive_count > d.match_count);
         });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_whole_word_option(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({"file.rs": "fn test() {}\nfn testing() {}\nfn my_test_fn() {}\n"}),
+        )
+        .await;
+
+        fixture.search("test").await;
+        let partial_count = fixture.delegate(|d| d.match_count);
+
+        fixture.toggle_option(SearchOptions::WHOLE_WORD);
+        fixture.search("test").await;
+
+        fixture.delegate(|d| {
+            assert!(d.search_options.contains(SearchOptions::WHOLE_WORD));
+            assert!(d.match_count < partial_count);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_regex_option(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(
+            cx,
+            json!({"file.rs": "fn test1() {}\nfn test2() {}\nfn test10() {}\nfn other() {}\n"}),
+        )
+        .await;
+
+        fixture.toggle_option(SearchOptions::REGEX);
+        fixture.search("test\\d+").await;
+
+        fixture.delegate(|d| {
+            assert!(d.search_options.contains(SearchOptions::REGEX));
+            assert_eq!(d.match_count, 3);
+            assert!(d.regex_error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_invalid_regex_shows_error(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": "fn test() {}\n"})).await;
+
+        fixture.toggle_option(SearchOptions::REGEX);
+        fixture.search("[invalid(regex").await;
+
+        fixture.delegate(|d| {
+            assert!(d.regex_error.is_some());
+            assert_eq!(d.items.len(), 0);
+            assert!(!d.is_searching);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_delegate_collapse_expand(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("test.rs", "src"),
+            line_match("src/test.rs", 0, "fn test()"),
+            line_match("src/test.rs", 1, "fn other()"),
+            file_header("lib.rs", "src"),
+            line_match("src/lib.rs", 0, "pub fn lib_test()"),
+        ]);
+
+        fixture.delegate(|d| {
+            assert_eq!(d.visible_indices.len(), 5);
+            assert_eq!(d.visible_line_match_indices.len(), 3);
+        });
+
+        let file_key: SharedString = "src/test.rs".into();
+        fixture.toggle_file_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert!(d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 3);
+            assert_eq!(d.visible_line_match_indices.len(), 1);
+        });
+
+        fixture.toggle_file_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert!(!d.collapsed_files.contains(&file_key));
+            assert_eq!(d.visible_indices.len(), 5);
+            assert_eq!(d.visible_line_match_indices.len(), 3);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_toggle_all_files_collapsed(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("test.rs", "src"),
+            line_match("src/test.rs", 0, "fn test()"),
+            file_header("lib.rs", "src"),
+            line_match("src/lib.rs", 0, "pub fn lib()"),
+        ]);
+
+        assert_eq!(fixture.delegate(|d| d.visible_indices.len()), 4);
+
+        let file_key: SharedString = "src/test.rs".into();
+        fixture.toggle_all_files_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert_eq!(d.collapsed_files.len(), 2);
+            assert_eq!(d.visible_indices.len(), 2);
+            assert_eq!(d.visible_line_match_indices.len(), 0);
+        });
+
+        fixture.toggle_all_files_collapsed(&file_key);
+
+        fixture.delegate(|d| {
+            assert_eq!(d.collapsed_files.len(), 0);
+            assert_eq!(d.visible_indices.len(), 4);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_find_nearest_line_match(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new(cx, json!({"file.rs": ""})).await;
+
+        fixture.set_items(vec![
+            file_header("test.rs", "src"),
+            line_match("src/test.rs", 0, "fn test()"),
+            file_header("lib.rs", "src"),
+            line_match("src/lib.rs", 0, "pub fn lib()"),
+        ]);
+
+        fixture.delegate(|d| {
+            assert_eq!(d.find_nearest_line_match(0, true), Some(1));
+            assert_eq!(d.find_nearest_line_match(2, false), Some(1));
+            assert_eq!(d.find_nearest_line_match(1, true), Some(1));
+            assert_eq!(d.find_nearest_line_match(3, true), Some(3));
+        });
+    }
+
+    #[gpui::test]
+    fn test_truncate_preview() {
+        assert_eq!(
+            truncate_preview("fn test() {}", MAX_PREVIEW_BYTES).as_ref(),
+            "fn test() {}"
+        );
+
+        let long_text = "a".repeat(300);
+        let truncated = truncate_preview(&long_text, MAX_PREVIEW_BYTES);
+        assert!(truncated.len() <= MAX_PREVIEW_BYTES + 3);
+        assert!(truncated.ends_with('…'));
+
+        assert_eq!(
+            truncate_preview("   fn test()   ", MAX_PREVIEW_BYTES).as_ref(),
+            "fn test()"
+        );
+    }
+
+    #[gpui::test]
+    fn test_format_file_key() {
+        assert_eq!(format_file_key("src", "main.rs").as_ref(), "src/main.rs");
+        assert_eq!(format_file_key("", "main.rs").as_ref(), "main.rs");
+    }
+
+    #[gpui::test]
+    fn test_build_search_query_text() {
+        assert!(build_search_query("test", SearchOptions::NONE).is_ok());
+        assert!(build_search_query("test", SearchOptions::CASE_SENSITIVE).is_ok());
+        assert!(build_search_query("test", SearchOptions::WHOLE_WORD).is_ok());
+    }
+
+    #[gpui::test]
+    fn test_build_search_query_regex() {
+        assert!(build_search_query("test\\d+", SearchOptions::REGEX).is_ok());
+
+        let query = build_search_query("[invalid", SearchOptions::REGEX);
+        assert!(query.is_err());
+        assert!(!query.unwrap_err().is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_quick_search_initial_query_from_selection(cx: &mut TestAppContext) {
+        let mut fixture = TestFixture::new_with_query(
+            cx,
+            json!({"file.rs": "fn hello() {}\nfn world() {}\n"}),
+            Some("hello".to_string()),
+        )
+        .await;
+
+        assert_eq!(fixture.delegate(|d| d.current_query.clone()), "hello");
+
+        fixture.search("hello").await;
+        assert!(fixture.delegate(|d| d.match_count) > 0);
     }
 }
