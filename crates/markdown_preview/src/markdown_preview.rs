@@ -11,8 +11,10 @@ actions!(
     markdown,
     [
         /// Scrolls up by one page in the markdown preview.
+        #[action(deprecated_aliases = ["markdown::MovePageUp"])]
         ScrollPageUp,
         /// Scrolls down by one page in the markdown preview.
+        #[action(deprecated_aliases = ["markdown::MovePageDown"])]
         ScrollPageDown,
         /// Scrolls up by approximately one visual line.
         ScrollUp,
