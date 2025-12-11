@@ -27611,7 +27611,8 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             - [ ] Item 1.a
         - [x] Item 2
             - [x] Item 2.a
-            - [x] Item 2.bˇ"});
+            - [x] Item 2.bˇ"
+    });
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
@@ -27625,6 +27626,14 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
     });
 
     // Case 3: Test adding a new nested list item preserves indent
+    cx.set_state(&indoc! {"
+        - [ ] Item 1
+            - [ ] Item 1.a
+        - [x] Item 2
+            - [x] Item 2.a
+            - [x] Item 2.b
+            ˇ"
+    });
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("-", window, cx);
     });
@@ -27671,6 +27680,14 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
     });
 
     // Case 5: Adding new ordered list item preserves indent
+    cx.set_state(indoc! {"
+        1. Item 1
+            1. Item 1.a
+        2. Item 2
+            1. Item 2.a
+            2. Item 2.b
+            ˇ"
+    });
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("3", window, cx);
     });
