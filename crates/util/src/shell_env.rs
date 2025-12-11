@@ -159,7 +159,7 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::PowerShell => cmd.args([
+        ShellKind::PowerShell | ShellKind::Pwsh => cmd.args([
             "-NonInteractive",
             "-NoProfile",
             "-Command",

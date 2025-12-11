@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt};
+use language::{Anchor, Buffer, OffsetRangeExt};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -252,8 +252,8 @@ where
 /// Returns edits updated based on user edits since the old snapshot. None is returned if any user
 /// edit is not a prefix of a predicted insertion.
 pub fn interpolate_edits(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
+    old_snapshot: &text::BufferSnapshot,
+    new_snapshot: &text::BufferSnapshot,
     current_edits: &[(Range<Anchor>, Arc<str>)],
 ) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
     let mut edits = Vec::new();

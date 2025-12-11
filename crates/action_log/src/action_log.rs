@@ -777,7 +777,7 @@ impl ActionLog {
 
 #[derive(Clone)]
 pub struct ActionLogTelemetry {
-    pub agent_telemetry_id: &'static str,
+    pub agent_telemetry_id: SharedString,
     pub session_id: Arc<str>,
 }
 

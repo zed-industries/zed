@@ -206,6 +206,13 @@ impl CodeContextMenu {
             CodeContextMenu::CodeActions(_) => (),
         }
     }
+
+    pub fn primary_scroll_handle(&self) -> UniformListScrollHandle {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.scroll_handle.clone(),
+            CodeContextMenu::CodeActions(menu) => menu.scroll_handle.clone(),
+        }
+    }
 }
 
 pub enum ContextMenuOrigin {
@@ -303,6 +310,7 @@ impl CompletionsMenu {
         is_incomplete: bool,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        scroll_handle: Option<UniformListScrollHandle>,
         display_options: CompletionDisplayOptions,
         snippet_sort_order: SnippetSortOrder,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -332,7 +340,7 @@ impl CompletionsMenu {
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: scroll_handle.unwrap_or_else(UniformListScrollHandle::new),
             scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
@@ -354,6 +362,7 @@ impl CompletionsMenu {
         choices: &Vec<String>,
         selection: Range<Anchor>,
         buffer: Entity<Buffer>,
+        scroll_handle: Option<UniformListScrollHandle>,
         snippet_sort_order: SnippetSortOrder,
     ) -> Self {
         let completions = choices
@@ -404,7 +413,7 @@ impl CompletionsMenu {
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle: scroll_handle.unwrap_or_else(UniformListScrollHandle::new),
             scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,

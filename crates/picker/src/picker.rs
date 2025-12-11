@@ -97,6 +97,18 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     );
+
+    /// Called before the picker handles `SelectPrevious` or `SelectNext`. Return `Some(query)` to
+    /// set a new query and prevent the default selection behavior.
+    fn select_history(
+        &mut self,
+        _direction: Direction,
+        _query: &str,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<String> {
+        None
+    }
     fn can_select(
         &mut self,
         _ix: usize,
@@ -448,6 +460,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Down, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -467,6 +487,14 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let query = self.query(cx);
+        if let Some(query) = self
+            .delegate
+            .select_history(Direction::Up, &query, window, cx)
+        {
+            self.set_query(query, window, cx);
+            return;
+        }
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();

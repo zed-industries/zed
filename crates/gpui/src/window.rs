@@ -5084,6 +5084,18 @@ impl From<SharedString> for ElementId {
     }
 }
 
+impl From<String> for ElementId {
+    fn from(name: String) -> Self {
+        ElementId::Name(name.into())
+    }
+}
+
+impl From<Arc<str>> for ElementId {
+    fn from(name: Arc<str>) -> Self {
+        ElementId::Name(name.into())
+    }
+}
+
 impl From<Arc<std::path::Path>> for ElementId {
     fn from(path: Arc<std::path::Path>) -> Self {
         ElementId::Path(path)

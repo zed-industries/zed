@@ -3,13 +3,13 @@ use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
 use project::{LocationLink, Project, ProjectPath};
-use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
 use std::{
     collections::hash_map,
     ops::Range,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,12 +24,14 @@ mod fake_definition_lsp;
 
 pub use cloud_llm_client::predict_edits_v3::Line;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
+pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
 
 const IDENTIFIER_LINE_COUNT: u32 = 3;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
-    related_files: Vec<RelatedFile>,
+    related_files: Arc<[RelatedFile]>,
+    related_file_buffers: Vec<Entity<Buffer>>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
     identifier_line_count: u32,
@@ -68,82 +70,6 @@ struct CachedDefinition {
     anchor_range: Range<Anchor>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct RelatedFile {
-    #[serde(serialize_with = "serialize_project_path")]
-    pub path: ProjectPath,
-    #[serde(skip)]
-    pub buffer: WeakEntity<Buffer>,
-    pub excerpts: Vec<RelatedExcerpt>,
-    pub max_row: u32,
-}
-
-impl RelatedFile {
-    pub fn merge_excerpts(&mut self) {
-        self.excerpts.sort_unstable_by(|a, b| {
-            a.point_range
-                .start
-                .cmp(&b.point_range.start)
-                .then(b.point_range.end.cmp(&a.point_range.end))
-        });
-
-        let mut index = 1;
-        while index < self.excerpts.len() {
-            if self.excerpts[index - 1]
-                .point_range
-                .end
-                .cmp(&self.excerpts[index].point_range.start)
-                .is_ge()
-            {
-                let removed = self.excerpts.remove(index);
-                if removed
-                    .point_range
-                    .end
-                    .cmp(&self.excerpts[index - 1].point_range.end)
-                    .is_gt()
-                {
-                    self.excerpts[index - 1].point_range.end = removed.point_range.end;
-                    self.excerpts[index - 1].anchor_range.end = removed.anchor_range.end;
-                }
-            } else {
-                index += 1;
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RelatedExcerpt {
-    #[serde(skip)]
-    pub anchor_range: Range<Anchor>,
-    #[serde(serialize_with = "serialize_point_range")]
-    pub point_range: Range<Point>,
-    #[serde(serialize_with = "serialize_rope")]
-    pub text: Rope,
-}
-
-fn serialize_project_path<S: Serializer>(
-    project_path: &ProjectPath,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    project_path.path.serialize(serializer)
-}
-
-fn serialize_rope<S: Serializer>(rope: &Rope, serializer: S) -> Result<S::Ok, S::Error> {
-    rope.to_string().serialize(serializer)
-}
-
-fn serialize_point_range<S: Serializer>(
-    range: &Range<Point>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    [
-        [range.start.row, range.start.column],
-        [range.end.row, range.end.column],
-    ]
-    .serialize(serializer)
-}
-
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
 
 impl EventEmitter<RelatedExcerptStoreEvent> for RelatedExcerptStore {}
@@ -179,7 +105,8 @@ impl RelatedExcerptStore {
         RelatedExcerptStore {
             project: project.downgrade(),
             update_tx,
-            related_files: Vec::new(),
+            related_files: Vec::new().into(),
+            related_file_buffers: Vec::new(),
             cache: Default::default(),
             identifier_line_count: IDENTIFIER_LINE_COUNT,
         }
@@ -193,8 +120,21 @@ impl RelatedExcerptStore {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
-    pub fn related_files(&self) -> &[RelatedFile] {
-        &self.related_files
+    pub fn related_files(&self) -> Arc<[RelatedFile]> {
+        self.related_files.clone()
+    }
+
+    pub fn related_files_with_buffers(
+        &self,
+    ) -> impl Iterator<Item = (RelatedFile, Entity<Buffer>)> {
+        self.related_files
+            .iter()
+            .cloned()
+            .zip(self.related_file_buffers.iter().cloned())
+    }
+
+    pub fn set_related_files(&mut self, files: Vec<RelatedFile>) {
+        self.related_files = files.into();
     }
 
     async fn fetch_excerpts(
@@ -297,7 +237,8 @@ impl RelatedExcerptStore {
         }
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
-        let (new_cache, related_files) = rebuild_related_files(new_cache, cx).await?;
+        let (new_cache, related_files, related_file_buffers) =
+            rebuild_related_files(&project, new_cache, cx).await?;
 
         if let Some(file) = &file {
             log::debug!(
@@ -309,7 +250,8 @@ impl RelatedExcerptStore {
 
         this.update(cx, |this, cx| {
             this.cache = new_cache;
-            this.related_files = related_files;
+            this.related_files = related_files.into();
+            this.related_file_buffers = related_file_buffers;
             cx.emit(RelatedExcerptStoreEvent::FinishedRefresh {
                 cache_hit_count,
                 cache_miss_count,
@@ -323,10 +265,16 @@ impl RelatedExcerptStore {
 }
 
 async fn rebuild_related_files(
+    project: &Entity<Project>,
     new_entries: HashMap<Identifier, Arc<CacheEntry>>,
     cx: &mut AsyncApp,
-) -> Result<(HashMap<Identifier, Arc<CacheEntry>>, Vec<RelatedFile>)> {
+) -> Result<(
+    HashMap<Identifier, Arc<CacheEntry>>,
+    Vec<RelatedFile>,
+    Vec<Entity<Buffer>>,
+)> {
     let mut snapshots = HashMap::default();
+    let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
         for definition in &entry.definitions {
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
@@ -340,12 +288,22 @@ async fn rebuild_related_files(
                         .read_with(cx, |buffer, _| buffer.snapshot())?,
                 );
             }
+            let worktree_id = definition.path.worktree_id;
+            if let hash_map::Entry::Vacant(e) =
+                worktree_root_names.entry(definition.path.worktree_id)
+            {
+                project.read_with(cx, |project, cx| {
+                    if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
+                        e.insert(worktree.read(cx).root_name().as_unix_str().to_string());
+                    }
+                })?;
+            }
         }
     }
 
     Ok(cx
         .background_spawn(async move {
-            let mut files = Vec::<RelatedFile>::new();
+            let mut files = Vec::new();
             let mut ranges_by_buffer = HashMap::<_, Vec<Range<Point>>>::default();
             let mut paths_by_buffer = HashMap::default();
             for entry in new_entries.values() {
@@ -369,19 +327,36 @@ async fn rebuild_related_files(
                     continue;
                 };
                 let excerpts = assemble_excerpts(snapshot, ranges);
-                files.push(RelatedFile {
-                    path: project_path.clone(),
-                    buffer: buffer.downgrade(),
-                    excerpts,
-                    max_row: snapshot.max_point().row,
-                });
+                let Some(root_name) = worktree_root_names.get(&project_path.worktree_id) else {
+                    continue;
+                };
+
+                let path = Path::new(&format!(
+                    "{}/{}",
+                    root_name,
+                    project_path.path.as_unix_str()
+                ))
+                .into();
+
+                files.push((
+                    buffer,
+                    RelatedFile {
+                        path,
+                        excerpts,
+                        max_row: snapshot.max_point().row,
+                    },
+                ));
             }
 
-            files.sort_by_key(|file| file.path.clone());
-            (new_entries, files)
+            files.sort_by_key(|(_, file)| file.path.clone());
+            let (related_buffers, related_files) = files.into_iter().unzip();
+
+            (new_entries, related_files, related_buffers)
         })
         .await)
 }
+
+const MAX_TARGET_LEN: usize = 128;
 
 fn process_definition(
     location: LocationLink,
@@ -395,6 +370,15 @@ fn process_definition(
     if worktree.read(cx).is_single_file() {
         return None;
     }
+
+    // If the target range is large, it likely means we requested the definition of an entire module.
+    // For individual definitions, the target range should be small as it only covers the symbol.
+    let buffer = location.target.buffer.read(cx);
+    let target_len = anchor_range.to_offset(&buffer).len();
+    if target_len > MAX_TARGET_LEN {
+        return None;
+    }
+
     Some(CachedDefinition {
         path: ProjectPath {
             worktree_id: file.worktree_id(cx),

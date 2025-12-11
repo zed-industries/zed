@@ -807,7 +807,7 @@ impl Copilot {
                         .ok();
                 }
                 language::BufferEvent::FileHandleChanged
-                | language::BufferEvent::LanguageChanged => {
+                | language::BufferEvent::LanguageChanged(_) => {
                     let new_language_id = id_for_language(buffer.read(cx).language());
                     let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
                         return Ok(());

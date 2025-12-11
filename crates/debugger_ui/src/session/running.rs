@@ -286,10 +286,10 @@ impl Item for SubView {
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id(SharedString::from(format!(
+            .id(format!(
                 "subview-container-{}",
                 self.kind.to_shared_string()
-            )))
+            ))
             .on_hover(cx.listener(|this, hovered, _, cx| {
                 this.hovered = *hovered;
                 cx.notify();
@@ -484,10 +484,7 @@ pub(crate) fn new_debugger_pane(
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
-                                    .id(SharedString::from(format!(
-                                        "debugger_tab_{}",
-                                        item.item_id().as_u64()
-                                    )))
+                                    .id(format!("debugger_tab_{}", item.item_id().as_u64()))
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
