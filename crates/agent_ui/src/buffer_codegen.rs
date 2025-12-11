@@ -41,7 +41,6 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use ui::SharedString;
 
 /// Use this tool to provide a message to the user when you're unable to complete a task.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -287,8 +286,9 @@ pub struct CodegenAlternative {
     completion: Option<String>,
     selected_text: Option<String>,
     pub message_id: Option<String>,
-    pub model_explanation: Option<SharedString>,
     session_id: Uuid,
+    pub description: Option<String>,
+    pub failure: Option<String>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -346,8 +346,9 @@ impl CodegenAlternative {
             elapsed_time: None,
             completion: None,
             selected_text: None,
-            model_explanation: None,
             session_id,
+            description: None,
+            failure: None,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
@@ -920,6 +921,16 @@ impl CodegenAlternative {
         self.completion.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_description(&self) -> Option<String> {
+        self.description.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_failure(&self) -> Option<String> {
+        self.failure.clone()
+    }
+
     pub fn selected_text(&self) -> Option<&str> {
         self.selected_text.as_deref()
     }
@@ -1177,13 +1188,18 @@ impl CodegenAlternative {
                                 "rewrite_section" | "failure_message"
                             ) =>
                         {
+                            let is_failure = tool_use.name.as_ref() == "failure_message";
                             let is_complete = tool_use.is_input_complete;
                             let (text, message) = tool_to_text_and_message(tool_use);
                             // Only update the model explanation if the tool use is complete.
                             // Otherwise the UI element bounces around as it's updated.
                             if is_complete {
                                 let _ = codegen.update(cx, |this, _cx| {
-                                    this.model_explanation = message.map(Into::into);
+                                    if is_failure {
+                                        this.failure = message.map(Into::into);
+                                    } else {
+                                        this.description = message.map(Into::into);
+                                    }
                                 });
                             }
                             first_text = text;
@@ -1215,14 +1231,23 @@ impl CodegenAlternative {
                 return;
             };
 
-            let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
+            struct ModelExplanation {
+                failure: bool,
+                message: Option<String>,
+            }
+            let (message_tx, mut message_rx) =
+                futures::channel::mpsc::unbounded::<ModelExplanation>();
 
             cx.spawn({
                 let codegen = codegen.clone();
                 async move |cx| {
                     while let Some(message) = message_rx.next().await {
                         let _ = codegen.update(cx, |this, _cx| {
-                            this.model_explanation = message;
+                            if message.failure {
+                                this.failure = message.message;
+                            } else {
+                                this.description = message.message;
+                            }
                         });
                     }
                 }
@@ -1245,11 +1270,17 @@ impl CodegenAlternative {
                                     "rewrite_section" | "failure_message"
                                 ) =>
                             {
+                                let is_failure = tool_use.name.as_ref() == "failure_message";
                                 let is_complete = tool_use.is_input_complete;
                                 let (text, message) = tool_to_text_and_message(tool_use);
                                 if is_complete {
                                     // Again only send the message when complete to not get a bouncing UI element.
-                                    let _ = message_tx.send(message.map(Into::into)).await;
+                                    let _ = message_tx
+                                        .send(ModelExplanation {
+                                            failure: is_failure,
+                                            message,
+                                        })
+                                        .await;
                                 }
                                 text.map(Ok)
                             }

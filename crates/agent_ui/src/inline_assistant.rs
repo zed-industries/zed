@@ -117,14 +117,6 @@ impl InlineAssistant {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_completion_receiver(
-        &mut self,
-        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
-    ) {
-        self._inline_assistant_completions = Some(sender);
-    }
-
     pub fn register_workspace(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -1593,6 +1585,27 @@ impl InlineAssistant {
                 .map(InlineAssistTarget::Terminal)
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_completion_receiver(
+        &mut self,
+        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
+    ) {
+        self._inline_assistant_completions = Some(sender);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_codegen(
+        &mut self,
+        assist_id: InlineAssistId,
+        cx: &mut App,
+    ) -> Option<Entity<CodegenAlternative>> {
+        self.assists.get(&assist_id).map(|inline_assist| {
+            inline_assist
+                .codegen
+                .update(cx, |codegen, _cx| codegen.active_alternative().clone())
+        })
+    }
 }
 
 struct EditorInlineAssists {
@@ -2034,14 +2047,22 @@ pub mod test {
 
     use crate::InlineAssistant;
 
+    #[derive(Debug)]
     pub enum InlineAssistantOutput {
         Success {
-            completion: String,
-            description: String,
+            completion: Option<String>,
+            description: Option<String>,
             full_buffer_text: String,
         },
         Failure {
-            error_message: String,
+            failure: String,
+        },
+        // These fields are used for logging
+        #[allow(unused)]
+        Malformed {
+            completion: Option<String>,
+            description: Option<String>,
+            failure: Option<String>,
         },
     }
 
@@ -2154,13 +2175,38 @@ pub mod test {
 
         test(cx);
 
-        cx.executor()
-            .block_test(async { completion_rx.next().await });
+        let assist_id = cx
+            .executor()
+            .block_test(async { completion_rx.next().await })
+            .unwrap()
+            .unwrap();
 
-        InlineAssistantOutput::Success {
-            completion: "".to_string(),
-            description: "".to_string(),
-            full_buffer_text: buffer.read_with(cx, |buffer, _| buffer.text()),
+        let (completion, description, failure) = cx.update(|_, cx| {
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let codegen = inline_assistant.get_codegen(assist_id, cx).unwrap();
+
+                let completion = codegen.read(cx).current_completion();
+                let description = codegen.read(cx).current_description();
+                let failure = codegen.read(cx).current_failure();
+
+                (completion, description, failure)
+            })
+        });
+
+        if failure.is_some() && (completion.is_some() || description.is_some()) {
+            InlineAssistantOutput::Malformed {
+                completion,
+                description,
+                failure,
+            }
+        } else if let Some(failure) = failure {
+            InlineAssistantOutput::Failure { failure }
+        } else {
+            InlineAssistantOutput::Success {
+                completion,
+                description,
+                full_buffer_text: buffer.read_with(cx, |buffer, _| buffer.text()),
+            }
         }
     }
 }
@@ -2175,45 +2221,6 @@ pub mod evals {
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
-
-    fn uncertain_output(output: InlineAssistantOutput) -> EvalOutput<()> {
-        match output {
-            InlineAssistantOutput::Success {
-                completion,
-                description,
-                ..
-            } => {
-                if !description.is_empty() && completion.is_empty() {
-                    EvalOutput::passed(format!("Assistant produced a description: {}", description))
-                } else {
-                    EvalOutput::failed(format!(
-                        "Assistant produced a completion: \n{}, or description: \n{}",
-                        completion, description
-                    ))
-                }
-            }
-            InlineAssistantOutput::Failure { error_message } => EvalOutput::passed(format!(
-                "Assistant produced a failure message: {}",
-                error_message
-            )),
-        }
-    }
-
-    fn exact_buffer_match(
-        correct_output: impl Into<String>,
-    ) -> impl Fn(InlineAssistantOutput) -> EvalOutput<()> {
-        let correct_output = correct_output.into();
-        move |output| {
-            if output.buffer_text() == correct_output {
-                EvalOutput::passed("Assistant output matches")
-            } else {
-                EvalOutput::failed(format!(
-                    "Assistant output does not match expected output: {}",
-                    output.buffer_text()
-                ))
-            }
-        }
-    }
 
     #[test]
     #[cfg_attr(not(feature = "unit-eval"), ignore)]
@@ -2314,5 +2321,49 @@ pub mod evals {
 
             judge(output)
         });
+    }
+
+    fn uncertain_output(output: InlineAssistantOutput) -> EvalOutput<()> {
+        match &output {
+            o @ InlineAssistantOutput::Success {
+                completion,
+                description,
+                ..
+            } => {
+                if description.is_some() && completion.is_none() {
+                    EvalOutput::passed(format!(
+                        "Assistant produced no completion, but a description:\n{}",
+                        description.as_ref().unwrap()
+                    ))
+                } else {
+                    EvalOutput::failed(format!("Assistant produced a completion:\n{:?}", o))
+                }
+            }
+            InlineAssistantOutput::Failure {
+                failure: error_message,
+            } => EvalOutput::passed(format!(
+                "Assistant produced a failure message: {}",
+                error_message
+            )),
+            o @ InlineAssistantOutput::Malformed { .. } => {
+                EvalOutput::failed(format!("Assistant produced a malformed response:\n{:?}", o))
+            }
+        }
+    }
+
+    fn exact_buffer_match(
+        correct_output: impl Into<String>,
+    ) -> impl Fn(InlineAssistantOutput) -> EvalOutput<()> {
+        let correct_output = correct_output.into();
+        move |output| {
+            if output.buffer_text() == correct_output {
+                EvalOutput::passed("Assistant output matches")
+            } else {
+                EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    output
+                ))
+            }
+        }
     }
 }
