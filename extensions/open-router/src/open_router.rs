@@ -566,14 +566,6 @@ impl zed::Extension for OpenRouterProvider {
         llm_get_credential("open_router").is_some()
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        if llm_get_credential("open_router").is_some() {
-            Ok(())
-        } else {
-            Err("No API key configured".to_string())
-        }
-    }
-
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
             "To use OpenRouter, you need an API key. You can create one [here](https://openrouter.ai/keys).".to_string(),

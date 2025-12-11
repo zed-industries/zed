@@ -183,12 +183,6 @@ world extension {
     /// Check if the provider is authenticated.
     export llm-provider-is-authenticated: func(provider-id: string) -> bool;
 
-    /// Attempt to authenticate the provider.
-    /// This is called for background credential checks - it should check for
-    /// existing credentials and return Ok if found, or an error if not.
-    /// For interactive OAuth flows, use the device flow functions instead.
-    export llm-provider-authenticate: func(provider-id: string) -> result<_, string>;
-
     /// Start an OAuth device flow sign-in.
     /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
     ///

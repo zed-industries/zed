@@ -598,14 +598,6 @@ impl zed::Extension for GoogleAiProvider {
         llm_get_credential("google-ai").is_some()
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        if llm_get_credential("google-ai").is_some() {
-            Ok(())
-        } else {
-            Err("No API key configured".to_string())
-        }
-    }
-
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
             "To use Google AI, you need an API key. You can create one [here](https://aistudio.google.com/apikey).".to_string(),

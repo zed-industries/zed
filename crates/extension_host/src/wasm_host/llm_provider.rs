@@ -206,59 +206,13 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        let extension = self.extension.clone();
-        let provider_id = self.provider_info.id.clone();
-        let state = self.state.clone();
+        // Check if already authenticated via is_authenticated
+        if self.is_authenticated(cx) {
+            return Task::ready(Ok(()));
+        }
 
-        cx.spawn(async move |cx| {
-            let result = extension
-                .call({
-                    let provider_id = provider_id.clone();
-                    |extension, store| {
-                        async move {
-                            extension
-                                .call_llm_provider_authenticate(store, &provider_id)
-                                .await
-                        }
-                        .boxed()
-                    }
-                })
-                .await;
-
-            match result {
-                Ok(Ok(Ok(()))) => {
-                    // After successful auth, refresh the models list
-                    let models_result = extension
-                        .call({
-                            let provider_id = provider_id.clone();
-                            |ext, store| {
-                                async move {
-                                    ext.call_llm_provider_models(store, &provider_id).await
-                                }
-                                .boxed()
-                            }
-                        })
-                        .await;
-
-                    let new_models: Vec<LlmModelInfo> = match models_result {
-                        Ok(Ok(Ok(models))) => models,
-                        _ => Vec::new(),
-                    };
-
-                    cx.update(|cx| {
-                        state.update(cx, |state, cx| {
-                            state.is_authenticated = true;
-                            state.available_models = new_models;
-                            cx.notify();
-                        });
-                    })?;
-                    Ok(())
-                }
-                Ok(Ok(Err(e))) => Err(AuthenticateError::Other(anyhow!("{}", e))),
-                Ok(Err(e)) => Err(AuthenticateError::Other(e)),
-                Err(e) => Err(AuthenticateError::Other(e)),
-            }
-        })
+        // Not authenticated - return error indicating credentials not found
+        Task::ready(Err(AuthenticateError::CredentialsNotFound))
     }
 
     fn configuration_view(

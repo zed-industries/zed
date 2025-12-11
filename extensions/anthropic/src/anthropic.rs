@@ -521,14 +521,6 @@ impl zed::Extension for AnthropicProvider {
         llm_get_credential("anthropic").is_some()
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        if llm_get_credential("anthropic").is_some() {
-            Ok(())
-        } else {
-            Err("No API key configured".to_string())
-        }
-    }
-
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
             "To use Anthropic, you need an API key. You can create one [here](https://console.anthropic.com/settings/keys).".to_string(),

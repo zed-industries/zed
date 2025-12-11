@@ -451,18 +451,6 @@ impl zed::Extension for CopilotChatProvider {
         )
     }
 
-    fn llm_provider_authenticate(&mut self, _provider_id: &str) -> Result<(), String> {
-        // Check if we have existing credentials
-        if llm_get_credential("copilot-chat").is_some() {
-            return Ok(());
-        }
-
-        // No credentials found - return error for background auth checks.
-        // The device flow will be triggered by the host when the user clicks
-        // the "Sign in with GitHub" button, which calls llm_provider_start_device_flow_sign_in.
-        Err("CredentialsNotFound".to_string())
-    }
-
     fn llm_provider_start_device_flow_sign_in(
         &mut self,
         _provider_id: &str,
