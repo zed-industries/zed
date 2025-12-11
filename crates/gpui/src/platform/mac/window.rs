@@ -2082,9 +2082,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             let mut lock = window_state.as_ref().lock();
             if is_active {
                 unsafe {
-                    let pool = NSAutoreleasePool::new(nil);
                     lock.move_traffic_light();
-                    pool.drain();
                 }
             }
 
