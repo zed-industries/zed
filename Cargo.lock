@@ -14445,12 +14445,14 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "tracing",
  "ui",
  "unindent",
  "util",
  "util_macros",
  "workspace",
  "zed_actions",
+ "ztracing",
 ]
 
 [[package]]
@@ -21022,6 +21024,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "zlog",
  "ztracing_macro",
 ]
 
