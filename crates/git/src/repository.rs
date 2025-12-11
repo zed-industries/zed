@@ -2318,6 +2318,7 @@ impl GitRepository for RealGitRepository {
         let executor = self.executor.clone();
         let help_output = self.any_git_binary_help_output();
 
+        // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
             let working_directory = working_directory?;
             if !help_output
@@ -2327,14 +2328,10 @@ impl GitRepository for RealGitRepository {
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
                 if hook_abs_path.is_file() {
-                    let output = self
-                        .executor
-                        .spawn(
-                            new_smol_command(&hook_abs_path)
-                                .envs(env.iter())
-                                .current_dir(&working_directory)
-                                .output(),
-                        )
+                    let output = new_smol_command(&hook_abs_path)
+                        .envs(env.iter())
+                        .current_dir(&working_directory)
+                        .output()
                         .await?;
 
                     if !output.status.success() {
