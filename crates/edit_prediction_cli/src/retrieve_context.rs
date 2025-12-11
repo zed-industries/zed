@@ -8,7 +8,7 @@ use collections::HashSet;
 use edit_prediction::{DebugEvent, EditPredictionStore};
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity, Task};
-use language::{Buffer, LanguageNotFound};
+use language::Buffer;
 use project::Project;
 use std::{sync::Arc, time::Duration};
 
@@ -71,19 +71,6 @@ async fn wait_for_language_server_to_start(
     buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) {
-    let language_registry = project
-        .read_with(cx, |project, _| project.languages().clone())
-        .unwrap();
-    let result = language_registry
-        .load_language_for_file_path(&example.cursor_path)
-        .await;
-
-    if let Err(error) = result
-        && !error.is::<LanguageNotFound>()
-    {
-        panic!("Failed to load language for file path: {}", error);
-    }
-
     let Some(language_id) = buffer
         .read_with(cx, |buffer, _cx| {
             buffer.language().map(|language| language.id())

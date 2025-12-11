@@ -44,6 +44,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         true,
         fs,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -108,6 +109,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -207,6 +209,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -357,6 +360,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -434,6 +438,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -598,6 +603,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -698,6 +704,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -791,6 +798,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -856,6 +864,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -914,6 +923,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -999,6 +1009,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1080,6 +1091,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1190,6 +1202,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1301,6 +1314,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         true,
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1339,6 +1353,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         true,
         fs,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1407,6 +1422,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         true,
         fs_fake,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1448,6 +1464,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         true,
         fs_real,
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1556,6 +1573,7 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1651,6 +1669,7 @@ async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAp
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1728,6 +1747,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1818,6 +1838,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -1890,6 +1911,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             true,
             fs.clone(),
             Default::default(),
+            true,
             &mut cx.to_async(),
         )
         .await
@@ -2203,6 +2225,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         true,
         fs.clone(),
         Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -2235,6 +2258,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         true,
         fs.clone(),
         Arc::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
@@ -2312,6 +2336,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         true,
         fs.clone(),
         Arc::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
