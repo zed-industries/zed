@@ -172,6 +172,7 @@ async fn setup_project(
                 app_state.languages.clone(),
                 app_state.fs.clone(),
                 None,
+                false,
                 cx,
             )
         })
