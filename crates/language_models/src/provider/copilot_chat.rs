@@ -14,7 +14,7 @@ use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
+use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
@@ -26,7 +26,7 @@ use language_model::{
     StopReason, TokenUsage,
 };
 use settings::SettingsStore;
-use ui::{CommonAnimationExt, ConfiguredApiCard, prelude::*};
+use ui::prelude::*;
 use util::debug_panic;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");

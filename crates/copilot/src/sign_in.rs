@@ -2,7 +2,7 @@ use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Render,
-    Styled, Subscription, Window, div, svg,
+    Styled, Subscription, Window, WindowBounds, WindowOptions, div, svg,
 };
 use ui::{Button, CommonAnimationExt, ConfiguredApiCard, Label, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
@@ -17,13 +17,33 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
     let Some(copilot) = Copilot::global(cx) else {
         return;
     };
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+
+    if let Some(workspace) = window.root::<Workspace>().flatten() {
+        workspace.update(cx, |workspace, cx| {
+            let is_reinstall = false;
+
+            initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx)
+        });
+    } else {
+        initiate_sign_in_within_window(copilot, window, cx);
+    }
+}
+
+pub fn initiate_sign_out(window: &mut Window, cx: &mut App) {
+    let Some(copilot) = Copilot::global(cx) else {
+        // todo! error?
         return;
     };
-    workspace.update(cx, |workspace, cx| {
-        let is_reinstall = false;
-        initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx)
-    });
+    if let Some(workspace) = window.root().flatten() {
+        workspace.update(cx, |workspace, cx| {
+            sign_out_within_workspace(workspace, copilot, cx);
+        })
+    } else {
+        // todo! notifications of some kind in settings_ui?
+        copilot
+            .update(cx, |copilot, cx| copilot.sign_out(cx))
+            .detach_and_log_err(cx);
+    }
 }
 
 pub fn reinstall_and_sign_in(window: &mut Window, cx: &mut App) {
@@ -49,6 +69,49 @@ pub fn reinstall_and_sign_in_within_workspace(
     initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
 }
 
+// todo! combine with workspace one
+pub fn initiate_sign_in_within_window(copilot: Entity<Copilot>, window: &mut Window, cx: &mut App) {
+    if matches!(copilot.read(cx).status(), Status::Disabled) {
+        copilot.update(cx, |copilot, cx| {
+            copilot.start_copilot(false, true, cx);
+        });
+    }
+    let starting_task = if let Status::Starting { task } = copilot.read(cx).status() {
+        Some(task)
+    } else {
+        None
+    };
+
+    let window_size = px(400.);
+    let window_bounds = WindowBounds::Windowed(gpui::bounds(
+        window.window_bounds().get_bounds().center(),
+        gpui::size(window_size, window_size),
+    ));
+
+    cx.spawn(async move |cx| {
+        if let Some(task) = starting_task {
+            task.await;
+        }
+        copilot
+            .update(cx, |copilot, cx| {
+                copilot.sign_in(cx).detach();
+            })
+            .expect("todo!");
+        cx.open_window(
+            WindowOptions {
+                kind: gpui::WindowKind::PopUp,
+                window_bounds: Some(window_bounds),
+                is_resizable: false,
+                is_movable: true,
+                ..Default::default()
+            },
+            |_, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, cx)),
+        )
+        .expect("todo!");
+    })
+    .detach();
+}
+
 pub fn initiate_sign_in_within_workspace(
     workspace: &mut Workspace,
     copilot: Entity<Copilot>,
@@ -65,9 +128,9 @@ pub fn initiate_sign_in_within_workspace(
                 Toast::new(
                     NotificationId::unique::<CopilotStatusToast>(),
                     if is_reinstall {
-                        "Copilot is reinstalling..."
+                        "Copilot is reinstalling…"
                     } else {
-                        "Copilot is starting..."
+                        "Copilot is starting…"
                     },
                 ),
                 cx,
@@ -124,7 +187,7 @@ pub fn sign_out_within_workspace(
     workspace.show_toast(
         Toast::new(
             NotificationId::unique::<CopilotStatusToast>(),
-            "Signing out of Copilot...",
+            "Signing out of Copilot…",
         ),
         cx,
     );
@@ -136,7 +199,7 @@ pub fn sign_out_within_workspace(
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<CopilotStatusToast>(),
-                            "Signed out of Copilot.",
+                            "Signed out of Copilot",
                         ),
                         cx,
                     )
@@ -241,7 +304,7 @@ impl CopilotCodeVerification {
         cx: &mut Context<Self>,
     ) -> impl Element {
         let connect_button_label = if connect_clicked {
-            "Waiting for connection..."
+            "Waiting for connection…"
         } else {
             "Connect to GitHub"
         };
@@ -399,25 +462,13 @@ impl Render for ConfigurationView {
             ConfiguredApiCard::new("Authorized")
                 .button_label("Sign Out")
                 .on_click(|_, window, cx| {
-                    let Some(copilot) = Copilot::global(cx) else {
-                        // todo! error?
-                        return;
-                    };
-                    if let Some(workspace) = window.root().flatten() {
-                        workspace.update(cx, |workspace, cx| {
-                            sign_out_within_workspace(workspace, copilot, cx);
-                        })
-                    } else {
-                        copilot
-                            .update(cx, |copilot, cx| copilot.sign_out(cx))
-                            .detach_and_log_err(cx);
-                    }
+                    initiate_sign_out(window, cx);
                 })
                 .into_any_element()
         } else {
             let (start_copy, error_label) = if self.edit_prediction {
                 (
-                    "To power edit prediction with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.",
+                    "To use GitHub Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.",
                     "Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit prediction provider.",
                 )
             } else {
@@ -454,7 +505,7 @@ impl Render for ConfigurationView {
                     _ => {
                         v_flex()
                             .gap_2()
-                            .child(Label::new(start_copy))
+                            .child(Label::new(start_copy).when(self.edit_prediction, |this| this.color(Color::Muted)))
                             .child(
                                 Button::new("sign_in", "Sign in to use GitHub Copilot")
                                     .full_width()

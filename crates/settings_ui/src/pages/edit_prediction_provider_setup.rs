@@ -34,7 +34,7 @@ impl Render for EditPredictionSetupPage {
 
         // todo! github copilot
         let providers = [
-            Some(render_github_copilot_provider(&self.settings_window, cx).into_any_element()),
+            Some(render_github_copilot_provider(window, cx).into_any_element()),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,
@@ -336,92 +336,33 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
 }
 
 pub(crate) fn render_github_copilot_provider(
-    settings_window: &Entity<SettingsWindow>,
+    window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    let is_authenticated =
-        copilot::Copilot::global(cx).is_some_and(|copilot| copilot.read(cx).is_authenticated());
-
-    let description = format!(
-        "To use GitHub Copilot as an edit prediction provider, you need to authenticate with GitHub.",
-    );
-
-    let settings_window = settings_window.clone();
+    let configuration_view = window.use_state(cx, |_, cx| {
+        copilot::ConfigurationView::new(
+            |cx| {
+                copilot::Copilot::global(cx)
+                    .is_some_and(|copilot| copilot.read(cx).is_authenticated())
+            },
+            copilot::ConfigurationMode::EditPrediction,
+            cx,
+        )
+    });
 
     v_flex()
         .id("github-copilot")
         .min_w_0()
         .gap_1p5()
         .child(
-            v_flex()
-                .w_full()
-                .gap_1p5()
+            h_flex()
+                .gap_1()
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Github)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(Label::new("GitHub Copilot")),
+                    Icon::new(IconName::Copilot)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
                 )
-                .child(Label::new(description).color(Color::Muted)),
+                .child(Label::new("GitHub Copilot")),
         )
-        .child(
-            Button::new("copilot_auth", "Authenticate with GitHub Copilot")
-                .full_width()
-                .style(ButtonStyle::Outlined)
-                .icon(IconName::Github)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
-                .on_click(move |_, window, cx| {
-                    let copilot = copilot::Copilot::global(cx);
-                    // todo! hide whole section if none
-                    if let Some(copilot) = copilot {
-                        if matches!(copilot.read(cx).status(), copilot::Status::Disabled) {
-                            copilot.update(cx, |copilot, cx| {
-                                copilot.start_copilot(false, true, cx);
-                            });
-                        }
-                        let starting_task =
-                            if let copilot::Status::Starting { task } = copilot.read(cx).status() {
-                                Some(task)
-                            } else {
-                                None
-                            };
-
-                        let window_size = px(400.);
-                        let window_bounds = WindowBounds::Windowed(gpui::bounds(
-                            window.window_bounds().get_bounds().center(),
-                            gpui::size(window_size, window_size),
-                        ));
-                        cx.spawn(async move |cx| {
-                            if let Some(task) = starting_task {
-                                task.await;
-                            }
-                            copilot
-                                .update(cx, |copilot, cx| {
-                                    copilot.sign_in(cx).detach();
-                                })
-                                .expect("todo!");
-                            cx.open_window(
-                                WindowOptions {
-                                    kind: gpui::WindowKind::PopUp,
-                                    window_bounds: Some(window_bounds),
-                                    is_resizable: false,
-                                    is_movable: true,
-                                    ..Default::default()
-                                },
-                                |_, cx| {
-                                    cx.new(|cx| copilot::CopilotCodeVerification::new(&copilot, cx))
-                                },
-                            )
-                            .expect("todo!");
-                        })
-                        .detach();
-                    }
-                }),
-        )
+        .child(configuration_view)
 }
