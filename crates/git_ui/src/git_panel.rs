@@ -2949,33 +2949,17 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let worktrees = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .collect::<Vec<_>>();
+        let Some(active_repository) = &self.active_repository else {
+            return;
+        };
 
-        // TODO!: Should we actually allow the user to select the directory to
-        // be added to `safe.directory`? What if the directory for one of the
-        // worktrees is not an unsafe directory?
-        if worktrees.is_empty() || worktrees.len() > 1 {
-            let result = window.prompt(
-                PromptLevel::Warning,
-                "Unable to add safe directory.",
-                Some("No directories, or multiple directories, open."),
-                &["Ok"],
-                cx,
-            );
+        // TODO!: What if the user is on a Windows machine remoting to a Linux
+        // machine? Will the path separators break this implementation?
+        let path = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
 
-            return cx
-                .background_spawn(async move { result.await.ok() })
-                .detach();
-        }
-
-        if let Some(worktree) = worktrees.first()
-            && let path = worktree.read(cx).abs_path()
-            && let Some(path_str) = path.to_str()
-        {
+        if let Some(path_str) = path.to_str() {
             let path_arg = String::from(path_str);
             let args = vec![
                 String::from("--global"),
