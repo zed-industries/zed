@@ -17,7 +17,7 @@ use ui::{
     ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*, rems_from_px,
 };
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, Workspace, searchable::SearchableItemHandle};
 
 #[derive(Default)]
 struct LastQuickSearchState(HashMap<EntityId, (String, SearchOptions)>);
@@ -50,6 +50,97 @@ const MAX_LINE_MATCHES: usize = 200;
 const MAX_PREVIEW_CHARS: usize = 200;
 
 actions!(search, [QuickSearch]);
+
+struct LineMatchData {
+    project_path: ProjectPath,
+    file_key: SharedString,
+    line: u32,
+    line_label: SharedString,
+    preview_text: SharedString,
+}
+
+struct FileMatchResult {
+    file_name: SharedString,
+    parent_path: SharedString,
+    file_key: SharedString,
+    matches: Vec<LineMatchData>,
+}
+
+fn truncate_preview(text: &str, max_chars: usize) -> SharedString {
+    let trimmed = text.trim();
+    if trimmed.len() <= max_chars {
+        return trimmed.to_string().into();
+    }
+
+    let mut end = max_chars;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    let mut result = trimmed[..end].to_string();
+    result.push('…');
+    result.into()
+}
+
+fn extract_file_matches(
+    buf: &Buffer,
+    ranges: &[std::ops::Range<text::Anchor>],
+    cx: &App,
+) -> Option<FileMatchResult> {
+    let file = buf.file()?;
+    let project_path = ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().clone(),
+    };
+
+    let (file_name, parent_path) = extract_path_parts(&project_path.path);
+    let file_key = format_file_key(&parent_path, &file_name);
+
+    let snapshot = buf.snapshot();
+    let mut seen_lines = HashSet::default();
+    let mut matches = Vec::with_capacity(ranges.len().min(MAX_LINE_MATCHES));
+
+    for range in ranges {
+        let start_point = range.start.to_point(&snapshot);
+        let line = start_point.row;
+
+        if !seen_lines.insert(line) {
+            continue;
+        }
+
+        let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
+        let line_end_col = snapshot.line_len(line);
+        let line_end = snapshot.point_to_offset(text::Point::new(line, line_end_col));
+
+        let line_text: String = snapshot.text_for_range(line_start..line_end).collect();
+
+        let preview_text = truncate_preview(&line_text, MAX_PREVIEW_CHARS);
+        let line_label: SharedString = format!("{}", line + 1).into();
+
+        matches.push(LineMatchData {
+            project_path: project_path.clone(),
+            file_key: file_key.clone(),
+            line,
+            line_label,
+            preview_text,
+        });
+
+        if matches.len() >= MAX_LINE_MATCHES {
+            break;
+        }
+    }
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    Some(FileMatchResult {
+        file_name,
+        parent_path,
+        file_key,
+        matches,
+    })
+}
 
 fn format_file_key(parent_path: &str, file_name: &str) -> SharedString {
     if parent_path.is_empty() {
@@ -100,7 +191,7 @@ pub struct QuickSearchDelegate {
     search_options: SearchOptions,
     items: Vec<QuickSearchItem>,
     visible_indices: Vec<usize>,
-    collapsed_files: HashSet<String>,
+    collapsed_files: HashSet<SharedString>,
     selected_index: usize,
     pending_search_id: usize,
     quick_search: WeakEntity<QuickSearchModal>,
@@ -265,12 +356,25 @@ impl QuickSearchModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &QuickSearch, window, cx| {
+            let selected_text = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .map(|editor| editor.query_suggestion(window, cx))
+                .filter(|query| !query.is_empty());
+
             let project = workspace.project().clone();
             let workspace_entity = cx.entity();
             let workspace_id = workspace_entity.entity_id();
             let weak_workspace = workspace_entity.downgrade();
             workspace.toggle_modal(window, cx, |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(
+                    weak_workspace,
+                    workspace_id,
+                    project,
+                    selected_text,
+                    window,
+                    cx,
+                )
             });
         });
         workspace.register_action(Self::toggle_case_sensitive);
@@ -359,6 +463,7 @@ impl QuickSearchModal {
         workspace: WeakEntity<Workspace>,
         workspace_id: EntityId,
         project: Entity<Project>,
+        initial_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -367,6 +472,8 @@ impl QuickSearchModal {
         let (last_query, last_options) = last_state
             .map(|(q, o)| (Some(q), o))
             .unwrap_or((None, SearchOptions::NONE));
+
+        let query = initial_query.or(last_query);
 
         let delegate = QuickSearchDelegate {
             workspace,
@@ -383,7 +490,7 @@ impl QuickSearchModal {
             file_count: 0,
             is_limited: false,
             is_searching: false,
-            current_query: last_query.clone().unwrap_or_default(),
+            current_query: query.clone().unwrap_or_default(),
             focus_handle: None,
             regex_error: None,
         };
@@ -394,8 +501,8 @@ impl QuickSearchModal {
                 .max_height(None)
                 .show_scrollbar(true);
             picker.delegate.focus_handle = Some(picker.focus_handle(cx));
-            if let Some(query) = last_query {
-                picker.set_query(query, window, cx);
+            if let Some(q) = query {
+                picker.set_query(q, window, cx);
             }
             picker
         });
@@ -448,10 +555,7 @@ impl QuickSearchModal {
         } else {
             let editor = cx.new(|cx| {
                 let mut editor = Editor::for_buffer(buffer.clone(), None, window, cx);
-                editor.set_read_only(true);
-                editor.set_input_enabled(false);
                 editor.set_show_gutter(true, cx);
-                editor.set_show_line_numbers(false, cx);
                 editor
             });
 
@@ -477,7 +581,7 @@ impl QuickSearchDelegate {
                     self.visible_indices.push(idx);
                 }
                 QuickSearchItem::LineMatch { file_key, .. } => {
-                    if !self.collapsed_files.contains(file_key.as_ref()) {
+                    if !self.collapsed_files.contains(file_key) {
                         self.visible_indices.push(idx);
                     }
                 }
@@ -486,11 +590,10 @@ impl QuickSearchDelegate {
     }
 
     fn toggle_file_collapsed(&mut self, file_key: &SharedString) {
-        let key = file_key.as_ref();
-        if self.collapsed_files.contains(key) {
-            self.collapsed_files.remove(key);
+        if self.collapsed_files.contains(file_key) {
+            self.collapsed_files.remove(file_key);
         } else {
-            self.collapsed_files.insert(key.to_string());
+            self.collapsed_files.insert(file_key.clone());
         }
         self.update_visible_indices();
     }
@@ -610,7 +713,7 @@ impl PickerDelegate for QuickSearchDelegate {
             self.is_searching = false;
             self.regex_error = None;
             let quick_search = self.quick_search.clone();
-            cx.defer_in(window, move |_, window, cx| {
+            cx.defer_in(window, move |_, _window, cx| {
                 if let Some(quick_search) = quick_search.upgrade() {
                     quick_search.update(cx, |qs, cx| {
                         qs.preview_editor = None;
@@ -618,7 +721,6 @@ impl PickerDelegate for QuickSearchDelegate {
                         cx.notify();
                     });
                 }
-                let _ = window;
             });
             cx.notify();
             return Task::ready(());
@@ -716,123 +818,36 @@ impl PickerDelegate for QuickSearchDelegate {
                             continue;
                         }
 
-                        let match_data_list = cx
-                            .read_entity(&buffer, |buf, cx| {
-                                let snapshot = buf.snapshot();
-                                let file = buf.file();
-                                let project_path = file.map(|f| ProjectPath {
-                                    worktree_id: f.worktree_id(cx),
-                                    path: f.path().clone(),
-                                });
+                        let file_result = cx
+                            .read_entity(&buffer, |buf, cx| extract_file_matches(buf, &ranges, cx))
+                            .ok()
+                            .flatten();
 
-                                let Some(project_path) = project_path else {
-                                    return Vec::new();
-                                };
+                        let Some(file_result) = file_result else {
+                            continue;
+                        };
 
-                                let (file_name, parent_path) =
-                                    extract_path_parts(&project_path.path);
-                                let file_key = format_file_key(&parent_path, &file_name);
+                        items.push(QuickSearchItem::FileHeader {
+                            file_name: file_result.file_name,
+                            parent_path: file_result.parent_path,
+                            file_key: file_result.file_key,
+                        });
+                        file_count += 1;
 
-                                let mut seen_lines = HashSet::default();
-                                let mut results = Vec::new();
-                                let mut preview_buffer = String::with_capacity(MAX_PREVIEW_CHARS);
-
-                                for range in &ranges {
-                                    let start_point = range.start.to_point(&snapshot);
-                                    let line = start_point.row;
-
-                                    if !seen_lines.insert(line) {
-                                        continue;
-                                    }
-
-                                    let line_start =
-                                        snapshot.point_to_offset(text::Point::new(line, 0));
-                                    let line_end_col = snapshot.line_len(line);
-                                    let line_end = snapshot
-                                        .point_to_offset(text::Point::new(line, line_end_col));
-
-                                    preview_buffer.clear();
-                                    let mut chars_remaining = MAX_PREVIEW_CHARS;
-                                    let mut started = false;
-
-                                    for chunk in snapshot.chunks(line_start..line_end, false) {
-                                        let text = if !started {
-                                            started = true;
-                                            chunk.text.trim_start()
-                                        } else {
-                                            chunk.text
-                                        };
-
-                                        if text.len() <= chars_remaining {
-                                            preview_buffer.push_str(text);
-                                            chars_remaining -= text.len();
-                                        } else {
-                                            for ch in text.chars() {
-                                                if chars_remaining == 0 {
-                                                    break;
-                                                }
-                                                preview_buffer.push(ch);
-                                                chars_remaining -= 1;
-                                            }
-                                            preview_buffer.push('…');
-                                            break;
-                                        }
-                                    }
-
-                                    let preview_text: SharedString =
-                                        preview_buffer.trim_end().to_string().into();
-
-                                    let line_label: SharedString = format!("{}", line + 1).into();
-
-                                    results.push((
-                                        project_path.clone(),
-                                        file_key.clone(),
-                                        line,
-                                        line_label,
-                                        preview_text,
-                                        file_name.clone(),
-                                        parent_path.clone(),
-                                    ));
-                                }
-
-                                results
-                            })
-                            .log_err()
-                            .unwrap_or_default();
-
-                        if !match_data_list.is_empty() {
-                            let first = &match_data_list[0];
-                            items.push(QuickSearchItem::FileHeader {
-                                file_name: first.5.clone(),
-                                parent_path: first.6.clone(),
-                                file_key: first.1.clone(),
+                        for match_data in file_result.matches {
+                            items.push(QuickSearchItem::LineMatch {
+                                project_path: match_data.project_path,
+                                file_key: match_data.file_key,
+                                buffer: buffer.clone(),
+                                line: match_data.line,
+                                line_label: match_data.line_label,
+                                preview_text: match_data.preview_text,
                             });
-                            file_count += 1;
 
-                            for (
-                                project_path,
-                                file_key,
-                                line,
-                                line_label,
-                                preview,
-                                _file_name,
-                                _parent_path,
-                            ) in match_data_list
-                            {
-                                items.push(QuickSearchItem::LineMatch {
-                                    project_path,
-                                    file_key,
-                                    buffer: buffer.clone(),
-                                    line,
-                                    line_label,
-                                    preview_text: preview,
-                                });
-
-                                line_match_count += 1;
-                                if line_match_count >= MAX_LINE_MATCHES {
-                                    is_limited = true;
-                                    break;
-                                }
+                            line_match_count += 1;
+                            if line_match_count >= MAX_LINE_MATCHES {
+                                is_limited = true;
+                                break;
                             }
                         }
 
@@ -1194,7 +1209,7 @@ mod tests {
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1227,7 +1242,7 @@ mod tests {
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1309,7 +1324,7 @@ mod tests {
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1354,7 +1369,7 @@ mod tests {
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1414,7 +1429,7 @@ mod tests {
             let weak_workspace = workspace.downgrade();
             let project = project.clone();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1439,7 +1454,7 @@ mod tests {
         let quick_search2 = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
             move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, window, cx)
+                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
             }
         });
 
@@ -1490,7 +1505,7 @@ mod tests {
             ];
 
             let mut visible_indices = Vec::new();
-            let mut collapsed_files: HashSet<String> = HashSet::default();
+            let mut collapsed_files: HashSet<SharedString> = HashSet::default();
 
             for (idx, item) in items.iter().enumerate() {
                 match item {
@@ -1498,7 +1513,7 @@ mod tests {
                         visible_indices.push(idx);
                     }
                     QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key.as_ref()) {
+                        if !collapsed_files.contains(file_key) {
                             visible_indices.push(idx);
                         }
                     }
@@ -1508,7 +1523,8 @@ mod tests {
             assert_eq!(visible_indices.len(), 3, "All 3 items should be visible");
             assert_eq!(visible_indices, vec![0, 1, 2]);
 
-            collapsed_files.insert("src/test.rs".to_string());
+            let file_key: SharedString = "src/test.rs".into();
+            collapsed_files.insert(file_key.clone());
             visible_indices.clear();
             for (idx, item) in items.iter().enumerate() {
                 match item {
@@ -1516,7 +1532,7 @@ mod tests {
                         visible_indices.push(idx);
                     }
                     QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key.as_ref()) {
+                        if !collapsed_files.contains(file_key) {
                             visible_indices.push(idx);
                         }
                     }
@@ -1530,7 +1546,7 @@ mod tests {
             );
             assert_eq!(visible_indices, vec![0]);
 
-            collapsed_files.remove("src/test.rs");
+            collapsed_files.remove(&file_key);
             visible_indices.clear();
             for (idx, item) in items.iter().enumerate() {
                 match item {
@@ -1538,7 +1554,7 @@ mod tests {
                         visible_indices.push(idx);
                     }
                     QuickSearchItem::LineMatch { file_key, .. } => {
-                        if !collapsed_files.contains(file_key.as_ref()) {
+                        if !collapsed_files.contains(file_key) {
                             visible_indices.push(idx);
                         }
                     }
