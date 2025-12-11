@@ -336,10 +336,6 @@ impl AnyAgentTool for ContextServerTool {
         cx.spawn(async move |_cx| {
             authorize.await?;
 
-            let Some(protocol) = server.client() else {
-                bail!("Context server not initialized");
-            };
-
             let arguments = if let serde_json::Value::Object(map) = input {
                 Some(map.into_iter().collect())
             } else {
@@ -351,11 +347,18 @@ impl AnyAgentTool for ContextServerTool {
                 tool_name,
                 arguments
             );
+
+            let Some(protocol) = server.client() else {
+                bail!("Context server not initialized");
+            };
+
+            // The transport layer handles OAuth re-authentication and session
+            // re-initialization internally, so we just make the request directly
             let response = protocol
                 .request::<context_server::types::requests::CallTool>(
                     context_server::types::CallToolParams {
-                        name: tool_name,
-                        arguments,
+                        name: tool_name.clone(),
+                        arguments: arguments.clone(),
                         meta: None,
                     },
                 )

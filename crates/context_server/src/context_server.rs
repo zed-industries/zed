@@ -1,5 +1,6 @@
 pub mod client;
 pub mod listener;
+pub mod oauth;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -67,8 +68,13 @@ impl ContextServer {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
                 log::info!("Using HTTP transport for {}", endpoint);
-                let transport =
-                    HttpTransport::new(http_client, endpoint.to_string(), headers, executor);
+                let transport = HttpTransport::new(
+                    id.to_string(),
+                    http_client,
+                    endpoint.clone(),
+                    headers,
+                    executor,
+                );
                 Arc::new(transport) as _
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),

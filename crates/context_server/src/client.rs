@@ -61,6 +61,7 @@ pub(crate) struct Client {
     executor: BackgroundExecutor,
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
+    transport_error: Arc<Mutex<Option<Arc<str>>>>,
     request_timeout: Option<Duration>,
 }
 
@@ -223,15 +224,22 @@ impl Client {
             input.or(err)
         });
 
+        let transport_error = Arc::new(Mutex::new(None));
         let output_task = cx.background_spawn({
             let transport = transport.clone();
-            Self::handle_output(
-                transport,
-                outbound_rx,
-                output_done_tx,
-                response_handlers.clone(),
-            )
-            .log_err()
+            let transport_error = transport_error.clone();
+            let response_handlers = response_handlers.clone();
+            async move {
+                Self::handle_output(
+                    transport,
+                    outbound_rx,
+                    output_done_tx,
+                    response_handlers,
+                    transport_error,
+                )
+                .await
+                .log_err()
+            }
         });
 
         Ok(Self {
@@ -245,6 +253,7 @@ impl Client {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
+            transport_error,
             request_timeout,
         })
     }
@@ -315,6 +324,7 @@ impl Client {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        transport_error: Arc<Mutex<Option<Arc<str>>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -324,7 +334,13 @@ impl Client {
         });
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message: {}", message);
-            transport.send(message).await?;
+            if let Err(err) = transport.send(message).await {
+                // Set transport_error BEFORE the deferred cleanup runs
+                // This ensures request_with sees the error instead of "connection closed"
+                log::error!("Transport error: {}", err);
+                *transport_error.lock() = Some(format!("{:#}", err).into());
+                return Err(err);
+            }
         }
         drop(output_done_tx);
         Ok(())
@@ -408,8 +424,8 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
-                match response? {
-                    Ok(response) => {
+                match response {
+                    Ok(Ok(response)) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
                             Err(anyhow!(error.message))
@@ -419,7 +435,15 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
-                    Err(_) => anyhow::bail!("cancelled")
+                    Ok(Err(_)) => anyhow::bail!("cancelled"),
+                    Err(_) => {
+                        // Oneshot was canceled - check if transport failed
+                        if let Some(transport_err) = self.transport_error.lock().as_ref() {
+                            anyhow::bail!("Connection failed: {}", transport_err);
+                        } else {
+                            anyhow::bail!("Request canceled: connection closed");
+                        }
+                    }
                 }
             }
             _ = cancel_fut => {
