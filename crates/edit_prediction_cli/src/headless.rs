@@ -16,7 +16,7 @@ use std::sync::Arc;
 use util::ResultExt as _;
 
 /// Headless subset of `workspace::AppState`.
-pub struct ZetaCliAppState {
+pub struct EpAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
@@ -25,7 +25,7 @@ pub struct ZetaCliAppState {
 }
 
 // TODO: dedupe with crates/eval/src/eval.rs
-pub fn init(cx: &mut App) -> ZetaCliAppState {
+pub fn init(cx: &mut App) -> EpAppState {
     let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
 
     let app_version = AppVersion::load(
@@ -112,7 +112,7 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
     prompt_store::init(cx);
     terminal_view::init(cx);
 
-    ZetaCliAppState {
+    EpAppState {
         languages,
         client,
         user_store,
