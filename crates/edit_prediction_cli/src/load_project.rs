@@ -34,7 +34,7 @@ pub async fn run_load_project(
         return;
     }
 
-    let _progress = progress.start(Step::LoadProject, &example.name);
+    let progress = progress.start(Step::LoadProject, &example.name);
 
     let project = setup_project(example, &app_state, &mut cx).await;
     let buffer_store = project
@@ -80,7 +80,7 @@ pub async fn run_load_project(
         })
         .unwrap();
 
-    _progress.set_info(language_name, InfoStyle::Normal);
+    progress.set_info(language_name, InfoStyle::Normal);
 
     example.buffer = Some(example_buffer);
     example.state = Some(ExampleState {
