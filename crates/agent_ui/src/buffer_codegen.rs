@@ -2,7 +2,6 @@ use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
-use anyhow::anyhow;
 use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
@@ -1115,26 +1114,6 @@ impl CodegenAlternative {
                 }
             };
 
-            // // Store the description if non-empty
-            // let description = if !input.description.trim().is_empty() {
-            //     Some(input.description.clone())
-            // } else {
-            //     None
-            // };
-
-            // // Apply the replacement text to the buffer and compute diff
-            // let batch_diff_task = codegen
-            //     .update(cx, |this, cx| {
-            //         this.model_explanation = description.map(Into::into);
-            //         let range = this.range.clone();
-            //         this.apply_edits(
-            //             std::iter::once((range, input.replacement_text)),
-            //             cx,
-            //         );
-            //         this.reapply_batch_diff(cx)
-            //     })
-            //     .ok();
-
             let chars_read_so_far = Arc::new(Mutex::new(0usize));
             let tool_to_text_and_message =
                 move |tool_use: LanguageModelToolUse| -> (Option<String>, Option<String>) {
@@ -1180,12 +1159,15 @@ impl CodegenAlternative {
                                 "rewrite_section" | "failure_message"
                             ) =>
                         {
+                            let is_complete = tool_use.is_input_complete;
                             let (text, message) = tool_to_text_and_message(tool_use);
-                            codegen
-                                .update(cx, |this, _cx| {
+                            // Only update the model explanation if the tool use is complete.
+                            // Otherwise the UI element bounces around as it's updated.
+                            if is_complete {
+                                let _ = codegen.update(cx, |this, _cx| {
                                     this.model_explanation = message.map(Into::into);
-                                })
-                                .expect("Update should happen");
+                                });
+                            }
                             first_text = text;
                             if first_text.is_some() {
                                 break;
@@ -1210,24 +1192,33 @@ impl CodegenAlternative {
                 }
             }
 
-            let text = total_text.lock().clone();
-            dbg!(text);
-
             let Some(first_text) = first_text else {
                 finish_with_status(CodegenStatus::Done, cx);
                 return;
             };
 
-            let move_last_token_usage = last_token_usage.clone();
+            let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
 
-            let (tx, mut rx) = futures::channel::mpsc::unbounded(); // TODO
+            cx.spawn({
+                let codegen = codegen.clone();
+                async move |cx| {
+                    while let Some(message) = message_rx.next().await {
+                        let _ = codegen.update(cx, |this, _cx| {
+                            this.model_explanation = message;
+                        });
+                    }
+                }
+            })
+            .detach();
+
+            let move_last_token_usage = last_token_usage.clone();
 
             let text_stream = Box::pin(futures::stream::once(async { Ok(first_text) }).chain(
                 completion_events.filter_map(move |e| {
                     let tool_to_text_and_message = tool_to_text_and_message.clone();
                     let last_token_usage = move_last_token_usage.clone();
                     let total_text = total_text.clone();
-                    let mut tx = tx.clone();
+                    let mut message_tx = message_tx.clone();
                     async move {
                         match e {
                             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
@@ -1236,8 +1227,12 @@ impl CodegenAlternative {
                                     "rewrite_section" | "failure_message"
                                 ) =>
                             {
+                                let is_complete = tool_use.is_input_complete;
                                 let (text, message) = tool_to_text_and_message(tool_use);
-                                let _ = tx.send(message.map(Into::into)).await; // TODO
+                                if is_complete {
+                                    // Again only send the message when complete to not get a bouncing UI element.
+                                    let _ = message_tx.send(message.map(Into::into)).await;
+                                }
                                 text.map(Ok)
                             }
                             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
@@ -1264,18 +1259,6 @@ impl CodegenAlternative {
                 stream: text_stream,
                 last_token_usage,
             };
-
-            cx.spawn({
-                let codegen = codegen.clone();
-                async move |cx| {
-                    while let Some(message) = rx.next().await {
-                        let _ = codegen.update(cx, |this, _cx| {
-                            this.model_explanation = message;
-                        });
-                    }
-                }
-            })
-            .detach();
 
             let Some(task) = codegen
                 .update(cx, move |codegen, cx| {
