@@ -1532,6 +1532,12 @@ fn up_down_buffer_rows(
     mut times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
+    // Return early if we're already on the first/last row of the buffer and
+    // trying to move further in that direction.
+    if (point.row() == 0 && times < 0) || (point.row() == map.max_point().row() && times > 0) {
+        return (point, goal);
+    }
+
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
 
     while map.is_folded_buffer_header(point.row()) {
