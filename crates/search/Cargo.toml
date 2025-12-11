@@ -55,3 +55,7 @@ lsp.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
+
