@@ -2325,8 +2325,6 @@ impl GitRepository for RealGitRepository {
                 .await
                 .lines()
                 .any(|line| line.trim().starts_with("hook "))
-            // FIXME
-            || true
             {
                 let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
                 if hook_abs_path.is_file() {
