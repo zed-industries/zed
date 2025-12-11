@@ -680,6 +680,10 @@ actions!(
         ReloadFile,
         /// Rewraps text to fit within the preferred line length.
         Rewrap,
+        /// Rotates selections or lines backward.
+        RotateSelectionsBackward,
+        /// Rotates selections or lines forward.
+        RotateSelectionsForward,
         /// Runs flycheck diagnostics.
         RunFlycheck,
         /// Scrolls the cursor to the bottom of the viewport.

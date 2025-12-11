@@ -1,106 +1,136 @@
-use anyhow::{Result, anyhow};
-use futures::channel::mpsc;
-use futures::{FutureExt as _, StreamExt as _};
+use crate::{
+    example::{Example, ExampleContext},
+    headless::EpAppState,
+    load_project::run_load_project,
+};
+use anyhow::Result;
+use collections::HashSet;
+use edit_prediction::{DebugEvent, EditPredictionStore};
+use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity, Task};
-use language::{Buffer, LanguageId, LanguageNotFound, LanguageServerId, ParseStatus};
-use project::lsp_store::OpenLspBufferHandle;
-use project::{Project, ProjectPath, Worktree};
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
-use util::rel_path::RelPath;
+use language::{Buffer, LanguageNotFound};
+use project::Project;
+use std::{sync::Arc, time::Duration};
 
-pub fn open_buffer(
-    project: Entity<Project>,
-    worktree: Entity<Worktree>,
-    path: Arc<RelPath>,
-    cx: &AsyncApp,
-) -> Task<Result<Entity<Buffer>>> {
-    cx.spawn(async move |cx| {
-        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-            worktree_id: worktree.id(),
-            path,
-        })?;
+pub async fn run_context_retrieval(
+    example: &mut Example,
+    app_state: Arc<EpAppState>,
+    mut cx: AsyncApp,
+) {
+    if example.context.is_some() {
+        return;
+    }
 
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?;
+    run_load_project(example, app_state.clone(), cx.clone()).await;
 
-        let mut parse_status = buffer.read_with(cx, |buffer, _cx| buffer.parse_status())?;
-        while *parse_status.borrow() != ParseStatus::Idle {
-            parse_status.changed().await?;
+    let state = example.state.as_ref().unwrap();
+    let project = state.project.clone();
+
+    let _lsp_handle = project
+        .update(&mut cx, |project, cx| {
+            project.register_buffer_with_language_servers(&state.buffer, cx)
+        })
+        .unwrap();
+
+    wait_for_language_server_to_start(example, &project, &state.buffer, &mut cx).await;
+
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
+        .unwrap();
+
+    let mut events = ep_store
+        .update(&mut cx, |store, cx| {
+            store.register_buffer(&state.buffer, &project, cx);
+            store.set_use_context(true);
+            store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
+            store.debug_info(&project, cx)
+        })
+        .unwrap();
+
+    while let Some(event) = events.next().await {
+        match event {
+            DebugEvent::ContextRetrievalFinished(_) => {
+                break;
+            }
+            _ => {}
         }
+    }
 
-        Ok(buffer)
-    })
+    let context_files = ep_store
+        .update(&mut cx, |store, cx| store.context_for_project(&project, cx))
+        .unwrap();
+
+    example.context = Some(ExampleContext {
+        files: context_files,
+    });
 }
 
-pub async fn open_buffer_with_language_server(
-    project: Entity<Project>,
-    worktree: Entity<Worktree>,
-    path: Arc<RelPath>,
-    ready_languages: &mut HashSet<LanguageId>,
+async fn wait_for_language_server_to_start(
+    example: &Example,
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Result<(OpenLspBufferHandle, LanguageServerId, Entity<Buffer>)> {
-    let buffer = open_buffer(project.clone(), worktree, path.clone(), cx).await?;
-
-    let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
-        (
-            project.register_buffer_with_language_servers(&buffer, cx),
-            project.path_style(cx),
-        )
-    })?;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
+) {
+    let language_registry = project
+        .read_with(cx, |project, _| project.languages().clone())
+        .unwrap();
     let result = language_registry
-        .load_language_for_file_path(path.as_std_path())
+        .load_language_for_file_path(&example.cursor_path)
         .await;
 
     if let Err(error) = result
         && !error.is::<LanguageNotFound>()
     {
-        anyhow::bail!(error);
+        panic!("Failed to load language for file path: {}", error);
     }
 
-    let Some(language_id) = buffer.read_with(cx, |buffer, _cx| {
-        buffer.language().map(|language| language.id())
-    })?
+    let Some(language_id) = buffer
+        .read_with(cx, |buffer, _cx| {
+            buffer.language().map(|language| language.id())
+        })
+        .unwrap()
     else {
-        return Err(anyhow!("No language for {}", path.display(path_style)));
+        panic!("No language for {:?}", example.cursor_path);
     };
 
-    let log_prefix = format!("{} | ", path.display(path_style));
+    let mut ready_languages = HashSet::default();
+    let log_prefix = format!("{} | ", example.name);
     if !ready_languages.contains(&language_id) {
-        wait_for_lang_server(&project, &buffer, log_prefix, cx).await?;
+        wait_for_lang_server(&project, &buffer, log_prefix, cx)
+            .await
+            .unwrap();
         ready_languages.insert(language_id);
     }
 
-    let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store())?;
+    let lsp_store = project
+        .read_with(cx, |project, _cx| project.lsp_store())
+        .unwrap();
 
     // hacky wait for buffer to be registered with the language server
     for _ in 0..100 {
-        let Some(language_server_id) = lsp_store.update(cx, |lsp_store, cx| {
-            buffer.update(cx, |buffer, cx| {
-                lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
-                    .next()
-                    .map(|(_, language_server)| language_server.server_id())
+        if lsp_store
+            .update(cx, |lsp_store, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .language_servers_for_local_buffer(&buffer, cx)
+                        .next()
+                        .map(|(_, language_server)| language_server.server_id())
+                })
             })
-        })?
-        else {
+            .unwrap()
+            .is_some()
+        {
+            return;
+        } else {
             cx.background_executor()
                 .timer(Duration::from_millis(10))
                 .await;
-            continue;
-        };
-
-        return Ok((lsp_open_handle, language_server_id, buffer));
+        }
     }
 
-    return Err(anyhow!("No language server found for buffer"));
+    panic!("No language server found for buffer");
 }
 
-// TODO: Dedupe with similar function in crates/eval/src/instance.rs
 pub fn wait_for_lang_server(
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,

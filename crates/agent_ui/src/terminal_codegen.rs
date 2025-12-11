@@ -135,6 +135,12 @@ impl TerminalCodegen {
         cx.notify();
     }
 
+    pub fn completion(&self) -> Option<String> {
+        self.transaction
+            .as_ref()
+            .map(|transaction| transaction.completion.clone())
+    }
+
     pub fn stop(&mut self, cx: &mut Context<Self>) {
         self.status = CodegenStatus::Done;
         self.generation = Task::ready(());
@@ -167,27 +173,32 @@ pub const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {
+    completion: String,
     terminal: Entity<Terminal>,
 }
 
 impl TerminalTransaction {
     pub fn start(terminal: Entity<Terminal>) -> Self {
-        Self { terminal }
+        Self {
+            completion: String::new(),
+            terminal,
+        }
     }
 
     pub fn push(&mut self, hunk: String, cx: &mut App) {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = Self::sanitize_input(hunk);
+        self.completion.push_str(&input);
         self.terminal
             .update(cx, |terminal, _| terminal.input(input.into_bytes()));
     }
 
-    pub fn undo(&self, cx: &mut App) {
+    pub fn undo(self, cx: &mut App) {
         self.terminal
             .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.as_bytes()));
     }
 
-    pub fn complete(&self, cx: &mut App) {
+    pub fn complete(self, cx: &mut App) {
         self.terminal
             .update(cx, |terminal, _| terminal.input(CARRIAGE_RETURN.as_bytes()));
     }
