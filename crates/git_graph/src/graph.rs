@@ -126,7 +126,6 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
             let parts: Vec<&str> = line.split('\x1E').collect();
 
             let sha = parts.get(0)?;
-            dbg!(sha);
             let author_name = parts.get(1)?;
             let author_email = parts.get(2)?;
             // todo! do we use the author or the commit timestamp
@@ -150,7 +149,8 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
                 ref_names: parts
                     .get(7)
                     .filter(|ref_name| !ref_name.is_empty())
-                    .map(|ref_names| ref_names.split(", ").map(ToString::to_string).collect())?,
+                    .map(|ref_names| ref_names.split(", ").map(ToString::to_string).collect())
+                    .unwrap_or_default(),
             })
         })
         .collect::<Vec<_>>())
