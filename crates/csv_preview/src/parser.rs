@@ -1,6 +1,6 @@
 use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Context, Entity, Subscription, Task};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{CsvPreviewView, table_data::TableData};
 
