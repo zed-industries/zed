@@ -805,6 +805,10 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
+    fn is_read_only(&self, cx: &App) -> bool {
+        self.read_only(cx)
+    }
+
     fn has_deleted_file(&self, cx: &App) -> bool {
         self.buffer().read(cx).read(cx).has_deleted_file()
     }

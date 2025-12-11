@@ -97,6 +97,12 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as hidden files. You can hide hidden files in the project panel.
     /// Default: ["**/.*"]
     pub hidden_files: Option<Vec<String>>,
+
+    /// Treat the files matching these globs as read-only. These files can be opened and viewed,
+    /// but cannot be edited. This is useful for generated files, build outputs, or files from
+    /// external dependencies that should not be modified directly.
+    /// Default: []
+    pub read_only_files: Option<Vec<String>>,
 }
 
 #[with_fallible_options]
