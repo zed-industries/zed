@@ -38,11 +38,11 @@ pub enum Step {
 impl Step {
     pub fn label(&self) -> &'static str {
         match self {
-            Step::LoadProject => "Loading",
+            Step::LoadProject => "Load",
             Step::Context => "Context",
-            Step::FormatPrompt => "Formatting",
-            Step::Predict => "Predicting",
-            Step::Score => "Scoring",
+            Step::FormatPrompt => "Format",
+            Step::Predict => "Predict",
+            Step::Score => "Score",
         }
     }
 
@@ -68,12 +68,14 @@ struct InProgressTask {
     step: Step,
     started_at: Instant,
     substatus: Option<String>,
+    info: Option<String>,
 }
 
 struct CompletedTask {
     step: Step,
     example_name: String,
     duration: Duration,
+    info: Option<String>,
 }
 
 struct ProgressInner {
@@ -81,6 +83,7 @@ struct ProgressInner {
     in_progress: HashMap<String, InProgressTask>,
     is_tty: bool,
     terminal_width: usize,
+    max_example_name_len: usize,
 }
 
 pub struct Progress {
@@ -95,6 +98,7 @@ impl Progress {
                 in_progress: HashMap::new(),
                 is_tty: std::io::stderr().is_terminal(),
                 terminal_width: get_terminal_width(),
+                max_example_name_len: 0,
             }),
         })
     }
@@ -105,12 +109,15 @@ impl Progress {
 
             Self::clear_line(&inner);
 
+            inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
+
             inner.in_progress.insert(
                 example_name.to_string(),
                 InProgressTask {
                     step,
                     started_at: Instant::now(),
                     substatus: None,
+                    info: None,
                 },
             );
 
@@ -134,6 +141,7 @@ impl Progress {
                     step: task.step,
                     example_name: example_name.to_string(),
                     duration: task.started_at.elapsed(),
+                    info: task.info.clone(),
                 });
 
                 Self::clear_line(&inner);
@@ -156,21 +164,52 @@ impl Progress {
 
     fn print_completed(inner: &ProgressInner, task: &CompletedTask) {
         let duration = format_duration(task.duration);
+        let name_width = inner.max_example_name_len;
+        let right_margin = 4;
 
         if inner.is_tty {
             let reset = "\x1b[0m";
             let bold = "\x1b[1m";
             let dim = "\x1b[2m";
 
-            eprintln!(
-                "{bold}{color}{label:>12}{reset} {name} {dim}({duration}){reset}",
+            let yellow = "\x1b[33m";
+            let info_part = task
+                .info
+                .as_ref()
+                .map(|s| {
+                    if s.starts_with("0 ") {
+                        format!(" {dim}│{reset} {yellow}{s}{reset}")
+                    } else {
+                        format!(" {dim}│{reset} {s}")
+                    }
+                })
+                .unwrap_or_default();
+
+            let prefix = format!(
+                "{bold}{color}{label:>12}{reset} {name:<name_width$}{info_part}",
                 color = task.step.color_code(),
                 label = task.step.label(),
                 name = task.example_name,
             );
+
+            let duration_with_margin = format!("{duration} ");
+            let padding_needed = inner
+                .terminal_width
+                .saturating_sub(right_margin)
+                .saturating_sub(duration_with_margin.len())
+                .saturating_sub(strip_ansi_len(&prefix));
+            let padding = " ".repeat(padding_needed);
+
+            eprintln!("{prefix}{padding}{dim}{duration_with_margin}{reset}");
         } else {
+            let info_part = task
+                .info
+                .as_ref()
+                .map(|s| format!(" | {}", s))
+                .unwrap_or_default();
+
             eprintln!(
-                "{label:>12} {name} ({duration})",
+                "{label:>12} {name:<name_width$}{info_part} {duration}",
                 label = task.step.label(),
                 name = task.example_name,
             );
@@ -266,6 +305,13 @@ impl Progress {
         }
     }
 
+    pub fn set_info(&self, example_name: &str, info: impl Into<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(task) = inner.in_progress.get_mut(example_name) {
+            task.info = Some(info.into());
+        }
+    }
+
     pub fn clear(&self) {
         let inner = self.inner.lock().unwrap();
         Self::clear_line(&inner);
@@ -274,6 +320,8 @@ impl Progress {
     pub fn batch_separator(&self, start_index: usize, end_index: usize, total_examples: usize) {
         let inner = self.inner.lock().unwrap();
         Self::clear_line(&inner);
+
+        eprintln!();
 
         let reset = "\x1b[0m";
         let dim = "\x1b[2m";
@@ -296,7 +344,26 @@ impl Progress {
         } else {
             eprintln!("{left_line}{label}{right_line}");
         }
+
+        eprintln!();
     }
+}
+
+fn strip_ansi_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            len += 1;
+        }
+    }
+    len
 }
 
 fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {

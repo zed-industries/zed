@@ -63,6 +63,9 @@ pub async fn run_context_retrieval(
         .update(&mut cx, |store, cx| store.context_for_project(&project, cx))
         .unwrap();
 
+    let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
+    progress.set_info(&example.name, format!("{} excerpts", excerpt_count));
+
     example.context = Some(ExampleContext {
         files: context_files,
     });
