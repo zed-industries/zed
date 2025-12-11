@@ -30,7 +30,6 @@ file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
-log.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
