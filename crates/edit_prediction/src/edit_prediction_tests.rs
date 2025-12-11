@@ -84,9 +84,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -140,9 +140,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(
             prediction,
@@ -158,9 +158,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer2, &project, cx)
+            .prediction_at(&buffer2, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -344,10 +344,10 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -404,10 +404,10 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -469,10 +469,10 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -492,11 +492,11 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // second replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -551,10 +551,10 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -586,11 +586,11 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // first is preferred over second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -657,11 +657,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -675,11 +675,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still second, since first was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -768,11 +768,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -786,11 +786,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still first, since second was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -804,11 +804,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // third completes and replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
