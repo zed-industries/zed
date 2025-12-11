@@ -3,12 +3,9 @@ use edit_prediction::{
     sweep_ai::SWEEP_CREDENTIALS_URL,
 };
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Action as _, Entity, ScrollHandle, WindowBounds, WindowOptions, prelude::*};
+use gpui::{Entity, ScrollHandle, WindowBounds, WindowOptions, prelude::*};
 use language_models::provider::mistral::CODESTRAL_API_URL;
-use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar,
-    prelude::*,
-};
+use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar, prelude::*};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -382,47 +379,49 @@ pub(crate) fn render_github_copilot_provider(
                 .on_click(move |_, window, cx| {
                     let copilot = copilot::Copilot::global(cx);
                     // todo! hide whole section if none
-                    if let Some(copilot) = copilot.as_ref() {
+                    if let Some(copilot) = copilot {
                         if matches!(copilot.read(cx).status(), copilot::Status::Disabled) {
                             copilot.update(cx, |copilot, cx| {
                                 copilot.start_copilot(false, true, cx);
-                                copilot.sign_in(cx);
                             });
                         }
-                        cx.open_window(
-                            WindowOptions {
-                                kind: gpui::WindowKind::PopUp,
-                                window_bounds: Some(WindowBounds::Windowed(gpui::bounds(
-                                    window.window_bounds().get_bounds().center(),
-                                    gpui::size(px(200.), px(400.)),
-                                ))),
-                                is_resizable: false,
-                                is_movable: true,
-                                ..Default::default()
-                            },
-                            |window, cx| {
-                                cx.new(|cx| copilot::CopilotCodeVerification::new(&copilot, cx))
-                            },
-                        )
-                        .unwrap();
-                    }
+                        let starting_task =
+                            if let copilot::Status::Starting { task } = copilot.read(cx).status() {
+                                Some(task)
+                            } else {
+                                None
+                            };
 
-                    // if let Some(original_window) = settings_window.read(cx).original_window {
-                    //     original_window.update(cx, |workspace, window, cx| {
-                    //         window.activate_window();
-                    //         window.dispatch_action(copilot::SignIn.boxed_clone(), cx);
-                    //     });
-                    // }
+                        let window_size = px(400.);
+                        let window_bounds = WindowBounds::Windowed(gpui::bounds(
+                            window.window_bounds().get_bounds().center(),
+                            gpui::size(window_size, window_size),
+                        ));
+                        cx.spawn(async move |cx| {
+                            if let Some(task) = starting_task {
+                                task.await;
+                            }
+                            copilot
+                                .update(cx, |copilot, cx| {
+                                    copilot.sign_in(cx).detach();
+                                })
+                                .expect("todo!");
+                            cx.open_window(
+                                WindowOptions {
+                                    kind: gpui::WindowKind::PopUp,
+                                    window_bounds: Some(window_bounds),
+                                    is_resizable: false,
+                                    is_movable: true,
+                                    ..Default::default()
+                                },
+                                |_, cx| {
+                                    cx.new(|cx| copilot::CopilotCodeVerification::new(&copilot, cx))
+                                },
+                            )
+                            .expect("todo!");
+                        })
+                        .detach();
+                    }
                 }),
         )
-}
-
-struct CopilotWindow {}
-
-impl Render for CopilotWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        return div()
-            .size_full()
-            .child(Label::new("GitHub Copilot Sign In"));
-    }
 }

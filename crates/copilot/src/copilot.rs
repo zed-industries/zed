@@ -47,7 +47,10 @@ use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
-pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_and_sign_in};
+pub use crate::sign_in::{
+    ConfigurationMode, ConfigurationView, CopilotCodeVerification, initiate_sign_in,
+    reinstall_and_sign_in,
+};
 
 actions!(
     copilot,
