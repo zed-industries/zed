@@ -3,15 +3,15 @@ mod graph;
 mod graph_rendering;
 
 use anyhow::Context as _;
-use commit_data::{CommitEntry, run_git_command};
+use git;
 use git_ui::commit_view::CommitView;
 use gpui::{
     Action, App, ClickEvent, ClipboardItem, Context, Corner, DismissEvent, ElementId, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListAlignment,
-    ListState, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
-    Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, ListAlignment, ListState,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list, px,
 };
-use graph_rendering::{BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell};
+use menu;
 use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
@@ -25,40 +25,67 @@ use workspace::ModalView;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
 
-use crate::graph::GraphCommit;
+use commit_data::{CommitEntry, run_git_command};
+use graph_rendering::{
+    BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
+};
 
 actions!(
     git_graph,
     [
+        /// Opens the Git Graph panel.
         OpenGitGraph,
+        /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Refreshes the git graph data.
         RefreshGraph,
+        /// Checks out the selected commit or branch.
         CheckoutCommit,
+        /// Copies the SHA of the selected commit to clipboard.
         CopySha,
+        /// Copies the branch name to clipboard.
         CopyBranchName,
+        /// Creates a new branch at the selected commit.
         CreateBranch,
+        /// Creates a new tag at the selected commit.
         CreateTag,
+        /// Renames the selected branch.
         RenameBranch,
+        /// Deletes the selected local branch.
         DeleteBranch,
+        /// Deletes the selected remote branch.
         DeleteRemoteBranch,
+        /// Reverts the selected commit.
         RevertCommit,
+        /// Cherry-picks the selected commit onto the current branch.
         CherryPickCommit,
+        /// Merges the selected branch into the current branch.
         MergeIntoCurrent,
+        /// Pulls the selected branch into the current branch.
         PullIntoCurrent,
+        /// Rebases the current branch onto the selected commit.
         RebaseOnto,
+        /// Soft resets to the selected commit (keeps changes staged).
         ResetSoft,
+        /// Mixed resets to the selected commit (keeps changes unstaged).
         ResetMixed,
+        /// Hard resets to the selected commit (discards all changes).
         ResetHard,
+        /// Pushes the current branch to remote.
         PushBranch,
+        /// Pulls the current branch from remote.
         PullBranch,
+        /// Fetches all remotes.
         FetchAll,
+        /// Stashes current changes.
         StashChanges,
+        /// Pops the most recent stash.
         StashPop,
     ]
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
             let project = workspace.project().clone();
             let workspace_handle = workspace.weak_handle();
@@ -960,18 +987,441 @@ impl GitGraph {
         .detach();
     }
 
+    fn create_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let sha = commit.sha.clone();
+        let short_sha = commit.short_sha.clone();
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let git_graph = cx.entity().downgrade();
+        let default_name = format!("v{}", short_sha);
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                InputModal::new(
+                    InputModalKind::CreateTag { sha },
+                    "Enter tag name",
+                    &default_name,
+                    work_dir,
+                    git_graph,
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
+    fn merge_into_current(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let sha = commit.sha.clone();
+        let refs = commit.refs.clone();
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let target = refs
+            .iter()
+            .find(|r| !r.starts_with("tag:") && !r.contains("HEAD"))
+            .cloned()
+            .unwrap_or(sha);
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["merge", &target]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Merge failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn pull_into_current(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let refs = commit.refs.clone();
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let remote_branch = refs.iter().find(|r| r.starts_with("origin/")).cloned();
+
+        let Some(remote_ref) = remote_branch else {
+            self.error = Some("No remote branch found for this commit".into());
+            cx.notify();
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(
+                &work_dir,
+                &["pull", "origin", remote_ref.trim_start_matches("origin/")],
+            )
+            .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Pull failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn copy_branch_name(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+
+        let branch_name = commit
+            .refs
+            .iter()
+            .find(|r| r.starts_with("HEAD -> "))
+            .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
+            .or_else(|| {
+                commit
+                    .refs
+                    .iter()
+                    .find(|r| {
+                        !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
+                    })
+                    .cloned()
+            })
+            .or_else(|| {
+                commit
+                    .refs
+                    .iter()
+                    .find(|r| r.starts_with("origin/"))
+                    .cloned()
+            });
+
+        match branch_name {
+            Some(name) => {
+                self.error = None;
+                cx.write_to_clipboard(ClipboardItem::new_string(name));
+            }
+            None => {
+                self.error = Some("No branch found for this commit".into());
+            }
+        }
+        cx.notify();
+    }
+
+    fn rename_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let branch_name = commit
+            .refs
+            .iter()
+            .find(|r| r.starts_with("HEAD -> "))
+            .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
+            .or_else(|| {
+                commit
+                    .refs
+                    .iter()
+                    .find(|r| {
+                        !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
+                    })
+                    .cloned()
+            });
+
+        let Some(old_name) = branch_name else {
+            self.error = Some("No local branch found to rename".into());
+            cx.notify();
+            return;
+        };
+
+        let git_graph = cx.entity().downgrade();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                InputModal::new(
+                    InputModalKind::RenameBranch {
+                        old_name: old_name.clone(),
+                    },
+                    "Enter new branch name",
+                    &old_name,
+                    work_dir,
+                    git_graph,
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
+    fn delete_branch(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let branch_name = commit
+            .refs
+            .iter()
+            .find(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
+            .cloned();
+
+        let Some(branch) = branch_name else {
+            self.error = Some("No local branch found to delete".into());
+            cx.notify();
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["branch", "-d", &branch]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Delete branch failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn delete_remote_branch(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let remote_branch = commit
+            .refs
+            .iter()
+            .find(|r| r.starts_with("origin/"))
+            .cloned();
+
+        let Some(remote_ref) = remote_branch else {
+            self.error = Some("No remote branch found to delete".into());
+            cx.notify();
+            return;
+        };
+
+        let branch = remote_ref.trim_start_matches("origin/").to_string();
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["push", "origin", "--delete", &branch]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Delete remote branch failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn rebase_onto(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = self.get_selected_commit() else {
+            return;
+        };
+        let sha = commit.sha.clone();
+        let refs = commit.refs.clone();
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        let target = refs
+            .iter()
+            .find(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
+            .cloned()
+            .unwrap_or(sha);
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["rebase", &target]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Rebase failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn push_branch(&mut self, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["push"]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Push failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn pull_branch(&mut self, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["pull"]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Pull failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn fetch_all(&mut self, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["fetch", "--all"]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Fetch failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn stash_changes(&mut self, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(
+                &work_dir,
+                &["stash", "push", "-m", "Stashed from Git Graph"],
+            )
+            .await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Stash failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    fn stash_pop(&mut self, cx: &mut Context<Self>) {
+        let Some(work_dir) = self.work_dir.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let result = run_git_command(&work_dir, &["stash", "pop"]).await;
+
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.error = None;
+                    this.load_data(cx);
+                }
+                Err(e) => {
+                    this.error = Some(format!("Stash pop failed: {}", e).into());
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     fn load_data(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
-        // todo!: Is this the best worktree to use?
+        self.loading = true;
+        self.error = None;
         let first_visible_worktree = project.read_with(cx, |project, cx| {
             project
                 .visible_worktrees(cx)
                 .next()
                 .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
         });
-
-        self.loading = true;
-        self.error = None;
 
         self._load_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
             let Some(worktree_path) = first_visible_worktree
@@ -989,7 +1439,6 @@ impl GitGraph {
                 match result {
                     Ok(commits) => {
                         this.graph.add_commits(commits);
-
                         let commit_count = this.graph.commits.len();
                         this.commits = this.graph.commits.clone();
                         this.max_lanes = this.graph.max_lanes;
@@ -999,131 +1448,149 @@ impl GitGraph {
                     Err(e) => {
                         this.error = Some(format!("{:?}", e).into());
                     }
-                }
+                };
+
                 cx.notify();
             })
             .log_err();
         }));
     }
 
-    fn render_list_item(
+    fn handle_checkout_commit(
         &mut self,
-        idx: usize,
-        _window: &mut Window,
+        _: &CheckoutCommit,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let row_height = self.row_height;
-        let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
-
-        self.render_commit_row(idx, row_height, graph_width, cx)
+    ) {
+        self.checkout_commit(window, cx);
     }
 
-    fn render_commit_row(
-        &self,
-        idx: usize,
-        row_height: Pixels,
-        graph_width: Pixels,
-        cx: &Context<Self>,
-    ) -> gpui::AnyElement {
-        let Some(commit) = self.commits.get(idx) else {
-            return div().into_any_element();
-        };
+    fn handle_open_commit_view(
+        &mut self,
+        _: &OpenCommitView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_commit_view(None, window, cx);
+    }
 
-        let subject: SharedString = commit.subject.clone().into();
-        let author_name: SharedString = commit.author_name.clone().into();
-        let short_sha: SharedString = commit.short_sha.clone().into();
-        let formatted_time: SharedString = commit.formatted_time.clone().into();
-        let refs = commit.refs.clone();
-        let lane = commit.lane;
-        let lines = commit.lines.clone();
-        let color_idx = commit.color_idx;
+    fn handle_copy_sha(&mut self, _: &CopySha, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy_sha(cx);
+    }
 
-        let is_selected = self.expanded_commit == Some(idx);
-        let bg = if is_selected {
-            cx.theme().colors().ghost_element_selected
-        } else {
-            cx.theme().colors().editor_background
-        };
-        let hover_bg = cx.theme().colors().ghost_element_hover;
+    fn handle_create_branch(
+        &mut self,
+        _: &CreateBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_branch(window, cx);
+    }
 
-        let date_width = px(140.0);
-        let author_width = px(120.0);
-        let commit_width = px(80.0);
+    fn handle_cherry_pick_commit(
+        &mut self,
+        _: &CherryPickCommit,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cherry_pick_commit(cx);
+    }
 
-        h_flex()
-            .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
-            .w_full()
-            .px_2()
-            .gap_4()
-            .h(row_height)
-            .min_h(row_height)
-            .flex_shrink_0()
-            .bg(bg)
-            .hover(move |style| style.bg(hover_bg))
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                this.selected_commit = Some(idx);
-                this.toggle_commit_expansion(idx, cx);
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_context_menu(event.position, idx, window, cx);
-                }),
-            )
-            .child(
-                div()
-                    .w(graph_width)
-                    .h_full()
-                    .flex_shrink_0()
-                    .child(render_graph_cell(
-                        lane,
-                        lines,
-                        color_idx,
-                        row_height,
-                        graph_width,
-                    )),
-            )
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap_2()
-                    .overflow_hidden()
-                    .items_center()
-                    .when(!refs.is_empty(), |el| {
-                        el.child(self.render_badges(&refs, color_idx, idx, cx))
-                    })
-                    .child(
-                        div()
-                            .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .tooltip(Tooltip::text(subject.clone()))
-                            .child(Label::new(subject).single_line()),
-                    ),
-            )
-            .child(
-                div()
-                    .w(date_width)
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(Label::new(formatted_time).color(Color::Muted).single_line()),
-            )
-            .child(
-                div()
-                    .w(author_width)
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .child(Label::new(author_name).color(Color::Muted).single_line()),
-            )
-            .child(
-                div()
-                    .w(commit_width)
-                    .flex_shrink_0()
-                    .child(Label::new(short_sha).color(Color::Accent).single_line()),
-            )
-            .into_any_element()
+    fn handle_revert_commit(&mut self, _: &RevertCommit, _: &mut Window, cx: &mut Context<Self>) {
+        self.revert_commit(cx);
+    }
+
+    fn handle_reset_soft(&mut self, _: &ResetSoft, _: &mut Window, cx: &mut Context<Self>) {
+        self.reset_soft(cx);
+    }
+
+    fn handle_reset_hard(&mut self, _: &ResetHard, _: &mut Window, cx: &mut Context<Self>) {
+        self.reset_hard(cx);
+    }
+
+    fn handle_refresh_graph(&mut self, _: &RefreshGraph, _: &mut Window, cx: &mut Context<Self>) {
+        self.load_data(cx);
+    }
+
+    fn handle_reset_mixed(&mut self, _: &ResetMixed, _: &mut Window, cx: &mut Context<Self>) {
+        self.reset_mixed(cx);
+    }
+
+    fn handle_create_tag(&mut self, _: &CreateTag, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_tag(window, cx);
+    }
+
+    fn handle_merge_into_current(
+        &mut self,
+        _: &MergeIntoCurrent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.merge_into_current(cx);
+    }
+
+    fn handle_pull_into_current(
+        &mut self,
+        _: &PullIntoCurrent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pull_into_current(cx);
+    }
+
+    fn handle_copy_branch_name(
+        &mut self,
+        _: &CopyBranchName,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.copy_branch_name(cx);
+    }
+
+    fn handle_rename_branch(
+        &mut self,
+        _: &RenameBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rename_branch(window, cx);
+    }
+
+    fn handle_delete_branch(&mut self, _: &DeleteBranch, _: &mut Window, cx: &mut Context<Self>) {
+        self.delete_branch(cx);
+    }
+
+    fn handle_delete_remote_branch(
+        &mut self,
+        _: &DeleteRemoteBranch,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_remote_branch(cx);
+    }
+
+    fn handle_rebase_onto(&mut self, _: &RebaseOnto, _: &mut Window, cx: &mut Context<Self>) {
+        self.rebase_onto(cx);
+    }
+
+    fn handle_push_branch(&mut self, _: &PushBranch, _: &mut Window, cx: &mut Context<Self>) {
+        self.push_branch(cx);
+    }
+
+    fn handle_pull_branch(&mut self, _: &PullBranch, _: &mut Window, cx: &mut Context<Self>) {
+        self.pull_branch(cx);
+    }
+
+    fn handle_fetch_all(&mut self, _: &FetchAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.fetch_all(cx);
+    }
+
+    fn handle_stash_changes(&mut self, _: &StashChanges, _: &mut Window, cx: &mut Context<Self>) {
+        self.stash_changes(cx);
+    }
+
+    fn handle_stash_pop(&mut self, _: &StashPop, _: &mut Window, cx: &mut Context<Self>) {
+        self.stash_pop(cx);
     }
 
     fn render_badges(
@@ -1287,6 +1754,441 @@ impl GitGraph {
                     }),
             )
     }
+
+    fn render_list_item(
+        &mut self,
+        idx: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let row_height = self.row_height;
+        let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
+        let date_width = px(140.0);
+        let author_width = px(120.0);
+        let commit_width = px(80.0);
+
+        self.render_commit_row_inline(
+            idx,
+            row_height,
+            graph_width,
+            date_width,
+            author_width,
+            commit_width,
+            cx,
+        )
+    }
+
+    fn render_commit_row_inline(
+        &self,
+        idx: usize,
+        row_height: Pixels,
+        graph_width: Pixels,
+        date_width: Pixels,
+        author_width: Pixels,
+        commit_width: Pixels,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_expanded = self.expanded_commit == Some(idx);
+        let row = self.render_commit_row(
+            idx,
+            row_height,
+            graph_width,
+            date_width,
+            author_width,
+            commit_width,
+            cx,
+        );
+
+        if is_expanded {
+            v_flex()
+                .w_full()
+                .child(row)
+                .child(self.render_inline_expansion(idx, graph_width, cx))
+                .into_any_element()
+        } else {
+            row
+        }
+    }
+
+    fn render_commit_row(
+        &self,
+        idx: usize,
+        row_height: Pixels,
+        graph_width: Pixels,
+        date_width: Pixels,
+        author_width: Pixels,
+        commit_width: Pixels,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some(commit) = self.commits.get(idx) else {
+            return div().into_any_element();
+        };
+
+        let subject: SharedString = commit.subject.clone().into();
+        let author_name: SharedString = commit.author_name.clone().into();
+        let short_sha: SharedString = commit.short_sha.clone().into();
+        let formatted_time: SharedString = commit.formatted_time.clone().into();
+        let refs = commit.refs.clone();
+        let lane = commit.lane;
+        let lines = commit.lines.clone();
+        let color_idx = commit.color_idx;
+
+        let is_selected = self.expanded_commit == Some(idx);
+        let bg = if is_selected {
+            cx.theme().colors().ghost_element_selected
+        } else {
+            cx.theme().colors().editor_background
+        };
+        let hover_bg = cx.theme().colors().ghost_element_hover;
+
+        h_flex()
+            .id(ElementId::NamedInteger("commit-row".into(), idx as u64))
+            .w_full()
+            .px_2()
+            .gap_4()
+            .h(row_height)
+            .min_h(row_height)
+            .flex_shrink_0()
+            .bg(bg)
+            .hover(move |style| style.bg(hover_bg))
+            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                this.selected_commit = Some(idx);
+                this.toggle_commit_expansion(idx, cx);
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_context_menu(event.position, idx, window, cx);
+                }),
+            )
+            .child(
+                div()
+                    .w(graph_width)
+                    .h_full()
+                    .flex_shrink_0()
+                    .child(render_graph_cell(
+                        lane,
+                        lines,
+                        color_idx,
+                        row_height,
+                        graph_width,
+                    )),
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap_2()
+                    .overflow_hidden()
+                    .items_center()
+                    .when(!refs.is_empty(), |el| {
+                        el.child(self.render_badges(&refs, color_idx, idx, cx))
+                    })
+                    .child(
+                        div()
+                            .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .tooltip(Tooltip::text(subject.clone()))
+                            .child(Label::new(subject).single_line()),
+                    ),
+            )
+            .child(
+                div()
+                    .w(date_width)
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(Label::new(formatted_time).color(Color::Muted).single_line()),
+            )
+            .child(
+                div()
+                    .w(author_width)
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(Label::new(author_name).color(Color::Muted).single_line()),
+            )
+            .child(
+                div()
+                    .w(commit_width)
+                    .flex_shrink_0()
+                    .child(Label::new(short_sha).color(Color::Accent).single_line()),
+            )
+            .into_any_element()
+    }
+
+    fn render_inline_expansion(
+        &self,
+        idx: usize,
+        graph_width: Pixels,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let Some(commit) = self.commits.get(idx) else {
+            return div().into_any_element();
+        };
+
+        let commit_sha = commit.sha.clone();
+        let parents = commit.parents.clone();
+        let author = commit.author_name.clone();
+        let subject = commit.subject.clone();
+        let formatted_time = commit.formatted_time.clone();
+        let lines = commit.lines.clone();
+        let loading_files = self.loading_files;
+        let expanded_files = &self.expanded_files;
+
+        h_flex()
+            .id(ElementId::NamedInteger(
+                "expanded-details".into(),
+                idx as u64,
+            ))
+            .w_full()
+            .min_h(px(120.0))
+            .px_2()
+            .gap_4()
+            .bg(cx.theme().colors().background)
+            .flex_shrink_0()
+            .child(
+                div()
+                    .w(graph_width)
+                    .h_full()
+                    .flex_shrink_0()
+                    .child(render_graph_continuation(lines, graph_width)),
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h_full()
+                    .items_start()
+                    .child(
+                        v_flex()
+                            .w(px(400.0))
+                            .p_2()
+                            .gap_0p5()
+                            .border_r_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h(px(28.0))
+                                    .pb_1()
+                                    .mb_1()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .items_center()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                Icon::new(IconName::Info)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("Info")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Commit:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(commit_sha)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Accent),
+                                    ),
+                            )
+                            .when(!parents.is_empty(), |el| {
+                                let parent_str = parents
+                                    .iter()
+                                    .map(|p| if p.len() >= 7 { &p[..7] } else { p.as_str() })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                el.child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Label::new("Parents:")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(parent_str)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Accent),
+                                        ),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Author:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new(author).size(LabelSize::Small)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Date:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new(formatted_time).size(LabelSize::Small)),
+                            )
+                            .child(div().h_2())
+                            .child(Label::new(subject).size(LabelSize::Small)),
+                    )
+                    .child(
+                        v_flex()
+                            .id("file-list-scroll")
+                            .flex_1()
+                            .h_full()
+                            .p_2()
+                            .gap_0p5()
+                            .overflow_y_scroll()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h(px(28.0))
+                                    .pb_1()
+                                    .mb_1()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                Icon::new(IconName::FileTree)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new(format!(
+                                                    "{} files",
+                                                    expanded_files.len()
+                                                ))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new("view-diff", "View Diff")
+                                            .style(ButtonStyle::Filled)
+                                            .label_size(LabelSize::Small)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_commit_view(None, window, cx);
+                                            })),
+                                    ),
+                            )
+                            .when(loading_files, |el| {
+                                el.child(
+                                    div().w_full().py_2().child(
+                                        Label::new("Loading...")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                                )
+                            })
+                            .when(!loading_files && expanded_files.is_empty(), |el| {
+                                el.child(
+                                    div().w_full().py_2().child(
+                                        Label::new("No files changed")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                                )
+                            })
+                            .when(!loading_files && !expanded_files.is_empty(), |el| {
+                                el.children(expanded_files.iter().enumerate().map(
+                                    |(file_idx, file)| {
+                                        let file_path = file.path.clone();
+                                        let status_icon = match file.status {
+                                            FileStatus::Added => IconName::Plus,
+                                            FileStatus::Modified => IconName::Pencil,
+                                            FileStatus::Deleted => IconName::Trash,
+                                            FileStatus::Renamed => IconName::Replace,
+                                            FileStatus::Copied => IconName::Copy,
+                                            FileStatus::Unknown => IconName::File,
+                                        };
+                                        let status_color = match file.status {
+                                            FileStatus::Added => Color::Created,
+                                            FileStatus::Modified => Color::Modified,
+                                            FileStatus::Deleted => Color::Deleted,
+                                            _ => Color::Muted,
+                                        };
+
+                                        h_flex()
+                                            .id(ElementId::NamedInteger(
+                                                "file-row".into(),
+                                                file_idx as u64,
+                                            ))
+                                            .w_full()
+                                            .px_1()
+                                            .py_0p5()
+                                            .gap_2()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .hover(|style| {
+                                                style.bg(cx.theme().colors().ghost_element_hover)
+                                            })
+                                            .rounded_sm()
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.open_commit_view(
+                                                    Some(file_path.clone()),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }))
+                                            .child(
+                                                Icon::new(status_icon)
+                                                    .color(status_color)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new(file.path.clone())
+                                                    .size(LabelSize::Small)
+                                                    .single_line(),
+                                            )
+                                    },
+                                ))
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(24.0))
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .pt_1()
+                    .child(
+                        IconButton::new("close-expanded", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.expanded_commit = None;
+                                this.expanded_files.clear();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for GitGraph {
@@ -1393,21 +2295,29 @@ impl Render for GitGraph {
             .bg(cx.theme().colors().editor_background)
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &RefreshGraph, _, cx| this.load_data(cx)))
-            .on_action(cx.listener(|this, _: &CopySha, _, cx| this.copy_sha(cx)))
-            .on_action(
-                cx.listener(|this, _: &CheckoutCommit, window, cx| {
-                    this.checkout_commit(window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &CreateBranch, window, cx| this.create_branch(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &CherryPickCommit, _, cx| this.cherry_pick_commit(cx)))
-            .on_action(cx.listener(|this, _: &RevertCommit, _, cx| this.revert_commit(cx)))
-            .on_action(cx.listener(|this, _: &ResetSoft, _, cx| this.reset_soft(cx)))
-            .on_action(cx.listener(|this, _: &ResetMixed, _, cx| this.reset_mixed(cx)))
-            .on_action(cx.listener(|this, _: &ResetHard, _, cx| this.reset_hard(cx)))
+            .on_action(cx.listener(Self::handle_refresh_graph))
+            .on_action(cx.listener(Self::handle_open_commit_view))
+            .on_action(cx.listener(Self::handle_checkout_commit))
+            .on_action(cx.listener(Self::handle_copy_sha))
+            .on_action(cx.listener(Self::handle_create_branch))
+            .on_action(cx.listener(Self::handle_cherry_pick_commit))
+            .on_action(cx.listener(Self::handle_revert_commit))
+            .on_action(cx.listener(Self::handle_reset_soft))
+            .on_action(cx.listener(Self::handle_reset_hard))
+            .on_action(cx.listener(Self::handle_reset_mixed))
+            .on_action(cx.listener(Self::handle_create_tag))
+            .on_action(cx.listener(Self::handle_merge_into_current))
+            .on_action(cx.listener(Self::handle_pull_into_current))
+            .on_action(cx.listener(Self::handle_copy_branch_name))
+            .on_action(cx.listener(Self::handle_rename_branch))
+            .on_action(cx.listener(Self::handle_delete_branch))
+            .on_action(cx.listener(Self::handle_delete_remote_branch))
+            .on_action(cx.listener(Self::handle_rebase_onto))
+            .on_action(cx.listener(Self::handle_push_branch))
+            .on_action(cx.listener(Self::handle_pull_branch))
+            .on_action(cx.listener(Self::handle_fetch_all))
+            .on_action(cx.listener(Self::handle_stash_changes))
+            .on_action(cx.listener(Self::handle_stash_pop))
             .child(v_flex().size_full().children(error_banner).child(content))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(

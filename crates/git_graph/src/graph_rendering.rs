@@ -1,4 +1,4 @@
-use gpui::{Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
+use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
 
 use crate::commit_data::LineType;
 
@@ -215,7 +215,7 @@ pub fn render_graph_continuation(
 ) -> impl IntoElement {
     canvas(
         move |_bounds, _window, _cx| {},
-        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx| {
+        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
             let lane_width = px(16.0);
             let left_padding = px(12.0);
             let y_top = bounds.origin.y;
@@ -256,7 +256,7 @@ pub fn render_graph_cell(
 ) -> impl IntoElement {
     canvas(
         move |_bounds, _window, _cx| {},
-        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx| {
+        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
             let lane_width = px(16.0);
             let left_padding = px(12.0);
             let y_top = bounds.origin.y;
