@@ -206,14 +206,14 @@ impl NodeRuntime {
 
     pub async fn run_npm_subcommand(
         &self,
-        directory: &Path,
+        directory: Option<&Path>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
             .await
-            .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
+            .run_npm_subcommand(directory, http.proxy(), subcommand, args)
             .await
     }
 
@@ -283,7 +283,7 @@ impl NodeRuntime {
         ]);
 
         // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(directory, "install", &arguments)
+        self.run_npm_subcommand(Some(directory), "install", &arguments)
             .await?;
         Ok(())
     }
@@ -559,7 +559,10 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             command.env("PATH", env_path);
             command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
-            command.args(["--cache".into(), self.installation_path.join("cache")]);
+            command.arg(format!(
+                "--cache={}",
+                self.installation_path.join("cache").display()
+            ));
             command.args([
                 "--userconfig".into(),
                 self.installation_path.join("blank_user_npmrc"),
@@ -703,7 +706,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
-            .args(["--cache".into(), self.scratch_dir.join("cache")])
+            .arg(format!(
+                "--cache={}",
+                self.scratch_dir.join("cache").display()
+            ))
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;

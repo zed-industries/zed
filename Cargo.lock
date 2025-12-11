@@ -401,6 +401,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "watch",
  "workspace",
  "zed_actions",
@@ -3594,6 +3595,7 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "url",
  "util",
 ]
@@ -13154,6 +13156,7 @@ dependencies = [
  "askpass",
  "auto_update",
  "dap",
+ "db",
  "editor",
  "extension_host",
  "file_finder",
@@ -13165,6 +13168,7 @@ dependencies = [
  "log",
  "markdown",
  "menu",
+ "node_runtime",
  "ordered-float 2.10.1",
  "paths",
  "picker",
@@ -13183,6 +13187,7 @@ dependencies = [
  "util",
  "windows-registry 0.6.1",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 
@@ -20469,7 +20474,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.217.0"
+version = "0.218.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",

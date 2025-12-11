@@ -977,7 +977,10 @@ impl AgentConfiguration {
                 } else {
                     AgentIcon::Name(IconName::Ai)
                 };
-                (name, icon)
+                let display_name = agent_server_store
+                    .agent_display_name(&name)
+                    .unwrap_or_else(|| name.0.clone());
+                (name, icon, display_name)
             })
             .collect();
 
@@ -1084,12 +1087,14 @@ impl AgentConfiguration {
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
+                                "Claude Code",
                                 false,
                                 cx,
                             ))
                             .child(Divider::horizontal().color(DividerColor::BorderFaded))
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiOpenAi),
+                                "Codex CLI",
                                 "Codex CLI",
                                 false,
                                 cx,
@@ -1098,16 +1103,23 @@ impl AgentConfiguration {
                             .child(self.render_agent_server(
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
+                                "Gemini CLI",
                                 false,
                                 cx,
                             ))
                             .map(|mut parent| {
-                                for (name, icon) in user_defined_agents {
+                                for (name, icon, display_name) in user_defined_agents {
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
                                         )
-                                        .child(self.render_agent_server(icon, name, true, cx));
+                                        .child(self.render_agent_server(
+                                            icon,
+                                            name,
+                                            display_name,
+                                            true,
+                                            cx,
+                                        ));
                                 }
                                 parent
                             }),
@@ -1118,11 +1130,13 @@ impl AgentConfiguration {
     fn render_agent_server(
         &self,
         icon: AgentIcon,
-        name: impl Into<SharedString>,
+        id: impl Into<SharedString>,
+        display_name: impl Into<SharedString>,
         external: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let name = name.into();
+        let id = id.into();
+        let display_name = display_name.into();
         let icon = match icon {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
                 .size(IconSize::Small)
@@ -1132,12 +1146,15 @@ impl AgentConfiguration {
                 .color(Color::Muted),
         };
 
-        let tooltip_id = SharedString::new(format!("agent-source-{}", name));
-        let tooltip_message = format!("The {} agent was installed from an extension.", name);
+        let tooltip_id = SharedString::new(format!("agent-source-{}", id));
+        let tooltip_message = format!(
+            "The {} agent was installed from an extension.",
+            display_name
+        );
 
-        let agent_server_name = ExternalAgentServerName(name.clone());
+        let agent_server_name = ExternalAgentServerName(id.clone());
 
-        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", name));
+        let uninstall_btn_id = SharedString::from(format!("uninstall-{}", id));
         let uninstall_button = IconButton::new(uninstall_btn_id, IconName::Trash)
             .icon_color(Color::Muted)
             .icon_size(IconSize::Small)
@@ -1161,7 +1178,7 @@ impl AgentConfiguration {
                 h_flex()
                     .gap_1p5()
                     .child(icon)
-                    .child(Label::new(name))
+                    .child(Label::new(display_name))
                     .when(external, |this| {
                         this.child(
                             div()
