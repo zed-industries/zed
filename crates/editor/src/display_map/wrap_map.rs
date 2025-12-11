@@ -840,7 +840,7 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[ztracing::instrument(skip_all, fields(point, ret))]
+    #[ztracing::instrument(skip_all, fields(point=?point, ret))]
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
@@ -851,11 +851,14 @@ impl WrapSnapshot {
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
+        // start
         cursor.seek(&point, Bias::Right);
+        // end
         if cursor.item().is_none() {
             cursor.prev();
         }
 
+        // start
         while let Some(transform) = cursor.item() {
             if transform.is_isomorphic() && cursor.start().1.column() == 0 {
                 return cmp::min(cursor.end().0.row(), point.row());
@@ -863,6 +866,7 @@ impl WrapSnapshot {
                 cursor.prev();
             }
         }
+        // end
 
         unreachable!()
     }
