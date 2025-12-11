@@ -1816,7 +1816,7 @@
       },
     },
     "CSharp": {
-      "language_servers": ["roslyn", "!omnisharp", "..."]
+      "language_servers": ["roslyn", "!omnisharp", "..."],
     },
     "CSS": {
       "prettier": {
@@ -1910,6 +1910,9 @@
       "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled",
+      },
       "prettier": {
         "allowed": true,
       },
@@ -1925,6 +1928,9 @@
     "Plain Text": {
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled",
+      },
     },
     "Python": {
       "code_actions_on_format": {

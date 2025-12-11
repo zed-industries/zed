@@ -77,10 +77,10 @@ use crate::{
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, ResultExt as _, SCROLL_LINES, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, profiler, px, size,
+    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
-    RunnableVariant, TaskTiming,
+    LinuxDispatcher, RunnableVariant, TaskTiming,
     platform::{PlatformWindow, blade::BladeContext},
 };
 use crate::{
@@ -503,7 +503,7 @@ impl WaylandClient {
                                         start,
                                         end: None,
                                     };
-                                    profiler::add_task_timing(timing);
+                                    LinuxDispatcher::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -515,7 +515,7 @@ impl WaylandClient {
                                         start,
                                         end: None,
                                     };
-                                    profiler::add_task_timing(timing);
+                                    LinuxDispatcher::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -524,7 +524,7 @@ impl WaylandClient {
 
                             let end = Instant::now();
                             timing.end = Some(end);
-                            profiler::add_task_timing(timing);
+                            LinuxDispatcher::add_task_timing(timing);
                         });
                     }
                 }

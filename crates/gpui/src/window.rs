@@ -9,15 +9,14 @@ use crate::{
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
-    Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1721,27 +1720,6 @@ impl Window {
     {
         let handle = self.handle;
         cx.spawn(async move |app| {
-            let mut async_window_cx = AsyncWindowContext::new_context(app.clone(), handle);
-            f(&mut async_window_cx).await
-        })
-    }
-
-    /// Spawn the future returned by the given closure on the application thread
-    /// pool, with the given priority. The closure is provided a handle to the
-    /// current window and an `AsyncWindowContext` for use within your future.
-    #[track_caller]
-    pub fn spawn_with_priority<AsyncFn, R>(
-        &self,
-        priority: Priority,
-        cx: &App,
-        f: AsyncFn,
-    ) -> Task<R>
-    where
-        R: 'static,
-        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
-    {
-        let handle = self.handle;
-        cx.spawn_with_priority(priority, async move |app| {
             let mut async_window_cx = AsyncWindowContext::new_context(app.clone(), handle);
             f(&mut async_window_cx).await
         })
