@@ -43,7 +43,7 @@ use ui::{
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
 };
 use util::{ResultExt, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -428,7 +428,9 @@ impl TitleBar {
             IconButton::new("restricted_mode_trigger", IconName::Warning)
                 .icon_color(Color::Warning)
                 .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text("Restricted Mode"))
+                .tooltip(|_, cx| {
+                    Tooltip::for_action("Restricted Mode", &ToggleWorktreeSecurity, cx)
+                })
                 .on_click({
                     cx.listener(move |this, _, window, cx| {
                         this.workspace

@@ -51,6 +51,7 @@
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
       "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "ctrl-cmd-s": "workspace::ToggleWorktreeSecurity",
     },
   },
   {
@@ -880,7 +881,7 @@
       "ctrl-[": "agent::CyclePreviousInlineAssist",
       "ctrl-]": "agent::CycleNextInlineAssist",
       "cmd-shift-enter": "inline_assistant::ThumbsUpResult",
-      "cmd-shift-backspace": "inline_assistant::ThumbsDownResult"
+      "cmd-shift-backspace": "inline_assistant::ThumbsDownResult",
     },
   },
   {
@@ -1445,14 +1446,6 @@
     "bindings": {
       "cmd-shift-backspace": "branch_picker::DeleteBranch",
       "cmd-shift-i": "branch_picker::FilterRemotes",
-    },
-  },
-  {
-    "context": "SecurityModal",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-r": "workspace::ToggleWorktreeSecurity",
-      "cmd-t": "menu::Cancel",
     },
   },
 ]
