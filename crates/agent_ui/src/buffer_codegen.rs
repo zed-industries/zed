@@ -119,6 +119,10 @@ impl BufferCodegen {
             .push(cx.subscribe(&codegen, |_, _, event, cx| cx.emit(*event)));
     }
 
+    pub fn active_completion(&self, cx: &App) -> Option<String> {
+        self.active_alternative().read(cx).current_completion()
+    }
+
     pub fn active_alternative(&self) -> &Entity<CodegenAlternative> {
         &self.alternatives[self.active_alternative]
     }
@@ -241,6 +245,10 @@ impl BufferCodegen {
     pub fn last_equal_ranges<'a>(&self, cx: &'a App) -> &'a [Range<Anchor>] {
         self.active_alternative().read(cx).last_equal_ranges()
     }
+
+    pub fn selected_text<'a>(&self, cx: &'a App) -> Option<&'a str> {
+        self.active_alternative().read(cx).selected_text()
+    }
 }
 
 impl EventEmitter<CodegenEvent> for BufferCodegen {}
@@ -264,6 +272,7 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     elapsed_time: Option<f64>,
     completion: Option<String>,
+    selected_text: Option<String>,
     pub message_id: Option<String>,
     pub model_explanation: Option<SharedString>,
 }
@@ -323,6 +332,7 @@ impl CodegenAlternative {
             range,
             elapsed_time: None,
             completion: None,
+            selected_text: None,
             model_explanation: None,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
@@ -608,6 +618,8 @@ impl CodegenAlternative {
             .text_for_range(self.range.start..self.range.end)
             .collect::<Rope>();
 
+        self.selected_text = Some(selected_text.to_string());
+
         let selection_start = self.range.start.to_point(&snapshot);
 
         // Start with the indentation of the first line in the selection
@@ -866,6 +878,14 @@ impl CodegenAlternative {
                 .ok();
         });
         cx.notify();
+    }
+
+    pub fn current_completion(&self) -> Option<String> {
+        self.completion.clone()
+    }
+
+    pub fn selected_text(&self) -> Option<&str> {
+        self.selected_text.as_deref()
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
@@ -1295,8 +1315,9 @@ mod tests {
     };
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, Point, tree_sitter_rust};
+    use language::{Buffer, Point};
     use language_model::{LanguageModelRegistry, TokenUsage};
+    use languages::rust_lang;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{future, sync::Arc};
@@ -1313,7 +1334,7 @@ mod tests {
                 }
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1375,7 +1396,7 @@ mod tests {
                 le
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1439,7 +1460,7 @@ mod tests {
             "  \n",
             "}\n" //
         );
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1555,7 +1576,7 @@ mod tests {
                 let x = 0;
             }
         "};
-        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1671,28 +1692,5 @@ mod tests {
             );
         });
         chunks_tx
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_indents_query(
-            r#"
-            (call_expression) @indent
-            (field_expression) @indent
-            (_ "(" ")" @end) @indent
-            (_ "{" "}" @end) @indent
-            "#,
-        )
-        .unwrap()
     }
 }

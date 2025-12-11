@@ -17,7 +17,6 @@ anyhow.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
-cloud_zeta2_prompt.workspace = true
 codestral.workspace = true
 command_palette_hooks.workspace = true
 copilot.workspace = true
@@ -46,6 +45,7 @@ ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zeta_prompt.workspace = true
 
 [dev-dependencies]
 copilot = { workspace = true, features = ["test-support"] }

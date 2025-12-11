@@ -1451,7 +1451,7 @@ impl GitStore {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 cx.subscribe(buffer, |this, buffer, event, cx| {
-                    if let BufferEvent::LanguageChanged = event {
+                    if let BufferEvent::LanguageChanged(_) = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
                             diff_state.update(cx, |diff_state, cx| {
@@ -4692,11 +4692,9 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let rx = self.run_hook(RunHook::PrePush, cx);
         self.send_job(
             Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
-                rx.await??;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,

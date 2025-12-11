@@ -3814,7 +3814,7 @@ impl BackgroundScanner {
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path {root_path:?}: {err}");
+                log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
                 return true;
             }
         };

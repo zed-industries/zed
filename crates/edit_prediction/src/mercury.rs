@@ -1,20 +1,17 @@
 use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
 use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
 use futures::{AsyncReadExt as _, FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, Entity, Task,
+    App, AppContext as _, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use project::{Project, ProjectPath};
-use std::{
-    collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
-};
+use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+use zeta_prompt::ZetaPromptInput;
 
 use crate::{
-    EditPredictionId, EditPredictionInputs, open_ai_response::text_from_response,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
     prediction::EditPredictionResult,
 };
 
@@ -38,16 +35,17 @@ impl Mercury {
         store_api_token_in_keychain(api_token, cx)
     }
 
-    pub fn request_prediction(
+    pub(crate) fn request_prediction(
         &self,
-        _project: &Entity<Project>,
-        active_buffer: &Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        position: language::Anchor,
-        events: Vec<Arc<Event>>,
-        _recent_paths: &VecDeque<ProjectPath>,
-        related_files: Vec<RelatedFile>,
-        _diagnostic_search_range: Range<Point>,
+        EditPredictionModelInput {
+            buffer,
+            snapshot,
+            position,
+            events,
+            related_files,
+            debug_tx,
+            ..
+        }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
@@ -62,6 +60,7 @@ impl Mercury {
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
         let buffer_snapshotted_at = Instant::now();
+        let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
@@ -72,38 +71,38 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
-            let offset_range = editable_range.to_offset(&snapshot);
-            let prompt = build_prompt(
-                &events,
-                &related_files,
-                &snapshot,
-                full_path.as_ref(),
-                cursor_point,
-                editable_range,
-                context_range.clone(),
-            );
+            let context_offset_range = context_range.to_offset(&snapshot);
 
-            let inputs = EditPredictionInputs {
-                events: events,
-                included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
-                    path: full_path.clone(),
-                    max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
-                    excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
-                        start_line: cloud_llm_client::predict_edits_v3::Line(
-                            context_range.start.row,
-                        ),
-                        text: snapshot
-                            .text_for_range(context_range.clone())
-                            .collect::<String>()
-                            .into(),
-                    }],
-                }],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    column: cursor_point.column,
-                    line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
-                },
+            let editable_offset_range = editable_range.to_offset(&snapshot);
+
+            let inputs = zeta_prompt::ZetaPromptInput {
+                events,
+                related_files,
+                cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
+                    - context_range.start.to_offset(&snapshot),
                 cursor_path: full_path.clone(),
+                cursor_excerpt: snapshot
+                    .text_for_range(context_range)
+                    .collect::<String>()
+                    .into(),
+                editable_range_in_excerpt: (editable_offset_range.start
+                    - context_offset_range.start)
+                    ..(editable_offset_range.end - context_offset_range.start),
             };
+
+            let prompt = build_prompt(&inputs);
+
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionStarted(
+                        EditPredictionStartedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            prompt: Some(prompt.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
 
             let request_body = open_ai::Request {
                 model: "mercury-coder".into(),
@@ -160,6 +159,18 @@ impl Mercury {
             let id = mem::take(&mut response.id);
             let response_str = text_from_response(response).unwrap_or_default();
 
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionFinished(
+                        EditPredictionFinishedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            model_output: Some(response_str.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
+
             let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
             let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);
 
@@ -168,15 +179,16 @@ impl Mercury {
 
             if response_str != NO_PREDICTION_OUTPUT {
                 let old_text = snapshot
-                    .text_for_range(offset_range.clone())
+                    .text_for_range(editable_offset_range.clone())
                     .collect::<String>();
                 edits.extend(
                     language::text_diff(&old_text, &response_str)
                         .into_iter()
                         .map(|(range, text)| {
                             (
-                                snapshot.anchor_after(offset_range.start + range.start)
-                                    ..snapshot.anchor_before(offset_range.start + range.end),
+                                snapshot.anchor_after(editable_offset_range.start + range.start)
+                                    ..snapshot
+                                        .anchor_before(editable_offset_range.start + range.end),
                                 text,
                             )
                         }),
@@ -185,8 +197,6 @@ impl Mercury {
 
             anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
         });
-
-        let buffer = active_buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) =
@@ -208,15 +218,7 @@ impl Mercury {
     }
 }
 
-fn build_prompt(
-    events: &[Arc<Event>],
-    related_files: &[RelatedFile],
-    cursor_buffer: &BufferSnapshot,
-    cursor_buffer_path: &Path,
-    cursor_point: Point,
-    editable_range: Range<Point>,
-    context_range: Range<Point>,
-) -> String {
+fn build_prompt(inputs: &ZetaPromptInput) -> String {
     const RECENTLY_VIEWED_SNIPPETS_START: &str = "<|recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPETS_END: &str = "<|/recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPET_START: &str = "<|recently_viewed_code_snippet|>\n";
@@ -237,14 +239,14 @@ fn build_prompt(
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in related_files {
+            for related_file in inputs.related_files.iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,
                         RECENTLY_VIEWED_SNIPPET_START..RECENTLY_VIEWED_SNIPPET_END,
                         |prompt| {
                             prompt.push_str(CODE_SNIPPET_FILE_PATH_PREFIX);
-                            prompt.push_str(related_file.path.path.as_unix_str());
+                            prompt.push_str(related_file.path.to_string_lossy().as_ref());
                             prompt.push('\n');
                             prompt.push_str(&related_excerpt.text.to_string());
                         },
@@ -259,21 +261,22 @@ fn build_prompt(
         CURRENT_FILE_CONTENT_START..CURRENT_FILE_CONTENT_END,
         |prompt| {
             prompt.push_str(CURRENT_FILE_PATH_PREFIX);
-            prompt.push_str(cursor_buffer_path.as_os_str().to_string_lossy().as_ref());
+            prompt.push_str(inputs.cursor_path.as_os_str().to_string_lossy().as_ref());
             prompt.push('\n');
 
-            let prefix_range = context_range.start..editable_range.start;
-            let suffix_range = editable_range.end..context_range.end;
-
-            prompt.extend(cursor_buffer.text_for_range(prefix_range));
+            prompt.push_str(&inputs.cursor_excerpt[0..inputs.editable_range_in_excerpt.start]);
             push_delimited(prompt, CODE_TO_EDIT_START..CODE_TO_EDIT_END, |prompt| {
-                let range_before_cursor = editable_range.start..cursor_point;
-                let range_after_cursor = cursor_point..editable_range.end;
-                prompt.extend(cursor_buffer.text_for_range(range_before_cursor));
+                prompt.push_str(
+                    &inputs.cursor_excerpt
+                        [inputs.editable_range_in_excerpt.start..inputs.cursor_offset_in_excerpt],
+                );
                 prompt.push_str(CURSOR_TAG);
-                prompt.extend(cursor_buffer.text_for_range(range_after_cursor));
+                prompt.push_str(
+                    &inputs.cursor_excerpt
+                        [inputs.cursor_offset_in_excerpt..inputs.editable_range_in_excerpt.end],
+                );
             });
-            prompt.extend(cursor_buffer.text_for_range(suffix_range));
+            prompt.push_str(&inputs.cursor_excerpt[inputs.editable_range_in_excerpt.end..]);
         },
     );
 
@@ -281,8 +284,8 @@ fn build_prompt(
         &mut prompt,
         EDIT_DIFF_HISTORY_START..EDIT_DIFF_HISTORY_END,
         |prompt| {
-            for event in events {
-                writeln!(prompt, "{event}").unwrap();
+            for event in inputs.events.iter() {
+                zeta_prompt::write_event(prompt, &event);
             }
         },
     );
