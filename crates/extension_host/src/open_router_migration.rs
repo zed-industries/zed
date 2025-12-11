@@ -136,6 +136,33 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_skips_migration_if_empty_marker_exists(cx: &mut TestAppContext) {
+        let old_api_key = "sk-or-old-key";
+
+        // Old credentials exist
+        cx.write_credentials(
+            OPEN_ROUTER_DEFAULT_API_URL,
+            "Bearer",
+            old_api_key.as_bytes(),
+        );
+        // But empty marker already exists (from previous migration attempt)
+        cx.write_credentials("extension-llm-openrouter:openrouter", "Bearer", b"");
+
+        cx.update(|cx| {
+            migrate_open_router_credentials_if_needed(OPEN_ROUTER_EXTENSION_ID, cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-openrouter:openrouter");
+        let (_, password) = credentials.unwrap();
+        assert!(
+            password.is_empty(),
+            "Should not overwrite empty marker with old credentials"
+        );
+    }
+
+    #[gpui::test]
     async fn test_writes_empty_marker_if_no_old_credentials(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_open_router_credentials_if_needed(OPEN_ROUTER_EXTENSION_ID, cx);

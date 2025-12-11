@@ -132,6 +132,29 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_skips_migration_if_empty_marker_exists(cx: &mut TestAppContext) {
+        let old_api_key = "AIzaSy-old-key";
+
+        // Old credentials exist
+        cx.write_credentials(GOOGLE_AI_DEFAULT_API_URL, "Bearer", old_api_key.as_bytes());
+        // But empty marker already exists (from previous migration attempt)
+        cx.write_credentials("extension-llm-google-ai:google-ai", "Bearer", b"");
+
+        cx.update(|cx| {
+            migrate_google_ai_credentials_if_needed(GOOGLE_AI_EXTENSION_ID, cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-google-ai:google-ai");
+        let (_, password) = credentials.unwrap();
+        assert!(
+            password.is_empty(),
+            "Should not overwrite empty marker with old credentials"
+        );
+    }
+
+    #[gpui::test]
     async fn test_writes_empty_marker_if_no_old_credentials(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_google_ai_credentials_if_needed(GOOGLE_AI_EXTENSION_ID, cx);
