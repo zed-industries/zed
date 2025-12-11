@@ -768,6 +768,10 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Whether to use modal-based global search instead of tab-based.
+    ///
+    /// Default: false
+    pub use_modal: Option<bool>,
 }
 
 #[with_fallible_options]
