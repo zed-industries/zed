@@ -270,6 +270,33 @@ impl Progress {
         let inner = self.inner.lock().unwrap();
         Self::clear_line(&inner);
     }
+
+    pub fn batch_separator(&self, start_index: usize, end_index: usize, total_examples: usize) {
+        let inner = self.inner.lock().unwrap();
+        Self::clear_line(&inner);
+
+        let reset = "\x1b[0m";
+        let dim = "\x1b[2m";
+
+        let label = if start_index + 1 == end_index {
+            format!(" {}/{} ", start_index + 1, total_examples)
+        } else {
+            format!(" {}-{}/{} ", start_index + 1, end_index, total_examples)
+        };
+        let right_width = 4;
+        let left_width = inner
+            .terminal_width
+            .saturating_sub(label.chars().count())
+            .saturating_sub(right_width);
+        let left_line = "─".repeat(left_width);
+        let right_line = "─".repeat(right_width);
+
+        if inner.is_tty {
+            eprintln!("{dim}{left_line}{reset}{label}{dim}{right_line}{reset}");
+        } else {
+            eprintln!("{left_line}{label}{right_line}");
+        }
+    }
 }
 
 fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {

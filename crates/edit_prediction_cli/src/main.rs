@@ -106,7 +106,7 @@ impl EpArgs {
 }
 
 fn main() {
-    zlog::init();
+    let _ = zlog::try_init(Some("error".into()));
     zlog::init_output_stderr();
     let args = EpArgs::parse();
 
@@ -147,8 +147,16 @@ fn main() {
             };
 
             let progress = Progress::new();
+            let total_examples = examples.len();
             let chunks = examples.chunks_mut(args.max_parallelism);
+            let total_batches = chunks.len();
+            let mut start_index = 0;
             for data in chunks {
+                let end_index = start_index + data.len();
+                if total_batches > 1 {
+                    progress.batch_separator(start_index, end_index, total_examples);
+                }
+                start_index = end_index;
                 let mut futures = Vec::new();
 
                 for example in data.iter_mut() {
