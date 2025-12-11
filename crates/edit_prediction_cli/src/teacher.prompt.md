@@ -46,3 +46,7 @@ Output example:
 ## Code Context
 
 {{context}}
+
+## Editable region
+
+{{editable_region}}

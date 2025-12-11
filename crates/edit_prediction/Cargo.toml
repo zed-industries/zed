@@ -21,7 +21,6 @@ arrayvec.workspace = true
 brotli.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
-cloud_zeta2_prompt.workspace = true
 collections.workspace = true
 copilot.workspace = true
 credentials_provider.workspace = true
@@ -50,8 +49,6 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
-strsim.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
@@ -62,6 +59,7 @@ uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zeta_prompt.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

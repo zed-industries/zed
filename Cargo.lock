@@ -3112,16 +3112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cloud_zeta2_prompt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cloud_llm_client",
- "indoc",
- "serde",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5119,7 +5109,6 @@ dependencies = [
  "clock",
  "cloud_api_types",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "collections",
  "copilot",
  "credentials_provider",
@@ -5150,8 +5139,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
- "strsim",
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
@@ -5162,6 +5149,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -5175,11 +5163,10 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "collections",
  "debug_adapter_extension",
+ "dirs 4.0.0",
  "edit_prediction",
- "edit_prediction_context",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5209,9 +5196,10 @@ dependencies = [
  "sqlez",
  "sqlez_macros",
  "terminal_view",
- "toml 0.8.23",
  "util",
+ "wasmtime",
  "watch",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -5239,6 +5227,7 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -5260,7 +5249,6 @@ dependencies = [
  "buffer_diff",
  "client",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "codestral",
  "command_palette_hooks",
  "copilot",
@@ -5291,6 +5279,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -20931,6 +20920,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "zeta_prompt"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
