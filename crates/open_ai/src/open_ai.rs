@@ -441,14 +441,14 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::Deserialize;
-    
+
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum ToolCallsHelper {
         Array(Vec<ToolCallChunk>),
         Null,
     }
-    
+
     match ToolCallsHelper::deserialize(deserializer)? {
         ToolCallsHelper::Array(vec) => {
             if vec.is_empty() {
@@ -523,9 +523,58 @@ pub enum ResponseStreamResult {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     pub choices: Vec<ChoiceDelta>,
+    #[serde(default)]
     pub usage: Option<Usage>,
     #[serde(flatten)]
     pub additional_fields: std::collections::HashMap<String, serde_json::Value>,
+}
+
+// Parse a response line with more lenient error handling for different providers
+fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serde_json::Error> {
+    // First try the standard parsing
+    match serde_json::from_str(line) {
+        Ok(result) => return Ok(result),
+        Err(_) => {
+            // If standard parsing fails, try a more lenient approach
+            let value: serde_json::Value = serde_json::from_str(line)?;
+
+            // Check if this looks like a success response (has choices)
+            if let Some(choices) = value.get("choices") {
+                // Try to build a ResponseStreamEvent manually
+                let choices = serde_json::from_value::<Vec<ChoiceDelta>>(choices.clone())?;
+                let usage = value
+                    .get("usage")
+                    .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok());
+
+                let mut additional_fields = std::collections::HashMap::new();
+                if let Some(obj) = value.as_object() {
+                    for (key, val) in obj {
+                        if key != "choices" && key != "usage" {
+                            additional_fields.insert(key.clone(), val.clone());
+                        }
+                    }
+                }
+
+                let event = ResponseStreamEvent {
+                    choices,
+                    usage,
+                    additional_fields,
+                };
+
+                return Ok(ResponseStreamResult::Ok(event));
+            }
+
+            // Check if this looks like an error response (has error)
+            if let Some(error_obj) = value.get("error") {
+                let error = serde_json::from_value::<ResponseStreamError>(error_obj.clone())?;
+                return Ok(ResponseStreamResult::Err { error });
+            }
+
+            // If we can't determine the structure, fall back to standard parsing
+            // This will likely fail, but at least we tried
+            serde_json::from_str(line)
+        }
+    }
 }
 
 pub async fn stream_completion(
@@ -560,7 +609,8 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
+                            // Try to parse the response with more lenient error handling
+                            match parse_response_stream_result(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error.message)))
@@ -658,5 +708,94 @@ pub fn embed<'a>(
         let response: OpenAiEmbeddingResponse =
             serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_deepseek_response() {
+        // Test a DeepSeek-style response with extend_fields
+        let deepseek_response = json!({
+            "id": "21705079-0372-4995-8176-8556a50d7951",
+            "object": "chat.completion.chunk",
+            "created": 1765468032,
+            "model": "deepseek-v3.2",
+            "usage": {
+                "prompt_tokens": 10772,
+                "completion_tokens": 1,
+                "total_tokens": 10773
+            },
+            "extend_fields": {
+                "traceId": "21010f9017654680283934182e2513",
+                "requestId": "8e2021a4be88b53de0fbbe3655fbad29"
+            },
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": "**",
+                    "tool_calls": []
+                }
+            }]
+        });
+
+        let response_str = deepseek_response.to_string();
+        let result = parse_response_stream_result(&response_str);
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                assert!(event.usage.is_some());
+                assert!(event.additional_fields.contains_key("id"));
+                assert!(event.additional_fields.contains_key("object"));
+                assert!(event.additional_fields.contains_key("created"));
+                assert!(event.additional_fields.contains_key("model"));
+                assert!(event.additional_fields.contains_key("extend_fields"));
+            }
+            Ok(ResponseStreamResult::Err { error }) => {
+                panic!("Expected success response, got error: {}", error.message);
+            }
+            Err(e) => {
+                panic!("Failed to parse DeepSeek response: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_standard_openai_response() {
+        // Test a standard OpenAI-style response
+        let openai_response = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "content": "hello"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+
+        let response_str = openai_response.to_string();
+        let result = parse_response_stream_result(&response_str);
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                assert!(event.usage.is_some());
+            }
+            Ok(ResponseStreamResult::Err { error }) => {
+                panic!("Expected success response, got error: {}", error.message);
+            }
+            Err(e) => {
+                panic!("Failed to parse OpenAI response: {}", e);
+            }
+        }
     }
 }
