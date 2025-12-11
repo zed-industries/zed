@@ -20,13 +20,13 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
-use crate::{MoveDown, MoveDownByItem, MoveUp, MoveUpByItem};
 use crate::{
-    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
+use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -427,7 +427,7 @@ impl MarkdownPreviewView {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
 
-    fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_page_up(&mut self, _: &ScrollPageUp, _window: &mut Window, cx: &mut Context<Self>) {
         let viewport_height = self.list_state.viewport_bounds().size.height;
         if viewport_height.is_zero() {
             return;
@@ -437,7 +437,12 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
-    fn scroll_page_down(&mut self, _: &MovePageDown, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_page_down(
+        &mut self,
+        _: &ScrollPageDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let viewport_height = self.list_state.viewport_bounds().size.height;
         if viewport_height.is_zero() {
             return;
@@ -447,7 +452,7 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
-    fn scroll_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
         let scroll_top = self.list_state.logical_scroll_top();
         if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
             let item_height = bounds.size.height;
@@ -459,7 +464,7 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
-    fn scroll_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
         let scroll_top = self.list_state.logical_scroll_top();
         if let Some(bounds) = self.list_state.bounds_for_item(scroll_top.item_ix) {
             let item_height = bounds.size.height;
@@ -473,7 +478,7 @@ impl MarkdownPreviewView {
 
     fn scroll_up_by_item(
         &mut self,
-        _: &MoveUpByItem,
+        _: &ScrollUpByItem,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -486,7 +491,7 @@ impl MarkdownPreviewView {
 
     fn scroll_down_by_item(
         &mut self,
-        _: &MoveDownByItem,
+        _: &ScrollDownByItem,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {

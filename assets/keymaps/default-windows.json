@@ -1218,12 +1218,12 @@
     "context": "MarkdownPreview",
     "use_key_equivalents": true,
     "bindings": {
-      "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown",
-      "up": "markdown::MoveUp",
-      "down": "markdown::MoveDown",
-      "alt-up": "markdown::MoveUpByItem",
-      "alt-down": "markdown::MoveDownByItem"
+      "pageup": "markdown::ScrollPageUp",
+      "pagedown": "markdown::ScrollPageDown",
+      "up": "markdown::ScrollUp",
+      "down": "markdown::ScrollDown",
+      "alt-up": "markdown::ScrollUpByItem",
+      "alt-down": "markdown::ScrollDownByItem"
     }
   },
   {
