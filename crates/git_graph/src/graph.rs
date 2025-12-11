@@ -3,11 +3,13 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::Result;
 use collections::HashMap;
 use git::Oid;
+use gpui::SharedString;
 use smallvec::SmallVec;
+use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;
 
 use crate::{
-    commit_data::{CommitEntry, GraphLine, LineType, format_timestamp},
+    commit_data::{GraphLine, LineType},
     graph_rendering::BRANCH_COLORS,
 };
 
@@ -24,21 +26,35 @@ static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%
 
 /// Commit data needed for the graph
 #[derive(Debug)]
-pub struct GraphCommit {
+pub struct CommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a small vec to avoid allocations
     pub parents: smallvec::SmallVec<[Oid; 1]>,
-    pub author_name: String,
-    pub _author_email: String,
-    pub commit_timestamp: i64,
-    pub subject: String,
-    pub ref_names: Vec<String>,
+    pub author_name: SharedString,
+    pub _author_email: SharedString,
+    pub commit_timestamp: SharedString,
+    pub subject: SharedString,
+    pub ref_names: Vec<SharedString>,
+}
+
+pub fn format_timestamp(timestamp: i64) -> String {
+    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return "Unknown".to_string();
+    };
+
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    let local_datetime = datetime.to_offset(local_offset);
+
+    // todo! do we have to parse this function every time?
+    let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+        .unwrap_or_default();
+    local_datetime.format(&format).unwrap_or_default()
 }
 
 // todo: This function should be on a background thread, and it should return a chunk of commits at a time
 // we should also be able to specify the order
 // todo: Make this function work over collab as well
-pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
+pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<CommitData>> {
     let git_log_output = new_smol_command("git")
         .current_dir(worktree_path)
         .arg("log")
@@ -71,17 +87,17 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
                 .filter_map(|hash| Oid::from_str(hash).ok())
                 .collect();
 
-            Some(GraphCommit {
-                author_name: author_name.to_string(),
-                _author_email: author_email.to_string(),
+            Some(CommitData {
+                author_name: SharedString::new(*author_name),
+                _author_email: SharedString::new(*author_email),
                 sha: Oid::from_str(sha).ok()?,
                 parents,
-                commit_timestamp: commit_timestamp.parse().ok()?, //todo!
-                subject: summary.to_string(),                     // todo!
+                commit_timestamp: format_timestamp(commit_timestamp.parse().ok()?).into(), //todo!
+                subject: SharedString::new(*summary),                                      // todo!
                 ref_names: parts
                     .get(7)
                     .filter(|ref_name| !ref_name.is_empty())
-                    .map(|ref_names| ref_names.split(", ").map(ToString::to_string).collect())
+                    .map(|ref_names| ref_names.split(", ").map(SharedString::new).collect())
                     .unwrap_or_default(),
             })
         })
@@ -110,6 +126,14 @@ impl LaneState {
             LaneState::Active { .. } => false,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct CommitEntry {
+    pub data: CommitData,
+    pub lane: usize,
+    pub color_idx: usize,
+    pub lines: Vec<GraphLine>,
 }
 
 type ActiveLaneIdx = usize;
@@ -151,7 +175,7 @@ impl GitGraph {
         })
     }
 
-    pub(crate) fn add_commits(&mut self, commits: Vec<GraphCommit>) {
+    pub(crate) fn add_commits(&mut self, commits: Vec<CommitData>) {
         for commit in commits.into_iter() {
             let commit_lane = self
                 .lane_states
@@ -265,17 +289,7 @@ impl GitGraph {
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
             self.commits.push(CommitEntry {
-                sha: commit.sha.to_string(),
-                short_sha: commit.sha.display_short(),
-                subject: commit.subject,
-                author_name: commit.author_name,
-                formatted_time: format_timestamp(commit.commit_timestamp),
-                parents: commit
-                    .parents
-                    .into_iter()
-                    .map(|parent| parent.to_string())
-                    .collect(),
-                refs: commit.ref_names,
+                data: commit,
                 lane: commit_lane,
                 color_idx: commit_color.0 as usize,
                 lines,

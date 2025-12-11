@@ -22,10 +22,11 @@ use util::ResultExt;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
 
-use commit_data::CommitEntry;
 use graph_rendering::{
     BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
 };
+
+use crate::graph::CommitEntry;
 
 actions!(
     git_graph,
@@ -106,7 +107,6 @@ pub struct GitGraph {
     graph: crate::graph::GitGraph,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    commits: Vec<CommitEntry>,
     max_lanes: usize,
     loading: bool,
     error: Option<SharedString>,
@@ -170,7 +170,6 @@ impl GitGraph {
             project,
             workspace,
             graph: crate::graph::GitGraph::new(),
-            commits: Vec::new(),
             max_lanes: 0,
             loading: true,
             error: None,
@@ -191,7 +190,8 @@ impl GitGraph {
     }
 
     fn get_selected_commit(&self) -> Option<&CommitEntry> {
-        self.selected_commit.and_then(|idx| self.commits.get(idx))
+        self.selected_commit
+            .and_then(|idx| self.graph.commits.get(idx))
     }
 
     fn get_repository(&self, cx: &App) -> Option<Entity<Repository>> {
@@ -208,7 +208,7 @@ impl GitGraph {
         let Some(commit) = self.get_selected_commit() else {
             return;
         };
-        let sha = commit.sha.clone();
+        let sha = commit.data.sha.clone();
 
         let Some(repository) = self.get_repository(cx) else {
             self.error = Some("No repository found".into());
@@ -219,7 +219,7 @@ impl GitGraph {
         let file_filter = file_path.and_then(|p| git::repository::RepoPath::new(&p).ok());
 
         CommitView::open(
-            sha,
+            sha.to_string(),
             repository.downgrade(),
             self.workspace.clone(),
             None,
@@ -238,12 +238,12 @@ impl GitGraph {
     ) {
         self.selected_commit = Some(commit_idx);
 
-        if self.commits.get(commit_idx).is_none() {
+        if self.graph.commits.get(commit_idx).is_none() {
             return;
         };
 
-        let commit = &self.commits[commit_idx];
-        let refs = &commit.refs;
+        let entry = &self.graph.commits[commit_idx];
+        let refs = &entry.data.ref_names;
 
         let is_head = refs.iter().any(|r| r.contains("HEAD"));
         let has_local_branch = refs
@@ -379,7 +379,6 @@ impl GitGraph {
                     Ok(commits) => {
                         this.graph.add_commits(commits);
                         let commit_count = this.graph.commits.len();
-                        this.commits = this.graph.commits.clone();
                         this.max_lanes = this.graph.max_lanes;
                         this.work_dir = Some(worktree_path);
                         this.list_state.reset(commit_count);
@@ -397,7 +396,7 @@ impl GitGraph {
 
     fn render_badges(
         &self,
-        refs: &[String],
+        refs: &[SharedString],
         color_idx: usize,
         commit_idx: usize,
         cx: &Context<Self>,
@@ -589,15 +588,15 @@ impl GitGraph {
         commit_width: Pixels,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
-        let Some(commit) = self.commits.get(idx) else {
+        let Some(commit) = self.graph.commits.get(idx) else {
             return div().into_any_element();
         };
 
-        let subject: SharedString = commit.subject.clone().into();
-        let author_name: SharedString = commit.author_name.clone().into();
-        let short_sha: SharedString = commit.short_sha.clone().into();
-        let formatted_time: SharedString = commit.formatted_time.clone().into();
-        let refs = commit.refs.clone();
+        let subject: SharedString = commit.data.subject.clone().into();
+        let author_name: SharedString = commit.data.author_name.clone().into();
+        let short_sha: SharedString = commit.data.sha.display_short().into();
+        let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
+        let refs = commit.data.ref_names.clone();
         let lane = commit.lane;
         let lines = commit.lines.clone();
         let color_idx = commit.color_idx;
@@ -691,15 +690,15 @@ impl GitGraph {
         graph_width: Pixels,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let Some(commit) = self.commits.get(idx) else {
+        let Some(commit) = self.graph.commits.get(idx) else {
             return div().into_any_element();
         };
 
-        let commit_sha = commit.sha.clone();
-        let parents = commit.parents.clone();
-        let author = commit.author_name.clone();
-        let subject = commit.subject.clone();
-        let formatted_time = commit.formatted_time.clone();
+        let commit_sha = commit.data.sha.clone();
+        let parents = commit.data.parents.clone();
+        let author = commit.data.author_name.clone();
+        let subject = commit.data.subject.clone();
+        let formatted_time = commit.data.commit_timestamp.clone();
         let lines = commit.lines.clone();
         let loading_files = self.loading_files;
         let expanded_files = &self.expanded_files;
@@ -768,7 +767,7 @@ impl GitGraph {
                                             .color(Color::Muted),
                                     )
                                     .child(
-                                        Label::new(commit_sha)
+                                        Label::new(commit_sha.to_string())
                                             .size(LabelSize::Small)
                                             .color(Color::Accent),
                                     ),
@@ -776,7 +775,7 @@ impl GitGraph {
                             .when(!parents.is_empty(), |el| {
                                 let parent_str = parents
                                     .iter()
-                                    .map(|p| if p.len() >= 7 { &p[..7] } else { p.as_str() })
+                                    .map(|parent| parent.display_short())
                                     .collect::<Vec<_>>()
                                     .join(", ");
                                 el.child(
@@ -1001,7 +1000,7 @@ impl Render for GitGraph {
                 .items_center()
                 .justify_center()
                 .child(Label::new("Loading commits...").color(Color::Muted))
-        } else if self.commits.is_empty() {
+        } else if self.graph.commits.is_empty() {
             div()
                 .size_full()
                 .flex()
