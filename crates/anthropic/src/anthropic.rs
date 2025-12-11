@@ -426,7 +426,6 @@ impl Model {
     }
 
     pub fn beta_headers(&self) -> Option<String> {
-        dbg!("BETA HEADERS");
         let mut headers = vec![];
 
         match self {
@@ -441,7 +440,6 @@ impl Model {
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5Thinking => {
                 // Fine-grained tool streaming for newer models
-                dbg!("PUSHING");
                 headers.push("fine-grained-tool-streaming-2025-05-14".to_string());
             }
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {

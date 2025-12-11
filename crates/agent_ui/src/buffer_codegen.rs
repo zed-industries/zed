@@ -424,8 +424,14 @@ impl CodegenAlternative {
                     })
                     .boxed_local()
                 };
-            self.generation =
-                self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+            self.generation = self.handle_stream(
+                telemetry_id,
+                provider_id.to_string(),
+                api_key,
+                stream,
+                None,
+                cx,
+            );
         }
 
         Ok(())
@@ -613,6 +619,7 @@ impl CodegenAlternative {
         model_provider_id: String,
         model_api_key: Option<String>,
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
+        model_explanation_source: Option<Arc<Mutex<Option<SharedString>>>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let start_time = Instant::now();
@@ -811,6 +818,15 @@ impl CodegenAlternative {
 
                 while let Some((char_ops, line_ops)) = diff_rx.next().await {
                     codegen.update(cx, |codegen, cx| {
+                        // Check for model explanation updates from the stream
+                        codegen.model_explanation = model_explanation_source
+                            .as_ref()
+                            .and_then(|source| source.lock().take());
+                        // if let Some(source) = &model_explanation_source {
+                        //     if let Some(explanation) = source.lock().take() {
+                        //         codegen.model_explanation = Some(explanation);
+                        //     }
+                        // }
                         codegen.last_equal_ranges.clear();
 
                         let edits = char_ops
@@ -1112,16 +1128,52 @@ impl CodegenAlternative {
                 }
             };
 
+            // // Store the description if non-empty
+            // let description = if !input.description.trim().is_empty() {
+            //     Some(input.description.clone())
+            // } else {
+            //     None
+            // };
+
+            // // Apply the replacement text to the buffer and compute diff
+            // let batch_diff_task = codegen
+            //     .update(cx, |this, cx| {
+            //         this.model_explanation = description.map(Into::into);
+            //         let range = this.range.clone();
+            //         this.apply_edits(
+            //             std::iter::once((range, input.replacement_text)),
+            //             cx,
+            //         );
+            //         this.reapply_batch_diff(cx)
+            //     })
+            //     .ok();
+
             let chars_read_so_far = Arc::new(Mutex::new(0usize));
-            let tool_to_text = move |tool_use: LanguageModelToolUse| -> Option<String> {
-                let mut chars_read_so_far = chars_read_so_far.lock();
-                // dbg!(&tool_use);
-                let input: RewriteSectionInput =
-                    serde_json::from_value(tool_use.input.clone()).ok()?;
-                let value = input.replacement_text[*chars_read_so_far..].to_string();
-                *chars_read_so_far = input.replacement_text.len();
-                Some(value)
-            };
+            let tool_to_text_and_message =
+                move |tool_use: LanguageModelToolUse| -> (Option<String>, Option<String>) {
+                    let mut chars_read_so_far = chars_read_so_far.lock();
+                    match tool_use.name.as_ref() {
+                        "rewrite_section" => {
+                            let Ok(mut input) = serde_json::from_value::<RewriteSectionInput>(
+                                tool_use.input.clone(),
+                            ) else {
+                                return (None, None);
+                            };
+                            let value = input.replacement_text[*chars_read_so_far..].to_string();
+                            *chars_read_so_far = input.replacement_text.len();
+                            (Some(value), Some(std::mem::take(&mut input.description)))
+                        }
+                        "failure_message" => {
+                            let Ok(mut input) = serde_json::from_value::<FailureMessageInput>(
+                                tool_use.input.clone(),
+                            ) else {
+                                return (None, None);
+                            };
+                            (None, Some(std::mem::take(&mut input.message)))
+                        }
+                        _ => (None, None),
+                    }
+                };
 
             let mut message_id = None;
             let mut first_text = None;
@@ -1133,13 +1185,21 @@ impl CodegenAlternative {
                     dbg!(&first_event);
                     match first_event {
                         Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
-                            dbg!("AAA 0");
                             message_id = Some(id);
                         }
                         Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                            if tool_use.name.as_ref() == "rewrite_section" =>
+                            if matches!(
+                                tool_use.name.as_ref(),
+                                "rewrite_section" | "failure_message"
+                            ) =>
                         {
-                            first_text = tool_to_text(tool_use);
+                            let (text, message) = tool_to_text_and_message(tool_use);
+                            codegen
+                                .update(cx, |this, _cx| {
+                                    this.model_explanation = message.map(Into::into);
+                                })
+                                .expect("Update should happen");
+                            first_text = text;
                             if first_text.is_some() {
                                 break;
                             }
@@ -1175,18 +1235,26 @@ impl CodegenAlternative {
             };
 
             let move_last_token_usage = last_token_usage.clone();
+            let model_explanation: Arc<Mutex<Option<SharedString>>> = Arc::new(Mutex::new(None));
+            let model_explanation_for_stream = model_explanation.clone();
 
             let text_stream = Box::pin(futures::stream::once(async { Ok(first_text) }).chain(
                 completion_events.filter_map(move |e| {
-                    let tool_to_text = tool_to_text.clone();
+                    let tool_to_text_and_message = tool_to_text_and_message.clone();
                     let last_token_usage = move_last_token_usage.clone();
                     let total_text = total_text.clone();
+                    let model_explanation = model_explanation_for_stream.clone();
                     async move {
                         match e {
                             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                                if tool_use.name.as_ref() == "rewrite_section" =>
+                                if matches!(
+                                    tool_use.name.as_ref(),
+                                    "rewrite_section" | "failure_message"
+                                ) =>
                             {
-                                tool_to_text(tool_use).map(Ok)
+                                let (text, message) = tool_to_text_and_message(tool_use);
+                                *model_explanation.lock() = message.map(Into::into);
+                                text.map(Ok)
                             }
                             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                 *last_token_usage.lock() = token_usage;
@@ -1198,7 +1266,7 @@ impl CodegenAlternative {
                                 None
                             }
                             e => {
-                                println!("UNEXPECTED EVENT {:?}", e);
+                                log::error!("UNEXPECTED EVENT {:?}", e);
                                 None
                             }
                         }
@@ -1219,6 +1287,7 @@ impl CodegenAlternative {
                         provider_id,
                         api_key,
                         async { Ok(language_model_text_stream) },
+                        Some(model_explanation.clone()),
                         cx,
                     )
                 })
@@ -1764,6 +1833,7 @@ mod tests {
                     stream: chunks_rx.map(Ok).boxed(),
                     last_token_usage: Arc::new(Mutex::new(TokenUsage::default())),
                 })),
+                None,
                 cx,
             );
         });
