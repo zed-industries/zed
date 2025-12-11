@@ -38,7 +38,7 @@ pub async fn apply_diff(
                         project
                             .find_project_path(path.as_ref(), cx)
                             .with_context(|| {
-                                format!("Failed to find worktree for new path: {}", path)
+                                format!("Failed to find worktree for edited path: {}", path)
                             })?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
