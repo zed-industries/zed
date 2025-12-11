@@ -843,6 +843,7 @@ impl Motion {
             | Up { .. }
             | WrappingLeft
             | WrappingRight => false,
+
             EndOfDocument
             | EndOfParagraph
             | GoToPercentage
@@ -966,7 +967,7 @@ impl Motion {
             } => down_display(map, point, goal, times, text_layout_details),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, -(times as isize), text_layout_details),
             Up {
                 display_lines: true,
             } => up_display(map, point, goal, times, text_layout_details),
