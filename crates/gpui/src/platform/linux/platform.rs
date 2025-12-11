@@ -14,7 +14,7 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow};
-use calloop::LoopSignal;
+use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
 use util::command::{new_smol_command, new_std_command};
@@ -25,8 +25,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, WindowAppearance, WindowParams, px,
+    PlatformTextSystem, PlatformWindow, Point, Result, RunnableVariant, Task, WindowAppearance,
+    WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -149,8 +149,8 @@ pub(crate) struct LinuxCommon {
 }
 
 impl LinuxCommon {
-    pub fn new(signal: LoopSignal) -> (Self, PriorityQueueCalloopReceiver<RunnableVariant>) {
-        let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
+    pub fn new(signal: LoopSignal) -> (Self, Channel<RunnableVariant>) {
+        let (main_sender, main_receiver) = calloop::channel::channel::<RunnableVariant>();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
