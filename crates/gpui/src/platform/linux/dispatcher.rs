@@ -248,7 +248,7 @@ impl<T> PriorityQueueCalloopSender<T> {
         Self { sender: tx, ping }
     }
 
-    fn send(&self, priority: Priority, item: T) -> Result<(), flume::SendError<(Priority, T)>> {
+    fn send(&self, priority: Priority, item: T) -> Result<(), crate::queue::Disconnected> {
         let res = self.sender.send(priority, item);
         if res.is_ok() {
             self.ping.ping();
@@ -328,7 +328,7 @@ impl<T> calloop::EventSource for PriorityQueueCalloopReceiver<T> {
             .process_events(readiness, token, |(), &mut ()| {
                 let mut is_empty = true;
 
-                let receiver = self.receiver.clone();
+                let mut receiver = self.receiver.clone();
                 for runnable in receiver.try_iter() {
                     match runnable {
                         Ok(r) => {
