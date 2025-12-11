@@ -61,9 +61,13 @@ pub async fn run_load_project(
         .await
         .unwrap();
     let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await;
-    let cursor_info = buffer
+    let (example_buffer, language_name) = buffer
         .read_with(&cx, |buffer, _cx| {
             let cursor_point = cursor_position.to_point(&buffer);
+            let language_name = buffer
+                .language()
+                .map(|l| l.name().to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
             (
                 ExampleBuffer {
                     content: buffer.text(),
@@ -71,16 +75,12 @@ pub async fn run_load_project(
                     cursor_column: cursor_point.column,
                     cursor_offset: cursor_position.to_offset(&buffer),
                 },
-                cursor_point.row + 1,
+                language_name,
             )
         })
         .unwrap();
-    let (example_buffer, cursor_row) = cursor_info;
 
-    _progress.set_info(
-        format!("{}:{}", example.cursor_path.display(), cursor_row),
-        InfoStyle::Normal,
-    );
+    _progress.set_info(language_name, InfoStyle::Normal);
 
     example.buffer = Some(example_buffer);
     example.state = Some(ExampleState {

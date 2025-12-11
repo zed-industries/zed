@@ -293,31 +293,6 @@ impl Progress {
         let _ = std::io::stderr().flush();
     }
 
-    fn set_substatus(&self, example_name: &str, substatus: impl Into<Cow<'static, str>>) {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(task) = inner.in_progress.get_mut(example_name) {
-            task.substatus = Some(substatus.into().into_owned());
-            Self::clear_line(&inner);
-            Self::print_status_line(&inner);
-        }
-    }
-
-    fn clear_substatus(&self, example_name: &str) {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(task) = inner.in_progress.get_mut(example_name) {
-            task.substatus = None;
-            Self::clear_line(&inner);
-            Self::print_status_line(&inner);
-        }
-    }
-
-    fn set_info(&self, example_name: &str, info: impl Into<String>, style: InfoStyle) {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(task) = inner.in_progress.get_mut(example_name) {
-            task.info = Some((info.into(), style));
-        }
-    }
-
     pub fn clear(&self) {
         let inner = self.inner.lock().unwrap();
         Self::clear_line(&inner);
@@ -403,15 +378,28 @@ pub struct StepProgress {
 
 impl StepProgress {
     pub fn set_substatus(&self, substatus: impl Into<Cow<'static, str>>) {
-        self.progress.set_substatus(&self.example_name, substatus);
+        let mut inner = self.progress.inner.lock().unwrap();
+        if let Some(task) = inner.in_progress.get_mut(&self.example_name) {
+            task.substatus = Some(substatus.into().into_owned());
+            Progress::clear_line(&inner);
+            Progress::print_status_line(&inner);
+        }
     }
 
     pub fn clear_substatus(&self) {
-        self.progress.clear_substatus(&self.example_name);
+        let mut inner = self.progress.inner.lock().unwrap();
+        if let Some(task) = inner.in_progress.get_mut(&self.example_name) {
+            task.substatus = None;
+            Progress::clear_line(&inner);
+            Progress::print_status_line(&inner);
+        }
     }
 
     pub fn set_info(&self, info: impl Into<String>, style: InfoStyle) {
-        self.progress.set_info(&self.example_name, info, style);
+        let mut inner = self.progress.inner.lock().unwrap();
+        if let Some(task) = inner.in_progress.get_mut(&self.example_name) {
+            task.info = Some((info.into(), style));
+        }
     }
 }
 

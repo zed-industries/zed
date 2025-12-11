@@ -64,12 +64,7 @@ pub async fn run_context_retrieval(
         .unwrap();
 
     let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
-    let style = if excerpt_count == 0 {
-        InfoStyle::Warning
-    } else {
-        InfoStyle::Normal
-    };
-    step_progress.set_info(format!("{} excerpts", excerpt_count), style);
+    step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
 
     example.context = Some(ExampleContext {
         files: context_files,
