@@ -223,11 +223,6 @@ pub async fn setup_worktree(example: &Example) {
         let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"])
             .await
             .unwrap();
-        if revision != example.revision {
-            run_git(&repo_dir, &["tag", &example.revision, &revision])
-                .await
-                .unwrap();
-        }
         revision
     };
 

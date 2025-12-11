@@ -6783,7 +6783,7 @@ impl LspStore {
             })
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
-                self.language_servers_for_local_buffer(buffer, cx)
+                self.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
@@ -8123,7 +8123,7 @@ impl LspStore {
         })
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
+    pub fn running_language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
         cx: &mut App,
@@ -8143,6 +8143,17 @@ impl LspStore {
                     _ => None,
                 },
             )
+    }
+
+    pub fn language_servers_for_local_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Vec<LanguageServerId> {
+        let local = self.as_local();
+        local
+            .map(|local| local.language_server_ids_for_buffer(buffer, cx))
+            .unwrap_or_default()
     }
 
     pub fn language_server_for_local_buffer<'a>(
