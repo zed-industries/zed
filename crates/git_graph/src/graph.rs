@@ -8,10 +8,7 @@ use smallvec::SmallVec;
 use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;
 
-use crate::{
-    commit_data::{GraphLine, LineType},
-    graph_rendering::BRANCH_COLORS,
-};
+use crate::graph_rendering::BRANCH_COLORS;
 
 /// %H - Full commit hash
 /// %aN - Author name
@@ -23,19 +20,6 @@ use crate::{
 /// %D - Ref names
 /// %x1E - ASCII record separator, used to split up commit data
 static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
-
-/// Commit data needed for the graph
-#[derive(Debug)]
-pub struct CommitData {
-    pub sha: Oid,
-    /// Most commits have a single parent, so we use a small vec to avoid allocations
-    pub parents: smallvec::SmallVec<[Oid; 1]>,
-    pub author_name: SharedString,
-    pub _author_email: SharedString,
-    pub commit_timestamp: SharedString,
-    pub subject: SharedString,
-    pub ref_names: Vec<SharedString>,
-}
 
 pub fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -102,6 +86,36 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<CommitData>> {
             })
         })
         .collect::<Vec<_>>())
+}
+
+/// Commit data needed for the graph
+#[derive(Debug)]
+pub struct CommitData {
+    pub sha: Oid,
+    /// Most commits have a single parent, so we use a small vec to avoid allocations
+    pub parents: smallvec::SmallVec<[Oid; 1]>,
+    pub author_name: SharedString,
+    pub _author_email: SharedString,
+    pub commit_timestamp: SharedString,
+    pub subject: SharedString,
+    pub ref_names: Vec<SharedString>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GraphLine {
+    pub from_lane: usize,
+    pub to_lane: usize,
+    pub line_type: LineType,
+    pub color_idx: usize,
+    pub continues_from_above: bool,
+    pub ends_at_commit: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LineType {
+    Straight,
+    MergeDown,
+    BranchOut,
 }
 
 #[derive(Copy, Clone)]

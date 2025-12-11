@@ -1,4 +1,3 @@
-mod commit_data;
 mod graph;
 mod graph_rendering;
 
@@ -6,10 +5,10 @@ use anyhow::Context as _;
 use git;
 use git_ui::commit_view::CommitView;
 use gpui::{
-    Action, App, ClickEvent, Context, Corner, DismissEvent, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, ListAlignment, ListState, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, actions, anchored, deferred, list, px,
+    App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
+    list, px,
 };
 use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
@@ -35,50 +34,6 @@ actions!(
         OpenGitGraph,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
-        /// Refreshes the git graph data.
-        RefreshGraph,
-        /// Checks out the selected commit or branch.
-        CheckoutCommit,
-        /// Copies the SHA of the selected commit to clipboard.
-        CopySha,
-        /// Copies the branch name to clipboard.
-        CopyBranchName,
-        /// Creates a new branch at the selected commit.
-        CreateBranch,
-        /// Creates a new tag at the selected commit.
-        CreateTag,
-        /// Renames the selected branch.
-        RenameBranch,
-        /// Deletes the selected local branch.
-        DeleteBranch,
-        /// Deletes the selected remote branch.
-        DeleteRemoteBranch,
-        /// Reverts the selected commit.
-        RevertCommit,
-        /// Cherry-picks the selected commit onto the current branch.
-        CherryPickCommit,
-        /// Merges the selected branch into the current branch.
-        MergeIntoCurrent,
-        /// Pulls the selected branch into the current branch.
-        PullIntoCurrent,
-        /// Rebases the current branch onto the selected commit.
-        RebaseOnto,
-        /// Soft resets to the selected commit (keeps changes staged).
-        ResetSoft,
-        /// Mixed resets to the selected commit (keeps changes unstaged).
-        ResetMixed,
-        /// Hard resets to the selected commit (discards all changes).
-        ResetHard,
-        /// Pushes the current branch to remote.
-        PushBranch,
-        /// Pulls the current branch from remote.
-        PullBranch,
-        /// Fetches all remotes.
-        FetchAll,
-        /// Stashes current changes.
-        StashChanges,
-        /// Pops the most recent stash.
-        StashPop,
     ]
 );
 
@@ -227,128 +182,6 @@ impl GitGraph {
             window,
             cx,
         );
-    }
-
-    fn deploy_context_menu(
-        &mut self,
-        position: Point<Pixels>,
-        commit_idx: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selected_commit = Some(commit_idx);
-
-        if self.graph.commits.get(commit_idx).is_none() {
-            return;
-        };
-
-        let entry = &self.graph.commits[commit_idx];
-        let refs = &entry.data.ref_names;
-
-        let is_head = refs.iter().any(|r| r.contains("HEAD"));
-        let has_local_branch = refs
-            .iter()
-            .any(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"));
-        let has_remote_branch = refs.iter().any(|r| r.starts_with("origin/"));
-        let has_any_branch = has_local_branch || has_remote_branch || is_head;
-
-        let focus_handle = self.focus_handle.clone();
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            let mut menu = menu.context(focus_handle);
-
-            menu = menu.action("Refresh", RefreshGraph.boxed_clone());
-
-            if !is_head {
-                menu = menu
-                    .separator()
-                    .action("Checkout", CheckoutCommit.boxed_clone())
-                    .action(
-                        "Merge into current branch...",
-                        MergeIntoCurrent.boxed_clone(),
-                    )
-                    .action("Rebase onto", RebaseOnto.boxed_clone());
-
-                if has_remote_branch {
-                    menu =
-                        menu.action("Pull into current branch...", PullIntoCurrent.boxed_clone());
-                }
-
-                menu = menu
-                    .separator()
-                    .action("Cherry-pick", CherryPickCommit.boxed_clone())
-                    .action("Revert", RevertCommit.boxed_clone());
-            }
-
-            menu = menu
-                .separator()
-                .action("Create Branch...", CreateBranch.boxed_clone())
-                .action("Create Tag...", CreateTag.boxed_clone());
-
-            if has_local_branch || is_head {
-                menu = menu.action("Rename Branch...", RenameBranch.boxed_clone());
-            }
-
-            if has_local_branch && !is_head {
-                menu = menu.action("Delete Local Branch", DeleteBranch.boxed_clone());
-            }
-
-            if has_remote_branch {
-                menu = menu.action("Delete Remote Branch...", DeleteRemoteBranch.boxed_clone());
-            }
-
-            if !is_head {
-                menu = menu
-                    .separator()
-                    .action("Reset (soft)", ResetSoft.boxed_clone())
-                    .action("Reset (mixed)", ResetMixed.boxed_clone())
-                    .action("Reset (hard)", ResetHard.boxed_clone());
-            }
-
-            menu = menu
-                .separator()
-                .action("Push", PushBranch.boxed_clone())
-                .action("Pull", PullBranch.boxed_clone())
-                .action("Fetch All", FetchAll.boxed_clone())
-                .separator()
-                .action("Stash", StashChanges.boxed_clone())
-                .action("Stash Pop", StashPop.boxed_clone())
-                .separator()
-                .action("Copy SHA", CopySha.boxed_clone());
-
-            if has_any_branch {
-                menu = menu.action("Copy Branch Name", CopyBranchName.boxed_clone());
-            }
-
-            menu
-        });
-
-        self.set_context_menu(context_menu, position, window, cx);
-    }
-
-    fn set_context_menu(
-        &mut self,
-        context_menu: Entity<ContextMenu>,
-        position: Point<Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let subscription = cx.subscribe_in(
-            &context_menu,
-            window,
-            |this, _, _: &DismissEvent, window, cx| {
-                if this
-                    .context_menu
-                    .as_ref()
-                    .is_some_and(|cm| cm.0.focus_handle(cx).contains_focused(window, cx))
-                {
-                    cx.focus_self(window);
-                }
-                this.context_menu.take();
-                cx.notify();
-            },
-        );
-        self.context_menu = Some((context_menu, position, subscription));
-        cx.notify();
     }
 
     fn load_data(&mut self, cx: &mut Context<Self>) {
@@ -622,12 +455,6 @@ impl GitGraph {
             .on_click(cx.listener(move |this, _event: &ClickEvent, _window, _cx| {
                 this.selected_commit = Some(idx);
             }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_context_menu(event.position, idx, window, cx);
-                }),
-            )
             .child(
                 div()
                     .w(graph_width)

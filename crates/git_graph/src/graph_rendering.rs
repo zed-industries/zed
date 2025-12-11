@@ -1,7 +1,7 @@
 use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
 use ui::SharedString;
 
-use crate::commit_data::LineType;
+use crate::graph::{GraphLine, LineType};
 
 pub const BRANCH_COLORS: &[Hsla; 34] = &[
     Hsla {
@@ -210,10 +210,7 @@ pub const BRANCH_COLORS: &[Hsla; 34] = &[
     }, // Medium Violet
 ];
 
-pub fn render_graph_continuation(
-    lines: Vec<crate::commit_data::GraphLine>,
-    graph_width: Pixels,
-) -> impl IntoElement {
+pub fn render_graph_continuation(lines: Vec<GraphLine>, graph_width: Pixels) -> impl IntoElement {
     canvas(
         move |_bounds, _window, _cx| {},
         move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
@@ -244,7 +241,7 @@ pub fn render_graph_continuation(
 
 pub fn render_graph_cell(
     lane: usize,
-    lines: Vec<crate::commit_data::GraphLine>,
+    lines: Vec<GraphLine>,
     commit_color_idx: usize,
     row_height: Pixels,
     graph_width: Pixels,
