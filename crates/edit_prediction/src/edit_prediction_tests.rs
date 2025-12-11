@@ -45,10 +45,6 @@ async fn test_current_state(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_project(&project, cx);
-    });
-
     let buffer1 = project
         .update(cx, |project, cx| {
             let path = project.find_project_path(path!("/root/1.txt"), cx).unwrap();
@@ -59,6 +55,11 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .unwrap();
     let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot1.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer1, &project, cx);
+    });
 
     // Prediction for current file
 
