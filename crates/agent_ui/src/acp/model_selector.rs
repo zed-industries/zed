@@ -15,7 +15,7 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::{LanguageModelSelection, Settings, update_settings_file};
+use settings::Settings;
 use ui::{
     DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, KeyBinding, ListItem,
     ListItemSpacing, Tooltip, prelude::*,
@@ -315,31 +315,26 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 };
 
                 let handle_action_click = {
-                    let fs = self.fs.clone();
                     let action = *action;
                     let model_id = model_info.id.clone();
+                    let fs = self.fs.clone();
 
-                    move |cx: &App| {
-                        let fs = fs.clone();
-                        let model_id = model_id.0.as_ref();
-                        let (provider, model) = model_id.split_once('/').unwrap_or(("", model_id));
-
-                        let selection = LanguageModelSelection {
-                            provider: provider.to_owned().into(),
-                            model: model.to_owned(),
-                        };
-
-                        update_settings_file(fs, cx, move |settings, _| match action {
-                            AcpModelPickerEntryAction::Favorite => settings
-                                .agent
-                                .get_or_insert_default()
-                                .add_favorite_model(selection),
-                            AcpModelPickerEntryAction::Unfavorite
-                            | AcpModelPickerEntryAction::RemoveFromFavorites => settings
-                                .agent
-                                .get_or_insert_default()
-                                .remove_favorite_model(&selection),
-                        });
+                    move |cx: &App| match action {
+                        AcpModelPickerEntryAction::Favorite => {
+                            crate::favorite_models::add_to_settings(
+                                model_id.clone(),
+                                fs.clone(),
+                                cx,
+                            )
+                        }
+                        AcpModelPickerEntryAction::Unfavorite
+                        | AcpModelPickerEntryAction::RemoveFromFavorites => {
+                            crate::favorite_models::remove_from_settings(
+                                model_id.clone(),
+                                fs.clone(),
+                                cx,
+                            )
+                        }
                     }
                 };
 

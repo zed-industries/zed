@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agent_client_protocol::ModelId;
 use fs::Fs;
 use language_model::LanguageModel;
 use settings::{LanguageModelSelection, update_settings_file};
@@ -14,6 +15,18 @@ impl IntoLanguageModelSelection for Arc<dyn LanguageModel> {
         LanguageModelSelection {
             provider: self.provider_id().to_string().into(),
             model: self.id().0.to_string(),
+        }
+    }
+}
+
+impl IntoLanguageModelSelection for ModelId {
+    fn into_language_model_selection(self) -> LanguageModelSelection {
+        let model_id = self.0.as_ref();
+        let (provider, model) = model_id.split_once('/').unwrap_or(("", model_id));
+
+        LanguageModelSelection {
+            provider: provider.to_owned().into(),
+            model: model.to_owned(),
         }
     }
 }
