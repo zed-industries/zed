@@ -1046,5 +1046,14 @@
       "g g": "settings_editor::FocusFirstNavEntry",
       "shift-g": "settings_editor::FocusLastNavEntry"
     }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "ctrl-u": "markdown::ScrollPageUp",
+      "ctrl-d": "markdown::ScrollPageDown",
+      "ctrl-y": "markdown::ScrollUp",
+      "ctrl-e": "markdown::ScrollDown"
+    }
   }
 ]
