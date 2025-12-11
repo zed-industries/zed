@@ -9442,7 +9442,7 @@ mod tests {
         });
     }
 
-        #[gpui::test]
+    #[gpui::test]
     async fn test_pane_zoom_in_out(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9458,21 +9458,16 @@ mod tests {
         // Add an item to the pane so it can be zoomed
         workspace.update_in(cx, |workspace, window, cx| {
             let item = cx.new(TestItem::new);
-            workspace.add_item(
-                pane.clone(),
-                Box::new(item),
-                None,
-                true,
-                true,
-                window,
-                cx
-            );
+            workspace.add_item(pane.clone(), Box::new(item), None, true, true, window, cx);
         });
 
         // Initially not zoomed
         workspace.update_in(cx, |workspace, _window, cx| {
             assert!(!pane.read(cx).is_zoomed(), "Pane starts unzoomed");
-            assert!(workspace.zoomed.is_none(), "Workspace should track no zoomed pane");
+            assert!(
+                workspace.zoomed.is_none(),
+                "Workspace should track no zoomed pane"
+            );
             assert!(pane.read(cx).items_len() > 0, "Pane should have items");
         });
 
@@ -9482,8 +9477,14 @@ mod tests {
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
-            assert!(pane.read(cx).is_zoomed(), "Pane should be zoomed after ZoomIn");
-            assert!(workspace.zoomed.is_some(), "Workspace should track the zoomed pane");
+            assert!(
+                pane.read(cx).is_zoomed(),
+                "Pane should be zoomed after ZoomIn"
+            );
+            assert!(
+                workspace.zoomed.is_some(),
+                "Workspace should track the zoomed pane"
+            );
             assert!(
                 pane.read(cx).focus_handle(cx).contains_focused(window, cx),
                 "ZoomIn should focus the pane"
@@ -9497,7 +9498,10 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(pane.read(cx).is_zoomed(), "Second ZoomIn keeps pane zoomed");
-            assert!(workspace.zoomed.is_some(), "Workspace still tracks zoomed pane");
+            assert!(
+                workspace.zoomed.is_some(),
+                "Workspace still tracks zoomed pane"
+            );
             assert!(
                 pane.read(cx).focus_handle(cx).contains_focused(window, cx),
                 "Pane remains focused after repeated ZoomIn"
@@ -9510,8 +9514,14 @@ mod tests {
         });
 
         workspace.update_in(cx, |workspace, _window, cx| {
-            assert!(!pane.read(cx).is_zoomed(), "Pane should unzoom after ZoomOut");
-            assert!(workspace.zoomed.is_none(), "Workspace clears zoom tracking after ZoomOut");
+            assert!(
+                !pane.read(cx).is_zoomed(),
+                "Pane should unzoom after ZoomOut"
+            );
+            assert!(
+                workspace.zoomed.is_none(),
+                "Workspace clears zoom tracking after ZoomOut"
+            );
         });
 
         // Zoom Out again is a no-op
@@ -9520,8 +9530,14 @@ mod tests {
         });
 
         workspace.update_in(cx, |workspace, _window, cx| {
-            assert!(!pane.read(cx).is_zoomed(), "Second ZoomOut keeps pane unzoomed");
-            assert!(workspace.zoomed.is_none(), "Workspace remains without zoomed pane");
+            assert!(
+                !pane.read(cx).is_zoomed(),
+                "Second ZoomOut keeps pane unzoomed"
+            );
+            assert!(
+                workspace.zoomed.is_none(),
+                "Workspace remains without zoomed pane"
+            );
         });
     }
 
@@ -11565,5 +11581,4 @@ mod tests {
         });
         item
     }
-
 }
