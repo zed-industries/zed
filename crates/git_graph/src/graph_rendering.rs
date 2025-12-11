@@ -1,241 +1,10 @@
 use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
+use theme::AccentColors;
 
 use crate::graph::{GraphLine, LineType};
 
-pub const BRANCH_COLORS: &[Hsla; 34] = &[
-    Hsla {
-        h: 200.0 / 360.0,
-        s: 0.9,
-        l: 0.55,
-        a: 1.0,
-    }, // Cyan
-    Hsla {
-        h: 320.0 / 360.0,
-        s: 0.9,
-        l: 0.55,
-        a: 1.0,
-    }, // Magenta/Pink
-    Hsla {
-        h: 45.0 / 360.0,
-        s: 0.95,
-        l: 0.50,
-        a: 1.0,
-    }, // Orange
-    Hsla {
-        h: 120.0 / 360.0,
-        s: 0.8,
-        l: 0.45,
-        a: 1.0,
-    }, // Green
-    Hsla {
-        h: 270.0 / 360.0,
-        s: 0.8,
-        l: 0.60,
-        a: 1.0,
-    }, // Purple
-    Hsla {
-        h: 0.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Red
-    Hsla {
-        h: 180.0 / 360.0,
-        s: 0.8,
-        l: 0.45,
-        a: 1.0,
-    }, // Teal
-    Hsla {
-        h: 60.0 / 360.0,
-        s: 0.9,
-        l: 0.50,
-        a: 1.0,
-    }, // Yellow
-    Hsla {
-        h: 210.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Blue
-    Hsla {
-        h: 340.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Rose
-    Hsla {
-        h: 90.0 / 360.0,
-        s: 0.75,
-        l: 0.50,
-        a: 1.0,
-    }, // Lime
-    Hsla {
-        h: 240.0 / 360.0,
-        s: 0.75,
-        l: 0.60,
-        a: 1.0,
-    }, // Indigo
-    Hsla {
-        h: 30.0 / 360.0,
-        s: 0.90,
-        l: 0.50,
-        a: 1.0,
-    }, // Orange-Red
-    Hsla {
-        h: 160.0 / 360.0,
-        s: 0.75,
-        l: 0.45,
-        a: 1.0,
-    }, // Sea Green
-    Hsla {
-        h: 290.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Violet
-    Hsla {
-        h: 15.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Coral
-    Hsla {
-        h: 175.0 / 360.0,
-        s: 0.70,
-        l: 0.50,
-        a: 1.0,
-    }, // Aqua
-    Hsla {
-        h: 300.0 / 360.0,
-        s: 0.65,
-        l: 0.55,
-        a: 1.0,
-    }, // Orchid
-    Hsla {
-        h: 75.0 / 360.0,
-        s: 0.80,
-        l: 0.45,
-        a: 1.0,
-    }, // Yellow-Green
-    Hsla {
-        h: 225.0 / 360.0,
-        s: 0.75,
-        l: 0.55,
-        a: 1.0,
-    }, // Slate Blue
-    Hsla {
-        h: 350.0 / 360.0,
-        s: 0.80,
-        l: 0.50,
-        a: 1.0,
-    }, // Crimson
-    Hsla {
-        h: 140.0 / 360.0,
-        s: 0.70,
-        l: 0.50,
-        a: 1.0,
-    }, // Spring Green
-    Hsla {
-        h: 255.0 / 360.0,
-        s: 0.65,
-        l: 0.60,
-        a: 1.0,
-    }, // Periwinkle
-    Hsla {
-        h: 20.0 / 360.0,
-        s: 0.85,
-        l: 0.50,
-        a: 1.0,
-    }, // Burnt Orange
-    Hsla {
-        h: 190.0 / 360.0,
-        s: 0.75,
-        l: 0.50,
-        a: 1.0,
-    }, // Steel Blue
-    Hsla {
-        h: 330.0 / 360.0,
-        s: 0.75,
-        l: 0.55,
-        a: 1.0,
-    }, // Hot Pink
-    Hsla {
-        h: 100.0 / 360.0,
-        s: 0.65,
-        l: 0.50,
-        a: 1.0,
-    }, // Olive Green
-    Hsla {
-        h: 265.0 / 360.0,
-        s: 0.60,
-        l: 0.55,
-        a: 1.0,
-    }, // Lavender
-    Hsla {
-        h: 5.0 / 360.0,
-        s: 0.80,
-        l: 0.55,
-        a: 1.0,
-    }, // Tomato
-    Hsla {
-        h: 150.0 / 360.0,
-        s: 0.65,
-        l: 0.50,
-        a: 1.0,
-    }, // Medium Sea Green
-    Hsla {
-        h: 280.0 / 360.0,
-        s: 0.55,
-        l: 0.55,
-        a: 1.0,
-    }, // Medium Purple
-    Hsla {
-        h: 35.0 / 360.0,
-        s: 0.85,
-        l: 0.55,
-        a: 1.0,
-    }, // Gold
-    Hsla {
-        h: 195.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Light Blue
-    Hsla {
-        h: 310.0 / 360.0,
-        s: 0.70,
-        l: 0.55,
-        a: 1.0,
-    }, // Medium Violet
-];
-
-pub fn _render_graph_continuation(lines: Vec<GraphLine>, graph_width: Pixels) -> impl IntoElement {
-    canvas(
-        move |_bounds, _window, _cx| {},
-        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
-            let lane_width = px(16.0);
-            let left_padding = px(12.0);
-            let y_top = bounds.origin.y;
-            let y_bottom = bounds.origin.y + bounds.size.height;
-            let line_width = px(1.5);
-
-            for line in &lines {
-                // Only draw straight continuation lines, not branch-outs (those are drawn in the cell)
-                let (lane, color_idx) = match line.line_type {
-                    LineType::Straight if !line.ends_at_commit => (line.from_lane, line.color_idx),
-                    _ => continue,
-                };
-
-                let color = BRANCH_COLORS[color_idx % BRANCH_COLORS.len()];
-                let x =
-                    bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
-
-                draw_straight_line(window, x, y_top, x, y_bottom, line_width, color);
-            }
-        },
-    )
-    .w(graph_width)
-    .h_full()
+pub fn accent_colors_count(accents: &AccentColors) -> usize {
+    accents.0.len()
 }
 
 pub fn render_graph_cell(
@@ -244,10 +13,12 @@ pub fn render_graph_cell(
     commit_color_idx: usize,
     row_height: Pixels,
     graph_width: Pixels,
+    accent_colors: AccentColors,
 ) -> impl IntoElement {
     canvas(
         move |_bounds, _window, _cx| {},
         move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
+            let accent_colors = &accent_colors;
             let lane_width = px(16.0);
             let left_padding = px(12.0);
             let y_top = bounds.origin.y;
@@ -256,7 +27,7 @@ pub fn render_graph_cell(
             let line_width = px(1.5);
 
             for line in &lines {
-                let color = BRANCH_COLORS[line.color_idx % BRANCH_COLORS.len()];
+                let color = accent_colors.color_for_index(line.color_idx as u32);
                 let from_x = bounds.origin.x
                     + left_padding
                     + lane_width * line.from_lane as f32
@@ -291,7 +62,7 @@ pub fn render_graph_cell(
 
             let commit_x =
                 bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
-            let commit_color = BRANCH_COLORS[commit_color_idx % BRANCH_COLORS.len()];
+            let commit_color = accent_colors.color_for_index(commit_color_idx as u32);
             let dot_radius = px(4.5);
             let stroke_width = px(1.5);
 

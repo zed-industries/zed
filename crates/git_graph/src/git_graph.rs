@@ -8,7 +8,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
     list, px,
 };
-use graph_rendering::render_graph_cell;
+use graph_rendering::{accent_colors_count, render_graph_cell};
 use project::{Project, git_store::GitStoreEvent};
 use settings::Settings;
 use std::path::PathBuf;
@@ -106,10 +106,11 @@ impl GitGraph {
 
         let list_state = ListState::new(0, ListAlignment::Top, px(500.0));
 
+        let accent_colors = cx.theme().accents();
         let mut this = GitGraph {
             focus_handle,
             project,
-            graph: crate::graph::GitGraph::new(),
+            graph: crate::graph::GitGraph::new(accent_colors_count(accent_colors)),
             max_lanes: 0,
             loading: true,
             error: None,
@@ -272,6 +273,8 @@ impl GitGraph {
                         color_idx,
                         row_height,
                         graph_width,
+                        // todo! Make this owned by self so we don't have to allocate every frame
+                        cx.theme().accents().clone(),
                     )),
             )
             .child(

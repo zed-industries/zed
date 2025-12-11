@@ -8,8 +8,6 @@ use smallvec::SmallVec;
 use time::{OffsetDateTime, UtcOffset};
 use util::command::new_smol_command;
 
-use crate::graph_rendering::BRANCH_COLORS;
-
 /// %H - Full commit hash
 /// %aN - Author name
 /// %aE - Author email
@@ -118,6 +116,7 @@ pub enum LineType {
     BranchOut,
 }
 
+// todo! On accent colors updating it's len we need to update lane colors to use different indices
 #[derive(Copy, Clone)]
 struct BranchColor(u8);
 
@@ -156,16 +155,18 @@ pub struct GitGraph {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     next_color: BranchColor,
+    accent_colors_count: usize,
     pub commits: Vec<CommitEntry>,
     pub max_lanes: usize,
 }
 
 impl GitGraph {
-    pub fn new() -> Self {
+    pub fn new(accent_colors_count: usize) -> Self {
         GitGraph {
             lane_states: SmallVec::default(),
             lane_colors: HashMap::default(),
             next_color: BranchColor(0),
+            accent_colors_count,
             commits: Vec::default(),
             max_lanes: 0,
         }
@@ -190,9 +191,10 @@ impl GitGraph {
     }
 
     fn get_lane_color(&mut self, lane_idx: ActiveLaneIdx) -> BranchColor {
+        let accent_colors_count = self.accent_colors_count;
         *self.lane_colors.entry(lane_idx).or_insert_with(|| {
             let color_idx = self.next_color;
-            self.next_color = BranchColor((self.next_color.0 + 1) % BRANCH_COLORS.len() as u8);
+            self.next_color = BranchColor((self.next_color.0 + 1) % accent_colors_count as u8);
             color_idx
         })
     }
