@@ -1,8 +1,7 @@
+use crate::{CsvPreviewView, table_data::TableData};
 use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Context, Entity, Subscription, Task};
 use std::time::{Duration, Instant};
-
-use crate::{CsvPreviewView, table_data::TableData};
 
 pub(crate) const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 

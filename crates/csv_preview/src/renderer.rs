@@ -400,7 +400,7 @@ impl CsvPreviewView {
         std::array::from_fn(|_| {
             elements_iter
                 .next()
-                .unwrap_or_else(|| div().into_any_element())
+                .unwrap_or_else(|| "BUG: Broken vec to array conversion".into_any_element())
         })
     }
 
