@@ -9,6 +9,7 @@ use smallvec::SmallVec;
 use std::{
     collections::hash_map,
     ops::Range,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -293,7 +294,7 @@ async fn rebuild_related_files(
             {
                 project.read_with(cx, |project, cx| {
                     if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
-                        e.insert(worktree.read(cx).root_name().as_std_path().to_path_buf());
+                        e.insert(worktree.read(cx).root_name().as_unix_str().to_string());
                     }
                 })?;
             }
@@ -330,7 +331,12 @@ async fn rebuild_related_files(
                     continue;
                 };
 
-                let path = root_name.join(project_path.path.as_std_path()).into();
+                let path = Path::new(&format!(
+                    "{}/{}",
+                    root_name,
+                    project_path.path.as_unix_str()
+                ))
+                .into();
 
                 files.push((
                     buffer,
