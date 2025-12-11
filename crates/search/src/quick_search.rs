@@ -10,7 +10,7 @@ use gpui::{
 use language::Buffer;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, search::SearchQuery};
-use std::{fmt::Write as _, path::Path, pin::pin, sync::Arc, time::Duration};
+use std::{path::Path, pin::pin, sync::Arc, time::Duration};
 use text::ToPoint as _;
 use ui::{
     Button, ButtonStyle, Color, Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label,
@@ -46,15 +46,31 @@ use crate::{
 const MODAL_HEIGHT: Pixels = px(650.);
 const MODAL_WIDTH: Pixels = px(1100.);
 const LEFT_PANEL_WIDTH: Pixels = px(300.);
+const MAX_LINE_MATCHES: usize = 200;
+const MAX_PREVIEW_CHARS: usize = 200;
 
 actions!(search, [QuickSearch]);
 
-fn format_file_key(parent_path: &str, file_name: &str) -> String {
+fn format_file_key(parent_path: &str, file_name: &str) -> SharedString {
     if parent_path.is_empty() {
-        file_name.to_string()
+        file_name.to_string().into()
     } else {
-        format!("{}/{}", parent_path, file_name)
+        format!("{}/{}", parent_path, file_name).into()
     }
+}
+
+fn extract_path_parts(path: &Arc<util::rel_path::RelPath>) -> (SharedString, SharedString) {
+    let file_name: SharedString = path
+        .file_name()
+        .map(|n| n.to_string())
+        .unwrap_or_default()
+        .into();
+    let parent_path: SharedString = path
+        .parent()
+        .map(|p| p.as_unix_str().to_string())
+        .unwrap_or_default()
+        .into();
+    (file_name, parent_path)
 }
 
 pub fn init(cx: &mut App) {
@@ -65,38 +81,16 @@ enum QuickSearchItem {
     FileHeader {
         file_name: SharedString,
         parent_path: SharedString,
+        file_key: SharedString,
     },
     LineMatch {
         project_path: ProjectPath,
+        file_key: SharedString,
         buffer: Entity<Buffer>,
         line: u32,
         line_label: SharedString,
         preview_text: SharedString,
     },
-}
-
-impl QuickSearchItem {
-    fn file_key(&self) -> String {
-        match self {
-            QuickSearchItem::FileHeader {
-                file_name,
-                parent_path,
-            } => format_file_key(parent_path, file_name),
-            QuickSearchItem::LineMatch { project_path, .. } => {
-                let file_name = project_path
-                    .path
-                    .file_name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_default();
-                let parent_path = project_path
-                    .path
-                    .parent()
-                    .map(|p| p.as_unix_str().to_string())
-                    .unwrap_or_default();
-                format_file_key(&parent_path, &file_name)
-            }
-        }
-    }
 }
 
 pub struct QuickSearchDelegate {
@@ -295,12 +289,7 @@ impl QuickSearchModal {
             modal.update(cx, |modal, cx| {
                 modal.picker.update(cx, |picker, cx| {
                     picker.delegate.toggle_search_option(option);
-                    cx.notify();
-                });
-            });
-            modal.update(cx, |modal, cx| {
-                let query = modal.picker.read(cx).delegate.current_query.clone();
-                modal.picker.update(cx, |picker, cx| {
+                    let query = picker.delegate.current_query.clone();
                     picker.set_query(query, window, cx);
                 });
             });
@@ -356,10 +345,7 @@ impl QuickSearchModal {
             .on_click(cx.listener(move |modal, _, window, cx| {
                 modal.picker.update(cx, |picker, cx| {
                     picker.delegate.toggle_search_option(search_option);
-                    cx.notify();
-                });
-                let query = modal.picker.read(cx).delegate.current_query.clone();
-                modal.picker.update(cx, |picker, cx| {
+                    let query = picker.delegate.current_query.clone();
                     picker.set_query(query, window, cx);
                 });
             }))
@@ -490,9 +476,8 @@ impl QuickSearchDelegate {
                 QuickSearchItem::FileHeader { .. } => {
                     self.visible_indices.push(idx);
                 }
-                QuickSearchItem::LineMatch { .. } => {
-                    let file_key = item.file_key();
-                    if !self.collapsed_files.contains(&file_key) {
+                QuickSearchItem::LineMatch { file_key, .. } => {
+                    if !self.collapsed_files.contains(file_key.as_ref()) {
                         self.visible_indices.push(idx);
                     }
                 }
@@ -500,11 +485,12 @@ impl QuickSearchDelegate {
         }
     }
 
-    fn toggle_file_collapsed(&mut self, file_key: &str) {
-        if self.collapsed_files.contains(file_key) {
-            self.collapsed_files.remove(file_key);
+    fn toggle_file_collapsed(&mut self, file_key: &SharedString) {
+        let key = file_key.as_ref();
+        if self.collapsed_files.contains(key) {
+            self.collapsed_files.remove(key);
         } else {
-            self.collapsed_files.insert(file_key.to_string());
+            self.collapsed_files.insert(key.to_string());
         }
         self.update_visible_indices();
     }
@@ -515,6 +501,30 @@ impl QuickSearchDelegate {
 
     fn actual_index(&self, visible_index: usize) -> Option<usize> {
         self.visible_indices.get(visible_index).copied()
+    }
+
+    fn is_line_match_at_visible_index(&self, visible_index: usize) -> bool {
+        self.visible_indices
+            .get(visible_index)
+            .and_then(|&actual_idx| self.items.get(actual_idx))
+            .map_or(false, |item| {
+                matches!(item, QuickSearchItem::LineMatch { .. })
+            })
+    }
+
+    fn find_nearest_line_match(
+        &self,
+        from_visible_index: usize,
+        going_down: bool,
+    ) -> Option<usize> {
+        if going_down {
+            (from_visible_index..self.visible_indices.len())
+                .find(|&i| self.is_line_match_at_visible_index(i))
+        } else {
+            (0..=from_visible_index)
+                .rev()
+                .find(|&i| self.is_line_match_at_visible_index(i))
+        }
     }
 }
 
@@ -542,47 +552,17 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let ix = ix.min(self.visible_indices.len().saturating_sub(1));
 
-        let actual_ix = self.visible_indices[ix];
-        if matches!(
-            self.items.get(actual_ix),
-            Some(QuickSearchItem::LineMatch { .. })
-        ) {
+        if self.is_line_match_at_visible_index(ix) {
             self.selected_index = ix;
             return;
         }
 
         let going_down = ix >= self.selected_index;
 
-        if going_down {
-            if let Some(next) = self.visible_indices[ix..].iter().position(|&actual_idx| {
-                matches!(
-                    self.items.get(actual_idx),
-                    Some(QuickSearchItem::LineMatch { .. })
-                )
-            }) {
-                self.selected_index = ix + next;
-                return;
-            }
-        }
-
-        let upper_bound = ix.min(self.visible_indices.len().saturating_sub(1));
-        if let Some(prev) = self.visible_indices[..=upper_bound]
-            .iter()
-            .rposition(|&actual_idx| {
-                matches!(
-                    self.items.get(actual_idx),
-                    Some(QuickSearchItem::LineMatch { .. })
-                )
-            })
-        {
-            self.selected_index = prev;
-        } else if let Some(next) = self.visible_indices.iter().position(|&actual_idx| {
-            matches!(
-                self.items.get(actual_idx),
-                Some(QuickSearchItem::LineMatch { .. })
-            )
-        }) {
-            self.selected_index = next;
+        if let Some(found) = self.find_nearest_line_match(ix, going_down) {
+            self.selected_index = found;
+        } else if let Some(found) = self.find_nearest_line_match(ix, !going_down) {
+            self.selected_index = found;
         }
     }
 
@@ -716,16 +696,14 @@ impl PickerDelegate for QuickSearchDelegate {
                 }
             };
 
-            let search_results = project
+            let Some(search_results) = project
                 .update(cx, |project, cx| project.search(search_query, cx))
-                .ok();
-
-            let Some(search_results) = search_results else {
+                .log_err()
+            else {
                 return;
             };
 
             let mut items = Vec::new();
-            let max_line_matches = 200;
             let mut line_match_count = 0;
             let mut file_count = 0;
             let mut is_limited = false;
@@ -751,21 +729,13 @@ impl PickerDelegate for QuickSearchDelegate {
                                     return Vec::new();
                                 };
 
-                                let file_name: SharedString = project_path
-                                    .path
-                                    .file_name()
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_default()
-                                    .into();
-                                let parent_path: SharedString = project_path
-                                    .path
-                                    .parent()
-                                    .map(|p| p.as_unix_str().to_string())
-                                    .unwrap_or_default()
-                                    .into();
+                                let (file_name, parent_path) =
+                                    extract_path_parts(&project_path.path);
+                                let file_key = format_file_key(&parent_path, &file_name);
 
-                                let mut seen_lines = std::collections::HashSet::new();
+                                let mut seen_lines = HashSet::default();
                                 let mut results = Vec::new();
+                                let mut preview_buffer = String::with_capacity(MAX_PREVIEW_CHARS);
 
                                 for range in &ranges {
                                     let start_point = range.start.to_point(&snapshot);
@@ -781,8 +751,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                     let line_end = snapshot
                                         .point_to_offset(text::Point::new(line, line_end_col));
 
-                                    const MAX_PREVIEW_CHARS: usize = 200;
-                                    let mut preview_text = String::with_capacity(MAX_PREVIEW_CHARS);
+                                    preview_buffer.clear();
                                     let mut chars_remaining = MAX_PREVIEW_CHARS;
                                     let mut started = false;
 
@@ -795,30 +764,29 @@ impl PickerDelegate for QuickSearchDelegate {
                                         };
 
                                         if text.len() <= chars_remaining {
-                                            preview_text.push_str(text);
+                                            preview_buffer.push_str(text);
                                             chars_remaining -= text.len();
                                         } else {
                                             for ch in text.chars() {
                                                 if chars_remaining == 0 {
                                                     break;
                                                 }
-                                                preview_text.push(ch);
+                                                preview_buffer.push(ch);
                                                 chars_remaining -= 1;
                                             }
-                                            preview_text.push('…');
+                                            preview_buffer.push('…');
                                             break;
                                         }
                                     }
 
                                     let preview_text: SharedString =
-                                        preview_text.trim_end().to_string().into();
+                                        preview_buffer.trim_end().to_string().into();
 
-                                    let mut line_label = String::with_capacity(8);
-                                    let _ = write!(line_label, "{}", line + 1);
-                                    let line_label: SharedString = line_label.into();
+                                    let line_label: SharedString = format!("{}", line + 1).into();
 
                                     results.push((
                                         project_path.clone(),
+                                        file_key.clone(),
                                         line,
                                         line_label,
                                         preview_text,
@@ -835,13 +803,15 @@ impl PickerDelegate for QuickSearchDelegate {
                         if !match_data_list.is_empty() {
                             let first = &match_data_list[0];
                             items.push(QuickSearchItem::FileHeader {
-                                file_name: first.4.clone(),
-                                parent_path: first.5.clone(),
+                                file_name: first.5.clone(),
+                                parent_path: first.6.clone(),
+                                file_key: first.1.clone(),
                             });
                             file_count += 1;
 
                             for (
                                 project_path,
+                                file_key,
                                 line,
                                 line_label,
                                 preview,
@@ -851,6 +821,7 @@ impl PickerDelegate for QuickSearchDelegate {
                             {
                                 items.push(QuickSearchItem::LineMatch {
                                     project_path,
+                                    file_key,
                                     buffer: buffer.clone(),
                                     line,
                                     line_label,
@@ -858,14 +829,14 @@ impl PickerDelegate for QuickSearchDelegate {
                                 });
 
                                 line_match_count += 1;
-                                if line_match_count >= max_line_matches {
+                                if line_match_count >= MAX_LINE_MATCHES {
                                     is_limited = true;
                                     break;
                                 }
                             }
                         }
 
-                        if line_match_count >= max_line_matches {
+                        if line_match_count >= MAX_LINE_MATCHES {
                             break;
                         }
                     }
@@ -993,9 +964,9 @@ impl PickerDelegate for QuickSearchDelegate {
             QuickSearchItem::FileHeader {
                 file_name,
                 parent_path,
+                file_key,
             } => {
-                let file_key = format_file_key(parent_path, file_name);
-                let is_collapsed = self.collapsed_files.contains(&file_key);
+                let is_collapsed = self.collapsed_files.contains(file_key.as_ref());
 
                 let chevron_icon = if is_collapsed {
                     IconName::ChevronRight
@@ -1019,15 +990,20 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .w_full()
                                 .gap_1()
                                 .cursor_pointer()
-                                .on_click(move |_, _window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(qs) = quick_search.upgrade() {
-                                        qs.update(cx, |qs, cx| {
-                                            qs.picker.update(cx, |picker, cx| {
-                                                picker.delegate.toggle_file_collapsed(&file_key);
-                                                cx.notify();
+                                .on_click({
+                                    let file_key = file_key.clone();
+                                    move |_, _window, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(qs) = quick_search.upgrade() {
+                                            qs.update(cx, |qs, cx| {
+                                                qs.picker.update(cx, |picker, cx| {
+                                                    picker
+                                                        .delegate
+                                                        .toggle_file_collapsed(&file_key);
+                                                    cx.notify();
+                                                });
                                             });
-                                        });
+                                        }
                                     }
                                 })
                                 .child(
@@ -1290,6 +1266,7 @@ mod tests {
         let header = QuickSearchItem::FileHeader {
             file_name: "test.rs".into(),
             parent_path: "src".into(),
+            file_key: "src/test.rs".into(),
         };
         assert!(matches!(header, QuickSearchItem::FileHeader { .. }));
 
@@ -1300,6 +1277,7 @@ mod tests {
                     worktree_id: project::WorktreeId::from_usize(0),
                     path: util::rel_path::rel_path("src/test.rs").into(),
                 },
+                file_key: "src/test.rs".into(),
                 buffer,
                 line: 0,
                 line_label: "1".into(),
@@ -1485,12 +1463,14 @@ mod tests {
                 QuickSearchItem::FileHeader {
                     file_name: "test.rs".into(),
                     parent_path: "src".into(),
+                    file_key: "src/test.rs".into(),
                 },
                 QuickSearchItem::LineMatch {
                     project_path: ProjectPath {
                         worktree_id: project::WorktreeId::from_usize(0),
                         path: util::rel_path::rel_path("src/test.rs").into(),
                     },
+                    file_key: "src/test.rs".into(),
                     buffer: buffer.clone(),
                     line: 0,
                     line_label: "1".into(),
@@ -1501,6 +1481,7 @@ mod tests {
                         worktree_id: project::WorktreeId::from_usize(0),
                         path: util::rel_path::rel_path("src/test.rs").into(),
                     },
+                    file_key: "src/test.rs".into(),
                     buffer,
                     line: 1,
                     line_label: "2".into(),
@@ -1516,9 +1497,8 @@ mod tests {
                     QuickSearchItem::FileHeader { .. } => {
                         visible_indices.push(idx);
                     }
-                    QuickSearchItem::LineMatch { .. } => {
-                        let file_key = item.file_key();
-                        if !collapsed_files.contains(&file_key) {
+                    QuickSearchItem::LineMatch { file_key, .. } => {
+                        if !collapsed_files.contains(file_key.as_ref()) {
                             visible_indices.push(idx);
                         }
                     }
@@ -1535,9 +1515,8 @@ mod tests {
                     QuickSearchItem::FileHeader { .. } => {
                         visible_indices.push(idx);
                     }
-                    QuickSearchItem::LineMatch { .. } => {
-                        let file_key = item.file_key();
-                        if !collapsed_files.contains(&file_key) {
+                    QuickSearchItem::LineMatch { file_key, .. } => {
+                        if !collapsed_files.contains(file_key.as_ref()) {
                             visible_indices.push(idx);
                         }
                     }
@@ -1558,9 +1537,8 @@ mod tests {
                     QuickSearchItem::FileHeader { .. } => {
                         visible_indices.push(idx);
                     }
-                    QuickSearchItem::LineMatch { .. } => {
-                        let file_key = item.file_key();
-                        if !collapsed_files.contains(&file_key) {
+                    QuickSearchItem::LineMatch { file_key, .. } => {
+                        if !collapsed_files.contains(file_key.as_ref()) {
                             visible_indices.push(idx);
                         }
                     }
