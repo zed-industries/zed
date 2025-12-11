@@ -115,12 +115,12 @@ impl Render for SecurityModal {
                                         "{} ({}@{})",
                                         self.shorten_path(abs_path).display(),
                                         user_name,
-                                        remote_host.host_name
+                                        remote_host.host_identifier
                                     ),
                                     None => format!(
                                         "{} ({})",
                                         self.shorten_path(abs_path).display(),
-                                        remote_host.host_name
+                                        remote_host.host_identifier
                                     ),
                                 },
                                 None => self.shorten_path(abs_path).display().to_string(),
@@ -129,10 +129,10 @@ impl Render for SecurityModal {
                                 Some(remote_host) => match &remote_host.user_name {
                                     Some(user_name) => format!(
                                         "Empty project ({}@{})",
-                                        user_name, remote_host.host_name
+                                        user_name, remote_host.host_identifier
                                     ),
                                     None => {
-                                        format!("Empty project ({})", remote_host.host_name)
+                                        format!("Empty project ({})", remote_host.host_identifier)
                                     }
                                 },
                                 None => "Empty project".to_string(),
@@ -242,14 +242,24 @@ impl SecurityModal {
     }
 
     fn build_trust_label(&self) -> Option<Cow<'static, str>> {
+        let mut has_restricted_files = false;
         let available_parents = self
             .restricted_paths
             .values()
-            .filter(|restricted_path| !restricted_path.is_file)
+            .filter(|restricted_path| {
+                has_restricted_files |= restricted_path.is_file;
+                !restricted_path.is_file
+            })
             .filter_map(|restricted_path| restricted_path.abs_path.as_ref()?.parent())
             .collect::<SmallVec<[_; 2]>>();
         match available_parents.len() {
-            0 => None,
+            0 => {
+                if has_restricted_files {
+                    Some(Cow::Borrowed("Trust all single files"))
+                } else {
+                    None
+                }
+            }
             1 => Some(Cow::Owned(format!(
                 "Trust all projects in the {:?} folder",
                 self.shorten_path(available_parents[0])
@@ -284,11 +294,12 @@ impl SecurityModal {
                     paths_to_trust.extend(self.restricted_paths.values().filter_map(
                         |restricted_paths| {
                             if restricted_paths.is_file {
-                                return None;
+                                Some(PathTrust::Global)
+                            } else {
+                                let parent_abs_path =
+                                    restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
+                                Some(PathTrust::AbsPath(parent_abs_path))
                             }
-                            let parent_abs_path =
-                                restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
-                            Some(PathTrust::AbsPath(parent_abs_path))
                         },
                     ));
                 }
@@ -309,7 +320,7 @@ impl SecurityModal {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
                 let mut new_restricted_worktrees = trusted_worktrees
                     .read(cx)
-                    .restricted_paths(worktree_store.read(cx), self.remote_host.clone(), cx)
+                    .restricted_worktrees(worktree_store.read(cx), self.remote_host.clone(), cx)
                     .into_iter()
                     .filter_map(|restricted_path| {
                         let restricted_path = match restricted_path {

@@ -7,7 +7,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_worktree_trust},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_global_trust},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -948,7 +948,7 @@ impl AgentPanel {
             if ext_agent.is_mcp() {
                 let wait_task = this.update(cx, |agent_panel, cx| {
                     agent_panel.project.update(cx, |project, cx| {
-                        wait_for_worktree_trust(project.remote_connection_options(cx), cx)
+                        wait_for_global_trust(project.remote_connection_options(cx), cx)
                     })
                 })?;
                 if let Some(wait_task) = wait_task {
@@ -1508,7 +1508,7 @@ impl AgentPanel {
     ) {
         let wait_task = if agent.is_mcp() {
             self.project.update(cx, |project, cx| {
-                wait_for_worktree_trust(project.remote_connection_options(cx), cx)
+                wait_for_global_trust(project.remote_connection_options(cx), cx)
             })
         } else {
             None

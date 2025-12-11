@@ -1,12 +1,57 @@
-// TODO kb docs
-/* FOR A SINGLE HOST LOCATION
- *
- * Single File Worktree
- * Global
- * Directory Worktree
- * AbsPath
- *
- */
+//! A module, responsible for managing the trust logic in Zed.
+//!
+//! It deals with multiple hosts, distinguished by [`RemoteHostLocation`].
+//! Each [`crate::Project`] and `HeadlessProject` should call [`init_global`], if wants to establish the trust mechanism.
+//! This will set up a [`gpui::Global`] with [`TrustedWorktrees`] entity that will persist, restore and allow querying for worktree trust.
+//! It's also possible to subscribe on [`TrustedWorktreesEvent`] events of this entity to track trust changes dynamically.
+//!
+//! The implementation can synchronize trust information with the remote hosts: currently, WSL and SSH.
+//! Docker and Collab remotes do not employ trust mechanism, as manage that themselves.
+//!
+//! Unless `trust_all_worktrees` auto trust is enabled, does not trust anything that was not persisted before.
+//! When dealing with "restricted" and other related concepts in the API, it means all explicitly restricted, after any of the [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_global`] calls.
+//!
+//!
+//!
+//!
+//! Path rust hierarchy.
+//!
+//! Zed has multiple layers of trust, based on the requests and [`PathTrust`] enum variants.
+//! From the least to the most trust level:
+//!
+//! * "single file worktree"
+//!
+//! After opening an empty Zed it's possible to open just a file, same as after opening a directory in Zed it's possible to open a file outside of this directory.
+//! Usual scenario for both cases is opening Zed's settings.json file via `zed: open settings file` command: that starts a language server for a new file open, which originates from a newly created, single file worktree.
+//!
+//! Spawning a language server is potentially dangerous, and Zed needs to restrict that by default.
+//! Each single file worktree requires a separate trust permission, unless a more global level is trusted.
+//!
+//! * "global"
+//!
+//! Even an empty Zed instance with no files or directories open is potentially dangerous: opening an Assistant Panel and creating new external agent thread might require installing and running MCP servers.
+//!
+//! Disabling the entire panel is possible with ai-related settings.
+//! Yet when it's enabled, it's still reasonably safe to use remote AI agents and control their permissions in the Assistant Panel.
+//!
+//! Unlike that, MCP servers are similar to language servers and may require fetching, installing and running packages or binaries.
+//! Given that those servers are not tied to any particular worktree, this level of trust is required to operate any MCP server.
+//!
+//! Global level of trust assumes all single file worktrees are trusted too, for the same host: if we allow global MCP server-related functionality, we can already allow spawning language servers for single file worktrees as well.
+//!
+//! * "directory worktree"
+//!
+//! If a directory is open in Zed, it's a full worktree which may spawn multiple language servers associated with it.
+//! Each such worktree requires a separate trust permission, so each separate directory worktree has to be trusted separately, unless a more global level is trusted.
+//!
+//! When a directory worktree is trusted and language servers are allowed to be downloaded and started, hence we also allow "global" level of trust (hence, "single file worktree" level of trust also).
+//!
+//! * "path override"
+//!
+//! To ease trusting multiple directory worktrees at once, it's possible to trust a parent directory of a certain directory worktree opened in Zed.
+//! Trusting a directory means trusting all its subdirectories as well, including all current and potential directory worktrees.
+//!
+//! If we trust multiple projects to install and spawn various language server processes, we can also allow global trust requests for MCP servers installation and spawning.
 
 use std::{
     path::{Path, PathBuf},
@@ -26,6 +71,7 @@ use crate::{
     persistence::PROJECT_DB, project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 
+/// An initialization call to set up trust global for a particular project (remote or local).
 pub fn init_global(
     worktree_store: Entity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
@@ -41,7 +87,7 @@ pub fn init_global(
         }
         None => {
             let trusted_worktrees = cx.new(|cx| {
-                TrustedWorktreesStorage::new(
+                TrustedWorktreesStore::new(
                     worktree_store.clone(),
                     remote_host,
                     downstream_client,
@@ -54,7 +100,8 @@ pub fn init_global(
     }
 }
 
-pub fn wait_for_worktree_trust(
+/// Waits until at least [`PathTrust::Global`] level of trust is granted for a particular host.
+pub fn wait_for_global_trust(
     remote_host: Option<impl Into<RemoteHostLocation>>,
     cx: &mut App,
 ) -> Option<Task<()>> {
@@ -88,12 +135,13 @@ pub fn wait_for_worktree_trust(
     }))
 }
 
-pub struct TrustedWorktrees(Entity<TrustedWorktreesStorage>);
+/// A collection of worktree trust metadata, can be accessed globally (if initialized) and subscribed to.
+pub struct TrustedWorktrees(Entity<TrustedWorktreesStore>);
 
 impl Global for TrustedWorktrees {}
 
 impl TrustedWorktrees {
-    pub fn try_get_global(cx: &App) -> Option<Entity<TrustedWorktreesStorage>> {
+    pub fn try_get_global(cx: &App) -> Option<Entity<TrustedWorktreesStore>> {
         cx.try_global::<Self>().map(|this| this.0.clone())
     }
 }
@@ -103,7 +151,7 @@ impl TrustedWorktrees {
 ///
 /// Emits an event each time the worktree was checked and found not trusted,
 /// or a certain worktree had been trusted.
-pub struct TrustedWorktreesStorage {
+pub struct TrustedWorktreesStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     upstream_client: Option<(AnyProtoClient, u64)>,
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
@@ -114,10 +162,13 @@ pub struct TrustedWorktreesStorage {
     restricted_globals: HashSet<Option<RemoteHostLocation>>,
 }
 
+/// An identifier of a host to split the trust questions by.
+/// Each trusted data change and event is done for a particular host.
+/// A host may contain more than one worktree or even project open concurrently.
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct RemoteHostLocation {
     pub user_name: Option<SharedString>,
-    pub host_name: SharedString,
+    pub host_identifier: SharedString,
 }
 
 impl From<RemoteConnectionOptions> for RemoteHostLocation {
@@ -138,20 +189,25 @@ impl From<RemoteConnectionOptions> for RemoteHostLocation {
         };
         RemoteHostLocation {
             user_name,
-            host_name,
+            host_identifier: host_name,
         }
     }
 }
 
-/// A unit of trust consideration: either a familiar worktree, or a path that may
-/// influence other worktrees' trust.
+// TODO kb split Worktree into file and directory variants?
+
+/// A unit of trust consideration inside a particular host:
+/// either a familiar worktree, or a path that may influence other worktrees' trust.
+/// See module-level documentation on the trust model.
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum PathTrust {
     /// General, no worktrees or files open case.
+    /// E.g. MCP servers can be spawned from a blank Zed instance, but will do `npm i` and other potentially malicious actions.
     Global,
     /// A worktree that is familiar to this workspace.
+    /// Either a single file or a directory worktree.
     Worktree(WorktreeId),
-    /// A path that may be another worktree yet not loaded into workspace,
+    /// A path that may be another worktree yet not loaded into any workspace (hence, without any `WorktreeId`),
     /// or a parent path coming out of the security modal.
     AbsPath(PathBuf),
 }
@@ -186,15 +242,16 @@ impl PathTrust {
     }
 }
 
+/// A change of trust on a certain host.
 #[derive(Debug)]
 pub enum TrustedWorktreesEvent {
     Trusted(Option<RemoteHostLocation>, HashSet<PathTrust>),
     Restricted(Option<RemoteHostLocation>, HashSet<PathTrust>),
 }
 
-impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStorage {}
+impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStore {}
 
-impl TrustedWorktreesStorage {
+impl TrustedWorktreesStore {
     fn new(
         worktree_store: Entity<WorktreeStore>,
         remote_host: Option<RemoteHostLocation>,
@@ -245,6 +302,7 @@ impl TrustedWorktreesStorage {
         }
     }
 
+    /// Whether a particular worktree store has associated worktrees that are restricted, or an associated host is restricted.
     pub fn has_restricted_worktrees(
         &self,
         worktree_store: &Entity<WorktreeStore>,
@@ -262,8 +320,9 @@ impl TrustedWorktreesStorage {
             })
     }
 
-    /// Adds worktree absolute paths to the trusted list.
-    /// This will emit [`TrustedWorktreesEvent::Trusted`] event.
+    /// Adds certain entities on this host to the trusted list.
+    /// This will emit [`TrustedWorktreesEvent::Trusted`] event for all passed entries
+    /// and the ones that got auto trusted based on trust hierarchy (see module-level docs).
     pub fn trust(
         &mut self,
         mut trusted_paths: HashSet<PathTrust>,
@@ -393,12 +452,16 @@ impl TrustedWorktreesStorage {
         ));
 
         if self.downstream_client.is_none() {
-            self.serialization_task = cx.background_spawn(async move {
-                PROJECT_DB
-                    .save_trusted_worktrees(new_trusted_worktrees, new_trusted_globals)
-                    .await
-                    .log_err();
-            });
+            // Do not persist auto trusted worktrees
+            if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                self.serialization_task = cx.background_spawn(async move {
+                    PROJECT_DB
+                        .save_trusted_worktrees(new_trusted_worktrees, new_trusted_globals)
+                        .await
+                        .log_err();
+                });
+            }
+
             if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
                 let trusted_paths = trusted_paths
                     .iter()
@@ -416,6 +479,8 @@ impl TrustedWorktreesStorage {
         }
     }
 
+    /// Restricts certain entities on this host.
+    /// This will emit [`TrustedWorktreesEvent::Restricted`] event for all passed entries.
     pub fn restrict(
         &mut self,
         restricted_paths: HashSet<PathTrust>,
@@ -443,6 +508,8 @@ impl TrustedWorktreesStorage {
         }
     }
 
+    /// Erases all trust information.
+    /// Requires Zed's restart to take proper effect.
     pub fn clear_trusted_paths(&mut self, cx: &App) -> Task<()> {
         if self.downstream_client.is_none() {
             self.trusted_paths.clear();
@@ -461,8 +528,10 @@ impl TrustedWorktreesStorage {
         }
     }
 
-    /// Checks whether a certain worktree is trusted.
-    /// If not, emits [`TrustedWorktreesEvent::Restricted`] event.
+    /// Checks whether a certain worktree is trusted (or on a larger trust level).
+    /// If not, emits [`TrustedWorktreesEvent::Restricted`] event if for the first time and not trusted, or no corresponding worktree store was found.
+    ///
+    /// No events or data adjustment happens when `trust_all_worktrees` auto trust is enabled.
     pub fn can_trust(&mut self, worktree_id: WorktreeId, cx: &mut Context<Self>) -> bool {
         if ProjectSettings::get_global(cx).session.trust_all_worktrees {
             return true;
@@ -483,9 +552,8 @@ impl TrustedWorktreesStorage {
         {
             return true;
         }
-        // Single-file worktrees are, for example, files drag-and-dropped into Zed, Zed's settings,
-        // task and bindings files, language servers' go to definition targets outside the current worktree, etc., etc.
-        // Avoid flashing them with another warning, if global trust is enabled or any other trust was made on the same host.
+
+        // See module documentation for details on trust level.
         if is_file && self.trusted_paths.contains_key(&remote_host) {
             return true;
         }
@@ -531,6 +599,10 @@ impl TrustedWorktreesStorage {
         false
     }
 
+    /// Checks whether a certain worktree is trusted globally (or on a larger trust level).
+    /// If not, emits [`TrustedWorktreesEvent::Restricted`] event if checked for the first time and not trusted.
+    ///
+    /// No events or data adjustment happens when `trust_all_worktrees` auto trust is enabled.
     pub fn can_trust_global(
         &mut self,
         remote_host: Option<RemoteHostLocation>,
@@ -575,7 +647,8 @@ impl TrustedWorktreesStorage {
         false
     }
 
-    pub fn restricted_paths(
+    /// Lists all explicitly restricted worktrees (via [`TrustedWorktreesStore::can_trust`] and [`TrustedWorktreesStore::can_trust_global`] method calls) for a particular worktree store on a particular host.
+    pub fn restricted_worktrees(
         &self,
         worktree_store: &WorktreeStore,
         remote_host: Option<RemoteHostLocation>,
@@ -599,7 +672,6 @@ impl TrustedWorktreesStorage {
             .map(Some)
             .collect::<HashSet<_>>();
 
-        // TODO kb explain the dependency chain, here it's inverted
         if !other_paths.is_empty() {
             return other_paths;
         } else if self.restricted_globals.contains(&remote_host) {
@@ -609,7 +681,9 @@ impl TrustedWorktreesStorage {
         }
     }
 
-    pub fn trust_all(&mut self, cx: &mut Context<Self>) {
+    /// Switches the "trust nothing" mode to "automatically trust everything".
+    /// This does not influence already persisted data, but stops adding new worktrees there.
+    pub fn auto_trust_all(&mut self, cx: &mut Context<Self>) {
         for (remote_host, mut worktrees) in std::mem::take(&mut self.restricted)
             .into_iter()
             .flat_map(|restricted_worktree| {
@@ -690,7 +764,7 @@ impl TrustedWorktreesStorage {
     }
 }
 
-pub fn find_worktree_in_store(
+pub(crate) fn find_worktree_in_store(
     worktree_store: &WorktreeStore,
     abs_path: &Path,
     cx: &App,
