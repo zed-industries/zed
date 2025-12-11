@@ -518,6 +518,11 @@
       "space p": "editor::Paste",
       "space y": "editor::Copy",
 
+      // Jump list
+      "ctrl-s": "vim::HelixSaveSelection",
+      "ctrl-o": "vim::HelixJumpBackward",
+      "ctrl-i": "vim::HelixJumpForward",
+
       // Other
       ":": "command_palette::Toggle",
       "m": "vim::PushHelixMatch",
