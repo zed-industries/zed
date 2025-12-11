@@ -82,13 +82,6 @@ impl TeacherPrompt {
     const PROMPT: &str = include_str!("teacher.prompt.md");
     pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
     pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
-    // pub(crate) const USER_CURSOR: &str = "<|user_cursor|>";
-
-    /// Number of lines to include before the cursor position
-    // pub(crate) const LEFT_CONTEXT_SIZE: usize = 5;
-
-    /// Number of lines to include after the cursor position
-    // pub(crate) const RIGHT_CONTEXT_SIZE: usize = 5;
 
     /// Truncate edit history to this number of last lines
     const MAX_HISTORY_LINES: usize = 128;
@@ -129,7 +122,7 @@ impl TeacherPrompt {
 
         let path_str = example.cursor_path.to_string_lossy();
         result.push_str(&format!("`````path=\"{path_str}\"\n"));
-        result.push_str(&format!("{}", Self::EDITABLE_REGION_START));
+        result.push_str(Self::EDITABLE_REGION_START);
 
         // TODO: control number of lines around cursor
         result.push_str(&example.cursor_position);

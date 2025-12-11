@@ -21,8 +21,8 @@ use project::Project;
 pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
 
 #[must_use]
-pub async fn apply_diff<'a>(
-    diff_str: &'a str,
+pub async fn apply_diff(
+    diff_str: &str,
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {

@@ -212,10 +212,8 @@ async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batc
     };
     let llm_client = llm_client.expect("Failed to create LLM client");
 
-    let prompt = example.prompt.as_ref().expect(&format!(
-        "Prompt is required for an example {}",
-        &example.name
-    ));
+    let prompt = example.prompt.as_ref().unwrap_or_else(|| panic!("Prompt is required for an example {}",
+        &example.name));
 
     let messages = vec![anthropic::Message {
         role: anthropic::Role::User,
