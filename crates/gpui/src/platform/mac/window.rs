@@ -2081,9 +2081,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
             if is_active {
-                unsafe {
-                    lock.move_traffic_light();
-                }
+                lock.move_traffic_light();
             }
 
             if let Some(mut callback) = lock.activate_callback.take() {
