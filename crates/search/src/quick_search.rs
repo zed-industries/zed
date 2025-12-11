@@ -1067,10 +1067,11 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .cursor_pointer()
                                 .on_click({
                                     let file_key = file_key.clone();
-                                    move |_, _window, cx| {
+                                    move |_, window, cx| {
                                         cx.stop_propagation();
                                         if let Some(qs) = quick_search.upgrade() {
                                             qs.update(cx, |qs, cx| {
+                                                window.focus(&qs.picker.focus_handle(cx));
                                                 qs.picker.update(cx, |picker, cx| {
                                                     picker
                                                         .delegate
@@ -1138,6 +1139,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                     };
 
                                     qs.update(cx, |modal, cx| {
+                                        window.focus(&modal.picker.focus_handle(cx));
                                         modal.picker.update(cx, |picker, cx| {
                                             picker.delegate.selected_index = visible_ix;
                                             cx.notify();
