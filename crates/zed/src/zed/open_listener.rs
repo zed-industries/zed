@@ -3,7 +3,7 @@ use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
-use client::{ZED_CHANNEL_REGEX, parse_zed_link};
+use client::parse_zed_link;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -38,6 +38,12 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
+}
+
+struct ZedCollabChannelInfo {
+    channel_id: u64,
+    open_note: bool,
+    note_heading: Option<String>,
 }
 
 #[derive(Debug)]
@@ -115,16 +121,13 @@ impl OpenRequest {
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else {
-                let request_path = parse_zed_link(&url, cx);
+                // Try to parse all other zed links, or open it in the browser
+                let request_path = parse_zed_link(&url, cx).unwrap_or("");
 
-                match request_path {
-                    Some(request_path) if ZED_CHANNEL_REGEX.is_match(&request_path) => {
-                        this.parse_channel_path(request_path)?;
-                    }
-                    Some(_) | None if url.starts_with("http://") || url.starts_with("https://") => {
-                        this.kind = Some(OpenRequestKind::NativeBrowser { url });
-                    }
-                    _ => log::error!("unhandled url: {}", url),
+                if let Some(collab_info) = this.parse_collab_link(&request_path)? {
+                    this.handle_collab_info(collab_info)?
+                } else {
+                    this.kind = Some(OpenRequestKind::NativeBrowser { url });
                 }
             }
         }
@@ -168,28 +171,39 @@ impl OpenRequest {
         Ok(())
     }
 
-    fn parse_channel_path(&mut self, request_path: &str) -> Result<()> {
+    fn parse_collab_link(&mut self, request_path: &str) -> Result<Option<ZedCollabChannelInfo>> {
         let mut parts = request_path.split('/');
+
         if parts.next() == Some("channel")
             && let Some(slug) = parts.next()
             && let Some(id_str) = slug.split('-').next_back()
             && let Ok(channel_id) = id_str.parse::<u64>()
         {
-            let Some(next) = parts.next() else {
-                self.join_channel = Some(channel_id);
-                return Ok(());
+            let (open_note, note_heading) = match parts.next() {
+                Some("notes") => (true, None),
+                Some(note_path) if note_path.starts_with("notes#") => (
+                    true,
+                    Some(note_path.strip_prefix("notes#").unwrap().to_string()),
+                ),
+                _ => (false, None),
             };
 
-            if let Some(heading) = next.strip_prefix("notes#") {
-                self.open_channel_notes
-                    .push((channel_id, Some(heading.to_string())));
-                return Ok(());
-            }
+            return Ok(Some(ZedCollabChannelInfo {
+                channel_id,
+                open_note,
+                note_heading,
+            }));
+        }
 
-            if next == "notes" {
-                self.open_channel_notes.push((channel_id, None));
-                return Ok(());
-            }
+        Ok(None)
+    }
+
+    fn handle_collab_info(&mut self, collab_info: ZedCollabChannelInfo) -> Result<()> {
+        if collab_info.open_note {
+            self.open_channel_notes
+                .push((collab_info.channel_id, collab_info.note_heading));
+        } else {
+            self.join_channel = Some(collab_info.channel_id);
         }
 
         Ok(())

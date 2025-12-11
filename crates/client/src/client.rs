@@ -27,7 +27,6 @@ use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
-use regex::Regex;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use serde::{Deserialize, Serialize};
@@ -1733,11 +1732,6 @@ impl ProtoClient for Client {
 /// prefix for the zed:// url scheme
 pub const ZED_URL_SCHEME: &str = "zed";
 
-/// Regex pattern for matching channel URLs with format: channel/anychars-numbers
-/// for example: "channel/zed-123", "channel/general-456/notes", etc.
-pub static ZED_CHANNEL_REGEX: std::sync::LazyLock<Regex> =
-    std::sync::LazyLock::new(|| Regex::new(r"^channel/[^/]+-\d+(?:/.*)?$").unwrap());
-
 /// Parses the given link into a Zed link.
 ///
 /// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
@@ -1748,11 +1742,7 @@ pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
         .strip_prefix(server_url)
         .and_then(|result| result.strip_prefix('/'))
     {
-        if ZED_CHANNEL_REGEX.is_match(stripped) {
-            return Some(stripped);
-        }
-
-        return None;
+        return Some(stripped);
     }
 
     if let Some(stripped) = link
