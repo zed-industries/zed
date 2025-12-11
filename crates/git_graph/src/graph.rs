@@ -269,6 +269,17 @@ impl GitGraph {
 
             self.lane_states[commit_lane] = LaneState::Empty;
 
+            if commit.parents.is_empty() && branch_continued {
+                lines.push(GraphLine {
+                    from_lane: commit_lane,
+                    to_lane: commit_lane,
+                    line_type: LineType::Straight,
+                    color_idx: commit_color.0 as usize,
+                    continues_from_above: true,
+                    ends_at_commit: true,
+                });
+            }
+
             commit
                 .parents
                 .iter()
