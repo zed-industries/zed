@@ -896,13 +896,13 @@ impl EditPredictionStore {
         });
     }
 
-    fn prediction_at<'a>(
-        &'a mut self,
+    fn prediction_at(
+        &mut self,
         buffer: &Entity<Buffer>,
         position: Option<language::Anchor>,
         project: &Entity<Project>,
         cx: &App,
-    ) -> Option<BufferEditPrediction<'a>> {
+    ) -> Option<BufferEditPrediction<'_>> {
         let project_state = self.projects.get_mut(&project.entity_id())?;
         if let Some(position) = position
             && let Some(buffer) = project_state
