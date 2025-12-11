@@ -18097,6 +18097,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "markdown_preview",
  "menu",
  "multi_buffer",
  "nvim-rs",
