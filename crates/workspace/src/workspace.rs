@@ -265,6 +265,10 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Zooms in on the active pane.
+        ZoomIn,
+        /// Zooms out of the active pane.
+        ZoomOut,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.

@@ -1,6 +1,6 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, ZoomIn, ZoomOut, Workspace,
     WorkspaceItemBuilder,
     invalid_item_view::InvalidItemView,
     item::{
@@ -1294,6 +1294,25 @@ impl Pane {
                 cx.focus_self(window);
             }
             cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if !self.zoomed && !self.items.is_empty() {
+            if !self.focus_handle.contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
+    pub fn zoom_out(&mut self, _: &ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
     }
 
@@ -3775,6 +3794,8 @@ impl Render for Pane {
                 cx.emit(Event::JoinAll);
             }))
             .on_action(cx.listener(Pane::toggle_zoom))
+            .on_action(cx.listener(Pane::zoom_in))
+            .on_action(cx.listener(Pane::zoom_out))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(
