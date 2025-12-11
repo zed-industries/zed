@@ -314,7 +314,7 @@ pub struct AdapterServerCapabilities {
 
 impl LanguageServer {
     /// Starts a language server process.
-    pub fn new(
+    pub async fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         server_name: LanguageServerName,
@@ -331,26 +331,30 @@ impl LanguageServer {
         };
         let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
-
         log::info!(
-            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: \
+            {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
         );
-
-        let mut command = util::command::new_smol_command(&binary.path);
-        command
-            .current_dir(working_dir)
-            .args(&binary.arguments)
-            .envs(binary.env.clone().unwrap_or_default())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut server = command
-            .spawn()
-            .with_context(|| format!("failed to spawn command {command:?}",))?;
+        let mut server = cx
+            .background_executor()
+            .await_on_background(async {
+                let mut command = util::command::new_smol_command(&binary.path);
+                command
+                    .current_dir(working_dir)
+                    .args(&binary.arguments)
+                    .envs(binary.env.clone().unwrap_or_default())
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+                command
+                    .spawn()
+                    .with_context(|| format!("failed to spawn command {command:?}",))
+            })
+            .await?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
