@@ -1042,32 +1042,70 @@ impl PickerDelegate for QuickSearchDelegate {
                 line_label,
                 preview_text,
                 ..
-            } => Some(
-                ListItem::new(ix)
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .pl(px(20.))
-                            .justify_between()
-                            .child(
-                                div().flex_1().min_w_0().overflow_hidden().child(
-                                    Label::new(preview_text.clone())
+            } => {
+                let quick_search = self.quick_search.clone();
+                let visible_ix = ix;
+
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .on_click({
+                            let quick_search = quick_search.clone();
+                            move |event, window, cx| {
+                                cx.stop_propagation();
+                                if event.click_count() >= 2 {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                                } else if let Some(qs) = quick_search.upgrade() {
+                                    let preview_data = {
+                                        let modal = qs.read(cx);
+                                        let delegate = &modal.picker.read(cx).delegate;
+                                        delegate.actual_index(visible_ix).and_then(|idx| {
+                                            match delegate.items.get(idx) {
+                                                Some(QuickSearchItem::LineMatch {
+                                                    buffer, line, ..
+                                                }) => Some((buffer.clone(), *line)),
+                                                _ => None,
+                                            }
+                                        })
+                                    };
+
+                                    qs.update(cx, |modal, cx| {
+                                        modal.picker.update(cx, |picker, cx| {
+                                            picker.delegate.selected_index = visible_ix;
+                                            cx.notify();
+                                        });
+                                    });
+
+                                    qs.update(cx, |modal, cx| {
+                                        modal.update_preview(preview_data, window, cx);
+                                    });
+                                }
+                            }
+                        })
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .pl(px(20.))
+                                .justify_between()
+                                .child(
+                                    div().flex_1().min_w_0().overflow_hidden().child(
+                                        Label::new(preview_text.clone())
+                                            .size(ui::LabelSize::Small)
+                                            .color(Color::Default)
+                                            .truncate(),
+                                    ),
+                                )
+                                .child(
+                                    Label::new(line_label.clone())
                                         .size(ui::LabelSize::Small)
-                                        .color(Color::Default)
-                                        .truncate(),
+                                        .color(Color::Muted),
                                 ),
-                            )
-                            .child(
-                                Label::new(line_label.clone())
-                                    .size(ui::LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    ),
-            ),
+                        ),
+                )
+            }
         }
     }
 
