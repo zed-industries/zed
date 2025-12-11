@@ -77,7 +77,7 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees},
+    trusted_worktrees::TrustedWorktrees,
 };
 use remote::{
     RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
@@ -275,7 +275,6 @@ actions!(
         ToggleZoom,
         /// If any worktrees are in restricted mode, shows a modal with possible actions.
         /// If the modal is shown already, closes it without trusting any worktree.
-        /// TODO kb docs for this and the one below
         ToggleWorktreeSecurity,
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
@@ -1225,7 +1224,7 @@ impl Workspace {
             if ProjectSettings::get_global(cx).session.trust_all_worktrees {
                 if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                     trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                        trusted_worktrees.trust_all(cx);
+                        trusted_worktrees.auto_trust_all(cx);
                     })
                 }
             }
@@ -1492,18 +1491,6 @@ impl Workspace {
         cx.defer_in(window, move |workspace, window, cx| {
             workspace.update_window_title(window, cx);
             workspace.show_initial_notifications(cx);
-            if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust_global(
-                        workspace
-                            .project()
-                            .read(cx)
-                            .remote_connection_options(cx)
-                            .map(RemoteHostLocation::from),
-                        cx,
-                    )
-                });
-            };
         });
         Workspace {
             weak_self: weak_handle.clone(),

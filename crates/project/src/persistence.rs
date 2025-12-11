@@ -99,7 +99,7 @@ VALUES {placeholders};"#
                         next_index,
                     )?;
                     next_index = statement.bind(
-                        &host.as_ref().map(|host| host.host_name.as_str()),
+                        &host.as_ref().map(|host| host.host_identifier.as_str()),
                         next_index,
                     )?;
                 }
@@ -125,11 +125,11 @@ VALUES {placeholders};"#
                     (_, None) => None,
                     (None, Some(host_name)) => Some(RemoteHostLocation {
                         user_name: None,
-                        host_name: SharedString::new(host_name),
+                        host_identifier: SharedString::new(host_name),
                     }),
                     (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
                         user_name: Some(SharedString::new(user_name)),
-                        host_name: SharedString::new(host_name),
+                        host_identifier: SharedString::new(host_name),
                     }),
                 };
 

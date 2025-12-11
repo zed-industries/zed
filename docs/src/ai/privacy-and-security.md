@@ -12,6 +12,8 @@ It is entirely possible to use Zed, including Zed's AI capabilities, without sha
 
 ## Documentation
 
+- [Worktree trust](../worktree-trust.md): How Zed opens files and directories in safe mode.
+
 - [Telemetry](../telemetry.md): How Zed collects general telemetry data.
 
 - [AI Improvement](./ai-improvement.md): Zed's opt-in-only approach to data collection for AI improvement, whether our Agentic offering or Edit Predictions.

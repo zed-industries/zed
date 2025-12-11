@@ -795,7 +795,6 @@ pub async fn open_remote_project(
                         if created_new_window {
                             window.remove_window();
                         }
-                        // TODO kb remote modal also leaks actions, so this is not secure?
                         trusted_worktrees::init_global(
                             workspace.project().read(cx).worktree_store(),
                             None,
