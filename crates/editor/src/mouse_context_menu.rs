@@ -239,6 +239,13 @@ pub fn deploy_context_menu(
                     "Find All References",
                     Box::new(FindAllReferences::default()),
                 )
+                .action(
+                    "Peek All References",
+                    Box::new(FindAllReferences {
+                        inline: true,
+                        ..Default::default()
+                    }),
+                )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))

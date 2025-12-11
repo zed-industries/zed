@@ -565,6 +565,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
+      "cmd-shift-f12": ["editor::FindAllReferences", { "inline": true }],
       "cmd-|": "editor::MoveToEnclosingBracket",
       "ctrl-m": "editor::MoveToEnclosingBracket", // From Jetbrains
       "alt-cmd-[": "editor::Fold",

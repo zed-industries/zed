@@ -512,6 +512,7 @@
       "alt-f12": "editor::GoToDefinitionSplit",
       "ctrl-f12": "editor::GoToImplementation",
       "shift-alt-f12": "editor::FindAllReferences",
+      "ctrl-shift-f12": ["editor::FindAllReferences", { "inline": true }],
       "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-shift-[": "editor::Fold",
       "ctrl-shift-]": "editor::UnfoldLines",
