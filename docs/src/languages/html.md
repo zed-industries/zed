@@ -25,6 +25,7 @@ You can disable `format_on_save` by adding the following to your Zed `settings.j
   "languages": {
     "HTML": {
       "format_on_save": "off",
+      "language_servers": ["vscode-html-language-server"],
     }
   }
 ```
