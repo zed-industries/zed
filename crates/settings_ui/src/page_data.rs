@@ -7478,8 +7478,9 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             in_json: false,
             files: USER,
             render: Arc::new(|_, window, cx| {
+                let settings_window = cx.entity();
                 let page = window.use_state(cx, |_, _| {
-                    crate::pages::EditPredictionSetupPage::new()
+                    crate::pages::EditPredictionSetupPage::new(settings_window)
                 });
                 page.into_any_element()
             }),

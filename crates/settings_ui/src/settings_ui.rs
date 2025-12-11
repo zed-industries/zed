@@ -2792,19 +2792,49 @@ impl SettingsWindow {
         page_content
     }
 
-    fn render_sub_page_items<'a, Items: Iterator<Item = (usize, &'a SettingsPageItem)>>(
+    fn render_sub_page_items<'a, Items>(
         &self,
         items: Items,
         page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
-    ) -> impl IntoElement {
-        let mut page_content = v_flex()
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
+        let page_content = v_flex()
             .id("settings-ui-page")
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.sub_page_scroll_handle);
+        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+    }
 
+    fn render_sub_page_items_section<'a, Items>(
+        &self,
+        items: Items,
+        page_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
+        let page_content = v_flex().id("settings-ui-sub-page-section").size_full();
+        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+    }
+
+    fn render_sub_page_items_in<'a, Items>(
+        &self,
+        mut page_content: Stateful<Div>,
+        items: Items,
+        page_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
         let items: Vec<_> = items.collect();
         let items_len = items.len();
         let mut section_header = None;
