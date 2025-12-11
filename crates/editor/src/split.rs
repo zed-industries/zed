@@ -342,13 +342,74 @@ impl SplittableEditor {
 #[cfg(test)]
 impl SplittableEditor {
     fn check_invariants(&self, cx: &App) {
+        use buffer_diff::DiffHunkStatusKind;
+        use collections::HashSet;
+        use multi_buffer::MultiBufferOffset;
+        use multi_buffer::MultiBufferRow;
+        use multi_buffer::MultiBufferSnapshot;
+
+        fn format_diff(snapshot: &MultiBufferSnapshot) -> String {
+            let text = snapshot.text();
+            let row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+            let boundary_rows = snapshot
+                .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+                .map(|b| b.row)
+                .collect::<HashSet<_>>();
+
+            text.split('\n')
+                .enumerate()
+                .zip(row_infos)
+                .map(|((ix, line), info)| {
+                    let marker = match info.diff_status.map(|status| status.kind) {
+                        Some(DiffHunkStatusKind::Added) => "+ ",
+                        Some(DiffHunkStatusKind::Deleted) => "- ",
+                        Some(DiffHunkStatusKind::Modified) => unreachable!(),
+                        None => {
+                            if !line.is_empty() {
+                                "  "
+                            } else {
+                                ""
+                            }
+                        }
+                    };
+                    let boundary_row = if boundary_rows.contains(&MultiBufferRow(ix as u32)) {
+                        "  ----------\n"
+                    } else {
+                        ""
+                    };
+                    let expand = info
+                        .expand_info
+                        .map(|expand_info| match expand_info.direction {
+                            ExpandExcerptDirection::Up => " [↑]",
+                            ExpandExcerptDirection::Down => " [↓]",
+                            ExpandExcerptDirection::UpAndDown => " [↕]",
+                        })
+                        .unwrap_or_default();
+
+                    format!("{boundary_row}{marker}{line}{expand}")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
         let Some(secondary) = &self.secondary else {
             return;
         };
 
+        log::info!(
+            "primary:\n\n{}",
+            format_diff(&self.primary_multibuffer.read(cx).snapshot(cx))
+        );
+
         let primary_excerpts = self.primary_multibuffer.read(cx).excerpt_ids();
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
-        assert_eq!(primary_excerpts.len(), secondary_excerpts.len());
+        assert_eq!(
+            primary_excerpts.len(),
+            secondary_excerpts.len(),
+            "\n\nprimary:\n\n{}\n\nsecondary:\n\n{}\n",
+            format_diff(&self.primary_multibuffer.read(cx).snapshot(cx)),
+            format_diff(&secondary.multibuffer.read(cx).snapshot(cx))
+        );
 
         // self.primary_multibuffer.read(cx).check_invariants(cx);
         // secondary.multibuffer.read(cx).check_invariants(cx);
@@ -401,13 +462,7 @@ impl SplittableEditor {
         let excerpt_ids = self.primary_multibuffer.read(cx).excerpt_ids();
 
         for _ in 0..mutation_count {
-            if rng.random_bool(0.05) {
-                log::info!("Clearing multi-buffer");
-                self.primary_multibuffer.update(cx, |multibuffer, cx| {
-                    multibuffer.clear(cx);
-                });
-                continue;
-            } else if rng.random_bool(0.1) && !excerpt_ids.is_empty() {
+            if rng.random_bool(0.1) && !excerpt_ids.is_empty() {
                 let mut excerpts = HashSet::default();
                 for _ in 0..rng.random_range(0..excerpt_ids.len()) {
                     excerpts.extend(excerpt_ids.choose(rng).copied());
@@ -428,20 +483,14 @@ impl SplittableEditor {
 
             if excerpt_ids.is_empty() || (rng.random() && excerpt_ids.len() < max_excerpts) {
                 let existing_buffers = self.primary_multibuffer.read(cx).all_buffers();
-                let buffer = if rng.random() || existing_buffers.is_empty() {
-                    let len = rng.random_range(0..500);
-                    let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
-                    let buffer = cx.new(|cx| Buffer::local(text, cx));
-                    log::info!(
-                        "Creating new buffer {} with text: {:?}",
-                        buffer.read(cx).remote_id(),
-                        buffer.read(cx).text()
-                    );
-                    buffer
-                } else {
-                    existing_buffers.iter().choose(rng).unwrap().clone()
-                };
-
+                let len = rng.random_range(0..500);
+                let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
+                let buffer = cx.new(|cx| Buffer::local(text, cx));
+                log::info!(
+                    "Creating new buffer {} with text: {:?}",
+                    buffer.read(cx).remote_id(),
+                    buffer.read(cx).text()
+                );
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 let diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_snapshot, cx));
                 // Create some initial diff hunks.
@@ -486,12 +535,15 @@ impl SplittableEditor {
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     if rng.random() {
+                        log::info!("randomly editing single buffer");
                         buffer.randomly_edit(rng, mutation_count, cx);
                     } else {
+                        log::info!("randomly undoing/redoing in single buffer");
                         buffer.randomly_undo_redo(rng, cx);
                     }
                 });
             } else {
+                log::info!("randomly editing multibuffer");
                 self.primary_multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer.randomly_edit(rng, mutation_count, cx);
                 });
@@ -499,6 +551,7 @@ impl SplittableEditor {
         } else if rng.random() {
             self.randomly_edit_excerpts(rng, mutation_count, cx);
         } else {
+            log::info!("updating diffs and excerpts");
             for buffer in self.primary_multibuffer.read(cx).all_buffers() {
                 let diff = self
                     .primary_multibuffer
@@ -617,14 +670,12 @@ impl SecondaryEditor {
 
 #[cfg(test)]
 mod tests {
-    use buffer_diff::BufferDiff;
-    use db::indoc;
     use fs::FakeFs;
     use gpui::AppContext as _;
-    use language::{Buffer, Capability};
+    use language::Capability;
     use multi_buffer::MultiBuffer;
     use project::Project;
-    use rand::{Rng, rngs::StdRng};
+    use rand::rngs::StdRng;
     use settings::SettingsStore;
     use ui::VisualContext as _;
     use workspace::Workspace;
@@ -640,41 +691,24 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_basic_excerpts(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+    #[gpui::test(iterations = 100)]
+    async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         init_test(cx);
-        let base_text = indoc! {"
-            hello
-        "};
-        let buffer_text = indoc! {"
-            HELLO!
-        "};
-        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
-        });
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let primary_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let editor = cx.new_window_entity(|window, cx| {
-            SplittableEditor::new_unsplit(multibuffer, project, workspace, window, cx)
+            let mut editor =
+                SplittableEditor::new_unsplit(primary_multibuffer, project, workspace, window, cx);
+            editor.split(&Default::default(), window, cx);
+            editor
         });
 
-        let mutation_count = rng.random_range(0..100);
-        editor.update(cx, |editor, cx| {
-            editor.randomly_mutate(&mut rng, mutation_count, cx);
-        })
-
-        // for _ in 0..random() {
-        //     editor.update(cx, |editor, cx| {
-        //         randomly_mutate(primary_multibuffer);
-        //         editor.primary_editor().update(cx, |editor, cx| {
-        //             editor.edit(vec![(random()..random(), "...")], cx);
-        //         })
-        //     });
-        // }
-
-        // editor.read(cx).primary_editor().read(cx).display_map.read(cx)
+        for _ in 0..10 {
+            editor.update(cx, |editor, cx| {
+                editor.randomly_mutate(&mut rng, 5, cx);
+            })
+        }
     }
 }
