@@ -82,6 +82,7 @@ jobs:
       uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
       with:
         identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
+        release-tag: ${{ github.event.release.tag_name || inputs.tag_name }}
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
   create_sentry_release:

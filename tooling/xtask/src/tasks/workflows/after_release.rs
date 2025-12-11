@@ -139,6 +139,7 @@ echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
             "19e706d4c9121098010096f9c495a70a7518b30f", // v2
         )
         .add_with(("identifier", package_name.to_string()))
+        .add_with(("release-tag", TAG_NAME))
         .add_with(("max-versions-to-keep", 5))
         .add_with(("token", vars::WINGET_TOKEN))
     }
