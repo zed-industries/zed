@@ -173,8 +173,7 @@ where
                 NodeKind::Internal { children } => {
                     // Add children to search stack, sorted by max_order ascending
                     // so highest max_order is processed first (LIFO)
-                    let mut child_orders: [(u32, usize); MAX_CHILDREN] =
-                        [(0, 0); MAX_CHILDREN];
+                    let mut child_orders: [(u32, usize); MAX_CHILDREN] = [(0, 0); MAX_CHILDREN];
                     let num_children = children.len();
 
                     for (i, &child_idx) in children.as_slice().iter().enumerate() {
@@ -182,8 +181,7 @@ where
                     }
 
                     // Sort by max_order (ascending, so highest is pushed last = popped first)
-                    child_orders[..num_children]
-                        .sort_unstable_by_key(|(max_order, _)| *max_order);
+                    child_orders[..num_children].sort_unstable_by_key(|(max_order, _)| *max_order);
 
                     for (child_max, child_idx) in &child_orders[..num_children] {
                         if *child_max > max_found {
@@ -249,9 +247,7 @@ where
                 .half_perimeter();
 
             for &child_idx in &children.as_slice()[1..] {
-                let cost = bounds
-                    .union(&self.nodes[child_idx].bounds)
-                    .half_perimeter();
+                let cost = bounds.union(&self.nodes[child_idx].bounds).half_perimeter();
                 if cost < best_cost {
                     best_cost = cost;
                     best_child_idx = child_idx;
