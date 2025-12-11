@@ -737,38 +737,38 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three
             +3
              four
              five
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              3
             -four
             -five
             +4
             +5
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
             -one
             -two
              3
              4
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
             +5
              six
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              seven
             +7.5
              eight
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              ten
             +11
         "#};
@@ -837,8 +837,8 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three
