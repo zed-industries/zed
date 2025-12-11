@@ -2,13 +2,16 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.217.0"
+version = "0.218.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
 
 [lints]
 workspace = true
+
+[features]
+tracy = ["ztracing/tracy"]
 
 [[bin]]
 name = "zed"
@@ -144,6 +147,8 @@ theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_input.workspace = true
@@ -223,4 +228,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling", "zstd"]
+ignored = ["profiling", "zstd", "tracing"]

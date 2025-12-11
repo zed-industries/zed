@@ -124,7 +124,7 @@ impl ActiveToolchain {
                 &buffer,
                 window,
                 |this, _, event: &BufferEvent, window, cx| {
-                    if matches!(event, BufferEvent::LanguageChanged) {
+                    if matches!(event, BufferEvent::LanguageChanged(_)) {
                         this._update_toolchain_task = Self::spawn_tracker_task(window, cx);
                     }
                 },

@@ -524,7 +524,7 @@ impl Render for MarkdownPreviewView {
                                                         if e.checked() { "[x]" } else { "[ ]" };
 
                                                     editor.edit(
-                                                        vec![(
+                                                        [(
                                                             MultiBufferOffset(
                                                                 e.source_range().start,
                                                             )

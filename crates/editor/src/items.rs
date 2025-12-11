@@ -1951,7 +1951,7 @@ mod tests {
     use super::*;
     use fs::MTime;
     use gpui::{App, VisualTestContext};
-    use language::{LanguageMatcher, TestFile};
+    use language::TestFile;
     use project::FakeFs;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
@@ -1989,20 +1989,6 @@ mod tests {
             })
             .await
             .unwrap()
-    }
-
-    fn rust_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        ))
     }
 
     #[gpui::test]
@@ -2086,7 +2072,9 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.read_with(cx, |project, _| project.languages().add(rust_language()));
+            project.read_with(cx, |project, _| {
+                project.languages().add(languages::rust_lang())
+            });
 
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));

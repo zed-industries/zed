@@ -2094,7 +2094,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             "1",
             acp::ToolCallUpdateFields::new()
                 .status(acp::ToolCallStatus::Completed)
-                .raw_output("Finished thinking.".into())
+                .raw_output("Finished thinking.")
         )
     );
 }

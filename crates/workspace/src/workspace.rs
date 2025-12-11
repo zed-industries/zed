@@ -675,6 +675,7 @@ impl ProjectItemRegistry {
                             Ok((project_entry_id, build_workspace_item))
                         }
                         Err(e) => {
+                            log::warn!("Failed to open a project item: {e:#}");
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
                                     entry_abs_path.as_deref().filter(|_| is_file)
@@ -1641,20 +1642,18 @@ impl Workspace {
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
-                } else {
-                    let restorable_bounds = serialized_workspace
-                        .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                        .or_else(|| {
-                            let (display, window_bounds) = DB.last_window().log_err()?;
-                            Some((display?, window_bounds?))
-                        });
-
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
+                } else if let Some(workspace) = serialized_workspace.as_ref() {
+                    // Reopening an existing workspace - restore its saved bounds
+                    if let (Some(display), Some(bounds)) =
+                        (workspace.display, workspace.window_bounds.as_ref())
+                    {
+                        (Some(bounds.0), Some(display))
                     } else {
                         (None, None)
                     }
+                } else {
+                    // New window - let GPUI's default_bounds() handle cascading
+                    (None, None)
                 };
 
                 // Use the serialized workspace to construct the new window
@@ -6070,6 +6069,11 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn set_random_database_id(&mut self) {
+        self.database_id = Some(WorkspaceId(Uuid::new_v4().as_u64_pair().0 as i64));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         use node_runtime::NodeRuntime;
         use session::Session;
@@ -7776,7 +7780,7 @@ pub fn open_remote_project_with_new_connection(
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
+            deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
                 .await?;
 
         let session = match cx
@@ -7830,7 +7834,7 @@ pub fn open_remote_project_with_existing_connection(
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+            deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
         open_remote_project_inner(
             project,
@@ -7932,7 +7936,7 @@ async fn open_remote_project_inner(
     Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
 
-fn serialize_remote_project(
+fn deserialize_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     cx: &AsyncApp,

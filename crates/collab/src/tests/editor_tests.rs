@@ -1,7 +1,4 @@
-use crate::{
-    rpc::RECONNECT_TIMEOUT,
-    tests::{TestServer, rust_lang},
-};
+use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
 use editor::{
     DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
@@ -23,7 +20,7 @@ use gpui::{
     App, Rgba, SharedString, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext,
 };
 use indoc::indoc;
-use language::FakeLspAdapter;
+use language::{FakeLspAdapter, rust_lang};
 use lsp::LSP_REQUEST_TIMEOUT;
 use pretty_assertions::assert_eq;
 use project::{
