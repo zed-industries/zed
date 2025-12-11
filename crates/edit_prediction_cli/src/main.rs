@@ -45,7 +45,7 @@ enum Command {
     /// Parse markdown examples and output a combined .jsonl file
     ParseExample,
     /// Create git worktrees for each example and load file contents
-    LoadBuffer,
+    LoadProject,
     /// Retrieve context for input examples.
     Context,
     /// Generate a prompt string for a specific model
@@ -144,15 +144,19 @@ fn main() {
                 _ => (),
             };
 
-            for data in examples.chunks_mut(args.max_parallelism) {
+            let chunks = examples.chunks_mut(args.max_parallelism);
+            let total_chunks = chunks.len();
+            for (batch_ix, data) in chunks.enumerate() {
                 let mut futures = Vec::new();
+                eprintln!("Processing batch: {}/{}", batch_ix + 1, total_chunks);
+
                 for example in data.iter_mut() {
                     let cx = cx.clone();
                     let app_state = app_state.clone();
                     futures.push(async {
                         match &command {
                             Command::ParseExample => {}
-                            Command::LoadBuffer => {
+                            Command::LoadProject => {
                                 run_load_project(example, app_state.clone(), cx).await;
                             }
                             Command::Context => {
