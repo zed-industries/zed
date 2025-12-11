@@ -166,7 +166,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                 .expect("Failed to read from stdin");
             buffer
         } else {
-            std::fs::read_to_string(path).unwrap_or_else(|_| panic!("Failed to read path: {:?}", &path))
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|_| panic!("Failed to read path: {:?}", &path))
         };
         let filename = path.file_stem().unwrap().to_string_lossy().to_string();
         let ext = if !is_stdin {
