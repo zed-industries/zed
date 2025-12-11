@@ -677,7 +677,7 @@ impl LocalBufferStore {
                     };
                     if is_read_only {
                         buffer.update(cx, |buffer, cx| {
-                            buffer.set_capability(Capability::ReadOnly, cx);
+                            buffer.set_capability(Capability::Read, cx);
                         });
                     }
 

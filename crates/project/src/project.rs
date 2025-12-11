@@ -2667,7 +2667,7 @@ impl Project {
 
     #[inline]
     pub fn is_read_only(&self, cx: &App) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) || !self.capability().editable()
     }
 
     #[inline]

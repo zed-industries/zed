@@ -3358,7 +3358,7 @@ impl Editor {
                 let position_matches = start_offset == completion_position.to_offset(buffer);
                 let continue_showing = if let Some((snap, ..)) =
                     buffer.point_to_buffer_offset(completion_position)
-                    && snap.capability == Capability::ReadOnly
+                    && !snap.capability.editable()
                 {
                     false
                 } else if position_matches {
@@ -4327,13 +4327,13 @@ impl Editor {
         {
             if snapshot
                 .point_to_buffer_point(selection.head())
-                .is_none_or(|(snapshot, ..)| snapshot.capability == Capability::ReadOnly)
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
             {
                 continue;
             }
             if snapshot
                 .point_to_buffer_point(selection.tail())
-                .is_none_or(|(snapshot, ..)| snapshot.capability == Capability::ReadOnly)
+                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
             {
                 // note, ideally we'd clip the tail to the closest writeable region towards the head
                 continue;
@@ -11093,13 +11093,13 @@ impl Editor {
     }
 
     pub fn toggle_read_only(&mut self, _: &ToggleReadOnly, _: &mut Window, cx: &mut Context<Self>) {
-        // todo(lw): We should not allow toggling every editor to read-write. Some we want to keep read-only, always as they might be read-only replicated etc.
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_capability(
                     match buffer.capability() {
-                        Capability::ReadWrite => Capability::ReadOnly,
-                        Capability::ReadOnly => Capability::ReadWrite,
+                        Capability::ReadWrite => Capability::Read,
+                        Capability::Read => Capability::ReadWrite,
+                        Capability::ReadOnly => Capability::ReadOnly,
                     },
                     cx,
                 );

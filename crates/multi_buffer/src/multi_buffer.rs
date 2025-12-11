@@ -1195,7 +1195,7 @@ impl MultiBuffer {
     }
 
     pub fn read_only(&self) -> bool {
-        self.capability == Capability::ReadOnly
+        !self.capability.editable()
     }
 
     /// Returns an up-to-date snapshot of the MultiBuffer.
