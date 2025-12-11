@@ -868,6 +868,21 @@ impl QuickSearchDelegate {
         }
     }
 
+    fn toggle_all_files_collapsed(&mut self, clicked_file_key: &SharedString) {
+        let is_clicked_collapsed = self.collapsed_files.contains(clicked_file_key);
+
+        if is_clicked_collapsed {
+            self.collapsed_files.clear();
+        } else {
+            for item in &self.items {
+                if let QuickSearchItem::FileHeader { file_key, .. } = item {
+                    self.collapsed_files.insert(file_key.clone());
+                }
+            }
+        }
+        self.update_visible_indices();
+    }
+
     fn collapse_file_indices(&mut self, file_key: &SharedString) {
         let mut indices_to_remove = Vec::new();
 
@@ -1010,13 +1025,17 @@ impl QuickSearchDelegate {
                     .w_full()
                     .gap_1()
                     .cursor_pointer()
-                    .on_click(move |_, window, cx| {
+                    .on_click(move |event, window, cx| {
                         cx.stop_propagation();
                         if let Some(qs) = quick_search.upgrade() {
                             qs.update(cx, |qs, cx| {
                                 window.focus(&qs.picker.focus_handle(cx));
                                 qs.picker.update(cx, |picker, cx| {
-                                    picker.delegate.toggle_file_collapsed(&file_key);
+                                    if event.modifiers().alt {
+                                        picker.delegate.toggle_all_files_collapsed(&file_key);
+                                    } else {
+                                        picker.delegate.toggle_file_collapsed(&file_key);
+                                    }
                                     cx.notify();
                                 });
                             });
