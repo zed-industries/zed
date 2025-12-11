@@ -16,6 +16,7 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
+collections.workspace = true
 git.workspace = true
 git_ui.workspace = true
 gpui.workspace = true

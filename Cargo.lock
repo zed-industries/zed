@@ -7002,6 +7002,7 @@ name = "git_graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "git",
  "git_ui",
  "gpui",

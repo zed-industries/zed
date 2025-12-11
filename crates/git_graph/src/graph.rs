@@ -1,16 +1,8 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
-use anyhow::{Context, Result, bail};
-use git::{
-    Oid,
-    libgit::{Repository, Sort},
-};
-use gpui::{AsyncApp, Entity};
-use project::Project;
+use anyhow::Result;
+use collections::HashMap;
+use git::Oid;
 use smallvec::SmallVec;
 use util::command::new_smol_command;
 
@@ -37,70 +29,10 @@ pub struct GraphCommit {
     /// Most commits have a single parent, so we use a small vec to avoid allocations
     pub parents: smallvec::SmallVec<[Oid; 1]>,
     pub author_name: String,
-    pub author_email: String,
+    pub _author_email: String,
     pub commit_timestamp: i64,
     pub subject: String,
     pub ref_names: Vec<String>,
-}
-
-/// The type of node in the graph
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeType {
-    Commit,
-    Stash,
-}
-
-/// A node's position in the graph: (row, column, type)
-#[derive(Debug, Clone, Copy)]
-pub struct GraphNode {
-    pub row: usize,
-    pub column: usize,
-    pub node_type: NodeType,
-}
-
-/// The type of edge connecting commits
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeType {
-    /// Edge to first parent (main line)
-    Normal,
-    /// Edge to non-first parent (merge)
-    Merge,
-}
-
-/// An edge in the graph connecting two positions
-// #[derive(Debug, Clone)]
-// pub struct GraphEdge {
-//     pub from_row: usize,
-//     pub from_column: usize,
-//     pub to_row: usize,
-//     pub to_column: usize,
-//     pub edge_type: EdgeType,
-// }
-
-/// The computed graph layout for visualization
-pub struct CommitGraph {
-    /// Map from commit SHA to its visual position
-    pub positions: HashMap<Oid, GraphNode>,
-    /// The width of the graph (number of columns/lanes)
-    pub width: usize,
-    // All edges in the graph, can be queried by row range
-    // pub edges: Vec<GraphEdge>,
-}
-
-/// Repository data needed for graph computation
-pub struct RepoGraph {
-    /// Commits in topologically sorted order (children before parents)
-    pub commits: Vec<GraphCommit>,
-    /// Map from SHA to index in commits vec
-    pub sha_to_index: HashMap<Oid, usize>,
-    /// Map from commit SHA to parent SHAs
-    pub parents: HashMap<Oid, Vec<Oid>>,
-    /// Map from commit SHA to child SHAs
-    pub children: HashMap<Oid, Vec<Oid>>,
-    /// Set of stash commit SHAs
-    pub stashes: HashSet<Oid>,
-    /// The HEAD commit SHA, if any
-    pub head_sha: Option<Oid>,
 }
 
 // todo: This function should be on a background thread, and it should return a chunk of commits at a time
@@ -141,7 +73,7 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
 
             Some(GraphCommit {
                 author_name: author_name.to_string(),
-                author_email: author_email.to_string(),
+                _author_email: author_email.to_string(),
                 sha: Oid::from_str(sha).ok()?,
                 parents,
                 commit_timestamp: commit_timestamp.parse().ok()?, //todo!
@@ -156,20 +88,8 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<GraphCommit>> {
         .collect::<Vec<_>>())
 }
 
-/// Load HEAD SHA from the repository
-pub fn get_head_sha(repo: &Repository) -> Option<Oid> {
-    repo.head()
-        .ok()
-        .and_then(|head| head.peel_to_commit().ok())
-        .and_then(|commit| Oid::from_bytes(commit.id().as_bytes()).ok())
-}
-
 #[derive(Copy, Clone)]
 struct BranchColor(u8);
-
-enum BranchLine {
-    Straight,
-}
 
 enum LaneState {
     Empty,
@@ -229,12 +149,6 @@ impl GitGraph {
             self.next_color = BranchColor((self.next_color.0 + 1) % BRANCH_COLORS.len() as u8);
             color_idx
         })
-    }
-
-    fn next_branch_color(&mut self) -> BranchColor {
-        let color_idx = self.next_color;
-        self.next_color = BranchColor((self.next_color.0 + 1) % BRANCH_COLORS.len() as u8);
-        color_idx
     }
 
     pub(crate) fn add_commits(&mut self, commits: Vec<GraphCommit>) {
