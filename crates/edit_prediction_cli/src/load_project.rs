@@ -1,7 +1,7 @@
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
-    progress::{Progress, Step},
+    progress::{InfoStyle, Progress, Step},
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -61,17 +61,28 @@ pub async fn run_load_project(
         .await
         .unwrap();
     let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await;
-    example.buffer = buffer
+    let cursor_info = buffer
         .read_with(&cx, |buffer, _cx| {
             let cursor_point = cursor_position.to_point(&buffer);
-            Some(ExampleBuffer {
-                content: buffer.text(),
-                cursor_row: cursor_point.row,
-                cursor_column: cursor_point.column,
-                cursor_offset: cursor_position.to_offset(&buffer),
-            })
+            (
+                ExampleBuffer {
+                    content: buffer.text(),
+                    cursor_row: cursor_point.row,
+                    cursor_column: cursor_point.column,
+                    cursor_offset: cursor_position.to_offset(&buffer),
+                },
+                cursor_point.row + 1,
+            )
         })
         .unwrap();
+    let (example_buffer, cursor_row) = cursor_info;
+
+    _progress.set_info(
+        format!("{}:{}", example.cursor_path.display(), cursor_row),
+        InfoStyle::Normal,
+    );
+
+    example.buffer = Some(example_buffer);
     example.state = Some(ExampleState {
         buffer,
         project,

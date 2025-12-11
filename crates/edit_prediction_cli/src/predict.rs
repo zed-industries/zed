@@ -6,7 +6,7 @@ use crate::{
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
-    progress::{Progress, Step},
+    progress::{InfoStyle, Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{DebugEvent, EditPredictionStore};
@@ -186,18 +186,31 @@ pub async fn run_prediction(
             .await
             .unwrap();
 
+        let actual_patch = prediction
+            .and_then(|prediction| {
+                let prediction = prediction.prediction.ok()?;
+                prediction.edit_preview.as_unified_diff(&prediction.edits)
+            })
+            .unwrap_or_default();
+
+        let has_prediction = !actual_patch.is_empty();
+
         updated_example
             .lock()
             .unwrap()
             .predictions
             .last_mut()
             .unwrap()
-            .actual_patch = prediction
-            .and_then(|prediction| {
-                let prediction = prediction.prediction.ok()?;
-                prediction.edit_preview.as_unified_diff(&prediction.edits)
-            })
-            .unwrap_or_default();
+            .actual_patch = actual_patch;
+
+        if ix == repetition_count - 1 {
+            let (info, style) = if has_prediction {
+                ("predicted", InfoStyle::Normal)
+            } else {
+                ("no prediction", InfoStyle::Warning)
+            };
+            _progress.set_info(info, style);
+        }
     }
 
     ep_store

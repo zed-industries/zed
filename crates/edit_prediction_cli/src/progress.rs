@@ -63,19 +63,25 @@ impl Display for Step {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InfoStyle {
+    Normal,
+    Warning,
+}
+
 #[derive(Clone)]
 struct InProgressTask {
     step: Step,
     started_at: Instant,
     substatus: Option<String>,
-    info: Option<String>,
+    info: Option<(String, InfoStyle)>,
 }
 
 struct CompletedTask {
     step: Step,
     example_name: String,
     duration: Duration,
-    info: Option<String>,
+    info: Option<(String, InfoStyle)>,
 }
 
 struct ProgressInner {
@@ -103,7 +109,7 @@ impl Progress {
         })
     }
 
-    pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepGuard {
+    pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> Arc<StepProgress> {
         {
             let mut inner = self.inner.lock().unwrap();
 
@@ -124,11 +130,11 @@ impl Progress {
             Self::print_status_line(&inner);
         }
 
-        StepGuard {
+        Arc::new(StepProgress {
             progress: self.clone(),
             step,
             example_name: example_name.to_string(),
-        }
+        })
     }
 
     pub fn finish(&self, step: Step, example_name: &str) {
@@ -141,7 +147,7 @@ impl Progress {
                     step: task.step,
                     example_name: example_name.to_string(),
                     duration: task.started_at.elapsed(),
-                    info: task.info.clone(),
+                    info: task.info,
                 });
 
                 Self::clear_line(&inner);
@@ -176,8 +182,8 @@ impl Progress {
             let info_part = task
                 .info
                 .as_ref()
-                .map(|s| {
-                    if s.starts_with("0 ") {
+                .map(|(s, style)| {
+                    if *style == InfoStyle::Warning {
                         format!(" {dim}│{reset} {yellow}{s}{reset}")
                     } else {
                         format!(" {dim}│{reset} {s}")
@@ -205,7 +211,7 @@ impl Progress {
             let info_part = task
                 .info
                 .as_ref()
-                .map(|s| format!(" | {}", s))
+                .map(|(s, _)| format!(" | {}", s))
                 .unwrap_or_default();
 
             eprintln!(
@@ -287,7 +293,7 @@ impl Progress {
         let _ = std::io::stderr().flush();
     }
 
-    pub fn set_substatus(&self, example_name: &str, substatus: impl Into<Cow<'static, str>>) {
+    fn set_substatus(&self, example_name: &str, substatus: impl Into<Cow<'static, str>>) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(task) = inner.in_progress.get_mut(example_name) {
             task.substatus = Some(substatus.into().into_owned());
@@ -296,7 +302,7 @@ impl Progress {
         }
     }
 
-    pub fn clear_substatus(&self, example_name: &str) {
+    fn clear_substatus(&self, example_name: &str) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(task) = inner.in_progress.get_mut(example_name) {
             task.substatus = None;
@@ -305,10 +311,10 @@ impl Progress {
         }
     }
 
-    pub fn set_info(&self, example_name: &str, info: impl Into<String>) {
+    fn set_info(&self, example_name: &str, info: impl Into<String>, style: InfoStyle) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(task) = inner.in_progress.get_mut(example_name) {
-            task.info = Some(info.into());
+            task.info = Some((info.into(), style));
         }
     }
 
@@ -389,13 +395,27 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-pub struct StepGuard {
+pub struct StepProgress {
     progress: Arc<Progress>,
     step: Step,
     example_name: String,
 }
 
-impl Drop for StepGuard {
+impl StepProgress {
+    pub fn set_substatus(&self, substatus: impl Into<Cow<'static, str>>) {
+        self.progress.set_substatus(&self.example_name, substatus);
+    }
+
+    pub fn clear_substatus(&self) {
+        self.progress.clear_substatus(&self.example_name);
+    }
+
+    pub fn set_info(&self, info: impl Into<String>, style: InfoStyle) {
+        self.progress.set_info(&self.example_name, info, style);
+    }
+}
+
+impl Drop for StepProgress {
     fn drop(&mut self) {
         self.progress.finish(self.step, &self.example_name);
     }
