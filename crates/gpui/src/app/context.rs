@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation, SubscriberSet,
+    Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -665,25 +665,6 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let view = self.weak_entity();
         window.spawn(self, async move |cx| f(view, cx).await)
-    }
-
-    /// Schedule a future to be run asynchronously with the given priority.
-    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the entity for a long-running process.
-    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.
-    /// The returned future will be polled on the main thread.
-    #[track_caller]
-    pub fn spawn_in_with_priority<AsyncFn, R>(
-        &self,
-        priority: Priority,
-        window: &Window,
-        f: AsyncFn,
-    ) -> Task<R>
-    where
-        R: 'static,
-        AsyncFn: AsyncFnOnce(WeakEntity<T>, &mut AsyncWindowContext) -> R + 'static,
-    {
-        let view = self.weak_entity();
-        window.spawn_with_priority(priority, self, async move |cx| f(view, cx).await)
     }
 
     /// Register a callback to be invoked when the given global state changes.
