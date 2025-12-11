@@ -1555,6 +1555,12 @@ impl Sub<u32> for DisplayRow {
     }
 }
 
+impl PartialEq<u32> for DisplayRow {
+    fn eq(&self, &other: &u32) -> bool {
+        self.0 == other
+    }
+}
+
 impl DisplayPoint {
     pub fn new(row: DisplayRow, column: u32) -> Self {
         Self(BlockPoint(Point::new(row.0, column)))
