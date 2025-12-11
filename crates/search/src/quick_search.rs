@@ -3,9 +3,8 @@ use editor::{Anchor as MultiBufferAnchor, Editor};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Global, Pixels, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
-    prelude::*,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Pixels,
+    Render, SharedString, Subscription, Task, WeakEntity, Window, actions, prelude::*,
 };
 use language::Buffer;
 use picker::{Picker, PickerDelegate};
@@ -18,25 +17,6 @@ use ui::{
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{ModalView, Workspace, searchable::SearchableItemHandle};
-
-#[derive(Default)]
-struct LastQuickSearchState(HashMap<EntityId, (String, SearchOptions)>);
-
-impl Global for LastQuickSearchState {}
-
-fn get_last_state(workspace_id: EntityId, cx: &App) -> Option<(String, SearchOptions)> {
-    cx.try_global::<LastQuickSearchState>()
-        .and_then(|storage| storage.0.get(&workspace_id).cloned())
-}
-
-fn set_last_state(workspace_id: EntityId, query: String, options: SearchOptions, cx: &mut App) {
-    if !cx.has_global::<LastQuickSearchState>() {
-        cx.set_global(LastQuickSearchState::default());
-    }
-    cx.global_mut::<LastQuickSearchState>()
-        .0
-        .insert(workspace_id, (query, options));
-}
 
 use crate::{
     SearchOption, SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
@@ -206,7 +186,6 @@ enum QuickSearchItem {
 
 pub struct QuickSearchDelegate {
     workspace: WeakEntity<Workspace>,
-    workspace_id: EntityId,
     project: Entity<Project>,
     search_options: SearchOptions,
     items: Vec<QuickSearchItem>,
@@ -383,18 +362,9 @@ impl QuickSearchModal {
                 .filter(|query| !query.is_empty());
 
             let project = workspace.project().clone();
-            let workspace_entity = cx.entity();
-            let workspace_id = workspace_entity.entity_id();
-            let weak_workspace = workspace_entity.downgrade();
+            let weak_workspace = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| {
-                QuickSearchModal::new(
-                    weak_workspace,
-                    workspace_id,
-                    project,
-                    selected_text,
-                    window,
-                    cx,
-                )
+                QuickSearchModal::new(weak_workspace, project, selected_text, window, cx)
             });
         });
         workspace.register_action(Self::toggle_case_sensitive);
@@ -481,25 +451,17 @@ impl QuickSearchModal {
 
     fn new(
         workspace: WeakEntity<Workspace>,
-        workspace_id: EntityId,
         project: Entity<Project>,
         initial_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_self = cx.entity().downgrade();
-        let last_state = get_last_state(workspace_id, cx);
-        let (last_query, last_options) = last_state
-            .map(|(q, o)| (Some(q), o))
-            .unwrap_or((None, SearchOptions::NONE));
-
-        let query = initial_query.or(last_query);
 
         let delegate = QuickSearchDelegate {
             workspace,
-            workspace_id,
             project,
-            search_options: last_options,
+            search_options: SearchOptions::NONE,
             items: Vec::new(),
             visible_indices: Vec::new(),
             collapsed_files: HashSet::default(),
@@ -510,7 +472,7 @@ impl QuickSearchModal {
             file_count: 0,
             is_limited: false,
             is_searching: false,
-            current_query: query.clone().unwrap_or_default(),
+            current_query: initial_query.clone().unwrap_or_default(),
             focus_handle: None,
             regex_error: None,
         };
@@ -521,7 +483,7 @@ impl QuickSearchModal {
                 .max_height(None)
                 .show_scrollbar(true);
             picker.delegate.focus_handle = Some(picker.focus_handle(cx));
-            if let Some(q) = query {
+            if let Some(q) = initial_query {
                 picker.set_query(q, window, cx);
             }
             picker
@@ -968,13 +930,6 @@ impl PickerDelegate for QuickSearchDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        set_last_state(
-            self.workspace_id,
-            self.current_query.clone(),
-            self.search_options,
-            cx,
-        );
-
         let actual_index = match self.actual_index(self.selected_index) {
             Some(idx) => idx,
             None => return,
@@ -1017,12 +972,6 @@ impl PickerDelegate for QuickSearchDelegate {
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        set_last_state(
-            self.workspace_id,
-            self.current_query.clone(),
-            self.search_options,
-            cx,
-        );
         cx.emit(DismissEvent);
     }
 
@@ -1312,12 +1261,9 @@ mod tests {
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
-        let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
+            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
         });
 
         quick_search.update(&mut cx, |modal, cx| {
@@ -1345,12 +1291,9 @@ mod tests {
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
-        let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
+            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
         });
 
         quick_search.update_in(&mut cx, |modal, window, cx| {
@@ -1428,12 +1371,9 @@ mod tests {
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
-        let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
+            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
         });
 
         quick_search.update_in(&mut cx, |modal, window, cx| {
@@ -1473,12 +1413,9 @@ mod tests {
         let workspace = window.root(cx).unwrap();
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
-        let workspace_id = workspace.entity_id();
         let quick_search = cx.new_window_entity({
             let weak_workspace = workspace.downgrade();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
+            move |window, cx| QuickSearchModal::new(weak_workspace, project, None, window, cx)
         });
 
         quick_search.update(&mut cx, |modal, cx| {
@@ -1510,67 +1447,6 @@ mod tests {
                 modal.picker.read(cx).delegate.pending_search_id,
                 2,
                 "Second search should have id 2"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_quick_search_persists_query_between_openings(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                "file.rs": "fn hello() {}\n",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
-        let workspace_id = workspace.entity_id();
-
-        let quick_search = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            let project = project.clone();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.set_query("hello", window, cx);
-            });
-        });
-
-        quick_search.update(&mut cx, |modal, cx| {
-            assert_eq!(modal.picker.read(cx).delegate.current_query, "hello");
-        });
-
-        quick_search.update_in(&mut cx, |modal, window, cx| {
-            modal.picker.update(cx, |picker, cx| {
-                picker.cancel(&menu::Cancel, window, cx);
-            });
-        });
-
-        cx.background_executor.run_until_parked();
-
-        let quick_search2 = cx.new_window_entity({
-            let weak_workspace = workspace.downgrade();
-            move |window, cx| {
-                QuickSearchModal::new(weak_workspace, workspace_id, project, None, window, cx)
-            }
-        });
-
-        quick_search2.update(&mut cx, |modal, cx| {
-            assert_eq!(
-                modal.picker.read(cx).delegate.current_query,
-                "hello",
-                "Query should be restored from previous session"
             );
         });
     }
