@@ -33,10 +33,10 @@ struct LineData {
     match_ranges: Vec<AnchorRange>,
 }
 
-const MODAL_HEIGHT: Pixels = px(650.);
-const MODAL_WIDTH: Pixels = px(1100.);
-const LEFT_PANEL_WIDTH: Pixels = px(300.);
-const MAX_LINE_MATCHES: usize = 200;
+const MODAL_HEIGHT: Pixels = px(800.);
+const MODAL_WIDTH: Pixels = px(1400.);
+const LEFT_PANEL_WIDTH: Pixels = px(400.);
+const MAX_LINE_MATCHES: usize = 800;
 const MAX_PREVIEW_BYTES: usize = 200;
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 const PREVIEW_DEBOUNCE_MS: u64 = 50;
@@ -242,7 +242,7 @@ impl Focusable for QuickSearchModal {
 }
 
 impl Render for QuickSearchModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let preview_editor = self.preview_editor.clone();
         let picker = self.picker.clone();
 
@@ -251,11 +251,17 @@ impl Render for QuickSearchModal {
         let search_options = delegate.search_options;
         let focus_handle = self.picker.focus_handle(cx);
 
+        let viewport_size = window.viewport_size();
+        let max_width = viewport_size.width * 0.9;
+        let max_height = viewport_size.height * 0.8;
+        let modal_width = MODAL_WIDTH.min(max_width);
+        let modal_height = MODAL_HEIGHT.min(max_height);
+
         div()
             .id("quick-search-modal")
             .relative()
-            .h(MODAL_HEIGHT)
-            .w(MODAL_WIDTH)
+            .h(modal_height)
+            .w(modal_width)
             .child(
                 v_flex()
                     .elevation_3(cx)
