@@ -21,9 +21,7 @@ use util::ResultExt;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent, SerializableItem};
 
-use graph_rendering::{
-    BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
-};
+use graph_rendering::{render_graph_cell, render_graph_continuation};
 
 use crate::graph::CommitEntry;
 
@@ -231,135 +229,6 @@ impl GitGraph {
         }));
     }
 
-    fn render_badges(
-        &self,
-        refs: &[SharedString],
-        color_idx: usize,
-        commit_idx: usize,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let badges = parse_refs_to_badges(refs);
-        let branch_color = BRANCH_COLORS[color_idx % BRANCH_COLORS.len()];
-        let tag_color = gpui::hsla(140.0 / 360.0, 0.55, 0.45, 1.0);
-        let hover_bg = cx.theme().colors().ghost_element_hover;
-        let accent_color = cx.theme().colors().border_focused;
-
-        h_flex()
-            .gap_1()
-            .flex_shrink_0()
-            .children(
-                badges
-                    .into_iter()
-                    .take(5)
-                    .enumerate()
-                    .map(|(badge_idx, badge)| match badge {
-                        BadgeType::Tag(name) => h_flex()
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .child(
-                                Icon::new(IconName::Hash)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(tag_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Default),
-                            )
-                            .into_any_element(),
-                        BadgeType::CurrentBranch(name, has_origin) => h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!(
-                                    "badge-current-{}-{}",
-                                    commit_idx, badge_idx
-                                )),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(accent_color)
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Default),
-                            )
-                            .when(has_origin, |el| {
-                                el.child(
-                                    Label::new("origin")
-                                        .size(LabelSize::Default)
-                                        .color(Color::Muted),
-                                )
-                            })
-                            .into_any_element(),
-                        BadgeType::LocalBranch(name, has_origin) => h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!(
-                                    "badge-local-{}-{}",
-                                    commit_idx, badge_idx
-                                )),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Default),
-                            )
-                            .when(has_origin, |el| {
-                                el.child(
-                                    Label::new("origin")
-                                        .size(LabelSize::Default)
-                                        .color(Color::Muted),
-                                )
-                            })
-                            .into_any_element(),
-                        BadgeType::RemoteBranch(name) => h_flex()
-                            .id(ElementId::NamedInteger(
-                                SharedString::from(format!(
-                                    "badge-remote-{}-{}",
-                                    commit_idx, badge_idx
-                                )),
-                                commit_idx as u64,
-                            ))
-                            .gap_0p5()
-                            .px_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(hover_bg))
-                            .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(IconSize::Small)
-                                    .color(Color::Custom(branch_color)),
-                            )
-                            .child(
-                                Label::new(name)
-                                    .size(LabelSize::Default)
-                                    .color(Color::Muted),
-                            )
-                            .into_any_element(),
-                    }),
-            )
-    }
-
     fn render_list_item(
         &mut self,
         idx: usize,
@@ -433,7 +302,6 @@ impl GitGraph {
         let author_name: SharedString = commit.data.author_name.clone().into();
         let short_sha: SharedString = commit.data.sha.display_short().into();
         let formatted_time: SharedString = commit.data.commit_timestamp.clone().into();
-        let refs = commit.data.ref_names.clone();
         let lane = commit.lane;
         let lines = commit.lines.clone();
         let color_idx = commit.color_idx;
@@ -479,9 +347,6 @@ impl GitGraph {
                     .gap_2()
                     .overflow_hidden()
                     .items_center()
-                    .when(!refs.is_empty(), |el| {
-                        el.child(self.render_badges(&refs, color_idx, idx, cx))
-                    })
                     .child(
                         div()
                             .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))

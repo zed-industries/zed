@@ -78,7 +78,7 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<CommitData>> {
                 parents,
                 commit_timestamp: format_timestamp(commit_timestamp.parse().ok()?).into(), //todo!
                 subject: SharedString::new(*summary),                                      // todo!
-                ref_names: parts
+                _ref_names: parts
                     .get(7)
                     .filter(|ref_name| !ref_name.is_empty())
                     .map(|ref_names| ref_names.split(", ").map(SharedString::new).collect())
@@ -98,7 +98,7 @@ pub struct CommitData {
     pub _author_email: SharedString,
     pub commit_timestamp: SharedString,
     pub subject: SharedString,
-    pub ref_names: Vec<SharedString>,
+    pub _ref_names: Vec<SharedString>,
 }
 
 #[derive(Clone, Debug)]

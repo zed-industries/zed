@@ -1,5 +1,4 @@
 use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
-use ui::SharedString;
 
 use crate::graph::{GraphLine, LineType};
 
@@ -468,64 +467,4 @@ fn cubic_bezier_derivative(
     let dx = 3.0 * inv_t2 * (p1x - p0x) + 6.0 * inv_t * t * (p2x - p1x) + 3.0 * t2 * (p3x - p2x);
     let dy = 3.0 * inv_t2 * (p1y - p0y) + 6.0 * inv_t * t * (p2y - p1y) + 3.0 * t2 * (p3y - p2y);
     (dx, dy)
-}
-
-pub enum BadgeType {
-    CurrentBranch(SharedString, bool), // name, has_origin
-    LocalBranch(SharedString, bool),   // name, has_origin
-    RemoteBranch(SharedString),        // full name like "origin/dev"
-    Tag(SharedString),
-}
-
-pub fn parse_refs_to_badges(refs: &[SharedString]) -> Vec<BadgeType> {
-    use std::collections::HashSet;
-
-    let mut result = Vec::new();
-    let mut local_branches: HashSet<SharedString> = HashSet::new();
-    let mut remote_branches: HashSet<SharedString> = HashSet::new();
-    let mut current_branch: Option<SharedString> = None;
-
-    for ref_name in refs {
-        if ref_name.starts_with("HEAD -> ") {
-            if let Some(branch) = ref_name.strip_prefix("HEAD -> ") {
-                let branch = SharedString::new(branch);
-                current_branch = Some(branch.clone());
-                local_branches.insert(branch);
-            }
-        } else if let Some(tag) = ref_name.strip_prefix("tag: ") {
-            result.push(BadgeType::Tag(SharedString::new(tag)));
-        } else if let Some(remote) = ref_name.strip_prefix("origin/") {
-            if remote != "HEAD" {
-                remote_branches.insert(SharedString::new(remote));
-            }
-        } else if !ref_name.contains("HEAD") {
-            local_branches.insert(ref_name.clone());
-        }
-    }
-
-    let mut branch_badges = Vec::new();
-    if let Some(ref current) = current_branch {
-        let has_origin = remote_branches.contains(current);
-        branch_badges.push(BadgeType::CurrentBranch(current.clone(), has_origin));
-        remote_branches.remove(current);
-        local_branches.remove(current);
-    }
-
-    let mut local_sorted: Vec<_> = local_branches.iter().cloned().collect();
-    local_sorted.sort();
-    for branch in local_sorted {
-        let has_origin = remote_branches.contains(&branch);
-        branch_badges.push(BadgeType::LocalBranch(branch.clone(), has_origin));
-        remote_branches.remove(&branch);
-    }
-
-    let mut remote_sorted: Vec<_> = remote_branches.iter().cloned().collect();
-    remote_sorted.sort();
-    for branch in remote_sorted {
-        branch_badges.push(BadgeType::RemoteBranch(format!("origin/{}", branch).into()));
-    }
-
-    let tags: Vec<_> = result.into_iter().collect();
-    branch_badges.extend(tags);
-    branch_badges
 }
