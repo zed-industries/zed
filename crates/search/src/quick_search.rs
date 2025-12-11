@@ -1,5 +1,5 @@
 use collections::{HashMap, HashSet};
-use editor::{Anchor as MultiBufferAnchor, Editor};
+use editor::{Anchor as MultiBufferAnchor, Editor, EditorEvent};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
@@ -206,11 +206,14 @@ pub struct QuickSearchDelegate {
 
 pub struct QuickSearchModal {
     picker: Entity<Picker<QuickSearchDelegate>>,
+    workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     preview_editor: Option<Entity<Editor>>,
     preview_buffer: Option<Entity<Buffer>>,
     preview_pending_path: Option<ProjectPath>,
+    preview_opened_in_workspace: Option<ProjectPath>,
     _subscriptions: Vec<Subscription>,
+    _open_in_workspace_task: Option<Task<()>>,
 }
 
 impl ModalView for QuickSearchModal {}
@@ -480,7 +483,7 @@ impl QuickSearchModal {
         let weak_self = cx.entity().downgrade();
 
         let delegate = QuickSearchDelegate {
-            workspace,
+            workspace: workspace.clone(),
             project: project.clone(),
             search_options: SearchOptions::NONE,
             items: Vec::new(),
@@ -514,11 +517,14 @@ impl QuickSearchModal {
 
         Self {
             picker,
+            workspace,
             project,
             preview_editor: None,
             preview_buffer: None,
             preview_pending_path: None,
+            preview_opened_in_workspace: None,
             _subscriptions: subscriptions,
+            _open_in_workspace_task: None,
         }
     }
 
@@ -532,6 +538,71 @@ impl QuickSearchModal {
         cx.emit(DismissEvent);
     }
 
+    fn on_preview_editor_event(
+        &mut self,
+        _editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, EditorEvent::Edited { .. }) {
+            return;
+        }
+
+        if self.preview_opened_in_workspace.is_some() {
+            return;
+        }
+
+        let Some(buffer) = &self.preview_buffer else {
+            return;
+        };
+
+        let Some(file) = buffer.read(cx).file() else {
+            return;
+        };
+
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+
+        let Some(preview_editor) = self.preview_editor.clone() else {
+            return;
+        };
+
+        self._open_in_workspace_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(200))
+                .await;
+
+            this.update_in(cx, |this, window, cx| {
+                if this.preview_opened_in_workspace.is_some() {
+                    return;
+                }
+
+                this.preview_opened_in_workspace = Some(project_path.clone());
+
+                let Some(workspace) = this.workspace.upgrade() else {
+                    return;
+                };
+
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    workspace.open_path_preview(project_path, None, false, false, false, window, cx)
+                });
+
+                cx.spawn_in(window, async move |_, cx| {
+                    let _ = open_task.await;
+                    cx.update(|window, cx| {
+                        window.focus(&preview_editor.focus_handle(cx));
+                    })
+                    .ok();
+                })
+                .detach();
+            })
+            .ok();
+        }));
+    }
+
     fn update_preview(
         &mut self,
         data: Option<(ProjectPath, u32, Vec<std::ops::Range<text::Anchor>>)>,
@@ -542,6 +613,7 @@ impl QuickSearchModal {
             self.preview_editor = None;
             self.preview_buffer = None;
             self.preview_pending_path = None;
+            self.preview_opened_in_workspace = None;
             cx.notify();
             return;
         };
@@ -630,8 +702,14 @@ impl QuickSearchModal {
                     }
                 });
 
+                this._subscriptions.push(cx.subscribe_in(
+                    &editor,
+                    window,
+                    Self::on_preview_editor_event,
+                ));
                 this.preview_editor = Some(editor);
                 this.preview_buffer = Some(buffer);
+                this.preview_opened_in_workspace = None;
                 cx.notify();
             })
             .ok();
