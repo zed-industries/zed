@@ -741,7 +741,8 @@ impl BlockMap {
             // and then insert the block itself.
             let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
-                let span = ztracing::debug_span!("for block in edits", block_height = block.height());
+                let span =
+                    ztracing::debug_span!("for block in edits", block_height = block.height());
                 let _enter = span.enter();
 
                 let mut summary = TransformSummary {
