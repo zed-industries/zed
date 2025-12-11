@@ -220,12 +220,12 @@ pub fn render_graph_continuation(
             let left_padding = px(12.0);
             let y_top = bounds.origin.y;
             let y_bottom = bounds.origin.y + bounds.size.height;
-            let line_width = px(2.0);
+            let line_width = px(1.5);
 
             for line in &lines {
+                // Only draw straight continuation lines, not branch-outs (those are drawn in the cell)
                 let (lane, color_idx) = match line.line_type {
                     LineType::Straight if !line.ends_at_commit => (line.from_lane, line.color_idx),
-                    LineType::BranchOut => (line.to_lane, line.color_idx),
                     _ => continue,
                 };
 
@@ -233,13 +233,7 @@ pub fn render_graph_continuation(
                 let x =
                     bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
 
-                window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        Point::new(x - line_width / 2.0, y_top),
-                        gpui::size(line_width, y_bottom - y_top),
-                    ),
-                    color,
-                ));
+                draw_straight_line(window, x, y_top, x, y_bottom, line_width, color);
             }
         },
     )
@@ -262,7 +256,7 @@ pub fn render_graph_cell(
             let y_top = bounds.origin.y;
             let y_center = bounds.origin.y + row_height / 2.0;
             let y_bottom = bounds.origin.y + row_height;
-            let line_width = px(2.0);
+            let line_width = px(1.5);
 
             for line in &lines {
                 let color = BRANCH_COLORS[line.color_idx % BRANCH_COLORS.len()];
@@ -288,13 +282,9 @@ pub fn render_graph_cell(
                             y_bottom
                         };
 
-                        window.paint_quad(gpui::fill(
-                            Bounds::new(
-                                Point::new(from_x - line_width / 2.0, start_y),
-                                gpui::size(line_width, end_y - start_y),
-                            ),
-                            color,
-                        ));
+                        draw_straight_line(
+                            window, from_x, start_y, from_x, end_y, line_width, color,
+                        );
                     }
                     LineType::MergeDown | LineType::BranchOut => {
                         draw_s_curve(window, from_x, y_center, to_x, y_bottom, line_width, color);
@@ -305,22 +295,88 @@ pub fn render_graph_cell(
             let commit_x =
                 bounds.origin.x + left_padding + lane_width * lane as f32 + lane_width / 2.0;
             let commit_color = BRANCH_COLORS[commit_color_idx % BRANCH_COLORS.len()];
-            let dot_radius = px(4.0);
+            let dot_radius = px(4.5);
+            let stroke_width = px(1.5);
 
-            window.paint_quad(
-                gpui::fill(
-                    Bounds::centered_at(
-                        Point::new(commit_x, y_center),
-                        gpui::size(dot_radius * 2.0, dot_radius * 2.0),
-                    ),
-                    commit_color,
-                )
-                .corner_radii(dot_radius),
+            // Draw colored outline only (hollow/transparent circle)
+            draw_circle_outline(
+                window,
+                commit_x,
+                y_center,
+                dot_radius,
+                stroke_width,
+                commit_color,
             );
         },
     )
     .w(graph_width)
     .h(row_height)
+}
+
+fn draw_circle_outline(
+    window: &mut Window,
+    center_x: Pixels,
+    center_y: Pixels,
+    radius: Pixels,
+    stroke_width: Pixels,
+    color: Hsla,
+) {
+    // Draw a circle outline using path segments
+    let segments = 32;
+    let outer_radius = radius;
+    let inner_radius = radius - stroke_width;
+
+    let mut outer_points = Vec::with_capacity(segments);
+    let mut inner_points = Vec::with_capacity(segments);
+
+    for i in 0..segments {
+        let angle = 2.0 * std::f32::consts::PI * (i as f32) / (segments as f32);
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        outer_points.push(Point::new(
+            center_x + px(f32::from(outer_radius) * cos_a),
+            center_y + px(f32::from(outer_radius) * sin_a),
+        ));
+        inner_points.push(Point::new(
+            center_x + px(f32::from(inner_radius) * cos_a),
+            center_y + px(f32::from(inner_radius) * sin_a),
+        ));
+    }
+
+    // Create path: outer circle clockwise, then inner circle counter-clockwise
+    let mut path = gpui::Path::new(outer_points[0]);
+    for point in outer_points.iter().skip(1) {
+        path.line_to(*point);
+    }
+    path.line_to(outer_points[0]); // Close outer circle
+
+    // Connect to inner circle and trace it in reverse
+    path.line_to(inner_points[0]);
+    for point in inner_points.iter().rev() {
+        path.line_to(*point);
+    }
+
+    window.paint_path(path, color);
+}
+
+fn draw_straight_line(
+    window: &mut Window,
+    from_x: Pixels,
+    from_y: Pixels,
+    to_x: Pixels,
+    to_y: Pixels,
+    line_width: Pixels,
+    color: Hsla,
+) {
+    let half_width = line_width / 2.0;
+
+    // Create a path as a thin rectangle for anti-aliased rendering
+    let mut path = gpui::Path::new(Point::new(from_x - half_width, from_y));
+    path.line_to(Point::new(from_x + half_width, from_y));
+    path.line_to(Point::new(to_x + half_width, to_y));
+    path.line_to(Point::new(to_x - half_width, to_y));
+    window.paint_path(path, color);
 }
 
 fn draw_s_curve(
@@ -333,13 +389,7 @@ fn draw_s_curve(
     color: Hsla,
 ) {
     if from_x == to_x {
-        window.paint_quad(gpui::fill(
-            Bounds::new(
-                Point::new(from_x - line_width / 2.0, from_y),
-                gpui::size(line_width, to_y - from_y),
-            ),
-            color,
-        ));
+        draw_straight_line(window, from_x, from_y, to_x, to_y, line_width, color);
         return;
     }
 
