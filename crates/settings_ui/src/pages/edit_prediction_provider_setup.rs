@@ -3,7 +3,7 @@ use edit_prediction::{
     sweep_ai::SWEEP_CREDENTIALS_URL,
 };
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Entity, ScrollHandle, prelude::*};
+use gpui::{Action as _, Entity, ScrollHandle, WindowBounds, WindowOptions, prelude::*};
 use language_models::provider::mistral::CODESTRAL_API_URL;
 use ui::{
     ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar,
@@ -37,6 +37,7 @@ impl Render for EditPredictionSetupPage {
 
         // todo! github copilot
         let providers = [
+            Some(render_github_copilot_provider(&self.settings_window, cx).into_any_element()),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,
@@ -232,7 +233,7 @@ fn render_api_key_provider<Ent: 'static>(
     };
 
     container.when_some(additional_info, |this, additional_info| {
-        this.child(div().child(additional_info).px_neg_8())
+        this.child(div().px_neg_8().child(additional_info))
     })
 }
 
@@ -303,7 +304,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Model",
-            description: "The Codestral model id to  use",
+            description: "The Codestral model id to use",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -337,20 +338,10 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
     ])
 }
 
-pub(crate) struct GithubCopilotLogin {}
-
-pub(crate) fn render_github_copilot_provider(cx: &mut App) -> AnyElement {
-    let base_container = v_flex().id("github-copilot").min_w_0().gap_1p5();
-
-    let icon_and_name = h_flex()
-        .gap_1()
-        .child(
-            Icon::new(IconName::Github)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
-        .child(Label::new("GitHub Copilot"));
-
+pub(crate) fn render_github_copilot_provider(
+    settings_window: &Entity<SettingsWindow>,
+    cx: &mut App,
+) -> impl IntoElement {
     let is_authenticated =
         copilot::Copilot::global(cx).is_some_and(|copilot| copilot.read(cx).is_authenticated());
 
@@ -358,25 +349,80 @@ pub(crate) fn render_github_copilot_provider(cx: &mut App) -> AnyElement {
         "To use GitHub Copilot as an edit prediction provider, you need to authenticate with GitHub.",
     );
 
-    base_container
+    let settings_window = settings_window.clone();
+
+    v_flex()
+        .id("github-copilot")
+        .min_w_0()
+        .gap_1p5()
         .child(
             v_flex()
                 .w_full()
                 .gap_1p5()
-                .child(icon_and_name)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Github)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new("GitHub Copilot")),
+                )
                 .child(Label::new(description).color(Color::Muted)),
         )
         .child(
-            ButtonLike::new("github-copilot-auth")
-                .size(ButtonSize::None)
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(Icon::new(IconName::Github).size(IconSize::Small))
-                        .child(Label::new("Authenticate with GitHub Copilot")),
-                )
-                .on_click(move |_, window, cx| window.disp)
-                .into_any_element(),
+            Button::new("copilot_auth", "Authenticate with GitHub Copilot")
+                .full_width()
+                .style(ButtonStyle::Outlined)
+                .icon(IconName::Github)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .on_click(move |_, window, cx| {
+                    let copilot = copilot::Copilot::global(cx);
+                    // todo! hide whole section if none
+                    if let Some(copilot) = copilot.as_ref() {
+                        if matches!(copilot.read(cx).status(), copilot::Status::Disabled) {
+                            copilot.update(cx, |copilot, cx| {
+                                copilot.start_copilot(false, true, cx);
+                                copilot.sign_in(cx);
+                            });
+                        }
+                        cx.open_window(
+                            WindowOptions {
+                                kind: gpui::WindowKind::PopUp,
+                                window_bounds: Some(WindowBounds::Windowed(gpui::bounds(
+                                    window.window_bounds().get_bounds().center(),
+                                    gpui::size(px(200.), px(400.)),
+                                ))),
+                                is_resizable: false,
+                                is_movable: true,
+                                ..Default::default()
+                            },
+                            |window, cx| {
+                                cx.new(|cx| copilot::CopilotCodeVerification::new(&copilot, cx))
+                            },
+                        )
+                        .unwrap();
+                    }
+
+                    // if let Some(original_window) = settings_window.read(cx).original_window {
+                    //     original_window.update(cx, |workspace, window, cx| {
+                    //         window.activate_window();
+                    //         window.dispatch_action(copilot::SignIn.boxed_clone(), cx);
+                    //     });
+                    // }
+                }),
         )
-        .into_any_element()
+}
+
+struct CopilotWindow {}
+
+impl Render for CopilotWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        return div()
+            .size_full()
+            .child(Label::new("GitHub Copilot Sign In"));
+    }
 }

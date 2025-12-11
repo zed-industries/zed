@@ -353,6 +353,7 @@ impl Render for CopilotCodeVerification {
         };
 
         v_flex()
+            .size_full()
             .id("copilot code verification")
             .track_focus(&self.focus_handle(cx))
             .elevation_3(cx)

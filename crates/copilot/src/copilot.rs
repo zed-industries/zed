@@ -375,7 +375,7 @@ impl Copilot {
         }
     }
 
-    fn start_copilot(
+    pub fn start_copilot(
         &mut self,
         check_edit_prediction_provider: bool,
         awaiting_sign_in_after_start: bool,
@@ -594,7 +594,7 @@ impl Copilot {
         );
     }
 
-    pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized => Task::ready(Ok(())).shared(),
