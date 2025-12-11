@@ -187,7 +187,9 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
-        self.background_sender.send(priority, runnable).unwrap();
+        self.background_sender
+            .send(priority, runnable)
+            .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
@@ -248,7 +250,7 @@ impl<T> PriorityQueueCalloopSender<T> {
         Self { sender: tx, ping }
     }
 
-    fn send(&self, priority: Priority, item: T) -> Result<(), crate::queue::Disconnected> {
+    fn send(&self, priority: Priority, item: T) -> Result<(), crate::queue::SendError<T>> {
         let res = self.sender.send(priority, item);
         if res.is_ok() {
             self.ping.ping();
