@@ -138,7 +138,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
             DiffEvent::Hunk { hunk, .. } => {
                 let hunk_offset = text
                     .find(&hunk.context)
-                    .ok_or_else(|| anyhow!("couldn't result hunk {:?}", hunk.context))?;
+                    .ok_or_else(|| anyhow!("couldn't resolve hunk {:?}", hunk.context))?;
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
                     text.replace_range(range, &edit.text);

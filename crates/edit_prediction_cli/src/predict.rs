@@ -2,7 +2,7 @@ use crate::{
     PredictionProvider, PromptFormat,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
-    format_prompt::{PromptParser, TeacherPrompt, run_format_prompt},
+    format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
