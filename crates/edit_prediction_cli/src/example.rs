@@ -32,12 +32,6 @@ pub struct Example {
     pub edit_history: String,
     pub expected_patch: String,
 
-    /// The cursor location in the "path/to/file:line:column" format.
-    /// It duplicates the (cursor_path, cursor_position) pair and is
-    /// provided for compatibility with the data preprocessing scripts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -261,7 +255,6 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         uncommitted_diff: String::new(),
         cursor_path: PathBuf::new().into(),
         cursor_position: String::new(),
-        cursor: None,
         edit_history: String::new(),
         expected_patch: String::new(),
         buffer: None,
