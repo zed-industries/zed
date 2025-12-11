@@ -1,10 +1,107 @@
+use std::rc::Rc;
+
 use gpui::{App, Bounds, Hsla, IntoElement, Pixels, Point, Styled, Window, canvas, px};
 use theme::AccentColors;
+use ui::ActiveTheme as _;
 
-use crate::graph::{GraphLine, LineType};
+use crate::{
+    GitGraph,
+    graph::{GraphLine, LineType},
+};
 
 pub fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
+}
+
+const LANE_WIDTH: Pixels = px(16.0);
+const LINE_WIDTH: Pixels = px(1.5);
+
+pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
+    let top_row = graph.list_state.logical_scroll_top();
+    let row_height = graph.row_height;
+
+    // todo! Figure out how we can avoid over allocating this data
+    let rows = graph.graph.commits[top_row.item_ix.saturating_sub(1)
+        ..(top_row.item_ix + 50).min(graph.graph.commits.len().saturating_sub(1))]
+        .to_vec();
+
+    canvas(
+        move |_bounds, _window, _cx| {},
+        move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
+            window.paint_layer(bounds, |window| {
+                let left_padding = px(12.0);
+                let accent_colors = cx.theme().accents();
+
+                for (row_idx, row) in rows.into_iter().enumerate() {
+                    let row_color = accent_colors.color_for_index(row.color_idx as u32);
+                    let row_y_coordinate = bounds.origin.y + row_idx * row_height;
+                    let row_x_coordinate =
+                        bounds.origin.x + row.lane * LANE_WIDTH + LANE_WIDTH / 2.0;
+
+                    for line in row.lines.iter() {
+                        let line_color = accent_colors.color_for_index(line.color_idx as u32);
+
+                        let from_x = bounds.origin.x
+                            + line.from_lane * LANE_WIDTH
+                            + LANE_WIDTH / 2.0
+                            + left_padding;
+                        let to_x = bounds.origin.x
+                            + line.to_lane * LANE_WIDTH
+                            + LANE_WIDTH / 2.0
+                            + left_padding;
+
+                        match line.line_type {
+                            LineType::Straight => {
+                                let start_y = if line.continues_from_above {
+                                    row_y_coordinate - row_height / 2.0
+                                } else {
+                                    row_y_coordinate
+                                };
+                                let end_y = if line.ends_at_commit {
+                                    row_y_coordinate
+                                } else {
+                                    row_y_coordinate + row_height
+                                };
+
+                                draw_straight_line(
+                                    window, from_x, start_y, from_x, end_y, LINE_WIDTH, line_color,
+                                );
+                            }
+                            LineType::MergeDown | LineType::BranchOut => {
+                                draw_s_curve(
+                                    window,
+                                    from_x,
+                                    row_y_coordinate,
+                                    to_x,
+                                    row_y_coordinate + row_height / 2.0,
+                                    LINE_WIDTH,
+                                    line_color,
+                                );
+                            }
+                        }
+                    }
+
+                    let commit_x = bounds.origin.x
+                        + left_padding
+                        + LANE_WIDTH * row.lane as f32
+                        + LANE_WIDTH / 2.0;
+                    let dot_radius = px(4.5);
+                    let stroke_width = px(1.5);
+
+                    // Draw colored outline only (hollow/transparent circle)
+                    draw_circle_outline(
+                        window,
+                        commit_x,
+                        row_y_coordinate,
+                        dot_radius,
+                        stroke_width,
+                        row_color,
+                    );
+                }
+            })
+        },
+    )
+    .w(px(16.0) * (graph.max_lanes.max(2) as f32) + px(24.0))
 }
 
 pub fn render_graph_cell(

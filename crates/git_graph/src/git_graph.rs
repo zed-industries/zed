@@ -3,8 +3,8 @@ mod graph_rendering;
 
 use anyhow::Context as _;
 use gpui::{
-    App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
+    AnyElement, App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
     list, px,
 };
@@ -19,6 +19,8 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
 };
+
+use crate::graph_rendering::render_graph;
 
 actions!(
     git_graph,
@@ -121,6 +123,7 @@ impl GitGraph {
             work_dir: None,
             row_height,
             list_state,
+            // todo! We can just make this a simple Subscription instead of wrapping it
             _subscriptions: vec![git_store_subscription],
         };
 
@@ -178,14 +181,14 @@ impl GitGraph {
         idx: usize,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> AnyElement {
         let row_height = self.row_height;
         let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
 
-        self.render_commit_row_inline(
+        self.render_commit_row(
             idx,
             row_height,
             graph_width,
@@ -194,29 +197,6 @@ impl GitGraph {
             commit_width,
             cx,
         )
-    }
-
-    fn render_commit_row_inline(
-        &self,
-        idx: usize,
-        row_height: Pixels,
-        graph_width: Pixels,
-        date_width: Pixels,
-        author_width: Pixels,
-        commit_width: Pixels,
-        cx: &Context<Self>,
-    ) -> gpui::AnyElement {
-        let row = self.render_commit_row(
-            idx,
-            row_height,
-            graph_width,
-            date_width,
-            author_width,
-            commit_width,
-            cx,
-        );
-
-        row
     }
 
     fn render_commit_row(
@@ -228,10 +208,11 @@ impl GitGraph {
         author_width: Pixels,
         commit_width: Pixels,
         cx: &Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> AnyElement {
         let Some(commit) = self.graph.commits.get(idx) else {
             return div().into_any_element();
         };
+        dbg!("Render commit row");
 
         let subject: SharedString = commit.data.subject.clone().into();
         let author_name: SharedString = commit.data.author_name.clone().into();

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, rc::Rc, str::FromStr};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -156,7 +156,7 @@ pub struct GitGraph {
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     next_color: BranchColor,
     accent_colors_count: usize,
-    pub commits: Vec<CommitEntry>,
+    pub commits: Vec<Rc<CommitEntry>>,
     pub max_lanes: usize,
 }
 
@@ -312,12 +312,12 @@ impl GitGraph {
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
-            self.commits.push(CommitEntry {
+            self.commits.push(Rc::new(CommitEntry {
                 data: commit,
                 lane: commit_lane,
                 color_idx: commit_color.0 as usize,
                 lines,
-            });
+            }));
         }
     }
 }
