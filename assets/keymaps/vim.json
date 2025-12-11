@@ -517,6 +517,7 @@
       "space c": "editor::ToggleComments",
       "space p": "editor::Paste",
       "space y": "editor::Copy",
+      "space /": "pane::DeploySearch",
 
       // Other
       ":": "command_palette::Toggle",
