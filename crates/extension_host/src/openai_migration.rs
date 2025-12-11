@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_skips_migration_if_no_old_credentials(cx: &mut TestAppContext) {
+    async fn test_writes_empty_marker_if_no_old_credentials(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_openai_credentials_if_needed(OPENAI_EXTENSION_ID, cx);
         });
@@ -141,9 +141,12 @@ mod tests {
 
         let credentials = cx.read_credentials("extension-llm-openai:openai");
         assert!(
-            credentials.is_none(),
-            "Should not create credentials if none existed"
+            credentials.is_some(),
+            "Should write empty credentials as migration marker"
         );
+        let (username, password) = credentials.unwrap();
+        assert_eq!(username, "Bearer");
+        assert!(password.is_empty(), "Password should be empty marker");
     }
 
     #[gpui::test]

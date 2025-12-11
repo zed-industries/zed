@@ -132,7 +132,30 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_skips_migration_if_no_old_credentials(cx: &mut TestAppContext) {
+    async fn test_skips_migration_if_empty_marker_exists(cx: &mut TestAppContext) {
+        let old_api_key = "sk-ant-old-key";
+
+        // Old credentials exist
+        cx.write_credentials(ANTHROPIC_DEFAULT_API_URL, "Bearer", old_api_key.as_bytes());
+        // But empty marker already exists (from previous migration attempt)
+        cx.write_credentials("extension-llm-anthropic:anthropic", "Bearer", b"");
+
+        cx.update(|cx| {
+            migrate_anthropic_credentials_if_needed(ANTHROPIC_EXTENSION_ID, cx);
+        });
+
+        cx.run_until_parked();
+
+        let credentials = cx.read_credentials("extension-llm-anthropic:anthropic");
+        let (_, password) = credentials.unwrap();
+        assert!(
+            password.is_empty(),
+            "Should not overwrite empty marker with old credentials"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_writes_empty_marker_if_no_old_credentials(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_anthropic_credentials_if_needed(ANTHROPIC_EXTENSION_ID, cx);
         });
@@ -141,9 +164,12 @@ mod tests {
 
         let credentials = cx.read_credentials("extension-llm-anthropic:anthropic");
         assert!(
-            credentials.is_none(),
-            "Should not create credentials if none existed"
+            credentials.is_some(),
+            "Should write empty credentials as migration marker"
         );
+        let (username, password) = credentials.unwrap();
+        assert_eq!(username, "Bearer");
+        assert!(password.is_empty(), "Password should be empty marker");
     }
 
     #[gpui::test]

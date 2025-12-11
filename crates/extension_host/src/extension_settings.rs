@@ -20,9 +20,6 @@ pub struct ExtensionSettings {
     /// from environment variables. Each entry is a provider ID in the format
     /// "extension_id:provider_id".
     pub allowed_env_var_providers: HashSet<Arc<str>>,
-    /// Tracks which legacy LLM providers have been migrated.
-    /// This prevents the migration from running multiple times and overriding user preferences.
-    pub migrated_llm_providers: HashSet<Arc<str>>,
 }
 
 impl ExtensionSettings {
@@ -70,13 +67,6 @@ impl Settings for ExtensionSettings {
             allowed_env_var_providers: content
                 .extension
                 .allowed_env_var_providers
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-            migrated_llm_providers: content
-                .extension
-                .migrated_llm_providers
                 .clone()
                 .unwrap_or_default()
                 .into_iter()

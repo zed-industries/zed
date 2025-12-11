@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_migration_when_no_copilot_config_exists(cx: &mut TestAppContext) {
+    async fn test_writes_empty_marker_when_no_copilot_config_exists(cx: &mut TestAppContext) {
         cx.update(|cx| {
             migrate_copilot_credentials_if_needed(COPILOT_CHAT_EXTENSION_ID, cx);
         });
@@ -243,8 +243,11 @@ mod tests {
 
         let credentials = cx.read_credentials("extension-llm-copilot-chat:copilot-chat");
         assert!(
-            credentials.is_none(),
-            "Should not create credentials when no copilot config exists"
+            credentials.is_some(),
+            "Should write empty credentials as migration marker"
         );
+        let (username, password) = credentials.unwrap();
+        assert_eq!(username, "api_key");
+        assert!(password.is_empty(), "Password should be empty marker");
     }
 }

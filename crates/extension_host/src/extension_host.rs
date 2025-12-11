@@ -17,6 +17,7 @@ use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
 use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
+
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -98,8 +99,9 @@ const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
 /// Migrates legacy LLM provider extensions by auto-enabling env var reading
 /// if the env var is currently present in the environment.
 ///
-/// This migration only runs once per provider - we track which providers have been
-/// migrated in `migrated_llm_providers` to avoid overriding user preferences.
+/// This is idempotent: if the provider is already in `allowed_env_var_providers`,
+/// we skip. This means if a user explicitly removes it, it will be re-added on
+/// next launch if the env var is still set - but that's predictable behavior.
 fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut App) {
     // Only apply migration to known legacy LLM extensions
     if !LEGACY_LLM_EXTENSION_IDS.contains(&manifest.id.as_ref()) {
@@ -117,51 +119,39 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
 
         let full_provider_id: Arc<str> = format!("{}:{}", manifest.id, provider_id).into();
 
-        // Check if we've already run migration for this provider (regardless of outcome)
-        let already_migrated = ExtensionSettings::get_global(cx)
-            .migrated_llm_providers
-            .contains(full_provider_id.as_ref());
-
-        if already_migrated {
-            continue;
-        }
-
         // Check if the env var is present and non-empty
         let env_var_is_set = std::env::var(env_var_name)
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 
-        // Mark as migrated regardless of whether we enable env var reading
-        let should_enable_env_var = env_var_is_set;
+        // If env var isn't set, no need to do anything
+        if !env_var_is_set {
+            continue;
+        }
+
+        // Check if already enabled in settings
+        let already_enabled = ExtensionSettings::get_global(cx)
+            .allowed_env_var_providers
+            .contains(full_provider_id.as_ref());
+
+        if already_enabled {
+            continue;
+        }
+
+        // Enable env var reading since the env var is set
         settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
             let full_provider_id = full_provider_id.clone();
             move |settings, _| {
-                // Always mark as migrated
-                let migrated = settings
+                let providers = settings
                     .extension
-                    .migrated_llm_providers
+                    .allowed_env_var_providers
                     .get_or_insert_with(Vec::new);
 
-                if !migrated
+                if !providers
                     .iter()
                     .any(|id| id.as_ref() == full_provider_id.as_ref())
                 {
-                    migrated.push(full_provider_id.clone());
-                }
-
-                // Only enable env var reading if the env var is set
-                if should_enable_env_var {
-                    let providers = settings
-                        .extension
-                        .allowed_env_var_providers
-                        .get_or_insert_with(Vec::new);
-
-                    if !providers
-                        .iter()
-                        .any(|id| id.as_ref() == full_provider_id.as_ref())
-                    {
-                        providers.push(full_provider_id);
-                    }
+                    providers.push(full_provider_id);
                 }
             }
         });
