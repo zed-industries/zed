@@ -4,7 +4,9 @@ use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
-    outputs::{ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall},
+    outputs::{
+        ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
+    },
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -448,7 +450,11 @@ impl Session {
             editor.splice_inlays(&[], vec![inlay], cx);
             self.result_inlays.insert(
                 message_id.to_string(),
-                (InlayId::ReplResult(inlay_id), code_range.clone(), original_len),
+                (
+                    InlayId::ReplResult(inlay_id),
+                    code_range.clone(),
+                    original_len,
+                ),
             );
 
             editor.insert_gutter_highlight::<ReplExecutedRange>(
@@ -526,16 +532,17 @@ impl Session {
 
         let mut result_inlay_keys_to_remove: Vec<String> = Vec::new();
 
-        self.result_inlays.retain(|key, (inlay_id, inlay_range, _)| {
-            if anchor_range.overlaps(inlay_range, &buffer) {
-                inlays_to_remove.push(*inlay_id);
-                gutter_ranges_to_remove.push(inlay_range.clone());
-                result_inlay_keys_to_remove.push(key.clone());
-                false
-            } else {
-                true
-            }
-        });
+        self.result_inlays
+            .retain(|key, (inlay_id, inlay_range, _)| {
+                if anchor_range.overlaps(inlay_range, &buffer) {
+                    inlays_to_remove.push(*inlay_id);
+                    gutter_ranges_to_remove.push(inlay_range.clone());
+                    result_inlay_keys_to_remove.push(key.clone());
+                    false
+                } else {
+                    true
+                }
+            });
 
         // Remove execution annotations for both result_inlays and blocks being replaced
         let mut annotation_positions_to_remove: Vec<Anchor> = Vec::new();
@@ -555,10 +562,8 @@ impl Session {
                     editor.splice_inlays(&inlays_to_remove, vec![], cx);
                 }
                 if !gutter_ranges_to_remove.is_empty() {
-                    editor.remove_gutter_highlights::<ReplExecutedRange>(
-                        gutter_ranges_to_remove,
-                        cx,
-                    );
+                    editor
+                        .remove_gutter_highlights::<ReplExecutedRange>(gutter_ranges_to_remove, cx);
                 }
                 if !annotation_positions_to_remove.is_empty() {
                     editor.remove_gutter_annotations::<ReplExecutionNumber>(
@@ -618,9 +623,13 @@ impl Session {
             },
         );
 
-        let Ok(editor_block) =
-            EditorBlock::new(self.editor.clone(), anchor_range.clone(), status, on_close, cx)
-        else {
+        let Ok(editor_block) = EditorBlock::new(
+            self.editor.clone(),
+            anchor_range.clone(),
+            status,
+            on_close,
+            cx,
+        ) else {
             return;
         };
 

@@ -435,8 +435,8 @@ fn runnable_ranges(
     let snippet_range = cell_range(buffer, range.start.row, range.end.row);
 
     // Check if the snippet range is entirely blank, if so, skip forward to find code
-    let is_blank = (snippet_range.start.row..=snippet_range.end.row)
-        .all(|row| buffer.is_line_blank(row));
+    let is_blank =
+        (snippet_range.start.row..=snippet_range.end.row).all(|row| buffer.is_line_blank(row));
 
     if is_blank {
         // Search forward for the next non-blank line

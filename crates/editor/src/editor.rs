@@ -21529,9 +21529,9 @@ impl Editor {
         let snapshot = self.buffer().read(cx).snapshot(cx);
         if let Some(annotations) = self.gutter_annotations.get_mut(&TypeId::of::<T>()) {
             annotations.retain(|annotation| {
-                !positions_to_remove.iter().any(|pos| {
-                    annotation.position.cmp(pos, &snapshot) == Ordering::Equal
-                })
+                !positions_to_remove
+                    .iter()
+                    .any(|pos| annotation.position.cmp(pos, &snapshot) == Ordering::Equal)
             });
             cx.notify();
         }

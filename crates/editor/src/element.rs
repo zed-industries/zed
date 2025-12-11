@@ -2780,12 +2780,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<AnyElement>> {
-        let annotations: Vec<_> = self
-            .editor
-            .read(cx)
-            .gutter_annotations()
-            .cloned()
-            .collect();
+        let annotations: Vec<_> = self.editor.read(cx).gutter_annotations().cloned().collect();
 
         if annotations.is_empty() {
             return None;
