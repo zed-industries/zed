@@ -166,8 +166,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
-    ztracing::init();
-
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     #[cfg(unix)]
@@ -242,6 +240,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -251,6 +250,7 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
