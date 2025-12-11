@@ -1,7 +1,7 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, ZoomIn, ZoomOut, Workspace,
-    WorkspaceItemBuilder,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
