@@ -3,7 +3,7 @@ mod graph;
 mod graph_rendering;
 
 use anyhow::Context as _;
-use commit_data::{CommitEntry, load_commits, run_git_command};
+use commit_data::{CommitEntry, run_git_command};
 use git_ui::commit_view::CommitView;
 use gpui::{
     Action, App, ClickEvent, ClipboardItem, Context, Corner, DismissEvent, ElementId, Entity,
@@ -11,9 +11,7 @@ use gpui::{
     ListState, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
     Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list,
 };
-use graph_rendering::{
-    BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
-};
+use graph_rendering::{BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell};
 use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
