@@ -4094,9 +4094,6 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if matches!(self.git_access, GitAccess::No) {
-            return None;
-        }
         let active_repository = self.active_repository.clone()?;
         let panel_editor_style = panel_editor_style(true, window, cx);
         let enable_coauthors = self.render_co_authors(cx);
@@ -4399,25 +4396,10 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let panel_text = match (self.git_access, self.active_repository.is_some()) {
-            (GitAccess::No, _) => {
-                // TODO!: What if there's more than one root path? When can that
-                // actually happen? Maybe take a look at `git_init` to see how
-                // that handles the fact that no directory might be open, which
-                // I believe is the case when Zed is open the first time?
-                if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
-                    workspace.root_paths(cx).first().cloned()
-                }) {
-                    format!(
-                        "Detected dubious ownership in repository at {}. This happens when the .git/ directory is not owned by the current user. If you want to learn more about safe directories, visit git's documentation.",
-                        path.display()
-                    )
-                } else {
-                    String::from("Detected dubious ownership in repository")
-                }
-            }
-            (_, false) => String::from("No Git repositories"),
-            (_, true) => String::from("No changes to commit"),
+        let children = match (self.git_access, &self.active_repository) {
+            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, None) => self.render_uninitialized_ui(cx),
+            (_, Some(_)) => self.render_no_changes_ui(),
         };
 
         h_flex().h_full().flex_grow().justify_center().child(
@@ -4425,89 +4407,90 @@ impl GitPanel {
                 .gap_2()
                 .max_w_full()
                 .px_4()
-                .child(
-                    div()
-                        .w_full()
-                        .whitespace_normal()
-                        .text_center()
-                        .child(panel_text),
-                )
-                .children(self.render_empty_state_button(cx))
                 .text_ui_sm(cx)
+                .whitespace_normal()
+                .text_center()
                 .mx_auto()
-                .text_color(Color::Placeholder.color(cx)),
+                .text_color(Color::Placeholder.color(cx))
+                .children(children),
         )
     }
 
-    fn render_empty_state_button(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+    fn render_no_changes_ui(&self) -> Vec<AnyElement> {
+        vec!["No changes to commit".into_any_element()]
+    }
 
-        if (matches!(self.git_access, GitAccess::Yes) && self.active_repository.is_some())
-            || worktree_count == 0
-        {
-            return None;
-        };
+    fn render_unsafe_repo_ui(
+        &self,
+        active_repository: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        // TODO!: What if the user is on a Windows machine remoting to a Linux
+        // machine? Will the path separators break this implementation?
+        let directory = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
 
-        // TODO!: What if there's more than one root path? When can that
-        // actually happen? Maybe take a look at `git_init` to see how
-        // that handles the fact that no directory might be open, which
-        // I believe is the case when Zed is open the first time?
-        let directory = if let Ok(Some(path)) = self.workspace.read_with(cx, |workspace, cx| {
-            workspace.root_paths(cx).first().cloned()
-        }) {
-            path.display().to_string()
-        } else {
-            String::new()
-        };
+        let message = format!(
+            "Detected dubious ownership in repository at {}. This happens when the .git/ directory is not owned by the current user. If you want to learn more about safe directories, visit git's documentation.",
+            directory.display()
+        );
 
-        Some(
-            h_flex()
-                .max_w_full()
-                .gap_2()
-                .justify_around()
-                .child(div().flex_grow())
-                .when(matches!(self.git_access, GitAccess::No), |this| {
-                    this.child(
-                        panel_filled_button("Trust Directory")
-                            .icon(IconName::Check)
-                            .tooltip(Tooltip::for_action_title_in(
-                                format!("git config --global --add safe.directory {}", directory),
-                                &AddSafeDirectory,
-                                &self.focus_handle,
-                            ))
-                            .on_click(move |_, _, cx| {
-                                cx.defer(move |cx| {
-                                    cx.dispatch_action(&AddSafeDirectory);
-                                })
-                            }),
-                    )
-                    .child(
-                        panel_filled_button("Learn More")
-                            .icon(IconName::Link)
-                            .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
-                            .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
-                    )
+        vec![
+            message.into_any_element(),
+            self.render_unsafe_repo_buttons(directory)
+                .into_any_element(),
+        ]
+    }
+
+    fn render_unsafe_repo_buttons(&self, directory: Arc<Path>) -> Div {
+        h_flex()
+            .max_w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                panel_filled_button("Trust Directory")
+                .icon(IconName::Check)
+                .tooltip(Tooltip::for_action_title_in(
+                    format!("git config --global --add safe.directory {}", directory.display()),
+                    &AddSafeDirectory,
+                    &self.focus_handle,
+                ))
+                .on_click(move |_, _, cx| {
+                    cx.defer(move |cx| {
+                        cx.dispatch_action(&AddSafeDirectory);
+                    })
                 })
-                .when(
-                    worktree_count > 0 && self.active_repository.is_none(),
-                    |this| {
-                        this.child(
-                            panel_filled_button("Initialize Repository")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "git init",
-                                    &git::Init,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(move |_, _, cx| {
-                                    cx.defer(move |cx| {
-                                        cx.dispatch_action(&git::Init);
-                                    })
-                                }),
-                        )
-                    },
-                )
-                .child(div().flex_grow())
         )
+        .child(
+            panel_filled_button("Learn More")
+                .icon(IconName::Link)
+                .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
+                .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+        )
+    }
+
+    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if worktree_count > 0 && self.active_repository.is_none() {
+            vec![
+                "No Git Repositories".into_any_element(),
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    })
+                    .into_any_element(),
+            ]
+        } else {
+            vec![]
+        }
     }
 
     fn render_buffer_header_controls(
