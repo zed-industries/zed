@@ -14,7 +14,7 @@ pub mod provider;
 mod settings;
 pub mod ui;
 
-pub use crate::extension::{extension_for_builtin_provider, init_proxy as init_extension_proxy};
+pub use crate::extension::init_proxy as init_extension_proxy;
 pub use crate::google_ai_api_key::api_key_for_gemini_cli;
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
@@ -35,11 +35,6 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
         register_language_model_providers(registry, user_store, client.clone(), cx);
-    });
-
-    // Set up the provider hiding function
-    registry.update(cx, |registry, _cx| {
-        registry.set_builtin_provider_hiding_fn(Box::new(extension_for_builtin_provider));
     });
 
     // Subscribe to extension store events to track LLM extension installations
