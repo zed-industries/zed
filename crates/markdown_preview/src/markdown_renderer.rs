@@ -78,7 +78,7 @@ impl RenderContext {
         let buffer_font_features = settings.buffer_font.features.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
-        buffer_text_style.font_features = buffer_font_features.clone();
+        buffer_text_style.font_features = buffer_font_features;
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
 
         RenderContext {
