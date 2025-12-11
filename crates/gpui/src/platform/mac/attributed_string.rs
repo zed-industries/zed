@@ -1,3 +1,4 @@
+use super::ns_string;
 use cocoa::base::id;
 use cocoa::foundation::NSRange;
 use objc::{class, msg_send, sel, sel_impl};
@@ -53,7 +54,7 @@ mod tests {
     use super::*;
     use cocoa::appkit::NSImage;
     use cocoa::base::nil;
-    use cocoa::foundation::{NSAutoreleasePool, NSString};
+    use cocoa::foundation::NSAutoreleasePool;
     #[test]
     #[ignore] // This was SIGSEGV-ing on CI but not locally; need to investigate https://github.com/zed-industries/zed/actions/runs/10362363230/job/28684225486?pr=15782#step:4:1348
     fn test_nsattributed_string() {
@@ -69,14 +70,14 @@ mod tests {
 
         unsafe {
             let image: id = msg_send![class!(NSImage), alloc];
-            image.initWithContentsOfFile_(NSString::alloc(nil).init_str("test.jpeg").autorelease());
+            image.initWithContentsOfFile_(ns_string("test.jpeg"));
             let _size = image.size();
 
-            let string = NSString::alloc(nil).init_str("Test String").autorelease();
+            let string = ns_string("Test String");
             let attr_string = NSMutableAttributedString::alloc(nil)
                 .init_attributed_string(string)
                 .autorelease();
-            let hello_string = NSString::alloc(nil).init_str("Hello World").autorelease();
+            let hello_string = ns_string("Hello World");
             let hello_attr_string = NSAttributedString::alloc(nil)
                 .init_attributed_string(hello_string)
                 .autorelease();
@@ -88,9 +89,7 @@ mod tests {
                 msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
             attr_string.appendAttributedString_(image_attr_string);
 
-            let another_string = NSString::alloc(nil)
-                .init_str("Another String")
-                .autorelease();
+            let another_string = ns_string("Another String");
             let another_attr_string = NSAttributedString::alloc(nil)
                 .init_attributed_string(another_string)
                 .autorelease();
