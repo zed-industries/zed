@@ -217,14 +217,6 @@ impl TrustedWorktreesStorage {
         } else {
             HashMap::default()
         };
-        let restricted_globals = if trusted_paths
-            .get(&remote_host)
-            .is_some_and(|trusted_paths| trusted_paths.contains(&PathTrust::Global))
-        {
-            HashSet::default()
-        } else {
-            HashSet::from_iter([remote_host.clone()])
-        };
 
         if let Some((upstream_client, upstream_project_id)) = &upstream_client {
             let trusted_paths = trusted_paths
@@ -239,24 +231,14 @@ impl TrustedWorktreesStorage {
                     })
                     .ok();
             }
-
-            if restricted_globals.contains(&remote_host) {
-                upstream_client
-                    .send(proto::RestrictWorktrees {
-                        project_id: *upstream_project_id,
-                        restrict_global: true,
-                        worktree_ids: Vec::new(),
-                    })
-                    .ok();
-            }
         }
 
         Self {
             trusted_paths,
-            restricted_globals,
             downstream_client,
             upstream_client,
             remote_host: remote_host.clone(),
+            restricted_globals: HashSet::default(),
             restricted: HashSet::default(),
             serialization_task: Task::ready(()),
             worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
@@ -289,13 +271,13 @@ impl TrustedWorktreesStorage {
         cx: &mut Context<Self>,
     ) {
         // TODO kb unit test all this logic
-        let current_trusted = self.trusted_paths.remove(&remote_host);
         let mut new_global_trusted = false;
         let mut new_trusted_single_file_worktrees = HashSet::default();
         let mut new_trusted_other_worktrees = HashSet::default();
         let mut new_trusted_abs_paths = HashSet::default();
         for trusted_path in trusted_paths.iter().chain(
-            current_trusted
+            self.trusted_paths
+                .remove(&remote_host)
                 .iter()
                 .flat_map(|current_trusted| current_trusted.iter()),
         ) {
@@ -351,8 +333,8 @@ impl TrustedWorktreesStorage {
                 if restricted_host != remote_host {
                     return true;
                 }
-                let retain = (is_file && !new_trusted_other_worktrees.is_empty())
-                    || new_trusted_abs_paths.iter().all(|new_trusted_path| {
+                let retain = (!is_file || new_trusted_other_worktrees.is_empty())
+                    && new_trusted_abs_paths.iter().all(|new_trusted_path| {
                         !restricted_worktree_path.starts_with(new_trusted_path)
                     });
                 if !retain {
@@ -690,10 +672,6 @@ impl TrustedWorktreesStorage {
             .insert(worktree_store.downgrade(), remote_host.clone());
 
         if let Some(trusted_paths) = self.trusted_paths.remove(&remote_host) {
-            if !trusted_paths.contains(&PathTrust::Global) {
-                self.restricted_globals.insert(remote_host.clone());
-            }
-
             self.trusted_paths.insert(
                 remote_host.clone(),
                 trusted_paths
@@ -709,11 +687,6 @@ impl TrustedWorktreesStorage {
                     .collect(),
             );
         }
-
-        cx.emit(TrustedWorktreesEvent::Restricted(
-            remote_host,
-            HashSet::from_iter([PathTrust::Global]),
-        ));
     }
 }
 
