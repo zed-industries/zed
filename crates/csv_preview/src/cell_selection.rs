@@ -195,17 +195,22 @@ impl TableSelection {
                 format!("csv-display-cell-{}-{}", display_row, col).into(),
                 0,
             ))
-            .child(cell_content)
             .cursor_pointer()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .h_full()
+            // .flex_grow()
             .when(is_selected, |div| div.bg(selected_bg_color))
             .when(
                 matches!(vertical_alignment, VerticalAlignment::Top),
-                |div| div.items_start(),
+                |div| div.justify_start(),
             )
             .when(
                 matches!(vertical_alignment, VerticalAlignment::Center),
-                |div| div.items_center(),
+                |div| div.justify_center(),
             )
+            .child(cell_content)
             // Called when user presses mouse button down on a cell
             .on_mouse_down(MouseButton::Left, {
                 let view = view_entity.clone();
