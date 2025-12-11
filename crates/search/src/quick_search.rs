@@ -628,6 +628,8 @@ impl QuickSearchModal {
             });
 
         if same_path {
+            self.preview_pending_path = None;
+
             if let Some(editor) = &self.preview_editor {
                 editor.update(cx, |editor, cx| {
                     let point = text::Point::new(line, 0);
