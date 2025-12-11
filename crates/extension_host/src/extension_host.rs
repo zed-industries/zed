@@ -91,7 +91,7 @@ const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
     "anthropic",
     "copilot-chat",
     "google-ai",
-    "open-router",
+    "openrouter",
     "openai",
 ];
 

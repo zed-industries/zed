@@ -14,7 +14,7 @@ static BUILTIN_TO_EXTENSION_MAP: LazyLock<HashMap<&'static str, &'static str>> =
         map.insert("anthropic", "anthropic");
         map.insert("openai", "openai");
         map.insert("google", "google-ai");
-        map.insert("openrouter", "open-router");
+        map.insert("openrouter", "openrouter");
         map.insert("copilot_chat", "copilot-chat");
         map
     });

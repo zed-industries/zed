@@ -1,8 +1,8 @@
 use credentials_provider::CredentialsProvider;
 use gpui::App;
 
-const OPEN_ROUTER_EXTENSION_ID: &str = "open-router";
-const OPEN_ROUTER_PROVIDER_ID: &str = "open-router";
+const OPEN_ROUTER_EXTENSION_ID: &str = "openrouter";
+const OPEN_ROUTER_PROVIDER_ID: &str = "openrouter";
 const OPEN_ROUTER_DEFAULT_API_URL: &str = "https://openrouter.ai/api/v1";
 
 pub fn migrate_open_router_credentials_if_needed(extension_id: &str, cx: &mut App) {
@@ -83,7 +83,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let migrated = cx.read_credentials("extension-llm-open-router:open-router");
+        let migrated = cx.read_credentials("extension-llm-openrouter:openrouter");
         assert!(migrated.is_some(), "Credentials should have been migrated");
         let (username, password) = migrated.unwrap();
         assert_eq!(username, "Bearer");
@@ -101,7 +101,7 @@ mod tests {
             old_api_key.as_bytes(),
         );
         cx.write_credentials(
-            "extension-llm-open-router:open-router",
+            "extension-llm-openrouter:openrouter",
             "Bearer",
             existing_key.as_bytes(),
         );
@@ -112,7 +112,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let credentials = cx.read_credentials("extension-llm-open-router:open-router");
+        let credentials = cx.read_credentials("extension-llm-openrouter:openrouter");
         let (_, password) = credentials.unwrap();
         assert_eq!(
             String::from_utf8(password).unwrap(),
@@ -129,7 +129,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let credentials = cx.read_credentials("extension-llm-open-router:open-router");
+        let credentials = cx.read_credentials("extension-llm-openrouter:openrouter");
         assert!(
             credentials.is_none(),
             "Should not create credentials if none existed"
@@ -148,7 +148,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let credentials = cx.read_credentials("extension-llm-open-router:open-router");
+        let credentials = cx.read_credentials("extension-llm-openrouter:openrouter");
         assert!(
             credentials.is_none(),
             "Should not migrate for other extensions"
