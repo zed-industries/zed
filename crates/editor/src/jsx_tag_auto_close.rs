@@ -15,12 +15,6 @@ pub struct JsxTagCompletionState {
     open_tag_range: Range<usize>,
 }
 
-/// Index of the named child within an open or close tag
-/// that corresponds to the tag name
-/// Note that this is not configurable, i.e. we assume the first
-/// named child of a tag node is the tag name
-const TS_NODE_TAG_NAME_CHILD_INDEX: usize = 0;
-
 /// Maximum number of parent elements to walk back when checking if an open tag
 /// is already closed.
 ///
@@ -92,6 +86,31 @@ pub(crate) fn should_auto_close(
     }
 }
 
+fn extract_tag_name(
+    node: &Node,
+    buffer: &BufferSnapshot,
+    config: &JsxTagAutoCloseConfig,
+) -> String {
+    let mut tag_text = String::new();
+    for i in 0..node.named_child_count() {
+        if let Some(child) = node.named_child(i) {
+            if child.kind() == config.tag_name_node_name
+                || config
+                    .tag_name_node_name_alternates
+                    .iter()
+                    .any(|alternate| alternate == child.kind())
+            {
+                tag_text.push_str(
+                    &buffer
+                        .text_for_range(child.byte_range())
+                        .collect::<String>(),
+                );
+            }
+        }
+    }
+    tag_text
+}
+
 pub(crate) fn generate_auto_close_edits(
     buffer: &BufferSnapshot,
     ranges: &[Range<Anchor>],
@@ -112,18 +131,7 @@ pub(crate) fn generate_auto_close_edits(
             continue;
         };
         assert!(open_tag.kind() == config.open_tag_node_name);
-        let tag_name = open_tag
-            .named_child(TS_NODE_TAG_NAME_CHILD_INDEX)
-            .filter(|node| {
-                node.kind() == config.tag_name_node_name
-                    || config
-                        .tag_name_node_name_alternates
-                        .iter()
-                        .any(|alternate| alternate == node.kind())
-            })
-            .map_or("".to_string(), |node| {
-                buffer.text_for_range(node.byte_range()).collect::<String>()
-            });
+        let tag_name = extract_tag_name(&open_tag, buffer, config);
 
         /*
          * Naive check to see if the tag is already closed
@@ -180,14 +188,8 @@ pub(crate) fn generate_auto_close_edits(
          * given that the naive algorithm is sufficient in the majority of cases.
          */
         {
-            let tag_node_name_equals = |node: &Node, name: &str| {
-                let is_empty = name.is_empty();
-                if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
-                    let range = node_name.byte_range();
-                    return buffer.text_for_range(range).equals_str(name);
-                }
-                is_empty
-            };
+            let tag_node_name_equals =
+                |node: &Node, name: &str| extract_tag_name(node, buffer, config) == name;
 
             let tree_root_node = {
                 let mut ancestors = Vec::with_capacity(
@@ -820,7 +822,7 @@ mod jsx_tag_autoclose_tests {
                     close_tag_node_name: "end_tag".into(),
                     jsx_element_node_name: "element".into(),
                     tag_name_node_name: "tag_name".into(),
-                    tag_name_node_name_alternates: vec![],
+                    tag_name_node_name_alternates: vec!["directive_attribute".into()],
                     erroneous_close_tag_node_name: Some("erroneous_end_tag".into()),
                     erroneous_close_tag_name_node_name: Some("erroneous_end_tag_name".into()),
                 }),
