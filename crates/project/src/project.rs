@@ -2622,6 +2622,12 @@ impl Project {
         !self.is_local()
     }
 
+    pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
+        self.worktree_store.update(cx, |worktree_store, _cx| {
+            worktree_store.disable_scanner();
+        });
+    }
+
     #[inline]
     pub fn create_buffer(
         &mut self,

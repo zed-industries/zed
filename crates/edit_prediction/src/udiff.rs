@@ -15,7 +15,9 @@ use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::Entity;
 use language::{Anchor, Buffer, OffsetRangeExt as _, TextBufferSnapshot};
-use project::Project;
+use project::{Project, ProjectPath};
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(#[allow(unused)] HashMap<String, Entity<Buffer>>);
@@ -28,18 +30,27 @@ pub async fn apply_diff(
 ) -> Result<OpenedBuffers> {
     let mut included_files = HashMap::default();
 
+    let worktree_id = project.read_with(cx, |project, cx| {
+        anyhow::Ok(
+            project
+                .visible_worktrees(cx)
+                .next()
+                .context("no worktrees")?
+                .read(cx)
+                .id(),
+        )
+    })??;
+
     for line in diff_str.lines() {
         let diff_line = DiffLine::parse(line);
 
         if let DiffLine::OldPath { path } = diff_line {
             let buffer = project
                 .update(cx, |project, cx| {
-                    let project_path =
-                        project
-                            .find_project_path(path.as_ref(), cx)
-                            .with_context(|| {
-                                format!("Failed to find worktree for new path: {}", path)
-                            })?;
+                    let project_path = ProjectPath {
+                        worktree_id,
+                        path: RelPath::new(Path::new(path.as_ref()), PathStyle::Posix)?.into_arc(),
+                    };
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })??
                 .await?;
@@ -726,38 +737,38 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three
             +3
              four
              five
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              3
             -four
             -five
             +4
             +5
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
             -one
             -two
              3
              4
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
             +5
              six
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              seven
             +7.5
              eight
-            --- a/root/file2
-            +++ b/root/file2
+            --- a/file2
+            +++ b/file2
              ten
             +11
         "#};
@@ -826,8 +837,8 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let diff = indoc! {r#"
-            --- a/root/file1
-            +++ b/root/file1
+            --- a/file1
+            +++ b/file1
              one
              two
             -three

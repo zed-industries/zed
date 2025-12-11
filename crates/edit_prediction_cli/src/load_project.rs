@@ -11,7 +11,7 @@ use futures::{
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::buffer_store::BufferStoreEvent;
 use project::{Project, ProjectPath};
 use std::{
@@ -77,6 +77,19 @@ async fn cursor_position(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> (Entity<Buffer>, Anchor) {
+    let language_registry = project
+        .read_with(cx, |project, _| project.languages().clone())
+        .unwrap();
+    let result = language_registry
+        .load_language_for_file_path(&example.cursor_path)
+        .await;
+
+    if let Err(error) = result
+        && !error.is::<LanguageNotFound>()
+    {
+        panic!("Failed to load language for file path: {}", error);
+    }
+
     let worktree = project
         .read_with(cx, |project, cx| {
             project.visible_worktrees(cx).next().unwrap()
@@ -115,7 +128,8 @@ async fn cursor_position(
         let mut matches = text.match_indices(&cursor_excerpt);
         let (excerpt_offset, _) = matches.next().unwrap_or_else(|| {
             panic!(
-                "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
+                "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Example: {}\nCursor excerpt did not exist in buffer.",
+                example.name
             );
         });
         assert!(matches.next().is_none(), "More than one cursor position match found for {}", &example.name);
@@ -148,6 +162,12 @@ async fn setup_project(
                 None,
                 cx,
             )
+        })
+        .unwrap();
+
+    project
+        .update(cx, |project, cx| {
+            project.disable_worktree_scanner(cx);
         })
         .unwrap();
 
