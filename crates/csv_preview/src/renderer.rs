@@ -1,17 +1,18 @@
 use gpui::{AnyElement, ElementId, Entity, MouseButton};
+use std::ops::Range;
 use ui::{
-    Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
-    TableResizeBehavior, div, h_flex, prelude::*,
+    Button, ButtonSize, ButtonStyle, ContextMenu, DefiniteLength, DropdownMenu, SharedString,
+    Table, TableColumnWidths, TableResizeBehavior, Tooltip, div, h_flex, prelude::*,
 };
 
 use crate::{
-    CsvPreviewView, Ordering,
+    CsvPreviewView, Ordering, RowRenderMechanism,
     cell_selection::TableSelection,
     data_ordering::{OrderingDirection, generate_ordered_indices},
 };
 
 impl Render for CsvPreviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         v_flex()
@@ -19,6 +20,7 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
+            .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {
                     div()
@@ -174,86 +176,233 @@ impl CsvPreviewView {
             std::array::from_fn(|_| iter.next().unwrap())
         };
 
-        Table::new()
+        let table = Table::new()
             .interactable(&self.table_interaction_state)
             .striped()
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
-            .header(headers_array)
-            .variable_list(row_count, {
-                let line_num_text_color = cx.theme().colors().editor_line_number;
-                let selected_bg = cx.theme().colors().element_selected;
-                cx.processor(move |this, display_index: usize, _window, cx| {
-                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+            .header(headers_array);
 
-                    // Get the actual row index from our ordered indices
-                    let row_index = match ordered_indices.get(display_index) {
-                        Some(&idx) => idx,
-                        None => {
-                            // Return empty row array if index not found
-                            return std::array::from_fn(|_| div().into_any_element());
-                        }
-                    };
-
-                    let row = match this.contents.rows.get(row_index) {
-                        Some(r) => r,
-                        None => {
-                            // Return empty row array if row not found
-                            return std::array::from_fn(|_| div().into_any_element());
-                        }
-                    };
-
-                    let mut elements = Vec::with_capacity(COLS);
-
-                    // First column: original line number from parsed data
-                    let line_number: SharedString = this
-                        .contents
-                        .line_numbers
-                        .get(row_index)
-                        .map(|ln| ln.display_string().into())
-                        .unwrap_or_else(|| "".into());
-                    elements.push(
-                        div()
-                            .child(line_number)
-                            .text_color(line_num_text_color)
-                            .into_any_element(),
-                    );
-
-                    // Remaining columns: actual CSV data
-                    for col in 0..(COLS - 1) {
-                        let cell_content: SharedString =
-                            row.get(col).cloned().unwrap_or_else(|| "".into());
-
-                        // Check if this cell is selected using display coordinates
-                        let ordered_indices =
-                            generate_ordered_indices(this.ordering, &this.contents);
-                        let display_to_data_converter =
-                            |dr: usize| ordered_indices.get(dr).copied();
-                        let is_selected = this.selection.is_cell_selected(
+        // Choose rendering method based on settings
+        match self.settings.rendering_with {
+            RowRenderMechanism::VariableList => table
+                .variable_list(row_count, {
+                    let line_num_text_color = cx.theme().colors().editor_line_number;
+                    let selected_bg = cx.theme().colors().element_selected;
+                    cx.processor(move |this, display_index: usize, _window, cx| {
+                        Self::render_table_row_for_variable_list::<COLS>(
+                            this,
                             display_index,
-                            col,
-                            display_to_data_converter,
-                        );
-
-                        elements.push(TableSelection::create_selectable_cell(
-                            display_index,
-                            col,
-                            cell_content,
-                            cx.entity(),
+                            line_num_text_color,
                             selected_bg,
-                            is_selected,
-                        ));
-                    }
-
-                    // Convert to fixed-size array, padding with empty divs if needed
-                    let mut elements_iter = elements.into_iter();
-                    std::array::from_fn(|_| {
-                        elements_iter
-                            .next()
-                            .unwrap_or_else(|| div().into_any_element())
+                            cx,
+                        )
                     })
                 })
+                .into_any_element(),
+            RowRenderMechanism::UniformList => table
+                .uniform_list("csv-table", row_count, {
+                    let line_num_text_color = cx.theme().colors().editor_line_number;
+                    let selected_bg = cx.theme().colors().element_selected;
+                    cx.processor(move |this, range: Range<usize>, _window, cx| {
+                        Self::render_table_rows_for_uniform_list::<COLS>(
+                            this,
+                            range,
+                            line_num_text_color,
+                            selected_bg,
+                            cx,
+                        )
+                    })
+                })
+                .into_any_element(),
+        }
+    }
+
+    /// Render settings panel above the table
+    fn render_settings_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let current_mode_text = match self.settings.rendering_with {
+            RowRenderMechanism::VariableList => "Variable Height",
+            RowRenderMechanism::UniformList => "Uniform Height",
+        };
+
+        let view = cx.entity();
+        let dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("Variable Height", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.rendering_with = RowRenderMechanism::VariableList;
+                        cx.notify();
+                    });
+                }
             })
+            .entry("Uniform Height", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.rendering_with = RowRenderMechanism::UniformList;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
+        h_flex()
+            .gap_2()
+            .p_2()
+            .bg(cx.theme().colors().surface_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child("Rendering Mode:"),
+            )
+            .child(
+                DropdownMenu::new(
+                    ElementId::Name("rendering-mode-dropdown".into()),
+                    current_mode_text,
+                    dropdown_menu,
+                )
+                .trigger_size(ButtonSize::Compact)
+                .trigger_tooltip(Tooltip::text("Choose between variable height (multiline support) or uniform height (better performance)"))
+            )
             .into_any_element()
+    }
+
+    /// Render a single row for variable_list (supports variable heights)
+    fn render_table_row_for_variable_list<const COLS: usize>(
+        this: &CsvPreviewView,
+        display_index: usize,
+        line_num_text_color: gpui::Hsla,
+        selected_bg: gpui::Hsla,
+        cx: &mut Context<CsvPreviewView>,
+    ) -> [AnyElement; COLS] {
+        let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+
+        // Get the actual row index from our ordered indices
+        let row_index = match ordered_indices.get(display_index) {
+            Some(&idx) => idx,
+            None => {
+                // Return empty row array if index not found
+                return std::array::from_fn(|_| div().into_any_element());
+            }
+        };
+
+        let row = match this.contents.rows.get(row_index) {
+            Some(r) => r,
+            None => {
+                // Return empty row array if row not found
+                return std::array::from_fn(|_| div().into_any_element());
+            }
+        };
+
+        let mut elements = Vec::with_capacity(COLS);
+
+        // First column: original line number from parsed data
+        let line_number: SharedString = this
+            .contents
+            .line_numbers
+            .get(row_index)
+            .map(|ln| ln.display_string().into())
+            .unwrap_or_else(|| "".into());
+        elements.push(
+            div()
+                .child(line_number)
+                .text_color(line_num_text_color)
+                .into_any_element(),
+        );
+
+        // Remaining columns: actual CSV data
+        for col in 0..(COLS - 1) {
+            let cell_content: SharedString = row.get(col).cloned().unwrap_or_else(|| "".into());
+
+            // Check if this cell is selected using display coordinates
+            let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+            let display_to_data_converter = |dr: usize| ordered_indices.get(dr).copied();
+            let is_selected =
+                this.selection
+                    .is_cell_selected(display_index, col, display_to_data_converter);
+
+            elements.push(TableSelection::create_selectable_cell(
+                display_index,
+                col,
+                cell_content,
+                cx.entity(),
+                selected_bg,
+                is_selected,
+            ));
+        }
+
+        // Convert to fixed-size array, padding with empty divs if needed
+        let mut elements_iter = elements.into_iter();
+        std::array::from_fn(|_| {
+            elements_iter
+                .next()
+                .unwrap_or_else(|| div().into_any_element())
+        })
+    }
+
+    /// Render multiple rows for uniform_list (uniform heights only)
+    fn render_table_rows_for_uniform_list<const COLS: usize>(
+        this: &CsvPreviewView,
+        range: Range<usize>,
+        line_num_text_color: gpui::Hsla,
+        selected_bg: gpui::Hsla,
+        cx: &mut Context<CsvPreviewView>,
+    ) -> Vec<[AnyElement; COLS]> {
+        let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+
+        range
+            .filter_map(|display_index| {
+                // Get the actual row index from our ordered indices
+                let row_index = *ordered_indices.get(display_index)?;
+                let row = this.contents.rows.get(row_index)?;
+
+                let mut elements = Vec::with_capacity(COLS);
+
+                // First column: original line number from parsed data
+                let line_number: SharedString = this
+                    .contents
+                    .line_numbers
+                    .get(row_index)?
+                    .display_string()
+                    .into();
+                elements.push(
+                    div()
+                        .child(line_number)
+                        .text_color(line_num_text_color)
+                        .into_any_element(),
+                );
+
+                // Remaining columns: actual CSV data
+                for col in 0..(COLS - 1) {
+                    let cell_content: SharedString =
+                        row.get(col).cloned().unwrap_or_else(|| "".into());
+
+                    // Check if this cell is selected using display coordinates
+                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+                    let display_to_data_converter = |dr: usize| ordered_indices.get(dr).copied();
+                    let is_selected = this.selection.is_cell_selected(
+                        display_index,
+                        col,
+                        display_to_data_converter,
+                    );
+
+                    elements.push(TableSelection::create_selectable_cell(
+                        display_index,
+                        col,
+                        cell_content,
+                        cx.entity(),
+                        selected_bg,
+                        is_selected,
+                    ));
+                }
+
+                let elements_array: [gpui::AnyElement; COLS] = elements.try_into().ok()?;
+                Some(elements_array)
+            })
+            .collect()
     }
 }

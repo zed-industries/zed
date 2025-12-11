@@ -38,6 +38,21 @@ pub struct CsvPreviewView {
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) ordering: Option<Ordering>,
     pub(crate) selection: TableSelection,
+    pub(crate) settings: CsvPreviewSettings,
+}
+
+#[derive(Default)]
+pub enum RowRenderMechanism {
+    /// Default behaviour
+    #[default]
+    VariableList,
+    /// More performance oriented, but all rows are same height
+    UniformList,
+}
+
+#[derive(Default)]
+pub(crate) struct CsvPreviewSettings {
+    pub(crate) rendering_with: RowRenderMechanism,
 }
 
 impl CsvPreviewView {
@@ -88,6 +103,7 @@ impl CsvPreviewView {
                 parsing_task: None,
                 ordering: None,
                 selection: TableSelection::new(),
+                settings: CsvPreviewSettings::default(),
             };
 
             view.set_editor(editor.clone(), cx);
