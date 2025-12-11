@@ -221,7 +221,7 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos - 1];
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
             last_block = Some(code_block.to_string());
             search_start = backtick_end + end_pos + backtick_count;
         } else {
@@ -250,7 +250,7 @@ mod tests {
             `````
             "};
         let last_block = extract_last_codeblock(text);
-        assert_eq!(last_block, "last block");
+        assert_eq!(last_block, "last block\n");
     }
 
     #[test]

@@ -87,6 +87,7 @@ enum PredictionProvider {
     Zeta1,
     Zeta2,
     Teacher,
+    TeacherNonBatching,
 }
 
 impl EpArgs {

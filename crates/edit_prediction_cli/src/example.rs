@@ -25,11 +25,18 @@ pub struct Example {
     pub name: String,
     pub repository_url: String,
     pub revision: String,
+    #[serde(default)]
     pub uncommitted_diff: String,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
     pub expected_patch: String,
+
+    /// The cursor location in the "path/to/file:line:column" format.
+    /// It duplicates the (cursor_path, cursor_position) pair and is
+    /// provided for compatibility with the data preprocessing scripts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
@@ -195,9 +202,9 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                     .enumerate()
                     .map(|(line_ix, line)| {
                         let mut example =
-                            serde_json::from_str::<Example>(line).unwrap_or_else(|_| {
+                            serde_json::from_str::<Example>(line).unwrap_or_else(|error| {
                                 panic!(
-                                    "Failed to parse example on {}:{}",
+                                    "Failed to parse example on {}:{}\n{error}",
                                     path.display(),
                                     line_ix + 1
                                 )
@@ -254,6 +261,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         uncommitted_diff: String::new(),
         cursor_path: PathBuf::new().into(),
         cursor_position: String::new(),
+        cursor: None,
         edit_history: String::new(),
         expected_patch: String::new(),
         buffer: None,
