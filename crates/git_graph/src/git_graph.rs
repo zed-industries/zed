@@ -2,28 +2,23 @@ mod graph;
 mod graph_rendering;
 
 use anyhow::Context as _;
-use git;
-use git_ui::commit_view::CommitView;
 use gpui::{
     App, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ListAlignment, ListState, ParentElement, Pixels, Point, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred,
     list, px,
 };
-use project::Project;
-use project::git_store::{GitStoreEvent, Repository};
+use graph_rendering::render_graph_cell;
+use project::{Project, git_store::GitStoreEvent};
 use settings::Settings;
 use std::path::PathBuf;
 use theme::ThemeSettings;
-use ui::prelude::*;
-use ui::{ContextMenu, Tooltip};
+use ui::{ContextMenu, Tooltip, prelude::*};
 use util::ResultExt;
-use workspace::Workspace;
-use workspace::item::{Item, ItemEvent, SerializableItem};
-
-use graph_rendering::{render_graph_cell, render_graph_continuation};
-
-use crate::graph::CommitEntry;
+use workspace::{
+    Workspace,
+    item::{Item, ItemEvent, SerializableItem},
+};
 
 actions!(
     git_graph,
@@ -41,8 +36,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
             let project = workspace.project().clone();
-            let workspace_handle = workspace.weak_handle();
-            let git_graph = cx.new(|cx| GitGraph::new(project, workspace_handle, window, cx));
+            let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
             workspace.add_item_to_active_pane(Box::new(git_graph), None, true, window, cx);
         });
     })
@@ -61,15 +55,12 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     graph: crate::graph::GitGraph,
     project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
     max_lanes: usize,
     loading: bool,
     error: Option<SharedString>,
     _load_task: Option<Task<()>>,
     selected_commit: Option<usize>,
     expanded_commit: Option<usize>,
-    expanded_files: Vec<ChangedFile>,
-    loading_files: bool,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     work_dir: Option<PathBuf>,
     row_height: Pixels,
@@ -94,12 +85,7 @@ pub enum FileStatus {
 }
 
 impl GitGraph {
-    pub fn new(
-        project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
@@ -123,7 +109,6 @@ impl GitGraph {
         let mut this = GitGraph {
             focus_handle,
             project,
-            workspace,
             graph: crate::graph::GitGraph::new(),
             max_lanes: 0,
             loading: true,
@@ -131,8 +116,6 @@ impl GitGraph {
             _load_task: None,
             selected_commit: None,
             expanded_commit: None,
-            expanded_files: Vec::new(),
-            loading_files: false,
             context_menu: None,
             work_dir: None,
             row_height,
@@ -142,46 +125,6 @@ impl GitGraph {
 
         this.load_data(cx);
         this
-    }
-
-    fn get_selected_commit(&self) -> Option<&CommitEntry> {
-        self.selected_commit
-            .and_then(|idx| self.graph.commits.get(idx))
-    }
-
-    fn get_repository(&self, cx: &App) -> Option<Entity<Repository>> {
-        let git_store = self.project.read(cx).git_store();
-        git_store.read(cx).repositories().values().next().cloned()
-    }
-
-    fn open_commit_view(
-        &mut self,
-        file_path: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.data.sha.clone();
-
-        let Some(repository) = self.get_repository(cx) else {
-            self.error = Some("No repository found".into());
-            cx.notify();
-            return;
-        };
-
-        let file_filter = file_path.and_then(|p| git::repository::RepoPath::new(&p).ok());
-
-        CommitView::open(
-            sha.to_string(),
-            repository.downgrade(),
-            self.workspace.clone(),
-            None,
-            file_filter,
-            window,
-            cx,
-        );
     }
 
     fn load_data(&mut self, cx: &mut Context<Self>) {
@@ -262,7 +205,6 @@ impl GitGraph {
         commit_width: Pixels,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
-        let is_expanded = self.expanded_commit == Some(idx);
         let row = self.render_commit_row(
             idx,
             row_height,
@@ -273,15 +215,7 @@ impl GitGraph {
             cx,
         );
 
-        if is_expanded {
-            v_flex()
-                .w_full()
-                .child(row)
-                .child(self.render_inline_expansion(idx, graph_width, cx))
-                .into_any_element()
-        } else {
-            row
-        }
+        row
     }
 
     fn render_commit_row(
@@ -379,279 +313,6 @@ impl GitGraph {
             )
             .into_any_element()
     }
-
-    fn render_inline_expansion(
-        &self,
-        idx: usize,
-        graph_width: Pixels,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let Some(commit) = self.graph.commits.get(idx) else {
-            return div().into_any_element();
-        };
-
-        let commit_sha = commit.data.sha.clone();
-        let parents = commit.data.parents.clone();
-        let author = commit.data.author_name.clone();
-        let subject = commit.data.subject.clone();
-        let formatted_time = commit.data.commit_timestamp.clone();
-        let lines = commit.lines.clone();
-        let loading_files = self.loading_files;
-        let expanded_files = &self.expanded_files;
-
-        h_flex()
-            .id(ElementId::NamedInteger(
-                "expanded-details".into(),
-                idx as u64,
-            ))
-            .w_full()
-            .min_h(px(120.0))
-            .px_2()
-            .gap_4()
-            .bg(cx.theme().colors().background)
-            .flex_shrink_0()
-            .child(
-                div()
-                    .w(graph_width)
-                    .h_full()
-                    .flex_shrink_0()
-                    .child(render_graph_continuation(lines, graph_width)),
-            )
-            .child(
-                h_flex()
-                    .flex_1()
-                    .h_full()
-                    .items_start()
-                    .child(
-                        v_flex()
-                            .w(px(400.0))
-                            .p_2()
-                            .gap_0p5()
-                            .border_r_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .h(px(28.0))
-                                    .pb_1()
-                                    .mb_1()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .items_center()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Icon::new(IconName::Info)
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(
-                                                Label::new("Info")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Label::new("Commit:")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(commit_sha.to_string())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Accent),
-                                    ),
-                            )
-                            .when(!parents.is_empty(), |el| {
-                                let parent_str = parents
-                                    .iter()
-                                    .map(|parent| parent.display_short())
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                el.child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            Label::new("Parents:")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new(parent_str)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Accent),
-                                        ),
-                                )
-                            })
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Label::new("Author:")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(Label::new(author).size(LabelSize::Small)),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Label::new("Date:")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(Label::new(formatted_time).size(LabelSize::Small)),
-                            )
-                            .child(div().h_2())
-                            .child(Label::new(subject).size(LabelSize::Small)),
-                    )
-                    .child(
-                        v_flex()
-                            .id("file-list-scroll")
-                            .flex_1()
-                            .h_full()
-                            .p_2()
-                            .gap_0p5()
-                            .overflow_y_scroll()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .h(px(28.0))
-                                    .pb_1()
-                                    .mb_1()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .justify_between()
-                                    .items_center()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .child(
-                                                Icon::new(IconName::FileTree)
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(
-                                                Label::new(format!(
-                                                    "{} files",
-                                                    expanded_files.len()
-                                                ))
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                            ),
-                                    )
-                                    .child(
-                                        Button::new("view-diff", "View Diff")
-                                            .style(ButtonStyle::Filled)
-                                            .label_size(LabelSize::Small)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.open_commit_view(None, window, cx);
-                                            })),
-                                    ),
-                            )
-                            .when(loading_files, |el| {
-                                el.child(
-                                    div().w_full().py_2().child(
-                                        Label::new("Loading...")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                                )
-                            })
-                            .when(!loading_files && expanded_files.is_empty(), |el| {
-                                el.child(
-                                    div().w_full().py_2().child(
-                                        Label::new("No files changed")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                                )
-                            })
-                            .when(!loading_files && !expanded_files.is_empty(), |el| {
-                                el.children(expanded_files.iter().enumerate().map(
-                                    |(file_idx, file)| {
-                                        let file_path = file.path.clone();
-                                        let status_icon = match file.status {
-                                            FileStatus::Added => IconName::Plus,
-                                            FileStatus::Modified => IconName::Pencil,
-                                            FileStatus::Deleted => IconName::Trash,
-                                            FileStatus::Renamed => IconName::Replace,
-                                            FileStatus::Copied => IconName::Copy,
-                                            FileStatus::Unknown => IconName::File,
-                                        };
-                                        let status_color = match file.status {
-                                            FileStatus::Added => Color::Created,
-                                            FileStatus::Modified => Color::Modified,
-                                            FileStatus::Deleted => Color::Deleted,
-                                            _ => Color::Muted,
-                                        };
-
-                                        h_flex()
-                                            .id(ElementId::NamedInteger(
-                                                "file-row".into(),
-                                                file_idx as u64,
-                                            ))
-                                            .w_full()
-                                            .px_1()
-                                            .py_0p5()
-                                            .gap_2()
-                                            .items_center()
-                                            .cursor_pointer()
-                                            .hover(|style| {
-                                                style.bg(cx.theme().colors().ghost_element_hover)
-                                            })
-                                            .rounded_sm()
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.open_commit_view(
-                                                    Some(file_path.clone()),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }))
-                                            .child(
-                                                Icon::new(status_icon)
-                                                    .color(status_color)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(
-                                                Label::new(file.path.clone())
-                                                    .size(LabelSize::Small)
-                                                    .single_line(),
-                                            )
-                                    },
-                                ))
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(24.0))
-                    .h_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_start()
-                    .justify_center()
-                    .pt_1()
-                    .child(
-                        IconButton::new("close-expanded", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.expanded_commit = None;
-                                this.expanded_files.clear();
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .into_any_element()
-    }
 }
 
 impl Render for GitGraph {
@@ -689,20 +350,18 @@ impl Render for GitGraph {
                 )
         });
 
-        let content = if self.loading {
+        let content = if self.loading || self.graph.commits.is_empty() {
+            let message = if self.loading {
+                "Loading commits..."
+            } else {
+                "No commits found"
+            };
             div()
                 .size_full()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(Label::new("Loading commits...").color(Color::Muted))
-        } else if self.graph.commits.is_empty() {
-            div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Label::new("No commits found").color(Color::Muted))
+                .child(Label::new(message).color(Color::Muted))
         } else {
             div()
                 .size_full()
@@ -817,7 +476,7 @@ impl SerializableItem for GitGraph {
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        _: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -828,7 +487,7 @@ impl SerializableItem for GitGraph {
             .ok()
             .is_some_and(|is_open| is_open)
         {
-            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, window, cx));
+            let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
             Task::ready(Ok(git_graph))
         } else {
             Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")))

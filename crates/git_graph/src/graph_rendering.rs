@@ -209,7 +209,7 @@ pub const BRANCH_COLORS: &[Hsla; 34] = &[
     }, // Medium Violet
 ];
 
-pub fn render_graph_continuation(lines: Vec<GraphLine>, graph_width: Pixels) -> impl IntoElement {
+pub fn _render_graph_continuation(lines: Vec<GraphLine>, graph_width: Pixels) -> impl IntoElement {
     canvas(
         move |_bounds, _window, _cx| {},
         move |bounds: Bounds<Pixels>, _: (), window: &mut Window, _cx: &mut App| {
