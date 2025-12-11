@@ -1,63 +1,153 @@
+use std::{
+    iter::FusedIterator,
+    sync::{Arc, atomic::AtomicUsize},
+};
+
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 
 use crate::Priority;
 
+struct PriorityQueues<T> {
+    high_priority: Vec<T>,
+    medium_priority: Vec<T>,
+    low_priority: Vec<T>,
+}
+
+impl<T> PriorityQueues<T> {
+    fn is_empty(&self) -> bool {
+        self.high_priority.is_empty()
+            && self.medium_priority.is_empty()
+            && self.low_priority.is_empty()
+    }
+}
+
+struct PriorityQueueState<T> {
+    queues: parking_lot::Mutex<PriorityQueues<T>>,
+    condvar: parking_lot::Condvar,
+    receiver_count: AtomicUsize,
+    sender_count: AtomicUsize,
+}
+
+impl<T> PriorityQueueState<T> {
+    fn send(&self, priority: Priority, item: T) -> Result<(), Disconnected> {
+        if self
+            .receiver_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
+            return Err(Disconnected);
+        }
+
+        let mut queues = self.queues.lock();
+        match priority {
+            Priority::Realtime(_) => unreachable!(),
+            Priority::High => queues.high_priority.push(item),
+            Priority::Medium => queues.medium_priority.push(item),
+            Priority::Low => queues.low_priority.push(item),
+        };
+        self.condvar.notify_one();
+        Ok(())
+    }
+
+    fn recv<'a>(&'a self) -> Result<parking_lot::MutexGuard<'a, PriorityQueues<T>>, Disconnected> {
+        let mut queues = self.queues.lock();
+
+        let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
+        if queues.is_empty() && sender_count == 0 {
+            return Err(crate::queue::Disconnected);
+        }
+
+        // parking_lot doesn't do spurious wakeups so an if is fine
+        if queues.is_empty() {
+            self.condvar.wait(&mut queues);
+        }
+
+        Ok(queues)
+    }
+
+    fn try_recv<'a>(
+        &'a self,
+    ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, Disconnected> {
+        let mut queues = self.queues.lock();
+
+        let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
+        if queues.is_empty() && sender_count == 0 {
+            return Err(crate::queue::Disconnected);
+        }
+
+        if queues.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(queues))
+        }
+    }
+}
+
 pub(crate) struct PriorityQueueSender<T> {
-    sender: flume::Sender<(Priority, T)>,
+    state: Arc<PriorityQueueState<T>>,
 }
 
 impl<T> PriorityQueueSender<T> {
-    pub(crate) fn new(tx: flume::Sender<(Priority, T)>) -> Self {
-        Self { sender: tx }
+    fn new(state: Arc<PriorityQueueState<T>>) -> Self {
+        Self { state }
     }
 
-    pub(crate) fn send(
-        &self,
-        priority: Priority,
-        item: T,
-    ) -> Result<(), flume::SendError<(Priority, T)>> {
-        self.sender.send((priority, item))
+    pub(crate) fn send(&self, priority: Priority, item: T) -> Result<(), Disconnected> {
+        self.state.send(priority, item)?;
+        Ok(())
+    }
+}
+
+impl<T> Drop for PriorityQueueSender<T> {
+    fn drop(&mut self) {
+        self.state
+            .sender_count
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
 pub(crate) struct PriorityQueueReceiver<T> {
-    receiver: flume::Receiver<(Priority, T)>,
+    state: Arc<PriorityQueueState<T>>,
     rand: SmallRng,
-    high_priority: Vec<T>,
-    medium_priority: Vec<T>,
-    low_priority: Vec<T>,
     disconnected: bool,
 }
 
 impl<T> Clone for PriorityQueueReceiver<T> {
     fn clone(&self) -> Self {
+        self.state
+            .receiver_count
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Self {
-            receiver: self.receiver.clone(),
+            state: Arc::clone(&self.state),
             rand: SmallRng::seed_from_u64(0),
-            high_priority: Vec::new(),
-            medium_priority: Vec::new(),
-            low_priority: Vec::new(),
             disconnected: self.disconnected,
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ReceiverDisconnected;
+pub(crate) struct Disconnected;
 
 #[allow(dead_code)]
 impl<T> PriorityQueueReceiver<T> {
     pub(crate) fn new() -> (PriorityQueueSender<T>, Self) {
-        let (tx, rx) = flume::unbounded();
+        let state = PriorityQueueState {
+            queues: parking_lot::Mutex::new(PriorityQueues {
+                high_priority: Vec::new(),
+                medium_priority: Vec::new(),
+                low_priority: Vec::new(),
+            }),
+            condvar: parking_lot::Condvar::new(),
+            receiver_count: AtomicUsize::new(1),
+            sender_count: AtomicUsize::new(1),
+        };
+        let state = Arc::new(state);
 
-        let sender = PriorityQueueSender::new(tx);
+        let sender = PriorityQueueSender::new(Arc::clone(&state));
 
         let receiver = PriorityQueueReceiver {
-            receiver: rx,
+            state,
             rand: SmallRng::seed_from_u64(0),
-            high_priority: Vec::new(),
-            medium_priority: Vec::new(),
-            low_priority: Vec::new(),
             disconnected: false,
         };
 
@@ -74,8 +164,8 @@ impl<T> PriorityQueueReceiver<T> {
     /// # Errors
     ///
     /// If the sender was dropped
-    pub(crate) fn try_pop(&mut self) -> Result<Option<T>, ReceiverDisconnected> {
-        self.pop_inner(false, false)
+    pub(crate) fn try_pop(&mut self) -> Result<Option<T>, Disconnected> {
+        self.pop_inner(false)
     }
 
     /// Pops an element from the priority queue blocking if necessary.
@@ -86,14 +176,17 @@ impl<T> PriorityQueueReceiver<T> {
     /// # Errors
     ///
     /// If the sender was dropped
-    pub(crate) fn pop(&mut self) -> Result<T, ReceiverDisconnected> {
-        self.pop_inner(false, true).map(|e| e.unwrap())
+    pub(crate) fn pop(&mut self) -> Result<T, Disconnected> {
+        self.pop_inner(true).map(|e| e.unwrap())
     }
 
     /// Returns an iterator over the elements of the queue
     /// this iterator will end when all elements have been consumed and will not wait for new ones.
     pub(crate) fn try_iter(self) -> TryIter<T> {
-        TryIter(self)
+        TryIter {
+            receiver: self,
+            ended: false,
+        }
     }
 
     /// Returns an iterator over the elements of the queue
@@ -102,97 +195,58 @@ impl<T> PriorityQueueReceiver<T> {
         Iter(self)
     }
 
-    fn collect_new(&mut self, pop_many: bool, block: bool) {
-        let mut add_element = |this: &mut Self, (priority, item): (Priority, T)| match priority {
-            Priority::Realtime(_) => unreachable!(),
-            Priority::High => this.high_priority.push(item),
-            Priority::Medium => this.medium_priority.push(item),
-            Priority::Low => this.low_priority.push(item),
-        };
-
-        if block && self.is_empty() {
-            match self.receiver.recv() {
-                Ok(e) => {
-                    add_element(self, e);
-                }
-                Err(flume::RecvError::Disconnected) => {
-                    self.disconnected = true;
-                }
-            };
-        }
-
-        // dont starve by getting stuck here
-        let count = if pop_many { 100 } else { 1 };
-        for _ in 0..count {
-            match self.receiver.try_recv() {
-                Ok(e) => {
-                    add_element(self, e);
-                }
-                Err(flume::TryRecvError::Empty) => {
-                    break;
-                }
-                Err(flume::TryRecvError::Disconnected) => {
-                    self.disconnected = true;
-                    break;
-                }
-            }
-        }
-    }
-
     #[inline(always)]
     // algorithm is the loaded die from biased coin from
     // https://www.keithschwarz.com/darts-dice-coins/
-    fn pop_inner(
-        &mut self,
-        pop_many: bool,
-        block: bool,
-    ) -> Result<Option<T>, ReceiverDisconnected> {
+    fn pop_inner(&mut self, block: bool) -> Result<Option<T>, Disconnected> {
         use Priority as P;
-        if self.disconnected && self.is_empty() {
-            return Err(ReceiverDisconnected);
-        }
 
-        self.collect_new(pop_many, block);
+        let mut queues = if !block {
+            let Some(queues) = self.state.try_recv()? else {
+                return Ok(None);
+            };
+            queues
+        } else {
+            self.state.recv()?
+        };
 
-        let high = P::High.probability() * !self.high_priority.is_empty() as u32;
-        let medium = P::Medium.probability() * !self.medium_priority.is_empty() as u32;
-        let low = P::Low.probability() * !self.low_priority.is_empty() as u32;
+        let high = P::High.probability() * !queues.high_priority.is_empty() as u32;
+        let medium = P::Medium.probability() * !queues.medium_priority.is_empty() as u32;
+        let low = P::Low.probability() * !queues.low_priority.is_empty() as u32;
         let mut mass = high + medium + low; //%
 
-        if !self.high_priority.is_empty() {
+        if !queues.high_priority.is_empty() {
             let flip = self.rand.random_ratio(P::High.probability(), mass);
             if flip {
-                return Ok(self.high_priority.pop());
+                return Ok(queues.high_priority.pop());
             }
             mass -= P::High.probability();
         }
 
-        if !self.medium_priority.is_empty() {
+        if !queues.medium_priority.is_empty() {
             let flip = self.rand.random_ratio(P::Medium.probability(), mass);
             if flip {
-                return Ok(self.medium_priority.pop());
+                return Ok(queues.medium_priority.pop());
             }
             mass -= P::Medium.probability();
         }
 
-        if !self.low_priority.is_empty() {
+        if !queues.low_priority.is_empty() {
             let flip = self.rand.random_ratio(P::Low.probability(), mass);
             if flip {
-                return Ok(self.low_priority.pop());
+                return Ok(queues.low_priority.pop());
             }
         }
 
-        debug_assert!(
-            self.is_empty(),
-            "Prio::High + Prio::Medium + Prio::low should be 100"
-        );
         Ok(None)
     }
+}
 
-    fn is_empty(&self) -> bool {
-        self.high_priority.is_empty()
-            && self.medium_priority.is_empty()
-            && self.low_priority.is_empty()
+impl<T> Drop for PriorityQueueReceiver<T> {
+    fn drop(&mut self) {
+        self.state
+            .receiver_count
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -202,19 +256,31 @@ impl<T> Iterator for Iter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop_inner(true, true).ok().flatten()
+        self.0.pop_inner(true).ok().flatten()
     }
 }
+impl<T> FusedIterator for Iter<T> {}
 
 /// If None is returned there are no more elements in the queue
-pub(crate) struct TryIter<T>(PriorityQueueReceiver<T>);
+pub(crate) struct TryIter<T> {
+    receiver: PriorityQueueReceiver<T>,
+    ended: bool,
+}
 impl<T> Iterator for TryIter<T> {
-    type Item = Result<T, ReceiverDisconnected>;
+    type Item = Result<T, Disconnected>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop_inner(true, false).transpose()
+        if self.ended {
+            return None;
+        }
+
+        let res = self.receiver.pop_inner(false);
+        self.ended = res.is_err();
+
+        res.transpose()
     }
 }
+impl<T> FusedIterator for TryIter<T> {}
 
 #[cfg(test)]
 mod tests {
