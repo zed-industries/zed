@@ -7,7 +7,7 @@ use util::command::new_smol_command;
 
 use crate::graph_rendering::BRANCH_COLORS;
 
-fn format_timestamp(timestamp: i64) -> String {
+pub(crate) fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
         return "Unknown".to_string();
     };
@@ -15,6 +15,7 @@ fn format_timestamp(timestamp: i64) -> String {
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let local_datetime = datetime.to_offset(local_offset);
 
+    // todo! do we have to parse this function every time?
     let format = time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
         .unwrap_or_default();
     local_datetime.format(&format).unwrap_or_default()
@@ -153,6 +154,8 @@ async fn fetch_git_log(work_dir: &PathBuf) -> Result<(Vec<CommitEntry>, usize)> 
     Ok((commits, max_lanes))
 }
 
+/// Builds the visual graph layout from raw commit data.
+/// Returns a list of CommitEntry with lane assignments and graph lines, plus the max lane count.
 fn build_graph(
     raw_commits: Vec<(
         String,
@@ -167,21 +170,41 @@ fn build_graph(
     use std::collections::HashMap;
 
     let mut commits = Vec::new();
+
+    // Active lanes track which SHA is expected in each column.
+    // Each lane is either None (empty/available) or Some((sha, color_index)).
+    // When we see a commit, we look for its SHA in active_lanes to know where to place it.
     let mut active_lanes: Vec<Option<(String, usize)>> = Vec::new();
+
+    // Maps lane index -> color index for consistent coloring within a branch
     let mut lane_colors: HashMap<usize, usize> = HashMap::new();
+
+    // Maps lane index -> row where that lane started (for potential future use)
     let mut lane_start_row: HashMap<usize, usize> = HashMap::new();
+
+    // Color counter that cycles through BRANCH_COLORS
     let mut next_color = 0;
+
+    // Track the maximum number of lanes used (for graph width)
     let mut max_lanes = 0;
 
     for (row_idx, (sha, short_sha, subject, author_name, timestamp, parents, refs)) in
         raw_commits.into_iter().enumerate()
     {
+        // Lines to draw for this row (vertical lines, merges, branches)
         let mut lines = Vec::new();
 
+        // ========== STEP 1: Check if this commit was expected ==========
+        // A commit is "expected" if a previous commit listed it as a parent,
+        // meaning there's already a lane waiting for this SHA.
         let was_expected = active_lanes
             .iter()
             .any(|s| s.as_ref().map(|(h, _)| h) == Some(&sha));
 
+        // ========== STEP 2: Find which lane this commit belongs in ==========
+        // First, try to find a lane that's expecting this exact SHA.
+        // If not found, use the first empty lane.
+        // If no empty lanes, create a new one.
         let commit_lane = active_lanes
             .iter()
             .position(|s| s.as_ref().map(|(h, _)| h) == Some(&sha))
@@ -195,12 +218,17 @@ fn build_graph(
                     })
             });
 
+        // ========== STEP 3: Assign a color to this lane ==========
+        // Reuse existing color for the lane, or assign a new one
         let color_idx = *lane_colors.entry(commit_lane).or_insert_with(|| {
             let color = next_color;
             next_color = (next_color + 1) % BRANCH_COLORS.len();
             color
         });
 
+        // ========== STEP 4: Draw pass-through lines for other active lanes ==========
+        // For every other lane that's active (waiting for a different commit),
+        // draw a vertical line passing through this row.
         for (lane_idx, lane_data) in active_lanes.iter().enumerate() {
             if let Some((hash, lane_color)) = lane_data {
                 if hash != &sha {
@@ -216,22 +244,37 @@ fn build_graph(
             }
         }
 
+        // ========== STEP 5: Clear the commit's lane ==========
+        // This commit has arrived, so its lane is no longer waiting for it.
+        // We'll potentially reuse this lane for the first parent below.
         if commit_lane < active_lanes.len() {
             active_lanes[commit_lane] = None;
             lane_start_row.remove(&commit_lane);
         }
 
+        // ========== STEP 6: Process each parent of this commit ==========
+        // For each parent:
+        // - If the parent is already expected in another lane, draw a merge line
+        // - If this is the first parent (i == 0), continue the current lane
+        // - If this is a secondary parent, branch out to a new lane
         for (i, parent) in parents.iter().enumerate() {
+            // Check if any lane is already waiting for this parent
             let existing_lane = active_lanes
                 .iter()
                 .position(|s| s.as_ref().map(|(h, _)| h) == Some(parent));
 
             if let Some(target_lane) = existing_lane {
+                // ===== CASE A: Parent already has a lane (merge scenario) =====
+                // Another branch is already tracking this parent commit.
+                // Draw a merge line from our lane to that lane.
                 let target_color = active_lanes[target_lane]
                     .as_ref()
                     .map(|(_, c)| *c)
                     .unwrap_or(color_idx);
                 if target_lane != commit_lane {
+                    // If this commit was expected (continuing a branch), draw the
+                    // incoming vertical line that ends at this commit
+                    // todo! expand on this more
                     if was_expected {
                         lines.push(GraphLine {
                             from_lane: commit_lane,
@@ -242,6 +285,7 @@ fn build_graph(
                             ends_at_commit: true,
                         });
                     }
+                    // Draw the diagonal merge line to the existing parent lane
                     lines.push(GraphLine {
                         from_lane: commit_lane,
                         to_lane: target_lane,
@@ -252,12 +296,17 @@ fn build_graph(
                     });
                 }
             } else if i == 0 {
+                // ===== CASE B: First parent, no existing lane =====
+                // Continue the current lane downward to this parent.
+                // The lane now expects the first parent SHA.
                 if commit_lane < active_lanes.len() {
                     active_lanes[commit_lane] = Some((parent.clone(), color_idx));
                 } else {
                     active_lanes.push(Some((parent.clone(), color_idx)));
                 }
                 lane_start_row.insert(commit_lane, row_idx);
+                dbg!("This case is hit");
+                // Draw the vertical line continuing down from this commit
                 lines.push(GraphLine {
                     from_lane: commit_lane,
                     to_lane: commit_lane,
@@ -267,6 +316,9 @@ fn build_graph(
                     ends_at_commit: false,
                 });
             } else {
+                // ===== CASE C: Secondary parent (i > 0), no existing lane =====
+                // This is a merge commit with multiple parents.
+                // Branch out to a new lane for this additional parent.
                 let target_lane = active_lanes
                     .iter()
                     .position(|s| s.is_none())
@@ -275,14 +327,18 @@ fn build_graph(
                         active_lanes.len() - 1
                     });
 
+                // Assign a new color to the branching lane
                 let branch_color = *lane_colors.entry(target_lane).or_insert_with(|| {
                     let color = next_color;
                     next_color = (next_color + 1) % BRANCH_COLORS.len();
                     color
                 });
 
+                // Mark this lane as expecting the secondary parent
                 active_lanes[target_lane] = Some((parent.clone(), branch_color));
                 lane_start_row.insert(target_lane, row_idx);
+
+                // Draw the diagonal branch-out line
                 lines.push(GraphLine {
                     from_lane: commit_lane,
                     to_lane: target_lane,
@@ -294,6 +350,7 @@ fn build_graph(
             }
         }
 
+        // ========== STEP 7: Update max lanes and create the commit entry ==========
         max_lanes = max_lanes.max(active_lanes.len());
 
         commits.push(CommitEntry {

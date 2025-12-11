@@ -7008,6 +7008,7 @@ dependencies = [
  "menu",
  "project",
  "settings",
+ "smallvec",
  "theme",
  "time",
  "ui",

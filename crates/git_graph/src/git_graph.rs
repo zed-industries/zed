@@ -1,8 +1,8 @@
 mod commit_data;
 mod graph;
-mod graph_layout;
 mod graph_rendering;
 
+use anyhow::Context as _;
 use commit_data::{CommitEntry, load_commits, run_git_command};
 use git_ui::commit_view::CommitView;
 use gpui::{
@@ -26,6 +26,8 @@ use util::ResultExt;
 use workspace::ModalView;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
+
+use crate::graph::GraphCommit;
 
 actions!(
     git_graph,
@@ -321,6 +323,7 @@ impl Render for InputModal {
 
 pub struct GitGraph {
     focus_handle: FocusHandle,
+    graph: crate::graph::GitGraph,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     commits: Vec<CommitEntry>,
@@ -386,6 +389,7 @@ impl GitGraph {
             focus_handle,
             project,
             workspace,
+            graph: crate::graph::GitGraph::new(),
             commits: Vec::new(),
             max_lanes: 0,
             loading: true,
@@ -960,20 +964,38 @@ impl GitGraph {
 
     fn load_data(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
+        // todo!: Is this the best worktree to use?
+        let first_visible_worktree = project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        });
+
         self.loading = true;
         self.error = None;
 
-        self._load_task = Some(cx.spawn(async move |this: WeakEntity<Self>, mut cx| {
-            let result = load_commits(project, &mut cx).await;
+        self._load_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx| {
+            let Some(worktree_path) = first_visible_worktree
+                .context("Can't open git graph in Project without visible worktrees")
+                .ok()
+            else {
+                // todo! handle error
+                return;
+            };
+
+            let result = crate::graph::load_commits(worktree_path.clone()).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
-                    Ok((commits, max_lanes, work_dir)) => {
-                        let commit_count = commits.len();
-                        this.commits = commits;
-                        this.max_lanes = max_lanes;
-                        this.work_dir = Some(work_dir);
+                    Ok(commits) => {
+                        this.graph.add_commits(commits);
+
+                        let commit_count = this.graph.commits.len();
+                        this.commits = this.graph.commits.clone();
+                        this.max_lanes = this.graph.max_lanes;
+                        this.work_dir = Some(worktree_path);
                         this.list_state.reset(commit_count);
                     }
                     Err(e) => {
