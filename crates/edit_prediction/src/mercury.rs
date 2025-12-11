@@ -1,25 +1,18 @@
+use crate::{
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
+    prediction::EditPredictionResult,
+};
 use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
-use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
+use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, SharedString, Task,
+    App, AppContext as _, Context, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset, ToPoint as _};
+use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
-use project::{Project, ProjectPath};
-use std::{
-    collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
-};
+use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
 use zeta_prompt::ZetaPromptInput;
-
-use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionInputs,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
-    open_ai_response::text_from_response, prediction::EditPredictionResult,
-};
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 const MAX_CONTEXT_TOKENS: usize = 150;
@@ -34,11 +27,6 @@ impl Mercury {
         Mercury {
             api_token: load_api_token(cx),
         }
-    }
-
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
     }
 
     pub(crate) fn request_prediction(
