@@ -7,7 +7,9 @@ use std::{
 use anyhow::Context;
 use util::ResultExt;
 use windows::{
-    System::Threading::{ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler},
+    System::Threading::{
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
+    },
     Win32::{
         Foundation::{LPARAM, WPARAM},
         System::Threading::{
