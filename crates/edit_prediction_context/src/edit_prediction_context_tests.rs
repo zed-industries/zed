@@ -48,7 +48,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
             &excerpts,
             &[
                 (
-                    "src/company.rs",
+                    "root/src/company.rs",
                     &[indoc! {"
                         pub struct Company {
                             owner: Arc<Person>,
@@ -56,7 +56,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                         }"}],
                 ),
                 (
-                    "src/main.rs",
+                    "root/src/main.rs",
                     &[
                         indoc! {"
                         pub struct Session {
@@ -71,7 +71,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
                     ],
                 ),
                 (
-                    "src/person.rs",
+                    "root/src/person.rs",
                     &[
                         indoc! {"
                         impl Person {
