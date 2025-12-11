@@ -781,7 +781,9 @@ impl MacWindow {
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
-                        let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                        let tabbing_id = NSString::alloc(nil)
+                            .init_str(tabbing_identifier.as_str())
+                            .autorelease();
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
                     } else {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
@@ -904,8 +906,12 @@ impl MacWindow {
     pub fn get_user_tabbing_preference() -> Option<UserTabbingPreference> {
         unsafe {
             let defaults: id = NSUserDefaults::standardUserDefaults();
-            let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
-            let key = NSString::alloc(nil).init_str("AppleWindowTabbingMode");
+            let domain = NSString::alloc(nil)
+                .init_str("NSGlobalDomain")
+                .autorelease();
+            let key = NSString::alloc(nil)
+                .init_str("AppleWindowTabbingMode")
+                .autorelease();
 
             let dict: id = msg_send![defaults, persistentDomainForName: domain];
             let value: id = if !dict.is_null() {
@@ -1033,7 +1039,9 @@ impl PlatformWindow for MacWindow {
             }
 
             if let Some(tabbing_identifier) = tabbing_identifier {
-                let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                let tabbing_id = NSString::alloc(nil)
+                    .init_str(tabbing_identifier.as_str())
+                    .autorelease();
                 let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
             } else {
                 let _: () = msg_send![native_window, setTabbingIdentifier:nil];
@@ -1061,7 +1069,9 @@ impl PlatformWindow for MacWindow {
             let device_description: id = msg_send![screen, deviceDescription];
             let screen_number: id = NSDictionary::valueForKey_(
                 device_description,
-                NSString::alloc(nil).init_str("NSScreenNumber"),
+                NSString::alloc(nil)
+                    .init_str("NSScreenNumber")
+                    .autorelease(),
             );
 
             let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
@@ -1505,8 +1515,12 @@ impl PlatformWindow for MacWindow {
             .spawn(async move {
                 unsafe {
                     let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
-                    let key = NSString::alloc(nil).init_str("AppleActionOnDoubleClick");
+                    let domain = NSString::alloc(nil)
+                        .init_str("NSGlobalDomain")
+                        .autorelease();
+                    let key = NSString::alloc(nil)
+                        .init_str("AppleActionOnDoubleClick")
+                        .autorelease();
 
                     let dict: id = msg_send![defaults, persistentDomainForName: domain];
                     let action: id = if !dict.is_null() {
@@ -2067,7 +2081,11 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
             if is_active {
-                lock.move_traffic_light();
+                unsafe {
+                    let pool = NSAutoreleasePool::new(nil);
+                    lock.move_traffic_light();
+                    pool.drain();
+                }
             }
 
             if let Some(mut callback) = lock.activate_callback.take() {
@@ -2508,7 +2526,9 @@ where
 unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
     unsafe {
         let device_description = NSScreen::deviceDescription(screen);
-        let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+        let screen_number_key: id = NSString::alloc(nil)
+            .init_str("NSScreenNumber")
+            .autorelease();
         let screen_number = device_description.objectForKey_(screen_number_key);
         let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
         screen_number as CGDirectDisplayID
