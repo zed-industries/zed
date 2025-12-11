@@ -375,7 +375,7 @@ impl TrustedWorktreesStorage {
                             // TODO kb how correct this method is?
                             // What if different windows find different set of worktrees?
                             .find_worktree_data(worktree_id, cx)
-                            .and_then(|(abs_path, ..)| Some(abs_path.to_path_buf())),
+                            .map(|(abs_path, ..)| abs_path.to_path_buf()),
                         PathTrust::AbsPath(abs_path) => Some(abs_path),
                         PathTrust::Global => {
                             new_trusted_globals.insert(host.clone());

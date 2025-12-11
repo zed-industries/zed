@@ -187,7 +187,7 @@ impl Render for SecurityModal {
                     .gap_1()
                     .justify_end()
                     .child(
-                        Button::new("rm", "Open in Restricted Mode")
+                        Button::new("rm", "Stay in Restricted Mode")
                             .key_binding(
                                 KeyBinding::for_action_in(
                                     &ToggleWorktreeSecurity,
