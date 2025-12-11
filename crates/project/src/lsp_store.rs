@@ -2220,12 +2220,10 @@ impl LocalLspStore {
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
-                    *lsp_action = Box::new(
-                        lang_server
-                            .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
-                            .await
-                            .into_response()?,
-                    );
+                    **lsp_action = lang_server
+                        .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
+                        .await
+                        .into_response()?;
                 }
             }
             LspAction::CodeLens(lens) => {
@@ -6413,7 +6411,7 @@ impl LspStore {
                 server_id == *completion_server_id,
                 "server_id mismatch, applying completion resolve for {server_id} but completion server id is {completion_server_id}"
             );
-            *lsp_completion = Box::new(resolved_completion);
+            **lsp_completion = resolved_completion;
             *resolved = true;
         }
         Ok(())
@@ -6572,7 +6570,7 @@ impl LspStore {
                 server_id == *completion_server_id,
                 "remote server_id mismatch, applying completion resolve for {server_id} but completion server id is {completion_server_id}"
             );
-            *lsp_completion = Box::new(resolved_lsp_completion);
+            **lsp_completion = resolved_lsp_completion;
             *resolved = true;
         }
 
