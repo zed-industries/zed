@@ -652,6 +652,7 @@ pub struct RealGitRepository {
     pub repository: Arc<Mutex<git2::Repository>>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
+    any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
 }
 
@@ -670,6 +671,7 @@ impl RealGitRepository {
             system_git_binary_path,
             any_git_binary_path,
             executor,
+            any_git_binary_help_output: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -679,6 +681,27 @@ impl RealGitRepository {
             .workdir()
             .context("failed to read git work directory")
             .map(Path::to_path_buf)
+    }
+
+    async fn any_git_binary_help_output(&self) -> SharedString {
+        if let Some(output) = self.any_git_binary_help_output.lock().clone() {
+            return output;
+        }
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        let working_directory = self.working_directory();
+        let output: SharedString = self
+            .executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(["help", "-a"])
+                    .await
+            })
+            .await
+            .unwrap_or_default()
+            .into();
+        *self.any_git_binary_help_output.lock() = Some(output.clone());
+        output
     }
 }
 
@@ -2290,48 +2313,50 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
+        let repository = self.repository.clone();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory.clone(), executor)
-                    .envs(HashMap::clone(&env));
+        let help_output = self.any_git_binary_help_output();
 
-                let output = git.run(&["help", "-a"]).await?;
-                if !output.lines().any(|line| line.trim().starts_with("hook ")) {
-                    log::warn!(
-                        "git hook command not available, running the {} hook manually",
-                        hook.as_str()
-                    );
+        async move {
+            let working_directory = working_directory?;
+            if !help_output
+                .await
+                .lines()
+                .any(|line| line.trim().starts_with("hook "))
+            {
+                let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
+                if hook_abs_path.is_file() {
+                    let output = self
+                        .executor
+                        .spawn(
+                            new_smol_command(&hook_abs_path)
+                                .envs(env.iter())
+                                .current_dir(&working_directory)
+                                .output(),
+                        )
+                        .await?;
 
-                    let hook_abs_path = working_directory
-                        .join(".git")
-                        .join("hooks")
-                        .join(hook.as_str());
-                    if hook_abs_path.is_file() {
-                        let output = new_smol_command(&hook_abs_path)
-                            .envs(env.iter())
-                            .current_dir(&working_directory)
-                            .output()
-                            .await?;
-
-                        anyhow::ensure!(
-                            output.status.success(),
-                            "{} hook failed:\n{}",
-                            hook.as_str(),
-                            String::from_utf8_lossy(&output.stderr)
-                        );
+                    if !output.status.success() {
+                        return Err(GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                            status: output.status,
+                        }
+                        .into());
                     }
-
-                    return Ok(());
                 }
 
-                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                    .await?;
-                Ok(())
-            })
-            .boxed()
+                return Ok(());
+            }
+
+            let git = GitBinary::new(git_binary_path, working_directory, executor)
+                .envs(HashMap::clone(&env));
+            git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                .await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
