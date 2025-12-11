@@ -857,7 +857,7 @@ impl WindowsPlatformInner {
                     }
                     break 'tasks;
                 }
-                let main_receiver = self.main_receiver.clone();
+                let mut main_receiver = self.main_receiver.clone();
                 match main_receiver.try_pop() {
                     Ok(Some(runnable)) => WindowsDispatcher::execute_runnable(runnable),
                     _ => break 'timeout_loop,
@@ -869,7 +869,7 @@ impl WindowsPlatformInner {
             self.dispatcher.wake_posted.store(false, Ordering::Release);
             let mut main_receiver = self.main_receiver.clone();
             match main_receiver.try_pop() {
-                Ok(runnable) => {
+                Ok(Some(runnable)) => {
                     self.dispatcher.wake_posted.store(true, Ordering::Release);
 
                     WindowsDispatcher::execute_runnable(runnable);
