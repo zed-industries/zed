@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
+use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -242,7 +242,20 @@ impl BackgroundExecutor {
                 realtime,
                 Box::new(move || {
                     while let Ok(runnable) = rx.recv() {
+                        let start = Instant::now();
+                        let location = runnable.metadata().location;
+                        let mut timing = TaskTiming {
+                            location,
+                            start,
+                            end: None,
+                        };
+                        profiler::add_task_timing(timing);
+
                         runnable.run();
+
+                        let end = Instant::now();
+                        timing.end = Some(end);
+                        profiler::add_task_timing(timing);
                     }
                 }),
             );
@@ -252,7 +265,7 @@ impl BackgroundExecutor {
                 .spawn(
                     move |_| future,
                     move |runnable| {
-                        tx.send(runnable);
+                        let _ = tx.send(runnable);
                     },
                 )
         } else {
