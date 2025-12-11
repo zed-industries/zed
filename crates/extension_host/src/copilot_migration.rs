@@ -1,6 +1,7 @@
 use credentials_provider::CredentialsProvider;
 use gpui::App;
 use std::path::PathBuf;
+use util::ResultExt as _;
 
 const COPILOT_CHAT_EXTENSION_ID: &str = "copilot-chat";
 const COPILOT_CHAT_PROVIDER_ID: &str = "copilot-chat";
@@ -30,9 +31,14 @@ pub fn migrate_copilot_credentials_if_needed(extension_id: &str, cx: &mut App) {
         }
 
         let oauth_token = match read_copilot_oauth_token().await {
-            Some(token) => token,
-            None => {
-                log::debug!("No existing Copilot OAuth token found to migrate");
+            Some(token) if !token.is_empty() => token,
+            _ => {
+                log::debug!("No existing Copilot OAuth token found, marking as migrated");
+                // Write empty credentials as a marker that migration was attempted
+                credentials_provider
+                    .write_credentials(&credential_key, "api_key", b"", &cx)
+                    .await
+                    .log_err();
                 return;
             }
         };

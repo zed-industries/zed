@@ -1,5 +1,6 @@
 use credentials_provider::CredentialsProvider;
 use gpui::App;
+use util::ResultExt as _;
 
 const OPENAI_EXTENSION_ID: &str = "openai";
 const OPENAI_PROVIDER_ID: &str = "openai";
@@ -37,17 +38,30 @@ pub fn migrate_openai_credentials_if_needed(extension_id: &str, cx: &mut App) {
 
         let api_key = match old_credential {
             Some((_, key_bytes)) => match String::from_utf8(key_bytes) {
-                Ok(key) => key,
+                Ok(key) if !key.is_empty() => key,
+                Ok(_) => {
+                    log::debug!("Existing OpenAI API key is empty, marking as migrated");
+                    String::new()
+                }
                 Err(_) => {
                     log::error!("Failed to decode OpenAI API key as UTF-8");
                     return;
                 }
             },
             None => {
-                log::debug!("No existing OpenAI API key found to migrate");
-                return;
+                log::debug!("No existing OpenAI API key found, marking as migrated");
+                String::new()
             }
         };
+
+        if api_key.is_empty() {
+            // Write empty credentials as a marker that migration was attempted
+            credentials_provider
+                .write_credentials(&extension_credential_key, "Bearer", b"", &cx)
+                .await
+                .log_err();
+            return;
+        }
 
         log::info!("Migrating existing OpenAI API key to OpenAI extension");
 
