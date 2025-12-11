@@ -935,10 +935,10 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
 
     let default_placement = || Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE);
 
-    // TODO: Consider taskbar (on windows/linux) for the bounds here
+    // Use visible_bounds to exclude taskbar/dock areas
     let display_bounds = display
         .as_ref()
-        .map(|d| d.bounds())
+        .map(|d| d.visible_bounds())
         .unwrap_or_else(default_placement);
 
     let (
