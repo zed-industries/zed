@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
-    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, RegisterSetting, Settings,
-    SettingsLocation, SettingsStore, parse_json_with_comments, watch_config_file,
+    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, NotificationAutoDismissalSetting,
+    RegisterSetting, Settings, SettingsLocation, SettingsStore, parse_json_with_comments,
+    watch_config_file,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
@@ -112,6 +113,16 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `true`
     pub button: bool,
+    pub notifications: LspNotificationSettings,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub struct LspNotificationSettings {
+    /// Whether to automatically dismiss notifications for language servers.
+    ///
+    /// Default: `Always`
+    pub auto_dismiss: NotificationAutoDismissalSetting,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -543,6 +554,16 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .button
                     .unwrap(),
+                notifications: LspNotificationSettings {
+                    auto_dismiss: content
+                        .global_lsp_settings
+                        .as_ref()
+                        .unwrap()
+                        .notifications
+                        .as_ref()
+                        .unwrap()
+                        .auto_dismiss,
+                },
             },
             dap: project
                 .dap
