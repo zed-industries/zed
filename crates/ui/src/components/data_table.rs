@@ -23,13 +23,15 @@ const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 struct DraggedColumn(usize);
 
 struct UniformListData<const COLS: usize> {
-    render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
+    render_list_of_rows_fn:
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
     element_id: ElementId,
     row_count: usize,
 }
 
 struct VariableListData<const COLS: usize> {
-    render_item_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own width
+    render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
     list_state: ListState,
     row_count: usize,
 }
@@ -529,7 +531,7 @@ impl<const COLS: usize> Table<COLS> {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
             row_count,
-            render_item_fn: Box::new(render_item_fn),
+            render_list_of_rows_fn: Box::new(render_item_fn),
         });
         self
     }
@@ -539,11 +541,11 @@ impl<const COLS: usize> Table<COLS> {
     pub fn variable_list(
         mut self,
         row_count: usize,
-        render_item_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
+        render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
     ) -> Self {
         let list_state = ListState::new(row_count, ListAlignment::Top, px(0.0));
         self.rows = TableContents::VariableList(VariableListData {
-            render_item_fn: Box::new(render_item_fn),
+            render_row_fn: Box::new(render_row_fn),
             list_state,
             row_count,
         });
@@ -881,7 +883,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 uniform_list_data.element_id,
                                 uniform_list_data.row_count,
                                 {
-                                    let render_item_fn = uniform_list_data.render_item_fn;
+                                    let render_item_fn = uniform_list_data.render_list_of_rows_fn;
                                     move |range: Range<usize>, window, cx| {
                                         let elements = render_item_fn(range.clone(), window, cx);
                                         elements
@@ -919,7 +921,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         ),
                         TableContents::VariableList(variable_list_data) => parent.child(
                             list(variable_list_data.list_state.clone(), {
-                                let render_item_fn = variable_list_data.render_item_fn;
+                                let render_item_fn = variable_list_data.render_row_fn;
                                 move |row_index: usize, window: &mut Window, cx: &mut App| {
                                     let row = render_item_fn(row_index, window, cx);
                                     render_table_row(
