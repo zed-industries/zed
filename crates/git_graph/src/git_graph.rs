@@ -19,7 +19,7 @@ use ui::prelude::*;
 use ui::{ContextMenu, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
-use workspace::item::{Item, ItemEvent};
+use workspace::item::{Item, ItemEvent, SerializableItem};
 
 use graph_rendering::{
     BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
@@ -38,6 +38,8 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    workspace::register_serializable_item::<GitGraph>(cx);
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenGitGraph, window, cx| {
             let project = workspace.project().clone();
@@ -188,6 +190,8 @@ impl GitGraph {
         let project = self.project.clone();
         self.loading = true;
         self.error = None;
+        self.graph.clear();
+
         let first_visible_worktree = project.read_with(cx, |project, cx| {
             project
                 .visible_worktrees(cx)
@@ -923,5 +927,119 @@ impl Item for GitGraph {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
         f(*event)
+    }
+}
+
+impl SerializableItem for GitGraph {
+    fn serialized_item_kind() -> &'static str {
+        "GitGraph"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "git_graphs",
+            &persistence::GIT_GRAPHS,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui::Result<Entity<Self>>> {
+        if persistence::GIT_GRAPHS
+            .get_git_graph(item_id, workspace_id)
+            .ok()
+            .is_some_and(|is_open| is_open)
+        {
+            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, window, cx));
+            Task::ready(Ok(git_graph))
+        } else {
+            Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")))
+        }
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        Some(cx.background_spawn(async move {
+            persistence::GIT_GRAPHS
+                .save_git_graph(item_id, workspace_id, true)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
+    }
+}
+
+mod persistence {
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
+    use workspace::WorkspaceDb;
+
+    pub struct GitGraphsDb(ThreadSafeConnection);
+
+    impl Domain for GitGraphsDb {
+        const NAME: &str = stringify!(GitGraphsDb);
+
+        const MIGRATIONS: &[&str] = (&[sql!(
+            CREATE TABLE git_graphs (
+                workspace_id INTEGER,
+                item_id INTEGER UNIQUE,
+                is_open INTEGER DEFAULT FALSE,
+
+                PRIMARY KEY(workspace_id, item_id),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+            ) STRICT;
+        )]);
+    }
+
+    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
+
+    impl GitGraphsDb {
+        query! {
+            pub async fn save_git_graph(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId,
+                is_open: bool
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, is_open)
+                VALUES (?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_git_graph(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<bool> {
+                SELECT is_open
+                FROM git_graphs
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
     }
 }

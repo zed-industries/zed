@@ -7003,6 +7003,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "db",
  "git",
  "git_ui",
  "gpui",

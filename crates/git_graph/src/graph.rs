@@ -171,6 +171,14 @@ impl GitGraph {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.lane_states.clear();
+        self.lane_colors.clear();
+        self.next_color = BranchColor(0);
+        self.commits.clear();
+        self.max_lanes = 0;
+    }
+
     fn first_empty_lane_idx(&mut self) -> ActiveLaneIdx {
         self.lane_states
             .iter()
