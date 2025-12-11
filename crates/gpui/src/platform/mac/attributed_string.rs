@@ -1,4 +1,3 @@
-use super::ns_string;
 use cocoa::base::id;
 use cocoa::foundation::NSRange;
 use objc::{class, msg_send, sel, sel_impl};
@@ -51,6 +50,8 @@ impl NSMutableAttributedString for id {}
 
 #[cfg(test)]
 mod tests {
+    use crate::platform::mac::ns_string;
+
     use super::*;
     use cocoa::appkit::NSImage;
     use cocoa::base::nil;
