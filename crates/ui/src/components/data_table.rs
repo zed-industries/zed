@@ -2,8 +2,9 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
-    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    FocusHandle, Length, ListAlignment, ListHorizontalSizingBehavior, ListSizingBehavior,
+    ListState, Point, Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black,
+    uniform_list,
 };
 
 use crate::{
@@ -27,9 +28,16 @@ struct UniformListData<const COLS: usize> {
     row_count: usize,
 }
 
+struct VariableListData<const COLS: usize> {
+    render_item_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
+    list_state: ListState,
+    row_count: usize,
+}
+
 enum TableContents<const COLS: usize> {
     Vec(Vec<[AnyElement; COLS]>),
     UniformList(UniformListData<COLS>),
+    VariableList(VariableListData<COLS>),
 }
 
 impl<const COLS: usize> TableContents<COLS> {
@@ -37,6 +45,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
+            TableContents::VariableList(_) => None,
         }
     }
 
@@ -44,6 +53,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
+            TableContents::VariableList(data) => data.row_count,
         }
     }
 
@@ -524,6 +534,22 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
+    /// Enables variable height list rendering for tables with rows of different heights.
+    /// This is slower than uniform_list but supports multiline content properly.
+    pub fn variable_list(
+        mut self,
+        row_count: usize,
+        render_item_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
+    ) -> Self {
+        let list_state = ListState::new(row_count, ListAlignment::Top, px(0.0));
+        self.rows = TableContents::VariableList(VariableListData {
+            render_item_fn: Box::new(render_item_fn),
+            list_state,
+            row_count,
+        });
+        self
+    }
+
     /// Enables row striping.
     pub fn striped(mut self) -> Self {
         self.striped = true;
@@ -890,6 +916,24 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                     )
                                 },
                             ),
+                        ),
+                        TableContents::VariableList(variable_list_data) => parent.child(
+                            list(variable_list_data.list_state.clone(), {
+                                let render_item_fn = variable_list_data.render_item_fn;
+                                move |row_index: usize, window: &mut Window, cx: &mut App| {
+                                    let row = render_item_fn(row_index, window, cx);
+                                    render_table_row(
+                                        row_index,
+                                        row,
+                                        table_context.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .size_full()
+                            .flex_grow()
+                            .with_sizing_behavior(ListSizingBehavior::Auto),
                         ),
                     })
                     .when_some(

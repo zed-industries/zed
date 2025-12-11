@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use ui::{
     Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
@@ -182,65 +180,78 @@ impl CsvPreviewView {
             .column_widths(widths)
             .resizable_columns(resize_behaviors, current_widths, cx)
             .header(headers_array)
-            .uniform_list("csv-table", row_count, {
+            .variable_list(row_count, {
                 let line_num_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
-                cx.processor(move |this, range: Range<usize>, _window, cx| {
+                cx.processor(move |this, display_index: usize, _window, cx| {
                     let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
 
-                    range
-                        .filter_map(|display_index| {
-                            // Get the actual row index from our ordered indices
-                            let row_index = *ordered_indices.get(display_index)?;
-                            let row = this.contents.rows.get(row_index)?;
+                    // Get the actual row index from our ordered indices
+                    let row_index = match ordered_indices.get(display_index) {
+                        Some(&idx) => idx,
+                        None => {
+                            // Return empty row array if index not found
+                            return std::array::from_fn(|_| div().into_any_element());
+                        }
+                    };
 
-                            let mut elements = Vec::with_capacity(COLS);
+                    let row = match this.contents.rows.get(row_index) {
+                        Some(r) => r,
+                        None => {
+                            // Return empty row array if row not found
+                            return std::array::from_fn(|_| div().into_any_element());
+                        }
+                    };
 
-                            // First column: original line number from parsed data
-                            let line_number: SharedString = this
-                                .contents
-                                .line_numbers
-                                .get(row_index)?
-                                .display_string()
-                                .into();
-                            elements.push(
-                                div()
-                                    .child(line_number)
-                                    .text_color(line_num_text_color)
-                                    .into_any_element(),
-                            );
+                    let mut elements = Vec::with_capacity(COLS);
 
-                            // Remaining columns: actual CSV data
-                            for col in 0..(COLS - 1) {
-                                let cell_content: SharedString =
-                                    row.get(col).cloned().unwrap_or_else(|| "".into());
+                    // First column: original line number from parsed data
+                    let line_number: SharedString = this
+                        .contents
+                        .line_numbers
+                        .get(row_index)
+                        .map(|ln| ln.display_string().into())
+                        .unwrap_or_else(|| "".into());
+                    elements.push(
+                        div()
+                            .child(line_number)
+                            .text_color(line_num_text_color)
+                            .into_any_element(),
+                    );
 
-                                // Check if this cell is selected using display coordinates
-                                let ordered_indices =
-                                    generate_ordered_indices(this.ordering, &this.contents);
-                                let display_to_data_converter =
-                                    |dr: usize| ordered_indices.get(dr).copied();
-                                let is_selected = this.selection.is_cell_selected(
-                                    display_index,
-                                    col,
-                                    display_to_data_converter,
-                                );
+                    // Remaining columns: actual CSV data
+                    for col in 0..(COLS - 1) {
+                        let cell_content: SharedString =
+                            row.get(col).cloned().unwrap_or_else(|| "".into());
 
-                                elements.push(TableSelection::create_selectable_cell(
-                                    display_index,
-                                    col,
-                                    cell_content,
-                                    cx.entity(),
-                                    selected_bg,
-                                    is_selected,
-                                ));
-                            }
+                        // Check if this cell is selected using display coordinates
+                        let ordered_indices =
+                            generate_ordered_indices(this.ordering, &this.contents);
+                        let display_to_data_converter =
+                            |dr: usize| ordered_indices.get(dr).copied();
+                        let is_selected = this.selection.is_cell_selected(
+                            display_index,
+                            col,
+                            display_to_data_converter,
+                        );
 
-                            let elements_array: [gpui::AnyElement; COLS] =
-                                elements.try_into().ok()?;
-                            Some(elements_array)
-                        })
-                        .collect()
+                        elements.push(TableSelection::create_selectable_cell(
+                            display_index,
+                            col,
+                            cell_content,
+                            cx.entity(),
+                            selected_bg,
+                            is_selected,
+                        ));
+                    }
+
+                    // Convert to fixed-size array, padding with empty divs if needed
+                    let mut elements_iter = elements.into_iter();
+                    std::array::from_fn(|_| {
+                        elements_iter
+                            .next()
+                            .unwrap_or_else(|| div().into_any_element())
+                    })
                 })
             })
             .into_any_element()
