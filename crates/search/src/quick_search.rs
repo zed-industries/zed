@@ -1,5 +1,5 @@
 use collections::{HashMap, HashSet};
-use editor::Editor;
+use editor::{Anchor as MultiBufferAnchor, Editor};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
@@ -57,7 +57,10 @@ struct LineMatchData {
     line: u32,
     line_label: SharedString,
     preview_text: SharedString,
+    match_ranges: Vec<std::ops::Range<text::Anchor>>,
 }
+
+enum QuickSearchHighlights {}
 
 struct FileMatchResult {
     file_name: SharedString,
@@ -97,42 +100,58 @@ fn extract_file_matches(
     let file_key = format_file_key(&parent_path, &file_name);
 
     let snapshot = buf.snapshot();
-    let mut seen_lines = HashSet::default();
-    let mut matches = Vec::with_capacity(ranges.len().min(MAX_LINE_MATCHES));
+    let mut lines_data: HashMap<
+        u32,
+        (
+            SharedString,
+            SharedString,
+            Vec<std::ops::Range<text::Anchor>>,
+        ),
+    > = HashMap::default();
+    let mut line_order = Vec::new();
 
     for range in ranges {
         let start_point = range.start.to_point(&snapshot);
         let line = start_point.row;
 
-        if !seen_lines.insert(line) {
-            continue;
+        if let Some((_, _, line_ranges)) = lines_data.get_mut(&line) {
+            line_ranges.push(range.clone());
+        } else {
+            let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
+            let line_end_col = snapshot.line_len(line);
+            let line_end = snapshot.point_to_offset(text::Point::new(line, line_end_col));
+
+            let line_text: String = snapshot.text_for_range(line_start..line_end).collect();
+            let preview_text = truncate_preview(&line_text, MAX_PREVIEW_CHARS);
+            let line_label: SharedString = format!("{}", line + 1).into();
+
+            lines_data.insert(line, (line_label, preview_text, vec![range.clone()]));
+            line_order.push(line);
         }
 
-        let line_start = snapshot.point_to_offset(text::Point::new(line, 0));
-        let line_end_col = snapshot.line_len(line);
-        let line_end = snapshot.point_to_offset(text::Point::new(line, line_end_col));
-
-        let line_text: String = snapshot.text_for_range(line_start..line_end).collect();
-
-        let preview_text = truncate_preview(&line_text, MAX_PREVIEW_CHARS);
-        let line_label: SharedString = format!("{}", line + 1).into();
-
-        matches.push(LineMatchData {
-            project_path: project_path.clone(),
-            file_key: file_key.clone(),
-            line,
-            line_label,
-            preview_text,
-        });
-
-        if matches.len() >= MAX_LINE_MATCHES {
+        if line_order.len() >= MAX_LINE_MATCHES {
             break;
         }
     }
 
-    if matches.is_empty() {
+    if line_order.is_empty() {
         return None;
     }
+
+    let matches = line_order
+        .into_iter()
+        .filter_map(|line| {
+            let (line_label, preview_text, match_ranges) = lines_data.remove(&line)?;
+            Some(LineMatchData {
+                project_path: project_path.clone(),
+                file_key: file_key.clone(),
+                line,
+                line_label,
+                preview_text,
+                match_ranges,
+            })
+        })
+        .collect();
 
     Some(FileMatchResult {
         file_name,
@@ -181,6 +200,7 @@ enum QuickSearchItem {
         line: u32,
         line_label: SharedString,
         preview_text: SharedString,
+        match_ranges: Vec<std::ops::Range<text::Anchor>>,
     },
 }
 
@@ -529,11 +549,11 @@ impl QuickSearchModal {
 
     fn update_preview(
         &mut self,
-        buffer: Option<(Entity<Buffer>, u32)>,
+        buffer: Option<(Entity<Buffer>, u32, Vec<std::ops::Range<text::Anchor>>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((buffer, line)) = buffer else {
+        let Some((buffer, line, match_ranges)) = buffer else {
             self.preview_editor = None;
             self.preview_buffer = None;
             cx.notify();
@@ -550,6 +570,21 @@ impl QuickSearchModal {
                 editor.update(cx, |editor, cx| {
                     let point = text::Point::new(line, 0);
                     editor.go_to_singleton_buffer_point(point, window, cx);
+
+                    let multi_buffer = editor.buffer().read(cx);
+                    if let Some(excerpt_id) = multi_buffer.excerpt_ids().first().copied() {
+                        let multi_buffer_ranges: Vec<_> = match_ranges
+                            .iter()
+                            .map(|range| {
+                                MultiBufferAnchor::range_in_buffer(excerpt_id, range.clone())
+                            })
+                            .collect();
+                        editor.highlight_background::<QuickSearchHighlights>(
+                            &multi_buffer_ranges,
+                            |_, theme| theme.colors().search_match_background,
+                            cx,
+                        );
+                    }
                 });
             }
         } else {
@@ -562,6 +597,19 @@ impl QuickSearchModal {
             editor.update(cx, |editor, cx| {
                 let point = text::Point::new(line, 0);
                 editor.go_to_singleton_buffer_point(point, window, cx);
+
+                let multi_buffer = editor.buffer().read(cx);
+                if let Some(excerpt_id) = multi_buffer.excerpt_ids().first().copied() {
+                    let multi_buffer_ranges: Vec<_> = match_ranges
+                        .iter()
+                        .map(|range| MultiBufferAnchor::range_in_buffer(excerpt_id, range.clone()))
+                        .collect();
+                    editor.highlight_background::<QuickSearchHighlights>(
+                        &multi_buffer_ranges,
+                        |_, theme| theme.colors().search_match_background,
+                        cx,
+                    );
+                }
             });
 
             self.preview_editor = Some(editor);
@@ -678,7 +726,12 @@ impl PickerDelegate for QuickSearchDelegate {
         let quick_search = self.quick_search.clone();
         let actual_index = self.actual_index(self.selected_index);
         let preview_data = actual_index.and_then(|idx| match self.items.get(idx) {
-            Some(QuickSearchItem::LineMatch { buffer, line, .. }) => Some((buffer.clone(), *line)),
+            Some(QuickSearchItem::LineMatch {
+                buffer,
+                line,
+                match_ranges,
+                ..
+            }) => Some((buffer.clone(), *line, match_ranges.clone())),
             _ => None,
         });
 
@@ -842,6 +895,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                 line: match_data.line,
                                 line_label: match_data.line_label,
                                 preview_text: match_data.preview_text,
+                                match_ranges: match_data.match_ranges,
                             });
 
                             line_match_count += 1;
@@ -863,8 +917,14 @@ impl PickerDelegate for QuickSearchDelegate {
             }
 
             let first_line_match = items.iter().find_map(|item| {
-                if let QuickSearchItem::LineMatch { buffer, line, .. } = item {
-                    Some((buffer.clone(), *line))
+                if let QuickSearchItem::LineMatch {
+                    buffer,
+                    line,
+                    match_ranges,
+                    ..
+                } = item
+                {
+                    Some((buffer.clone(), *line, match_ranges.clone()))
                 } else {
                     None
                 }
@@ -1052,7 +1112,6 @@ impl PickerDelegate for QuickSearchDelegate {
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
                         .on_click({
-                            let quick_search = quick_search.clone();
                             move |event, window, cx| {
                                 cx.stop_propagation();
                                 if event.click_count() >= 2 {
@@ -1064,8 +1123,15 @@ impl PickerDelegate for QuickSearchDelegate {
                                         delegate.actual_index(visible_ix).and_then(|idx| {
                                             match delegate.items.get(idx) {
                                                 Some(QuickSearchItem::LineMatch {
-                                                    buffer, line, ..
-                                                }) => Some((buffer.clone(), *line)),
+                                                    buffer,
+                                                    line,
+                                                    match_ranges,
+                                                    ..
+                                                }) => Some((
+                                                    buffer.clone(),
+                                                    *line,
+                                                    match_ranges.clone(),
+                                                )),
                                                 _ => None,
                                             }
                                         })
@@ -1335,6 +1401,7 @@ mod tests {
                 line: 0,
                 line_label: "1".into(),
                 preview_text: "fn test()".into(),
+                match_ranges: Vec::new(),
             };
             assert!(matches!(line_match, QuickSearchItem::LineMatch { .. }));
         });
@@ -1528,6 +1595,7 @@ mod tests {
                     line: 0,
                     line_label: "1".into(),
                     preview_text: "fn test()".into(),
+                    match_ranges: Vec::new(),
                 },
                 QuickSearchItem::LineMatch {
                     project_path: ProjectPath {
@@ -1539,6 +1607,7 @@ mod tests {
                     line: 1,
                     line_label: "2".into(),
                     preview_text: "fn other()".into(),
+                    match_ranges: Vec::new(),
                 },
             ];
 
