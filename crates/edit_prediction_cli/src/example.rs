@@ -265,12 +265,12 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         state: None,
     };
 
-    let mut name = String::new();
     let mut text = String::new();
     let mut block_info: CowStr = "".into();
 
     #[derive(PartialEq)]
     enum Section {
+        Start,
         UncommittedDiff,
         EditHistory,
         CursorPosition,
@@ -279,14 +279,16 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
         Other,
     }
 
-    let mut current_section = Section::Other;
+    let mut current_section = Section::Start;
 
     for event in parser {
         match event {
             Event::Text(line) => {
                 text.push_str(&line);
 
-                if let Some((field, value)) = line.split_once('=') {
+                if let Section::Start = current_section
+                    && let Some((field, value)) = line.split_once('=')
+                {
                     match field.trim() {
                         REPOSITORY_URL_FIELD => {
                             example.repository_url = value.trim().to_string();
@@ -297,14 +299,6 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
                         _ => {}
                     }
                 }
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
-                if !name.is_empty() {
-                    anyhow::bail!(
-                        "Found multiple H1 headings. There should only be one with the name of the example."
-                    );
-                }
-                name = mem::take(&mut text);
             }
             Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
                 let title = mem::take(&mut text);
@@ -364,7 +358,7 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
                     Section::ExpectedPatch => {
                         example.expected_patch = mem::take(&mut text);
                     }
-                    Section::Other => {}
+                    Section::Start | Section::Other => {}
                 }
             }
             _ => {}
