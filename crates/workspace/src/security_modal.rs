@@ -71,14 +71,16 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
-        let focus_handle = self.focus_handle(cx);
 
         AlertModal::new("security-modal")
             .width(rems(40.))
             .key_context("SecurityModal")
-            .track_focus(&focus_handle)
-            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
+            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
                 this.trust_and_dismiss(cx);
+            }))
+            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
+                this.dismiss(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
                 this.dismiss(cx);
@@ -174,6 +176,7 @@ impl Render for SecurityModal {
                                     |security_modal, state: &ToggleState, _, cx| {
                                         security_modal.trust_parents = state.selected();
                                         cx.notify();
+                                        cx.stop_propagation();
                                     },
                                 )),
                         ),
@@ -189,9 +192,8 @@ impl Render for SecurityModal {
                     .child(
                         Button::new("rm", "Stay in Restricted Mode")
                             .key_binding(
-                                KeyBinding::for_action_in(
+                                KeyBinding::for_action(
                                     &ToggleWorktreeSecurity,
-                                    &focus_handle,
                                     cx,
                                 )
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -206,11 +208,12 @@ impl Render for SecurityModal {
                             .style(ButtonStyle::Filled)
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
-                                KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
+                                KeyBinding::for_action(&menu::Confirm, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trust_and_dismiss(cx);
+                                cx.stop_propagation();
                             })),
                     ),
             )
