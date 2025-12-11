@@ -63,26 +63,30 @@ impl<T> PriorityQueueReceiver<T> {
         (sender, receiver)
     }
 
-    /// Tries to pop as many elements from the priority queue as possible
-    /// and returns them in the order of priorities [High, Medium, Low].
+    /// Tries to pop one element from the priority queue without blocking.
     ///
     /// This will early return if there are no elements in the queue.
+    ///
+    /// This method is best suited if you only intend to pop one element, for better performance
+    /// on large queues see [`Self::try_iter`]
     ///
     /// # Errors
     ///
     /// If the sender was dropped
     pub(crate) fn try_pop(&mut self) -> Result<Option<T>, ReceiverDisconnected> {
-        self.pop_inner(false)
+        self.pop_inner(false, false)
     }
 
-    /// Tries to pop as many elements from the priority queue as possible
-    /// and returns them in the order of priorities [High, Medium, Low]
+    /// Pops an element from the priority queue blocking if necessary.
+    ///
+    /// This method is best suited if you only intend to pop one element, for better performance
+    /// on large queues see [`Self::iter``]
     ///
     /// # Errors
     ///
     /// If the sender was dropped
     pub(crate) fn pop(&mut self) -> Result<T, ReceiverDisconnected> {
-        self.pop_inner(true).map(|e| e.unwrap())
+        self.pop_inner(false, true).map(|e| e.unwrap())
     }
 
     /// Returns an iterator over the elements of the queue
@@ -97,7 +101,7 @@ impl<T> PriorityQueueReceiver<T> {
         Iter(self)
     }
 
-    fn collect_new(&mut self, block: bool) {
+    fn collect_new(&mut self, pop_many: bool, block: bool) {
         let mut add_element = |this: &mut Self, (priority, item): (Priority, T)| match priority {
             Priority::Realtime(_) => unreachable!(),
             Priority::High => this.high_priority.push(item),
@@ -117,7 +121,8 @@ impl<T> PriorityQueueReceiver<T> {
         }
 
         // dont starve by getting stuck here
-        for _ in 0..100 {
+        let count = if pop_many { 100 } else { 1 };
+        for _ in 0..count {
             match self.receiver.try_recv() {
                 Ok(e) => {
                     add_element(self, e);
@@ -136,13 +141,17 @@ impl<T> PriorityQueueReceiver<T> {
     #[inline(always)]
     // algorithm is the loaded die from biased coin from
     // https://www.keithschwarz.com/darts-dice-coins/
-    fn pop_inner(&mut self, block: bool) -> Result<Option<T>, ReceiverDisconnected> {
+    fn pop_inner(
+        &mut self,
+        pop_many: bool,
+        block: bool,
+    ) -> Result<Option<T>, ReceiverDisconnected> {
         use Priority as P;
         if self.disconnected && self.is_empty() {
             return Err(ReceiverDisconnected);
         }
 
-        self.collect_new(block);
+        self.collect_new(pop_many, block);
 
         let high = P::High.probability() * !self.high_priority.is_empty() as u32;
         let medium = P::Medium.probability() * !self.medium_priority.is_empty() as u32;
@@ -192,7 +201,7 @@ impl<T> Iterator for Iter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop().ok()
+        self.0.pop_inner(true, true).ok().flatten()
     }
 }
 
@@ -202,7 +211,7 @@ impl<T> Iterator for TryIter<T> {
     type Item = Result<T, ReceiverDisconnected>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.try_pop().transpose()
+        self.0.pop_inner(true, false).transpose()
     }
 }
 
