@@ -588,8 +588,9 @@ impl QuickSearchModal {
                 });
             }
         } else {
+            let project = self.picker.read(cx).delegate.project.clone();
             let editor = cx.new(|cx| {
-                let mut editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+                let mut editor = Editor::for_buffer(buffer.clone(), Some(project), window, cx);
                 editor.set_show_gutter(true, cx);
                 editor
             });
