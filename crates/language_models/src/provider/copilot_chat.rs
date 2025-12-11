@@ -1144,9 +1144,9 @@ mod tests {
             responses::StreamEvent::Completed {
                 response: responses::Response {
                     usage: Some(responses::ResponseUsage {
-                        input_tokens: Some(5),
-                        output_tokens: Some(3),
-                        total_tokens: Some(8),
+                        input_tokens: Some(5u64),
+                        output_tokens: Some(3u64),
+                        total_tokens: Some(8u64),
                     }),
                     ..Default::default()
                 },
@@ -1260,9 +1260,9 @@ mod tests {
         let events = vec![responses::StreamEvent::Incomplete {
             response: responses::Response {
                 usage: Some(responses::ResponseUsage {
-                    input_tokens: Some(10),
-                    output_tokens: Some(0),
-                    total_tokens: Some(10),
+                    input_tokens: Some(10u64),
+                    output_tokens: Some(0u64),
+                    total_tokens: Some(10u64),
                 }),
                 incomplete_details: Some(responses::IncompleteDetails {
                     reason: Some(responses::IncompleteReason::MaxOutputTokens),
