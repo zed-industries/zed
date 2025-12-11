@@ -1,13 +1,10 @@
-use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
-use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
+use anyhow::Result;
+use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, SharedString, Task,
+    App, AppContext as _, Context, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Buffer, BufferSnapshot, Point, ToOffset as _, ToPoint as _};
+use language::{Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
@@ -19,7 +16,7 @@ use std::{
 };
 
 use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, EditPredictionStore,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStore,
     prediction::EditPredictionResult,
 };
 

@@ -4,7 +4,7 @@ pub mod copilot_responses;
 pub mod request;
 mod sign_in;
 
-use crate::sign_in::initiate_sign_in_within_workspace;
+use crate::sign_in::initiate_sign_out;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -21,19 +21,17 @@ use language::{
     language_settings::{EditPredictionProvider, all_language_settings, language_settings},
     point_from_lsp, point_to_lsp,
 };
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName, };
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
 use semver::Version;
 use serde_json::json;
-use settings::Settings;
-use settings::SettingsStore;
-use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
-use std::collections::hash_map::Entry;
+use settings::{Settings, SettingsStore};
 use std::{
     any::TypeId,
+    collections::hash_map::Entry,
     env,
     ffi::OsString,
     mem,
@@ -42,8 +40,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
-use util::rel_path::RelPath;
-use util::{ResultExt, fs::remove_matching};
+use util::{ResultExt, fs::remove_matching, rel_path::RelPath};
 use workspace::Workspace;
 
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
@@ -101,21 +98,14 @@ pub fn init(
     .detach();
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|workspace, _: &SignIn, window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                let is_reinstall = false;
-                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
-            }
+        workspace.register_action(|_, _: &SignIn, window, cx| {
+            initiate_sign_in(window, cx);
         });
-        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
-            }
+        workspace.register_action(|_, _: &Reinstall, window, cx| {
+            reinstall_and_sign_in(window, cx);
         });
-        workspace.register_action(|workspace, _: &SignOut, _window, cx| {
-            if let Some(copilot) = Copilot::global(cx) {
-                sign_out_within_workspace(workspace, copilot, cx);
-            }
+        workspace.register_action(|_, _: &SignOut, window, cx| {
+            initiate_sign_out(window, cx);
         });
     })
     .detach();
