@@ -128,10 +128,8 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return project
-                        .update(cx, |_, cx| {
-                            lister.activation_script(&toolchain, shell_kind, cx)
-                        })
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
                 }
                 None
@@ -326,9 +324,16 @@ impl Project {
 
         let is_windows = self.path_style(cx).is_windows();
 
+        // Prepare a task for resolving the environment
+        let env_task =
+            self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
+
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, is_windows);
+            let mut env = env_task.await.unwrap_or_default();
+            env.extend(settings.env);
+
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -339,10 +344,8 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return project
-                        .update(cx, |_, cx| {
-                            lister.activation_script(&toolchain, shell_kind, cx)
-                        })
+                    return cx
+                        .update(|cx| lister.activation_script(&toolchain, shell_kind, cx))
                         .ok();
                 }
                 None
