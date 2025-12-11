@@ -1019,6 +1019,7 @@ impl GitStore {
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
+        extra_args: &[String],
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Blame>>> {
         let buffer = buffer.read(cx);
@@ -1035,6 +1036,7 @@ impl GitStore {
         let buffer_id = buffer.remote_id();
 
         let repo = repo.downgrade();
+        let extra_args = extra_args.to_vec();
         cx.spawn(async move |_, cx| {
             let repository_state = repo
                 .update(cx, |repo, _| repo.repository_state.clone())?
@@ -1042,7 +1044,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content)
+                    .blame(repo_path.clone(), content, &extra_args)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -1052,6 +1054,7 @@ impl GitStore {
                             project_id: project_id.to_proto(),
                             buffer_id: buffer_id.into(),
                             version: serialize_version(&version),
+                            extra_args: extra_args.clone(),
                         })
                         .await?;
                     Ok(deserialize_blame_buffer_response(response))
@@ -2751,7 +2754,7 @@ impl GitStore {
             .await?;
         let blame = this
             .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), cx)
+                this.blame_buffer(&buffer, Some(version), &envelope.payload.extra_args, cx)
             })?
             .await?;
         Ok(serialize_blame_buffer_response(blame))

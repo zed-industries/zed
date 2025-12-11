@@ -18,7 +18,9 @@ use multi_buffer::{MultiBuffer, RowInfo};
 use project::{
     Project, ProjectItem as _,
     git_store::{GitStoreEvent, Repository},
+    project_settings::ProjectSettings,
 };
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
@@ -507,7 +509,16 @@ impl GitBlame {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
-                    let blame_buffer = project.blame_buffer(&buffer, None, cx);
+                    let settings = ProjectSettings::get_global(cx);
+                    let mut extra_args = Vec::new();
+                    if settings.git.blame.detect_code_movement {
+                        extra_args.push("-M".to_string());
+                    }
+                    if settings.git.blame.detect_code_movement_between_files {
+                        extra_args.push("-C".to_string());
+                    }
+
+                    let blame_buffer = project.blame_buffer(&buffer, None, &extra_args, cx);
                     let remote_url = project
                         .git_store()
                         .read(cx)

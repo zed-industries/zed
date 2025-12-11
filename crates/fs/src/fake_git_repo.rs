@@ -451,7 +451,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _extra_args: &[String],
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames

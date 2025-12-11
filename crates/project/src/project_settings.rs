@@ -403,6 +403,22 @@ pub struct BlameSettings {
     ///
     /// Default: true
     pub show_avatar: bool,
+    /// Whether to detect code movement within a file in git blame.
+    /// This enables the -M flag for git blame.
+    ///
+    /// Note: Enabling this setting may make git blame operations slower
+    /// for large repositories as it requires additional analysis.
+    ///
+    /// Default: false
+    pub detect_code_movement: bool,
+    /// Whether to detect code movement between files in git blame.
+    /// This enables the -C flag for git blame.
+    ///
+    /// Note: Enabling this setting may make git blame operations slower
+    /// for large repositories as it requires additional analysis.
+    ///
+    /// Default: false
+    pub detect_code_movement_between_files: bool,
 }
 
 impl GitSettings {
@@ -512,6 +528,10 @@ impl Settings for ProjectSettings {
                 let blame = git.blame.unwrap();
                 BlameSettings {
                     show_avatar: blame.show_avatar.unwrap(),
+                    detect_code_movement: blame.detect_code_movement.unwrap_or(false),
+                    detect_code_movement_between_files: blame
+                        .detect_code_movement_between_files
+                        .unwrap_or(false),
                 }
             },
             branch_picker: {
