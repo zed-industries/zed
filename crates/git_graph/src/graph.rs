@@ -43,6 +43,8 @@ pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<CommitData>> {
         .arg("--all")
         .arg(COMMIT_FORMAT)
         .arg("--date-order")
+        .arg("--skip=0") // todo! make these arguments passed into function
+        .arg("--max-count=5000")
         .output()
         .await?;
 
