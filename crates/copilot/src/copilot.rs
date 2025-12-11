@@ -516,7 +516,8 @@ impl Copilot {
                 None,
                 Default::default(),
                 cx,
-            )?;
+            )
+            .await?;
 
             server
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
