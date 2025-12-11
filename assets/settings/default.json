@@ -1730,7 +1730,7 @@
     "anthropic": true,
     "google-ai": true,
     "openai": true,
-    "openrouter": true,
+    "openrouter": true
   },
   // The capabilities granted to extensions.
   //
