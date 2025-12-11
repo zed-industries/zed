@@ -2769,66 +2769,6 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
-    fn layout_gutter_annotations(
-        &self,
-        buffer_rows: &[RowInfo],
-        scroll_position: gpui::Point<ScrollOffset>,
-        line_height: Pixels,
-        gutter_hitbox: &Hitbox,
-        _gutter_dimensions: &GutterDimensions,
-        snapshot: &EditorSnapshot,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Vec<AnyElement>> {
-        let annotations: Vec<_> = self.editor.read(cx).gutter_annotations().cloned().collect();
-
-        if annotations.is_empty() {
-            return None;
-        }
-
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
-
-        let elements = buffer_rows
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, row_info)| {
-                let buffer_row = row_info.buffer_row?;
-                let annotation = annotations.iter().find(|a| {
-                    let annotation_point = a.position.to_point(&buffer_snapshot);
-                    annotation_point.row == buffer_row
-                })?;
-
-                let color = (annotation.color)(cx);
-                let mut element = div()
-                    .h(line_height)
-                    .flex()
-                    .items_center()
-                    .text_ui_xs(cx)
-                    .text_color(color)
-                    .child(annotation.label.clone())
-                    .into_any_element();
-
-                let start_y = ix as f32 * line_height
-                    - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height));
-                let gutter_strip_width = Self::gutter_strip_width(line_height);
-                let start_x = gutter_strip_width + px(6.);
-                let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
-
-                element.prepaint_as_root(
-                    absolute_offset,
-                    size(AvailableSpace::MaxContent, AvailableSpace::MinContent),
-                    window,
-                    cx,
-                );
-
-                Some(element)
-            })
-            .collect();
-
-        Some(elements)
-    }
-
     fn layout_indent_guides(
         &self,
         content_origin: gpui::Point<Pixels>,
@@ -6552,23 +6492,6 @@ impl EditorElement {
         })
     }
 
-    fn paint_gutter_annotations(
-        &self,
-        layout: &mut EditorLayout,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(gutter_annotation_elements) = layout.gutter_annotation_elements.take() else {
-            return;
-        };
-
-        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
-            for mut element in gutter_annotation_elements.into_iter() {
-                element.paint(window, cx);
-            }
-        })
-    }
-
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         window.with_content_mask(
             Some(ContentMask {
@@ -9956,17 +9879,6 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let gutter_annotation_elements = self.layout_gutter_annotations(
-                        &row_infos,
-                        scroll_position,
-                        line_height,
-                        &gutter_hitbox,
-                        &gutter_dimensions,
-                        &snapshot,
-                        window,
-                        cx,
-                    );
-
                     let line_elements = self.prepaint_lines(
                         start_row,
                         &mut line_layouts,
@@ -10287,7 +10199,6 @@ impl Element for EditorElement {
                         line_elements,
                         line_numbers,
                         blamed_display_rows,
-                        gutter_annotation_elements,
                         inline_diagnostics,
                         inline_blame_layout,
                         inline_code_actions,
@@ -10354,7 +10265,6 @@ impl Element for EditorElement {
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_blamed_display_rows(layout, window, cx);
-                        self.paint_gutter_annotations(layout, window, cx);
                         self.paint_line_numbers(layout, window, cx);
                     }
 
@@ -10465,7 +10375,6 @@ pub struct EditorLayout {
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
-    gutter_annotation_elements: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame_layout: Option<InlineBlameLayout>,
     inline_code_actions: Option<AnyElement>,

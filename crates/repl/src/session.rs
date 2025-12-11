@@ -23,7 +23,6 @@ use project::InlayId;
 
 /// Marker types
 enum ReplExecutedRange {}
-enum ReplExecutionNumber {}
 
 use futures::FutureExt as _;
 use gpui::{
@@ -48,9 +47,7 @@ pub struct Session {
 
     blocks: HashMap<String, EditorBlock>,
     result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
-    execution_annotations: HashMap<String, Anchor>,
     next_inlay_id: usize,
-    execution_counter: usize,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -235,9 +232,7 @@ impl Session {
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
             blocks: HashMap::default(),
             result_inlays: HashMap::default(),
-            execution_annotations: HashMap::default(),
             next_inlay_id: 0,
-            execution_counter: 0,
             kernel_specification,
             _subscriptions: vec![subscription],
         };
@@ -371,17 +366,9 @@ impl Session {
                     }
                 });
 
-            let mut annotation_positions_to_remove: Vec<Anchor> = Vec::new();
-            for key in &keys_to_remove {
-                if let Some(position) = self.execution_annotations.remove(key) {
-                    annotation_positions_to_remove.push(position);
-                }
-            }
-
             if !blocks_to_remove.is_empty()
                 || !inlays_to_remove.is_empty()
                 || !gutter_ranges_to_remove.is_empty()
-                || !annotation_positions_to_remove.is_empty()
             {
                 self.editor
                     .update(cx, |editor, cx| {
@@ -394,12 +381,6 @@ impl Session {
                         if !gutter_ranges_to_remove.is_empty() {
                             editor.remove_gutter_highlights::<ReplExecutedRange>(
                                 gutter_ranges_to_remove,
-                                cx,
-                            );
-                        }
-                        if !annotation_positions_to_remove.is_empty() {
-                            editor.remove_gutter_annotations::<ReplExecutionNumber>(
-                                annotation_positions_to_remove,
                                 cx,
                             );
                         }
@@ -479,13 +460,11 @@ impl Session {
                 editor.remove_blocks(blocks_to_remove, None, cx);
                 editor.splice_inlays(&inlays_to_remove, vec![], cx);
                 editor.clear_gutter_highlights::<ReplExecutedRange>(cx);
-                editor.clear_gutter_annotations::<ReplExecutionNumber>(cx);
             })
             .ok();
 
         self.blocks.clear();
         self.result_inlays.clear();
-        self.execution_annotations.clear();
     }
 
     pub fn execute(
@@ -518,42 +497,25 @@ impl Session {
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
-        let mut block_keys_to_remove: Vec<String> = Vec::new();
-
-        self.blocks.retain(|key, block| {
+        self.blocks.retain(|_key, block| {
             if anchor_range.overlaps(&block.code_range, &buffer) {
                 blocks_to_remove.insert(block.block_id);
-                block_keys_to_remove.push(key.clone());
                 false
             } else {
                 true
             }
         });
 
-        let mut result_inlay_keys_to_remove: Vec<String> = Vec::new();
-
         self.result_inlays
-            .retain(|key, (inlay_id, inlay_range, _)| {
+            .retain(|_key, (inlay_id, inlay_range, _)| {
                 if anchor_range.overlaps(inlay_range, &buffer) {
                     inlays_to_remove.push(*inlay_id);
                     gutter_ranges_to_remove.push(inlay_range.clone());
-                    result_inlay_keys_to_remove.push(key.clone());
                     false
                 } else {
                     true
                 }
             });
-
-        // Remove execution annotations for both result_inlays and blocks being replaced
-        let mut annotation_positions_to_remove: Vec<Anchor> = Vec::new();
-        for key in result_inlay_keys_to_remove
-            .iter()
-            .chain(block_keys_to_remove.iter())
-        {
-            if let Some(position) = self.execution_annotations.remove(key) {
-                annotation_positions_to_remove.push(position);
-            }
-        }
 
         self.editor
             .update(cx, |editor, cx| {
@@ -564,12 +526,6 @@ impl Session {
                 if !gutter_ranges_to_remove.is_empty() {
                     editor
                         .remove_gutter_highlights::<ReplExecutedRange>(gutter_ranges_to_remove, cx);
-                }
-                if !annotation_positions_to_remove.is_empty() {
-                    editor.remove_gutter_annotations::<ReplExecutionNumber>(
-                        annotation_positions_to_remove,
-                        cx,
-                    );
                 }
             })
             .ok();
@@ -590,14 +546,9 @@ impl Session {
 
         let on_close: CloseBlockFn = Arc::new(
             move |block_id: CustomBlockId, _: &mut Window, cx: &mut App| {
-                let mut annotation_position_to_remove: Option<Anchor> = None;
-
                 if let Some(session) = session_view.upgrade() {
                     session.update(cx, |session, cx| {
                         session.blocks.remove(&parent_message_id);
-                        // Also remove the execution annotation
-                        annotation_position_to_remove =
-                            session.execution_annotations.remove(&parent_message_id);
                         cx.notify();
                     });
                 }
@@ -611,13 +562,6 @@ impl Session {
                             vec![code_range_for_close.clone()],
                             cx,
                         );
-                        // Also remove the execution annotation if it exists
-                        if let Some(position) = annotation_position_to_remove {
-                            editor.remove_gutter_annotations::<ReplExecutionNumber>(
-                                vec![position],
-                                cx,
-                            );
-                        }
                     });
                 }
             },
@@ -633,31 +577,15 @@ impl Session {
             return;
         };
 
-        // Increment execution counter and add execution number annotation
-        self.execution_counter += 1;
-        let execution_number = self.execution_counter;
-
         self.editor
             .update(cx, |editor, cx| {
-                // Add gutter highlight for the executed range
                 editor.insert_gutter_highlight::<ReplExecutedRange>(
                     anchor_range.clone(),
                     |cx| cx.theme().status().success,
                     cx,
                 );
-
-                // Add execution number annotation at the end of the cell
-                editor.insert_gutter_annotation::<ReplExecutionNumber>(
-                    anchor_range.end,
-                    format!("[{}]", execution_number),
-                    |cx| cx.theme().status().success,
-                    cx,
-                );
             })
             .ok();
-
-        self.execution_annotations
-            .insert(message.header.msg_id.clone(), anchor_range.end);
 
         let new_cursor_pos = if let Some(next_cursor) = next_cell {
             next_cursor
