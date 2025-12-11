@@ -242,7 +242,7 @@ pub fn main() {
     }
 
     zlog::init();
-    if stdout_is_a_pty() {
+    if args.foreground {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
@@ -1309,10 +1309,11 @@ struct Args {
     #[arg(long, hide = true)]
     crash_handler: Option<PathBuf>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
+    /// Print logs
+    ///
+    /// Set by CLI binary when running zed in the foreground
     #[arg(long)]
-    #[cfg(target_os = "windows")]
-    #[arg(hide = true)]
+    #[cfg_attr(debug_assertions, arg(default_value_t = true, hide = true))]
     foreground: bool,
 
     /// The dock action to perform. This is used on Windows only.
