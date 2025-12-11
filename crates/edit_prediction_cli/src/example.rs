@@ -1,10 +1,10 @@
-use crate::udiff::OpenedBuffers;
 use crate::{
     PredictionProvider, PromptFormat,
     metrics::ClassificationMetrics,
     paths::{REPOS_DIR, WORKTREES_DIR},
 };
 use anyhow::{Context as _, Result};
+use edit_prediction::udiff::OpenedBuffers;
 use gpui::Entity;
 use http_client::Url;
 use language::{Anchor, Buffer};

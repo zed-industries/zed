@@ -1,5 +1,5 @@
-use crate::udiff::DiffLine;
 use collections::{HashMap, HashSet};
+use edit_prediction::udiff::DiffLine;
 use serde::{Deserialize, Serialize};
 
 type Counts = HashMap<String, usize>;
@@ -278,7 +278,7 @@ fn count_ngrams(text: &str, n: usize) -> Counts {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::udiff::DiffLine;
+    use edit_prediction::udiff::DiffLine;
 
     #[test]
     fn test_delta_chr_f_perfect_match() {

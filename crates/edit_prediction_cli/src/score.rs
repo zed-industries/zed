@@ -4,8 +4,8 @@ use crate::{
     headless::EpAppState,
     metrics::{self, ClassificationMetrics},
     predict::run_prediction,
-    udiff::DiffLine,
 };
+use edit_prediction::udiff::DiffLine;
 use gpui::AsyncApp;
 use std::sync::Arc;
 

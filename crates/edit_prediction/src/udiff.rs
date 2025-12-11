@@ -117,6 +117,29 @@ pub async fn apply_diff(
     Ok(OpenedBuffers(included_files))
 }
 
+pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    let mut diff = DiffParser::new(diff_str);
+
+    let mut text = text.to_string();
+
+    while let Some(event) = diff.next()? {
+        match event {
+            DiffEvent::Hunk { hunk, .. } => {
+                let hunk_offset = text
+                    .find(&hunk.context)
+                    .ok_or_else(|| anyhow!("couldn't result hunk {:?}", hunk.context))?;
+                for edit in hunk.edits.iter().rev() {
+                    let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+                    text.replace_range(range, &edit.text);
+                }
+            }
+            DiffEvent::FileEnd { .. } => {}
+        }
+    }
+
+    Ok(text)
+}
+
 struct PatchFile<'a> {
     old_path: Cow<'a, str>,
     new_path: Cow<'a, str>,

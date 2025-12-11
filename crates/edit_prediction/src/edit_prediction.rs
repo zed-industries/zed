@@ -56,6 +56,9 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
+#[cfg(any(test, feature = "test-support", feature = "eval-support"))]
+pub mod udiff;
+
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
