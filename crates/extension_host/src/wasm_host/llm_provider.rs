@@ -431,12 +431,13 @@ impl ExtensionProviderConfigurationView {
             let has_credentials = credentials.is_some();
 
             // Update authentication state based on stored credentials
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 state.update(cx, |state, cx| {
                     state.is_authenticated = has_credentials;
                     cx.notify();
                 });
-            });
+            })
+            .log_err();
 
             this.update(cx, |this, cx| {
                 this.loading_credentials = false;
@@ -537,12 +538,13 @@ impl ExtensionProviderConfigurationView {
 
             let has_credentials = credentials.is_some();
 
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 state.update(cx, |state, cx| {
                     state.is_authenticated = has_credentials;
                     cx.notify();
                 });
-            });
+            })
+            .log_err();
         })
         .detach();
     }
@@ -569,12 +571,13 @@ impl ExtensionProviderConfigurationView {
                 .log_err();
 
             // Update state to authenticated
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 state.update(cx, |state, cx| {
                     state.is_authenticated = true;
                     cx.notify();
                 });
-            });
+            })
+            .log_err();
         })
         .detach();
     }
@@ -596,12 +599,13 @@ impl ExtensionProviderConfigurationView {
                 .log_err();
 
             // Update state to unauthenticated
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 state.update(cx, |state, cx| {
                     state.is_authenticated = false;
                     cx.notify();
                 });
-            });
+            })
+            .log_err();
         })
         .detach();
     }
@@ -700,13 +704,14 @@ impl ExtensionProviderConfigurationView {
                         _ => Vec::new(),
                     };
 
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         state.update(cx, |state, cx| {
                             state.is_authenticated = true;
                             state.available_models = new_models;
                             cx.notify();
                         });
-                    });
+                    })
+                    .log_err();
                     None
                 }
                 Ok(Ok(Err(e))) => {
