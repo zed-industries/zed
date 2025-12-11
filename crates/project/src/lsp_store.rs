@@ -8145,8 +8145,8 @@ impl LspStore {
             )
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
-        &'a self,
+    pub fn language_servers_for_local_buffer(
+        &self,
         buffer: &Buffer,
         cx: &mut App,
     ) -> Vec<LanguageServerId> {
