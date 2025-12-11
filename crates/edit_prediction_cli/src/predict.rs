@@ -2,7 +2,7 @@ use crate::{
     PredictionProvider, PromptFormat,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
-    format_prompt::{PromptParser, TeacherPrompt, run_format_prompt},
+    format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
@@ -30,19 +30,23 @@ pub async fn run_prediction(
         return;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await;
     run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
     let provider = provider.unwrap();
 
-    if matches!(provider, PredictionProvider::Teacher) {
+    if matches!(
+        provider,
+        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
+    ) {
         if example.prompt.is_none() {
             run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
         }
 
-        let batched = true;
+        let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
     }
+
+    run_load_project(example, app_state.clone(), cx.clone()).await;
 
     if matches!(
         provider,
@@ -75,7 +79,9 @@ pub async fn run_prediction(
                 PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
                 PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
                 PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-                PredictionProvider::Teacher => unreachable!(),
+                PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+                    unreachable!()
+                }
             };
             store.set_edit_prediction_model(model);
         })

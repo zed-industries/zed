@@ -55,7 +55,7 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-#[cfg(any(test, feature = "test-support", feature = "eval-support"))]
+#[cfg(any(test, feature = "test-support", feature = "cli-support"))]
 pub mod udiff;
 
 mod zed_edit_prediction_delegate;
@@ -158,7 +158,7 @@ pub struct EditPredictionStore {
     use_context: bool,
     options: ZetaOptions,
     update_required: bool,
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
@@ -505,7 +505,7 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            #[cfg(feature = "eval-support")]
+            #[cfg(feature = "cli-support")]
             eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2,
             sweep_ai: SweepAi::new(cx),
@@ -554,7 +554,7 @@ impl EditPredictionStore {
             .is_some()
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
     }
@@ -1590,8 +1590,8 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
-        #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
-        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
+        #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1601,7 +1601,7 @@ impl EditPredictionStore {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {
             use collections::FxHasher;
             use std::hash::{Hash, Hasher};
@@ -1635,7 +1635,7 @@ impl EditPredictionStore {
         )
         .await?;
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         if let Some((cache, request, key)) = cache_key {
             cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
@@ -1767,7 +1767,7 @@ impl EditPredictionStore {
         }
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn set_context_for_buffer(
         &mut self,
         project: &Entity<Project>,
@@ -1892,10 +1892,10 @@ pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub type EvalCacheKey = (EvalCacheEntryKind, u64);
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EvalCacheEntryKind {
     Context,
@@ -1903,7 +1903,7 @@ pub enum EvalCacheEntryKind {
     Prediction,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 impl std::fmt::Display for EvalCacheEntryKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1914,7 +1914,7 @@ impl std::fmt::Display for EvalCacheEntryKind {
     }
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub trait EvalCache: Send + Sync {
     fn read(&self, key: EvalCacheKey) -> Option<String>;
     fn write(&self, key: EvalCacheKey, input: &str, value: &str);

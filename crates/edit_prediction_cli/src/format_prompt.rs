@@ -2,9 +2,13 @@ use crate::{
     PromptFormat,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
+    load_project::run_load_project,
     retrieve_context::run_context_retrieval,
 };
-use edit_prediction::{EditPredictionStore, zeta2::zeta2_prompt_input};
+use edit_prediction::{
+    EditPredictionStore,
+    zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
+};
 use gpui::AsyncApp;
 use std::sync::Arc;
 use zeta_prompt::format_zeta_prompt;
@@ -15,11 +19,20 @@ pub async fn run_format_prompt(
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
 ) {
-    run_context_retrieval(example, app_state, cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
-    let prompt = match prompt_format {
-        PromptFormat::Teacher => TeacherPrompt::format(example),
+    match prompt_format {
+        PromptFormat::Teacher => {
+            let prompt = TeacherPrompt::format_prompt(example);
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output: example.expected_patch.clone(), // TODO
+                format: prompt_format,
+            });
+        }
         PromptFormat::Zeta2 => {
+            run_load_project(example, app_state, cx.clone()).await;
+
             let ep_store = cx
                 .update(|cx| EditPredictionStore::try_global(cx).unwrap())
                 .unwrap();
@@ -41,30 +54,28 @@ pub async fn run_format_prompt(
                     )
                 })
                 .unwrap();
-            format_zeta_prompt(&input)
+            let prompt = format_zeta_prompt(&input);
+            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone());
+            example.prompt = Some(ExamplePrompt {
+                input: prompt,
+                expected_output,
+                format: prompt_format,
+            });
         }
     };
-
-    example.prompt = Some(ExamplePrompt {
-        input: prompt,
-        expected_output: example.expected_patch.clone(), // TODO
-        format: prompt_format,
-    });
-}
-
-pub trait PromptFormatter {
-    fn format(example: &Example) -> String;
-}
-
-pub trait PromptParser {
-    /// Return unified diff patch of prediction given raw LLM response
-    fn parse(example: &Example, response: &str) -> String;
 }
 
 pub struct TeacherPrompt;
 
-impl PromptFormatter for TeacherPrompt {
-    fn format(example: &Example) -> String {
+impl TeacherPrompt {
+    const PROMPT: &str = include_str!("teacher.prompt.md");
+    pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
+    pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+
+    /// Truncate edit history to this number of last lines
+    const MAX_HISTORY_LINES: usize = 128;
+
+    pub fn format_prompt(example: &Example) -> String {
         let edit_history = Self::format_edit_history(&example.edit_history);
         let context = Self::format_context(example);
         let editable_region = Self::format_editable_region(example);
@@ -76,15 +87,46 @@ impl PromptFormatter for TeacherPrompt {
 
         prompt
     }
-}
 
-impl TeacherPrompt {
-    const PROMPT: &str = include_str!("teacher.prompt.md");
-    pub(crate) const EDITABLE_REGION_START: &str = "<|editable_region_start|>\n";
-    pub(crate) const EDITABLE_REGION_END: &str = "<|editable_region_end|>";
+    pub fn parse(example: &Example, response: &str) -> String {
+        // Ideally, we should always be able to find cursor position in the retrieved context.
+        // In reality, sometimes we don't find it for these reasons:
+        // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
+        //    (can be fixed by getting cursor coordinates at the load_example stage)
+        // 2. Context retriever just didn't include cursor line.
+        //
+        // In that case, fallback to using `cursor_position` as excerpt.
+        let cursor_file = &example
+            .buffer
+            .as_ref()
+            .expect("`buffer` should be filled in in the context collection step")
+            .content;
 
-    /// Truncate edit history to this number of last lines
-    const MAX_HISTORY_LINES: usize = 128;
+        // Extract updated (new) editable region from the model response
+        let new_editable_region = extract_last_codeblock(response);
+
+        // Reconstruct old editable region we sent to the model
+        let old_editable_region = Self::format_editable_region(example);
+        let old_editable_region = Self::extract_editable_region(&old_editable_region);
+        if !cursor_file.contains(&old_editable_region) {
+            panic!("Something's wrong: editable_region is not found in the cursor file")
+        }
+
+        // Apply editable region to a larger context and compute diff.
+        // This is needed to get a better context lines around the editable region
+        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
+        let diff = language::unified_diff(&cursor_file, &edited_file);
+
+        let diff = indoc::formatdoc! {"
+            --- a/{path}
+            +++ b/{path}
+            {diff}",
+            path = example.cursor_path.to_string_lossy(),
+            diff = diff,
+        };
+
+        diff
+    }
 
     fn format_edit_history(edit_history: &str) -> String {
         // Strip comments ("garbage lines") from edit history
@@ -157,49 +199,6 @@ impl TeacherPrompt {
     }
 }
 
-impl PromptParser for TeacherPrompt {
-    fn parse(example: &Example, response: &str) -> String {
-        // Ideally, we should always be able to find cursor position in the retrieved context.
-        // In reality, sometimes we don't find it for these reasons:
-        // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
-        //    (can be fixed by getting cursor coordinates at the load_example stage)
-        // 2. Context retriever just didn't include cursor line.
-        //
-        // In that case, fallback to using `cursor_position` as excerpt.
-        let cursor_file = &example
-            .buffer
-            .as_ref()
-            .expect("`buffer` should be filled in in the context collection step")
-            .content;
-
-        // Extract updated (new) editable region from the model response
-        let new_editable_region = extract_last_codeblock(response);
-
-        // Reconstruct old editable region we sent to the model
-        let old_editable_region = Self::format_editable_region(example);
-        let old_editable_region = Self::extract_editable_region(&old_editable_region);
-        if !cursor_file.contains(&old_editable_region) {
-            panic!("Something's wrong: editable_region is not found in the cursor file")
-        }
-
-        // Apply editable region to a larger context and compute diff.
-        // This is needed to get a better context lines around the editable region
-        let edited_file = cursor_file.replace(&old_editable_region, &new_editable_region);
-        let diff = language::unified_diff(&cursor_file, &edited_file);
-
-        let diff = indoc::formatdoc! {"
-            --- a/{path}
-            +++ b/{path}
-            {diff}
-            ",
-            path = example.cursor_path.to_string_lossy(),
-            diff = diff,
-        };
-
-        diff
-    }
-}
-
 fn extract_last_codeblock(text: &str) -> String {
     let mut last_block = None;
     let mut search_start = 0;
@@ -221,7 +220,7 @@ fn extract_last_codeblock(text: &str) -> String {
         }
 
         if let Some(end_pos) = text[backtick_end..].find(&closing_backticks) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos - 1];
+            let code_block = &text[backtick_end + 1..backtick_end + end_pos];
             last_block = Some(code_block.to_string());
             search_start = backtick_end + end_pos + backtick_count;
         } else {
@@ -250,7 +249,7 @@ mod tests {
             `````
             "};
         let last_block = extract_last_codeblock(text);
-        assert_eq!(last_block, "last block");
+        assert_eq!(last_block, "last block\n");
     }
 
     #[test]

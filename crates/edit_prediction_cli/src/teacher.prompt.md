@@ -18,6 +18,7 @@ Focus on:
 Rules:
 - Do not just mechanically apply patterns - reason about what changes make sense given the context and the programmer's apparent goals.
 - Do not just fix syntax errors - look for the broader refactoring pattern and apply it systematically throughout the code.
+- Keep existing formatting unless it's absolutely necessary 
 
 Input format:
 - You receive small code fragments called context (structs, field definitions, function signatures, etc.). They may or may not be relevant.
