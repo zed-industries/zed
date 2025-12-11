@@ -50,9 +50,19 @@ pub enum RowRenderMechanism {
     UniformList,
 }
 
+#[derive(Default, Clone, Copy)]
+pub enum VerticalAlignment {
+    /// Align text to the top of cells
+    #[default]
+    Top,
+    /// Center text vertically in cells
+    Center,
+}
+
 #[derive(Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
+    pub(crate) vertical_alignment: VerticalAlignment,
 }
 
 impl CsvPreviewView {

@@ -6,7 +6,7 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView, Ordering, RowRenderMechanism,
+    CsvPreviewView, Ordering, RowRenderMechanism, VerticalAlignment,
     cell_selection::TableSelection,
     data_ordering::{OrderingDirection, generate_ordered_indices},
 };
@@ -225,8 +225,13 @@ impl CsvPreviewView {
             RowRenderMechanism::UniformList => "Uniform Height",
         };
 
+        let current_alignment_text = match self.settings.vertical_alignment {
+            VerticalAlignment::Top => "Top",
+            VerticalAlignment::Center => "Center",
+        };
+
         let view = cx.entity();
-        let dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+        let rendering_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
             menu.entry("Variable Height", None, {
                 let view = view.clone();
                 move |_window, cx| {
@@ -247,26 +252,72 @@ impl CsvPreviewView {
             })
         });
 
+        let alignment_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("Top", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.vertical_alignment = VerticalAlignment::Top;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("Center", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.vertical_alignment = VerticalAlignment::Center;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
         h_flex()
-            .gap_2()
+            .gap_4()
             .p_2()
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().colors().text_muted)
-                    .child("Rendering Mode:"),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child("Rendering Mode:"),
+                    )
+                    .child(
+                        DropdownMenu::new(
+                            ElementId::Name("rendering-mode-dropdown".into()),
+                            current_mode_text,
+                            rendering_dropdown_menu,
+                        )
+                        .trigger_size(ButtonSize::Compact)
+                        .trigger_tooltip(Tooltip::text("Choose between variable height (multiline support) or uniform height (better performance)"))
+                    ),
             )
             .child(
-                DropdownMenu::new(
-                    ElementId::Name("rendering-mode-dropdown".into()),
-                    current_mode_text,
-                    dropdown_menu,
-                )
-                .trigger_size(ButtonSize::Compact)
-                .trigger_tooltip(Tooltip::text("Choose between variable height (multiline support) or uniform height (better performance)"))
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child("Text Alignment:"),
+                    )
+                    .child(
+                        DropdownMenu::new(
+                            ElementId::Name("vertical-alignment-dropdown".into()),
+                            current_alignment_text,
+                            alignment_dropdown_menu,
+                        )
+                        .trigger_size(ButtonSize::Compact)
+                        .trigger_tooltip(Tooltip::text("Choose vertical text alignment within cells"))
+                    ),
             )
             .into_any_element()
     }
@@ -311,6 +362,14 @@ impl CsvPreviewView {
             div()
                 .child(line_number)
                 .text_color(line_num_text_color)
+                .when(
+                    matches!(this.settings.vertical_alignment, VerticalAlignment::Top),
+                    |div| div.items_start(),
+                )
+                .when(
+                    matches!(this.settings.vertical_alignment, VerticalAlignment::Center),
+                    |div| div.items_center(),
+                )
                 .into_any_element(),
         );
 
@@ -332,6 +391,7 @@ impl CsvPreviewView {
                 cx.entity(),
                 selected_bg,
                 is_selected,
+                this.settings.vertical_alignment,
             ));
         }
 
@@ -373,6 +433,14 @@ impl CsvPreviewView {
                     div()
                         .child(line_number)
                         .text_color(line_num_text_color)
+                        .when(
+                            matches!(this.settings.vertical_alignment, VerticalAlignment::Top),
+                            |div| div.items_start(),
+                        )
+                        .when(
+                            matches!(this.settings.vertical_alignment, VerticalAlignment::Center),
+                            |div| div.items_center(),
+                        )
                         .into_any_element(),
                 );
 
@@ -397,6 +465,7 @@ impl CsvPreviewView {
                         cx.entity(),
                         selected_bg,
                         is_selected,
+                        this.settings.vertical_alignment,
                     ));
                 }
 
