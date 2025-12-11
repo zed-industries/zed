@@ -1612,7 +1612,9 @@ impl AgentPanel {
                                         let thread_view = thread_view.clone();
                                         move |_, _window, cx| {
                                             thread_view.update(cx, |thread_view, cx| {
-                                                if let Some(thread) = thread_view.as_native_thread(cx) {
+                                                if let Some(thread) =
+                                                    thread_view.as_native_thread(cx)
+                                                {
                                                     thread.update(cx, |thread, cx| {
                                                         thread.generate_title(cx);
                                                     });
