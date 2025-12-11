@@ -712,11 +712,15 @@ impl ExtensionStore {
 
         cx.spawn(async move |this, cx| {
             for extension_id in extensions_to_install {
-                // HACK: In debug builds, check if extension exists locally in repo's extensions/ dir
-                // and install as dev extension instead of fetching from registry.
-                // This allows testing unpublished extensions.
+                // When enabled, this checks if an extension exists locally in the repo's extensions/
+                // directory and installs it as a dev extension instead of fetching from the registry.
+                // This is useful for testing auto-installed extensions before they've been published.
+                // Set to `true` only during local development/testing of new auto-install extensions.
                 #[cfg(debug_assertions)]
-                {
+                const DEBUG_ALLOW_UNPUBLISHED_AUTO_EXTENSIONS: bool = false;
+
+                #[cfg(debug_assertions)]
+                if DEBUG_ALLOW_UNPUBLISHED_AUTO_EXTENSIONS {
                     let local_extension_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .parent()
                         .unwrap()
