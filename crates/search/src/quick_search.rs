@@ -16,7 +16,9 @@ use ui::{
     ListItem, ListItemSpacing, SpinnerLabel, Tooltip, prelude::*, rems_from_px,
 };
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{ModalView, Workspace, searchable::SearchableItemHandle};
+use workspace::{
+    Item, ModalView, Save, Workspace, item::SaveOptions, searchable::SearchableItemHandle,
+};
 
 use crate::{
     SearchOption, SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
@@ -176,7 +178,6 @@ enum QuickSearchItem {
     LineMatch {
         project_path: ProjectPath,
         file_key: SharedString,
-        buffer: Entity<Buffer>,
         line: u32,
         line_label: SharedString,
         preview_text: SharedString,
@@ -205,8 +206,10 @@ pub struct QuickSearchDelegate {
 
 pub struct QuickSearchModal {
     picker: Entity<Picker<QuickSearchDelegate>>,
+    project: Entity<Project>,
     preview_editor: Option<Entity<Editor>>,
     preview_buffer: Option<Entity<Buffer>>,
+    preview_pending_path: Option<ProjectPath>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -317,7 +320,9 @@ impl Render for QuickSearchModal {
                                     )
                                     .child(self.picker.clone()),
                             )
-                            .child(
+                            .child({
+                                let project = self.project.clone();
+                                let save_preview_editor = preview_editor.clone();
                                 v_flex()
                                     .id("quick-search-preview")
                                     .relative()
@@ -327,6 +332,22 @@ impl Render for QuickSearchModal {
                                     .bg(cx.theme().colors().editor_background)
                                     .on_click(move |_, window, cx| {
                                         window.focus(&picker.focus_handle(cx));
+                                    })
+                                    .on_action({
+                                        move |_: &Save, window, cx| {
+                                            if let Some(editor) = save_preview_editor.clone() {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor
+                                                        .save(
+                                                            SaveOptions::default(),
+                                                            project.clone(),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx);
+                                                });
+                                            }
+                                        }
                                     })
                                     .when_some(preview_editor, |this, editor| this.child(editor))
                                     .when(self.preview_editor.is_none(), |this| {
@@ -341,8 +362,8 @@ impl Render for QuickSearchModal {
                                                         .color(Color::Muted),
                                                 ),
                                         )
-                                    }),
-                            ),
+                                    })
+                            }),
                     ),
             )
     }
@@ -460,7 +481,7 @@ impl QuickSearchModal {
 
         let delegate = QuickSearchDelegate {
             workspace,
-            project,
+            project: project.clone(),
             search_options: SearchOptions::NONE,
             items: Vec::new(),
             visible_indices: Vec::new(),
@@ -493,8 +514,10 @@ impl QuickSearchModal {
 
         Self {
             picker,
+            project,
             preview_editor: None,
             preview_buffer: None,
+            preview_pending_path: None,
             _subscriptions: subscriptions,
         }
     }
@@ -511,23 +534,28 @@ impl QuickSearchModal {
 
     fn update_preview(
         &mut self,
-        buffer: Option<(Entity<Buffer>, u32, Vec<std::ops::Range<text::Anchor>>)>,
+        data: Option<(ProjectPath, u32, Vec<std::ops::Range<text::Anchor>>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((buffer, line, match_ranges)) = buffer else {
+        let Some((project_path, line, match_ranges)) = data else {
             self.preview_editor = None;
             self.preview_buffer = None;
+            self.preview_pending_path = None;
             cx.notify();
             return;
         };
 
-        let same_buffer = self
+        let same_path = self
             .preview_buffer
             .as_ref()
-            .map_or(false, |b| b.entity_id() == buffer.entity_id());
+            .and_then(|b| b.read(cx).file())
+            .map_or(false, |file| {
+                file.worktree_id(cx) == project_path.worktree_id
+                    && file.path() == &project_path.path
+            });
 
-        if same_buffer {
+        if same_path {
             if let Some(editor) = &self.preview_editor {
                 editor.update(cx, |editor, cx| {
                     let point = text::Point::new(line, 0);
@@ -549,36 +577,66 @@ impl QuickSearchModal {
                     }
                 });
             }
-        } else {
-            let project = self.picker.read(cx).delegate.project.clone();
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::for_buffer(buffer.clone(), Some(project), window, cx);
-                editor.set_show_gutter(true, cx);
-                editor
-            });
-
-            editor.update(cx, |editor, cx| {
-                let point = text::Point::new(line, 0);
-                editor.go_to_singleton_buffer_point(point, window, cx);
-
-                let multi_buffer = editor.buffer().read(cx);
-                if let Some(excerpt_id) = multi_buffer.excerpt_ids().first().copied() {
-                    let multi_buffer_ranges: Vec<_> = match_ranges
-                        .iter()
-                        .map(|range| MultiBufferAnchor::range_in_buffer(excerpt_id, range.clone()))
-                        .collect();
-                    editor.highlight_background::<QuickSearchHighlights>(
-                        &multi_buffer_ranges,
-                        |_, theme| theme.colors().search_match_background,
-                        cx,
-                    );
-                }
-            });
-
-            self.preview_editor = Some(editor);
-            self.preview_buffer = Some(buffer);
+            cx.notify();
+            return;
         }
-        cx.notify();
+
+        if self.preview_pending_path.as_ref() == Some(&project_path) {
+            return;
+        }
+
+        self.preview_pending_path = Some(project_path.clone());
+
+        let project = self.project.clone();
+        let open_buffer_task = project.update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(buffer) = open_buffer_task.await else {
+                return;
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                if this.preview_pending_path.as_ref() != Some(&project_path) {
+                    return;
+                }
+                this.preview_pending_path = None;
+
+                let project = this.project.clone();
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::for_buffer(buffer.clone(), Some(project), window, cx);
+                    editor.set_show_gutter(true, cx);
+                    editor
+                });
+
+                editor.update(cx, |editor, cx| {
+                    let point = text::Point::new(line, 0);
+                    editor.go_to_singleton_buffer_point(point, window, cx);
+
+                    let multi_buffer = editor.buffer().read(cx);
+                    if let Some(excerpt_id) = multi_buffer.excerpt_ids().first().copied() {
+                        let multi_buffer_ranges: Vec<_> = match_ranges
+                            .iter()
+                            .map(|range| {
+                                MultiBufferAnchor::range_in_buffer(excerpt_id, range.clone())
+                            })
+                            .collect();
+                        editor.highlight_background::<QuickSearchHighlights>(
+                            &multi_buffer_ranges,
+                            |_, theme| theme.colors().search_match_background,
+                            cx,
+                        );
+                    }
+                });
+
+                this.preview_editor = Some(editor);
+                this.preview_buffer = Some(buffer);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -690,11 +748,11 @@ impl PickerDelegate for QuickSearchDelegate {
         let actual_index = self.actual_index(self.selected_index);
         let preview_data = actual_index.and_then(|idx| match self.items.get(idx) {
             Some(QuickSearchItem::LineMatch {
-                buffer,
+                project_path,
                 line,
                 match_ranges,
                 ..
-            }) => Some((buffer.clone(), *line, match_ranges.clone())),
+            }) => Some((project_path.clone(), *line, match_ranges.clone())),
             _ => None,
         });
 
@@ -854,7 +912,6 @@ impl PickerDelegate for QuickSearchDelegate {
                             items.push(QuickSearchItem::LineMatch {
                                 project_path: match_data.project_path,
                                 file_key: match_data.file_key,
-                                buffer: buffer.clone(),
                                 line: match_data.line,
                                 line_label: match_data.line_label,
                                 preview_text: match_data.preview_text,
@@ -881,13 +938,13 @@ impl PickerDelegate for QuickSearchDelegate {
 
             let first_line_match = items.iter().find_map(|item| {
                 if let QuickSearchItem::LineMatch {
-                    buffer,
+                    project_path,
                     line,
                     match_ranges,
                     ..
                 } = item
                 {
-                    Some((buffer.clone(), *line, match_ranges.clone()))
+                    Some((project_path.clone(), *line, match_ranges.clone()))
                 } else {
                     None
                 }
@@ -1074,12 +1131,12 @@ impl PickerDelegate for QuickSearchDelegate {
                                         delegate.actual_index(visible_ix).and_then(|idx| {
                                             match delegate.items.get(idx) {
                                                 Some(QuickSearchItem::LineMatch {
-                                                    buffer,
+                                                    project_path,
                                                     line,
                                                     match_ranges,
                                                     ..
                                                 }) => Some((
-                                                    buffer.clone(),
+                                                    project_path.clone(),
                                                     *line,
                                                     match_ranges.clone(),
                                                 )),
@@ -1335,15 +1392,13 @@ mod tests {
         };
         assert!(matches!(header, QuickSearchItem::FileHeader { .. }));
 
-        cx.update(|cx| {
-            let buffer = cx.new(|cx| language::Buffer::local("fn test() {}", cx));
+        cx.update(|_cx| {
             let line_match = QuickSearchItem::LineMatch {
                 project_path: ProjectPath {
                     worktree_id: project::WorktreeId::from_usize(0),
                     path: util::rel_path::rel_path("src/test.rs").into(),
                 },
                 file_key: "src/test.rs".into(),
-                buffer,
                 line: 0,
                 line_label: "1".into(),
                 preview_text: "fn test()".into(),
@@ -1455,9 +1510,7 @@ mod tests {
     fn test_quick_search_collapse_expand_files(cx: &mut TestAppContext) {
         init_test(cx);
 
-        cx.update(|cx| {
-            let buffer = cx.new(|cx| language::Buffer::local("fn test() {}\nfn other() {}", cx));
-
+        cx.update(|_cx| {
             let items = [
                 QuickSearchItem::FileHeader {
                     file_name: "test.rs".into(),
@@ -1470,7 +1523,6 @@ mod tests {
                         path: util::rel_path::rel_path("src/test.rs").into(),
                     },
                     file_key: "src/test.rs".into(),
-                    buffer: buffer.clone(),
                     line: 0,
                     line_label: "1".into(),
                     preview_text: "fn test()".into(),
@@ -1482,7 +1534,6 @@ mod tests {
                         path: util::rel_path::rel_path("src/test.rs").into(),
                     },
                     file_key: "src/test.rs".into(),
-                    buffer,
                     line: 1,
                     line_label: "2".into(),
                     preview_text: "fn other()".into(),
