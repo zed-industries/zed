@@ -50,6 +50,7 @@ pub struct FailureMessageInput {
     /// A brief message to the user explaining why you're unable to fulfill the request or to ask a question about the request.
     ///
     /// The message may use markdown formatting if you wish.
+    #[serde(default)]
     pub message: String,
 }
 
@@ -60,9 +61,11 @@ pub struct RewriteSectionInput {
     ///
     /// The description may use markdown formatting if you wish.
     /// This is optional - if the edit is simple or obvious, you should leave it empty.
+    #[serde(default)]
     pub description: String,
 
     /// The text to replace the section with.
+    #[serde(default)]
     pub replacement_text: String,
 }
 
@@ -424,14 +427,8 @@ impl CodegenAlternative {
                     })
                     .boxed_local()
                 };
-            self.generation = self.handle_stream(
-                telemetry_id,
-                provider_id.to_string(),
-                api_key,
-                stream,
-                None,
-                cx,
-            );
+            self.generation =
+                self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         }
 
         Ok(())
@@ -619,7 +616,6 @@ impl CodegenAlternative {
         model_provider_id: String,
         model_api_key: Option<String>,
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
-        model_explanation_source: Option<Arc<Mutex<Option<SharedString>>>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let start_time = Instant::now();
@@ -818,15 +814,6 @@ impl CodegenAlternative {
 
                 while let Some((char_ops, line_ops)) = diff_rx.next().await {
                     codegen.update(cx, |codegen, cx| {
-                        // Check for model explanation updates from the stream
-                        codegen.model_explanation = model_explanation_source
-                            .as_ref()
-                            .and_then(|source| source.lock().take());
-                        // if let Some(source) = &model_explanation_source {
-                        //     if let Some(explanation) = source.lock().take() {
-                        //         codegen.model_explanation = Some(explanation);
-                        //     }
-                        // }
                         codegen.last_equal_ranges.clear();
 
                         let edits = char_ops
@@ -1154,9 +1141,9 @@ impl CodegenAlternative {
                     let mut chars_read_so_far = chars_read_so_far.lock();
                     match tool_use.name.as_ref() {
                         "rewrite_section" => {
-                            let Ok(mut input) = serde_json::from_value::<RewriteSectionInput>(
-                                tool_use.input.clone(),
-                            ) else {
+                            let Ok(mut input) =
+                                serde_json::from_value::<RewriteSectionInput>(tool_use.input)
+                            else {
                                 return (None, None);
                             };
                             let value = input.replacement_text[*chars_read_so_far..].to_string();
@@ -1164,9 +1151,9 @@ impl CodegenAlternative {
                             (Some(value), Some(std::mem::take(&mut input.description)))
                         }
                         "failure_message" => {
-                            let Ok(mut input) = serde_json::from_value::<FailureMessageInput>(
-                                tool_use.input.clone(),
-                            ) else {
+                            let Ok(mut input) =
+                                serde_json::from_value::<FailureMessageInput>(tool_use.input)
+                            else {
                                 return (None, None);
                             };
                             (None, Some(std::mem::take(&mut input.message)))
@@ -1227,23 +1214,20 @@ impl CodegenAlternative {
             dbg!(text);
 
             let Some(first_text) = first_text else {
-                finish_with_status(
-                    CodegenStatus::Error(anyhow!("Failed to start????").into()),
-                    cx,
-                );
+                finish_with_status(CodegenStatus::Done, cx);
                 return;
             };
 
             let move_last_token_usage = last_token_usage.clone();
-            let model_explanation: Arc<Mutex<Option<SharedString>>> = Arc::new(Mutex::new(None));
-            let model_explanation_for_stream = model_explanation.clone();
+
+            let (tx, mut rx) = futures::channel::mpsc::unbounded(); // TODO
 
             let text_stream = Box::pin(futures::stream::once(async { Ok(first_text) }).chain(
                 completion_events.filter_map(move |e| {
                     let tool_to_text_and_message = tool_to_text_and_message.clone();
                     let last_token_usage = move_last_token_usage.clone();
                     let total_text = total_text.clone();
-                    let model_explanation = model_explanation_for_stream.clone();
+                    let mut tx = tx.clone();
                     async move {
                         match e {
                             Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
@@ -1253,7 +1237,7 @@ impl CodegenAlternative {
                                 ) =>
                             {
                                 let (text, message) = tool_to_text_and_message(tool_use);
-                                *model_explanation.lock() = message.map(Into::into);
+                                let _ = tx.send(message.map(Into::into)).await; // TODO
                                 text.map(Ok)
                             }
                             Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
@@ -1265,6 +1249,7 @@ impl CodegenAlternative {
                                 lock.push_str(&text);
                                 None
                             }
+                            Ok(LanguageModelCompletionEvent::Stop(_reason)) => None,
                             e => {
                                 log::error!("UNEXPECTED EVENT {:?}", e);
                                 None
@@ -1280,6 +1265,18 @@ impl CodegenAlternative {
                 last_token_usage,
             };
 
+            cx.spawn({
+                let codegen = codegen.clone();
+                async move |cx| {
+                    while let Some(message) = rx.next().await {
+                        let _ = codegen.update(cx, |this, _cx| {
+                            this.model_explanation = message;
+                        });
+                    }
+                }
+            })
+            .detach();
+
             let Some(task) = codegen
                 .update(cx, move |codegen, cx| {
                     codegen.handle_stream(
@@ -1287,7 +1284,6 @@ impl CodegenAlternative {
                         provider_id,
                         api_key,
                         async { Ok(language_model_text_stream) },
-                        Some(model_explanation.clone()),
                         cx,
                     )
                 })
@@ -1833,7 +1829,6 @@ mod tests {
                     stream: chunks_rx.map(Ok).boxed(),
                     last_token_usage: Arc::new(Mutex::new(TokenUsage::default())),
                 })),
-                None,
                 cx,
             );
         });
