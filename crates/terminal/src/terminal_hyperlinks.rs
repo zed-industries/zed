@@ -8,8 +8,8 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
     },
 };
-use fancy_regex::Regex;
 use log::{info, warn};
+use regex::Regex;
 use std::{
     ops::{Index, Range},
     time::{Duration, Instant},
@@ -308,17 +308,6 @@ fn path_match<T>(
         let mut path_found = false;
 
         for captures in regex.captures_iter(&line) {
-            let captures = match captures {
-                Ok(captures) => captures,
-                Err(error) => {
-                    warn!("Error '{error}' searching for path hyperlinks in line: {line}");
-                    info!(
-                        "Skipping match from path hyperlinks with regex: {}",
-                        regex.as_str()
-                    );
-                    continue;
-                }
-            };
             path_found = true;
             let match_range = captures.get(0).unwrap().range();
             let (path_range, line_column) = if let Some(path) = captures.name("path") {
@@ -376,7 +365,7 @@ mod tests {
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
-    use fancy_regex::Regex;
+    use regex::Regex;
     use settings::{self, Settings, SettingsContent};
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
@@ -386,7 +375,7 @@ mod tests {
         let results: Vec<_> = Regex::new(re)
             .unwrap()
             .find_iter(hay)
-            .map(|m| m.unwrap().as_str())
+            .map(|m| m.as_str())
             .collect();
         assert_eq!(results, expected);
     }
