@@ -9,7 +9,10 @@ use gpui::{
     list, px,
 };
 use graph_rendering::{accent_colors_count, render_graph_cell};
-use project::{Project, git_store::GitStoreEvent};
+use project::{
+    Project,
+    git_store::{GitStoreEvent, RepositoryEvent},
+};
 use settings::Settings;
 use std::path::PathBuf;
 use theme::ThemeSettings;
@@ -20,7 +23,7 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-use crate::graph_rendering::render_graph;
+use crate::{graph::CHUNK_SIZE, graph_rendering::render_graph};
 
 actions!(
     git_graph,
@@ -94,10 +97,10 @@ impl GitGraph {
 
         let git_store = project.read(cx).git_store().clone();
         let git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| match event {
-            GitStoreEvent::RepositoryUpdated(_, _, _)
-            | GitStoreEvent::RepositoryAdded
-            | GitStoreEvent::RepositoryRemoved(_) => {
-                this.load_data(cx);
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true)
+            | GitStoreEvent::ActiveRepositoryChanged(_) => {
+                // todo! only call load data from render, we should set a bool here
+                this.load_data(false, cx);
             }
             _ => {}
         });
@@ -127,15 +130,20 @@ impl GitGraph {
             _subscriptions: vec![git_store_subscription],
         };
 
-        this.load_data(cx);
+        this.load_data(true, cx);
         this
     }
 
-    fn load_data(&mut self, cx: &mut Context<Self>) {
+    fn load_data(&mut self, fetch_chunks: bool, cx: &mut Context<Self>) {
         let project = self.project.clone();
         self.loading = true;
         self.error = None;
-        self.graph.clear();
+
+        if self._load_task.is_some() {
+            return;
+        }
+
+        let last_loaded_chunk = self.graph.commits.len() / CHUNK_SIZE;
 
         let first_visible_worktree = project.read_with(cx, |project, cx| {
             project
@@ -153,29 +161,44 @@ impl GitGraph {
                 return;
             };
 
-            let result = crate::graph::load_commits(worktree_path.clone()).await;
+            // todo! don't count commits everytime
+            let commit_count = if fetch_chunks {
+                None
+            } else {
+                crate::graph::commit_count(&worktree_path).await.ok()
+            };
+            let result = crate::graph::load_commits(last_loaded_chunk, worktree_path.clone()).await;
 
             this.update(cx, |this, cx| {
                 this.loading = false;
-                match result {
-                    Ok(commits) => {
+                match result.map(|commits| (commits, commit_count)) {
+                    Ok((commits, commit_count)) => {
+                        if !fetch_chunks {
+                            this.graph.clear();
+                        }
+
                         this.graph.add_commits(commits);
-                        let commit_count = this.graph.commits.len();
                         this.max_lanes = this.graph.max_lanes;
                         this.work_dir = Some(worktree_path);
-                        this.list_state.reset(commit_count);
+
+                        if let Some(commit_count) = commit_count {
+                            this.graph.max_commit_count = commit_count;
+                            this.list_state.reset(commit_count);
+                        }
                     }
                     Err(e) => {
                         this.error = Some(format!("{:?}", e).into());
                     }
                 };
 
+                this._load_task.take();
                 cx.notify();
             })
             .log_err();
         }));
     }
 
+    // todo unflatten this function
     fn render_list_item(
         &mut self,
         idx: usize,
@@ -183,7 +206,9 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row_height = self.row_height;
-        let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
+        // let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
+        // todo! make these widths constant
+        let graph_width = px(16.0) * (4 as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
@@ -200,17 +225,22 @@ impl GitGraph {
     }
 
     fn render_commit_row(
-        &self,
+        &mut self,
         idx: usize,
         row_height: Pixels,
         graph_width: Pixels,
         date_width: Pixels,
         author_width: Pixels,
         commit_width: Pixels,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
+        if (idx + CHUNK_SIZE).min(self.graph.max_commit_count) > self.graph.commits.len() {
+            self.load_data(true, cx);
+        }
+
         let Some(commit) = self.graph.commits.get(idx) else {
-            return div().into_any_element();
+            // todo! loading row element
+            return div().h(row_height).into_any_element();
         };
 
         let subject: SharedString = commit.data.subject.clone().into();
@@ -302,7 +332,7 @@ impl GitGraph {
 
 impl Render for GitGraph {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let graph_width = px(16.0) * (self.max_lanes.max(2) as f32) + px(24.0);
+        let graph_width = px(16.0) * (4 as f32) + px(24.0);
         let date_width = px(140.0);
         let author_width = px(120.0);
         let commit_width = px(80.0);
@@ -335,7 +365,7 @@ impl Render for GitGraph {
                 )
         });
 
-        let content = if self.loading || self.graph.commits.is_empty() {
+        let content = if self.loading && self.graph.commits.is_empty() && false {
             let message = if self.loading {
                 "Loading commits..."
             } else {

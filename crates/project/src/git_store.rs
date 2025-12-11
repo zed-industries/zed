@@ -375,6 +375,7 @@ pub struct JobsUpdated;
 #[derive(Debug)]
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
+    /// Bool is true when the repository that's updated is the active repository
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
     RepositoryAdded,
     RepositoryRemoved(RepositoryId),

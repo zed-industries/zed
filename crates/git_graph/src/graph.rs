@@ -18,6 +18,7 @@ use util::command::new_smol_command;
 /// %D - Ref names
 /// %x1E - ASCII record separator, used to split up commit data
 static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
+pub(crate) const CHUNK_SIZE: usize = 60;
 
 pub fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -33,18 +34,38 @@ pub fn format_timestamp(timestamp: i64) -> String {
     local_datetime.format(&format).unwrap_or_default()
 }
 
+// todo! change to repo path
+// move to repo as well
+pub async fn commit_count(worktree_path: &PathBuf) -> Result<usize> {
+    let git_log_output = new_smol_command("git")
+        .current_dir(worktree_path)
+        .arg("rev-list")
+        .arg("--all")
+        .arg("--count")
+        .output()
+        .await?;
+
+    let stdout = String::from_utf8_lossy(&git_log_output.stdout);
+    Ok(stdout.trim().parse::<usize>()?)
+}
+
 // todo: This function should be on a background thread, and it should return a chunk of commits at a time
 // we should also be able to specify the order
 // todo: Make this function work over collab as well
-pub async fn load_commits(worktree_path: PathBuf) -> Result<Vec<CommitData>> {
+pub async fn load_commits(
+    chunk_position: usize,
+    worktree_path: PathBuf, //todo! Change to repo path
+) -> Result<Vec<CommitData>> {
+    let start = chunk_position * CHUNK_SIZE;
+
     let git_log_output = new_smol_command("git")
         .current_dir(worktree_path)
         .arg("log")
         .arg("--all")
         .arg(COMMIT_FORMAT)
         .arg("--date-order")
-        .arg("--skip=0") // todo! make these arguments passed into function
-        .arg("--max-count=5000")
+        .arg(format!("--skip={start}"))
+        .arg(format!("--max-count={}", CHUNK_SIZE))
         .output()
         .await?;
 
@@ -159,6 +180,7 @@ pub struct GitGraph {
     next_color: BranchColor,
     accent_colors_count: usize,
     pub commits: Vec<Rc<CommitEntry>>,
+    pub max_commit_count: usize,
     pub max_lanes: usize,
 }
 
@@ -170,6 +192,7 @@ impl GitGraph {
             next_color: BranchColor(0),
             accent_colors_count,
             commits: Vec::default(),
+            max_commit_count: 0,
             max_lanes: 0,
         }
     }
@@ -284,6 +307,7 @@ impl GitGraph {
                             continues_from_above: false,
                             ends_at_commit: false,
                         });
+                    // base commit
                     } else if parent_idx == 0 {
                         self.lane_states[commit_lane] = LaneState::Active {
                             sha: *parent,

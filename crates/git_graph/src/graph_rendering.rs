@@ -19,10 +19,12 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
     let row_height = graph.row_height;
     let scroll_offset = top_row.offset_in_item;
     let first_visible_row = top_row.item_ix;
+    let graph_width = px(16.0) * (4 as f32) + px(24.0);
+    let loaded_commit_count = graph.graph.commits.len();
 
     // todo! Figure out how we can avoid over allocating this data
-    let rows = graph.graph.commits
-        [first_visible_row..(first_visible_row + 50).min(graph.graph.commits.len())]
+    let rows = graph.graph.commits[first_visible_row.min(loaded_commit_count.saturating_sub(1))
+        ..(first_visible_row + 50).min(loaded_commit_count)]
         .to_vec();
 
     canvas(
@@ -103,7 +105,7 @@ pub fn render_graph(graph: &GitGraph) -> impl IntoElement {
             })
         },
     )
-    .w(px(16.0) * (graph.max_lanes.max(2) as f32) + px(24.0))
+    .w(graph_width)
     .h_full()
 }
 
