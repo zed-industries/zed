@@ -6,6 +6,7 @@ mod load_project;
 mod metrics;
 mod paths;
 mod predict;
+mod progress;
 mod retrieve_context;
 mod score;
 
@@ -20,6 +21,7 @@ use crate::example::{read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::predict::run_prediction;
+use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 
@@ -144,26 +146,33 @@ fn main() {
                 _ => (),
             };
 
+            let progress = Progress::new();
             let chunks = examples.chunks_mut(args.max_parallelism);
-            let total_chunks = chunks.len();
-            for (batch_ix, data) in chunks.enumerate() {
+            for data in chunks {
                 let mut futures = Vec::new();
-                eprintln!("Processing batch: {}/{}", batch_ix + 1, total_chunks);
 
                 for example in data.iter_mut() {
                     let cx = cx.clone();
                     let app_state = app_state.clone();
+                    let progress = progress.clone();
                     futures.push(async {
                         match &command {
                             Command::ParseExample => {}
                             Command::LoadProject => {
-                                run_load_project(example, app_state.clone(), cx).await;
+                                run_load_project(example, app_state.clone(), progress, cx).await;
                             }
                             Command::Context => {
-                                run_context_retrieval(example, app_state, cx).await;
+                                run_context_retrieval(example, app_state, progress, cx).await;
                             }
                             Command::FormatPrompt(args) => {
-                                run_format_prompt(example, args.prompt_format, app_state, cx).await;
+                                run_format_prompt(
+                                    example,
+                                    args.prompt_format,
+                                    app_state,
+                                    progress,
+                                    cx,
+                                )
+                                .await;
                             }
                             Command::Predict(args) => {
                                 run_prediction(
@@ -171,12 +180,13 @@ fn main() {
                                     Some(args.provider),
                                     args.repetitions,
                                     app_state.clone(),
+                                    progress,
                                     cx,
                                 )
                                 .await;
                             }
                             Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(example, &args, app_state, cx).await;
+                                run_scoring(example, &args, app_state, progress, cx).await;
                             }
                             Command::Clean => {
                                 unreachable!()
@@ -186,6 +196,7 @@ fn main() {
                 }
                 futures::future::join_all(futures).await;
             }
+            progress.clear();
 
             if args.output.is_some() || !matches!(command, Command::Eval(_)) {
                 write_examples(&examples, output.as_ref());

@@ -1,6 +1,7 @@
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
+    progress::{Progress, Step},
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -23,10 +24,17 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::CURSOR_MARKER;
 
-pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>, mut cx: AsyncApp) {
+pub async fn run_load_project(
+    example: &mut Example,
+    app_state: Arc<EpAppState>,
+    progress: Arc<Progress>,
+    mut cx: AsyncApp,
+) {
     if example.state.is_some() {
         return;
     }
+
+    let _progress = progress.start(Step::LoadProject, &example.name);
 
     let project = setup_project(example, &app_state, &mut cx).await;
     let buffer_store = project

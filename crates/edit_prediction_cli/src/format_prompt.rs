@@ -2,6 +2,7 @@ use crate::{
     PromptFormat,
     example::{Example, ExamplePrompt},
     headless::EpAppState,
+    progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{EditPredictionStore, zeta2::zeta2_prompt_input};
@@ -13,9 +14,12 @@ pub async fn run_format_prompt(
     example: &mut Example,
     prompt_format: PromptFormat,
     app_state: Arc<EpAppState>,
+    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
-    run_context_retrieval(example, app_state, cx.clone()).await;
+    run_context_retrieval(example, app_state, progress.clone(), cx.clone()).await;
+
+    let _progress = progress.start(Step::FormatPrompt, &example.name);
 
     let prompt = match prompt_format {
         PromptFormat::Teacher => TeacherPrompt::format(example),

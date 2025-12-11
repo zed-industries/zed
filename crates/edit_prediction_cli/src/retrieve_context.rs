@@ -2,6 +2,7 @@ use crate::{
     example::{Example, ExampleContext},
     headless::EpAppState,
     load_project::run_load_project,
+    progress::{Progress, Step},
 };
 use collections::HashSet;
 use edit_prediction::{DebugEvent, EditPredictionStore};
@@ -9,18 +10,22 @@ use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity};
 use language::Buffer;
 use project::Project;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
+    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
     if example.context.is_some() {
         return;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await;
+    run_load_project(example, app_state.clone(), progress.clone(), cx.clone()).await;
+
+    let _progress = progress.start(Step::Context, &example.name);
 
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();
@@ -30,7 +35,7 @@ pub async fn run_context_retrieval(
             project.register_buffer_with_language_servers(&state.buffer, cx)
         })
         .unwrap();
-    wait_for_language_servers_to_start(example, &project, &state.buffer, &mut cx).await;
+    wait_for_language_servers_to_start(example, &project, &state.buffer, &progress, &mut cx).await;
 
     let ep_store = cx
         .update(|cx| EditPredictionStore::try_global(cx).unwrap())
@@ -67,10 +72,9 @@ async fn wait_for_language_servers_to_start(
     example: &Example,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
+    progress: &Arc<Progress>,
     cx: &mut AsyncApp,
 ) {
-    let log_prefix = format!("{} | ", example.name);
-
     let lsp_store = project
         .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
@@ -83,17 +87,18 @@ async fn wait_for_language_servers_to_start(
         })
         .unwrap_or_default();
 
-    if !lang_server_ids.is_empty() {
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .unwrap()
-            .detach();
+    if lang_server_ids.is_empty() {
+        return;
     }
 
-    eprintln!(
-        "{}⏵ Waiting for {} language servers",
-        log_prefix,
-        lang_server_ids.len()
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .unwrap()
+        .detach();
+
+    progress.set_substatus(
+        &example.name,
+        format!("waiting for {} LSPs", lang_server_ids.len()),
     );
 
     let timeout = cx
@@ -103,10 +108,11 @@ async fn wait_for_language_servers_to_start(
 
     let (mut tx, mut rx) = mpsc::channel(lang_server_ids.len());
     let added_subscription = cx.subscribe(project, {
-        let log_prefix = log_prefix.clone();
+        let progress = progress.clone();
+        let example_name = example.name.clone();
         move |_, event, _| match event {
             project::Event::LanguageServerAdded(language_server_id, name, _) => {
-                eprintln!("{}+ Language server started: {}", log_prefix, name);
+                progress.set_substatus(&example_name, format!("LSP started: {}", name));
                 tx.try_send(*language_server_id).ok();
             }
             _ => {}
@@ -132,7 +138,8 @@ async fn wait_for_language_servers_to_start(
     let (mut tx, mut rx) = mpsc::channel(lang_server_ids.len());
     let subscriptions = [
         cx.subscribe(&lsp_store, {
-            let log_prefix = log_prefix.clone();
+            let progress = progress.clone();
+            let example_name = example.name.clone();
             move |_, event, _| {
                 if let project::LspStoreEvent::LanguageServerUpdate {
                     message:
@@ -145,12 +152,13 @@ async fn wait_for_language_servers_to_start(
                     ..
                 } = event
                 {
-                    eprintln!("{}⟲ {message}", log_prefix)
+                    progress.set_substatus(&example_name, message.clone());
                 }
             }
         }),
         cx.subscribe(project, {
-            let log_prefix = log_prefix.clone();
+            let progress = progress.clone();
+            let example_name = example.name.clone();
             move |_, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     let lsp_store = lsp_store.read(cx);
@@ -158,7 +166,7 @@ async fn wait_for_language_servers_to_start(
                         .language_server_adapter_for_id(*language_server_id)
                         .unwrap()
                         .name();
-                    eprintln!("{}⚑ Language server idle: {}", log_prefix, name);
+                    progress.set_substatus(&example_name, format!("LSP idle: {}", name));
                     tx.try_send(*language_server_id).ok();
                 }
                 _ => {}
@@ -187,4 +195,5 @@ async fn wait_for_language_servers_to_start(
     }
 
     drop(subscriptions);
+    progress.clear_substatus(&example.name);
 }

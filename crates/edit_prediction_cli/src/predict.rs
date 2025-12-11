@@ -6,6 +6,7 @@ use crate::{
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
+    progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{DebugEvent, EditPredictionStore};
@@ -24,20 +25,30 @@ pub async fn run_prediction(
     provider: Option<PredictionProvider>,
     repetition_count: usize,
     app_state: Arc<EpAppState>,
+    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
     if !example.predictions.is_empty() {
         return;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await;
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
+    run_load_project(example, app_state.clone(), progress.clone(), cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), progress.clone(), cx.clone()).await;
+
+    let _progress = progress.start(Step::Predict, &example.name);
 
     let provider = provider.unwrap();
 
     if matches!(provider, PredictionProvider::Teacher) {
         if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
+            run_format_prompt(
+                example,
+                PromptFormat::Teacher,
+                app_state.clone(),
+                progress,
+                cx,
+            )
+            .await;
         }
 
         let batched = true;
