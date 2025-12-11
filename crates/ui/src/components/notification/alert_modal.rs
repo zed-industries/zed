@@ -238,7 +238,7 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                                     .child(
                                         h_flex()
                                             .gap_1()
-                                            .child(Button::new("restricted", "Open in Restricted Mode").color(Color::Muted))
+                                            .child(Button::new("restricted", "Stay in Restricted Mode").color(Color::Muted))
                                             .child(Button::new("trust", "Trust and Continue").style(ButtonStyle::Filled))
                                     )
                             )
