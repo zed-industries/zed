@@ -21,7 +21,7 @@ use language::{
     language_settings::{EditPredictionProvider, all_language_settings, language_settings},
     point_from_lsp, point_to_lsp,
 };
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName, };
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;

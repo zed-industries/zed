@@ -1,14 +1,12 @@
 use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
-    App, AsyncApp, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Point, Render, Styled, Subscription, Window, WindowBounds, WindowOptions, div,
-    svg,
+    App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Point,
+    Render, Styled, Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
 };
 use ui::{Button, CommonAnimationExt, ConfiguredApiCard, Label, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::notifications::NotificationId;
-use workspace::{ModalView, Toast, Workspace};
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 
@@ -54,10 +52,9 @@ fn open_copilot_code_verification_window(
     copilot: &Entity<Copilot>,
     cx: &mut App,
 ) {
-    // todo! actually center
     let window_size = px(400.);
     let window_bounds = WindowBounds::Windowed(gpui::bounds(
-        current_window_center,
+        current_window_center - point(window_size / 2.0, window_size / 2.0),
         gpui::size(window_size, window_size),
     ));
     cx.open_window(
@@ -66,9 +63,13 @@ fn open_copilot_code_verification_window(
             window_bounds: Some(window_bounds),
             is_resizable: false,
             is_movable: true,
+            titlebar: Some(gpui::TitlebarOptions {
+                appears_transparent: true,
+                ..Default::default()
+            }),
             ..Default::default()
         },
-        |_, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, cx)),
+        |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
     )
     .expect("todo!");
 }
@@ -181,24 +182,28 @@ impl Focusable for CopilotCodeVerification {
 }
 
 impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
-impl ModalView for CopilotCodeVerification {
-    fn on_before_dismiss(
-        &mut self,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> workspace::DismissDecision {
-        self.copilot.update(cx, |copilot, cx| {
-            if matches!(copilot.status(), Status::SigningIn { .. }) {
-                copilot.sign_out(cx).detach_and_log_err(cx);
-            }
-        });
-        workspace::DismissDecision::Dismiss(true)
-    }
-}
 
 impl CopilotCodeVerification {
-    pub fn new(copilot: &Entity<Copilot>, cx: &mut Context<Self>) -> Self {
-        let status = dbg!(copilot.read(cx).status());
+    pub fn new(copilot: &Entity<Copilot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        window.on_window_should_close(cx, |window, cx| {
+            if let Some(this) = window.root::<CopilotCodeVerification>().flatten() {
+                this.update(cx, |this, cx| {
+                    this.before_dismiss(cx);
+                });
+            }
+            true
+        });
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                window.remove_window();
+                this.before_dismiss(cx);
+            },
+        )
+        .detach();
+
+        let status = copilot.read(cx).status();
         Self {
             status,
             connect_clicked: false,
@@ -210,7 +215,7 @@ impl CopilotCodeVerification {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
                         this.set_status(dbg!(status), cx)
                     }
-                    status @ _ => _ = dbg!(status, cx.emit(DismissEvent)),
+                    _ => cx.emit(DismissEvent),
                 }
             }),
         }
@@ -323,6 +328,18 @@ impl CopilotCodeVerification {
                     .full_width()
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
+    }
+
+    fn before_dismiss(
+        &mut self,
+        cx: &mut Context<'_, CopilotCodeVerification>,
+    ) -> workspace::DismissDecision {
+        self.copilot.update(cx, |copilot, cx| {
+            if matches!(copilot.status(), Status::SigningIn { .. }) {
+                copilot.sign_out(cx).detach_and_log_err(cx);
+            }
+        });
+        workspace::DismissDecision::Dismiss(true)
     }
 }
 
