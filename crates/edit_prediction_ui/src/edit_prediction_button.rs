@@ -1082,6 +1082,7 @@ impl EditPredictionButton {
                 ContextMenuEntry::new("Configure Providers")
                     .icon(IconName::Settings)
                     .icon_position(IconPosition::Start)
+                    .icon_color(Color::Muted)
                     .handler(move |window, cx| {
                         window.dispatch_action(
                             OpenSettingsAt {

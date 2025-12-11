@@ -25,6 +25,7 @@ impl Render for EditPredictionSetupPage {
         // todo! skip ep_store for loading keys
         let ep_store = EditPredictionStore::try_global(cx);
 
+        // todo! github copilot
         let providers = [
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
                 render_api_key_provider(
@@ -208,5 +209,3 @@ fn render_api_key_provider<Ent: 'static>(
 
     container
 }
-
-// todo! github copilot
