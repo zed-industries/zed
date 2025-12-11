@@ -2502,6 +2502,40 @@ impl LspAdapter for PyreflyLspAdapter {
             language.highlight_text(&text.as_str().into(), display_range),
         ))
     }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        _: Option<Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            if let Some(toolchain) = toolchain
+                && let Ok(env) =
+                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
+            {
+                if !user_settings.is_object() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+
+                if let Some(interpreter_path) = &env.environment.executable {
+                    object.insert(
+                        "pythonPath".to_owned(),
+                        Value::String(interpreter_path.to_string_lossy().into_owned()),
+                    );
+                }
+            }
+
+            user_settings
+        })
+    }
 }
 
 impl LspInstaller for PyreflyLspAdapter {
