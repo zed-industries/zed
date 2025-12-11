@@ -1,7 +1,4 @@
-use anyhow::Result;
-use std::path::PathBuf;
 use time::{OffsetDateTime, UtcOffset};
-use util::command::new_smol_command;
 
 pub(crate) fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -46,19 +43,4 @@ pub struct CommitEntry {
     pub lane: usize,
     pub color_idx: usize,
     pub lines: Vec<GraphLine>,
-}
-
-pub async fn run_git_command(work_dir: &PathBuf, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
-        .current_dir(work_dir)
-        .args(args)
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{}", stderr);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

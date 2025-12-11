@@ -6,12 +6,11 @@ use anyhow::Context as _;
 use git;
 use git_ui::commit_view::CommitView;
 use gpui::{
-    Action, App, ClickEvent, ClipboardItem, Context, Corner, DismissEvent, ElementId, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, ListAlignment, ListState,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, list, px,
+    Action, App, ClickEvent, Context, Corner, DismissEvent, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, ListAlignment, ListState, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Styled, Subscription, Task,
+    WeakEntity, Window, actions, anchored, deferred, list, px,
 };
-use menu;
 use project::Project;
 use project::git_store::{GitStoreEvent, Repository};
 use settings::Settings;
@@ -19,13 +18,11 @@ use std::path::PathBuf;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{ContextMenu, Tooltip};
-use ui_input::InputField;
 use util::ResultExt;
-use workspace::ModalView;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
 
-use commit_data::{CommitEntry, run_git_command};
+use commit_data::CommitEntry;
 use graph_rendering::{
     BRANCH_COLORS, BadgeType, parse_refs_to_badges, render_graph_cell, render_graph_continuation,
 };
@@ -102,248 +99,6 @@ pub enum InputModalKind {
     CreateTag { sha: String },
     RenameBranch { old_name: String },
     CheckoutRemoteBranch { remote_branch: String },
-}
-
-pub struct InputModal {
-    focus_handle: FocusHandle,
-    input: Entity<InputField>,
-    kind: InputModalKind,
-    work_dir: PathBuf,
-    git_graph: WeakEntity<GitGraph>,
-    push_to_remote: bool,
-}
-
-impl InputModal {
-    pub fn new(
-        kind: InputModalKind,
-        placeholder: impl Into<SharedString>,
-        default_value: &str,
-        work_dir: PathBuf,
-        git_graph: WeakEntity<GitGraph>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let placeholder_text: SharedString = placeholder.into();
-        let default_text = default_value.to_string();
-        let input = cx.new(|cx| {
-            let field = InputField::new(window, cx, placeholder_text);
-            field.set_text(default_text, window, cx);
-            field
-        });
-
-        Self {
-            focus_handle: cx.focus_handle(),
-            input,
-            kind,
-            work_dir,
-            git_graph,
-            push_to_remote: false,
-        }
-    }
-
-    fn supports_push(&self) -> bool {
-        matches!(
-            self.kind,
-            InputModalKind::CreateBranch { .. } | InputModalKind::CreateTag { .. }
-        )
-    }
-
-    fn is_checkout_remote(&self) -> bool {
-        matches!(self.kind, InputModalKind::CheckoutRemoteBranch { .. })
-    }
-
-    fn toggle_push_to_remote(&mut self, cx: &mut Context<Self>) {
-        self.push_to_remote = !self.push_to_remote;
-        cx.notify();
-    }
-
-    fn title(&self) -> &'static str {
-        match &self.kind {
-            InputModalKind::CreateBranch { .. } => "Create Branch",
-            InputModalKind::CreateTag { .. } => "Create Tag",
-            InputModalKind::RenameBranch { .. } => "Rename Branch",
-            InputModalKind::CheckoutRemoteBranch { .. } => "Checkout Remote Branch",
-        }
-    }
-
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        let input_text = self.input.read(cx).text(cx);
-        if input_text.is_empty() {
-            return;
-        }
-
-        let work_dir = self.work_dir.clone();
-        let kind = self.kind.clone();
-        let git_graph = self.git_graph.clone();
-        let push_to_remote = self.push_to_remote;
-
-        cx.spawn(async move |_, cx| {
-            let result = match &kind {
-                InputModalKind::CreateBranch { sha } => {
-                    run_git_command(&work_dir, &["branch", &input_text, sha]).await
-                }
-                InputModalKind::CreateTag { sha } => {
-                    run_git_command(&work_dir, &["tag", &input_text, sha]).await
-                }
-                InputModalKind::RenameBranch { old_name } => {
-                    run_git_command(&work_dir, &["branch", "-m", old_name, &input_text]).await
-                }
-                InputModalKind::CheckoutRemoteBranch { remote_branch } => {
-                    run_git_command(&work_dir, &["checkout", "-b", &input_text, remote_branch])
-                        .await
-                }
-            };
-
-            let post_result = if result.is_ok() && push_to_remote {
-                match &kind {
-                    InputModalKind::CreateBranch { .. } => {
-                        run_git_command(&work_dir, &["push", "-u", "origin", &input_text]).await
-                    }
-                    InputModalKind::CreateTag { .. } => {
-                        run_git_command(&work_dir, &["push", "origin", &input_text]).await
-                    }
-                    InputModalKind::CheckoutRemoteBranch { .. } => {
-                        run_git_command(&work_dir, &["pull"]).await
-                    }
-                    InputModalKind::RenameBranch { .. } => Ok(String::new()),
-                }
-            } else {
-                Ok(String::new())
-            };
-
-            git_graph
-                .update(cx, |this, cx| {
-                    match (&result, &post_result) {
-                        (Ok(_), Ok(_)) => {
-                            this.error = None;
-                            this.load_data(cx);
-                        }
-                        (Err(e), _) => {
-                            this.error = Some(format!("Failed: {}", e).into());
-                        }
-                        (Ok(_), Err(e)) => {
-                            this.error =
-                                Some(format!("Checkout succeeded but pull failed: {}", e).into());
-                            this.load_data(cx);
-                        }
-                    }
-                    cx.notify();
-                })
-                .log_err();
-        })
-        .detach();
-
-        cx.emit(DismissEvent);
-    }
-
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent);
-    }
-}
-
-impl Focusable for InputModal {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<DismissEvent> for InputModal {}
-
-impl ModalView for InputModal {}
-
-impl Render for InputModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = self.title();
-        let supports_push = self.supports_push();
-        let is_checkout_remote = self.is_checkout_remote();
-        let checkbox_state = if self.push_to_remote {
-            ui::ToggleState::Selected
-        } else {
-            ui::ToggleState::Unselected
-        };
-        let checkbox_label = if is_checkout_remote {
-            "Pull after checkout"
-        } else {
-            "Push to remote"
-        };
-        let confirm_label = if is_checkout_remote {
-            "Checkout"
-        } else {
-            "Confirm"
-        };
-
-        v_flex()
-            .key_context("InputModal")
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::cancel))
-            .elevation_2(cx)
-            .w(px(400.0))
-            .overflow_hidden()
-            .rounded_lg()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().elevated_surface_background)
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(Label::new(title).size(LabelSize::Small).color(Color::Muted)),
-            )
-            .child(
-                v_flex()
-                    .w_full()
-                    .p_3()
-                    .gap_2()
-                    .child(self.input.clone())
-                    .when(supports_push || is_checkout_remote, |el| {
-                        el.child(
-                            h_flex()
-                                .gap_2()
-                                .items_center()
-                                .child(
-                                    ui::Checkbox::new("checkbox-option", checkbox_state).on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.toggle_push_to_remote(cx);
-                                        }),
-                                    ),
-                                )
-                                .child(
-                                    Label::new(checkbox_label)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                    }),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .justify_end()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        Button::new("cancel", "Cancel")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.cancel(&menu::Cancel, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("confirm", confirm_label)
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.confirm(&menu::Confirm, window, cx);
-                            })),
-                    ),
-            )
-    }
 }
 
 pub struct GitGraph {
@@ -474,88 +229,6 @@ impl GitGraph {
         );
     }
 
-    fn toggle_commit_expansion(&mut self, commit_idx: usize, cx: &mut Context<Self>) {
-        let scroll_pos = self.list_state.logical_scroll_top();
-
-        if self.expanded_commit == Some(commit_idx) {
-            self.expanded_commit = None;
-            self.expanded_files.clear();
-            self.list_state.reset(self.commits.len());
-            self.list_state.scroll_to(scroll_pos);
-            cx.notify();
-            return;
-        }
-
-        let Some(commit) = self.commits.get(commit_idx) else {
-            return;
-        };
-        let sha = commit.sha.clone();
-
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        self.selected_commit = Some(commit_idx);
-        self.expanded_commit = Some(commit_idx);
-        self.expanded_files.clear();
-        self.loading_files = true;
-        self.error = None;
-        self.list_state.reset(self.commits.len());
-        self.list_state.scroll_to(scroll_pos);
-        cx.notify();
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(
-                &work_dir,
-                &[
-                    "diff-tree",
-                    "--root",
-                    "--no-commit-id",
-                    "--name-status",
-                    "-r",
-                    &sha,
-                ],
-            )
-            .await;
-
-            this.update(cx, |this, cx| {
-                this.loading_files = false;
-                match result {
-                    Ok(output) => {
-                        this.expanded_files = output
-                            .lines()
-                            .filter_map(|line| {
-                                let parts: Vec<&str> = line.split('\t').collect();
-                                if parts.len() >= 2 {
-                                    let status = match parts[0].chars().next() {
-                                        Some('A') => FileStatus::Added,
-                                        Some('M') => FileStatus::Modified,
-                                        Some('D') => FileStatus::Deleted,
-                                        Some('R') => FileStatus::Renamed,
-                                        Some('C') => FileStatus::Copied,
-                                        _ => FileStatus::Unknown,
-                                    };
-                                    Some(ChangedFile {
-                                        path: parts[1].to_string(),
-                                        status,
-                                    })
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                    }
-                    Err(e) => {
-                        this.error = Some(format!("Failed to load files: {}", e).into());
-                    }
-                }
-                cx.notify();
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
     fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -678,740 +351,6 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn checkout_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let refs = commit.refs.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let has_local_branch = refs
-            .iter()
-            .any(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
-            || refs.iter().any(|r| r.starts_with("HEAD -> "));
-
-        let remote_only_branch = if !has_local_branch {
-            refs.iter()
-                .find(|r| r.starts_with("origin/") && !r.ends_with("/HEAD"))
-                .cloned()
-        } else {
-            None
-        };
-
-        if let Some(remote_branch) = remote_only_branch {
-            let local_name = remote_branch
-                .strip_prefix("origin/")
-                .unwrap_or(&remote_branch)
-                .to_string();
-            let Some(workspace) = self.workspace.upgrade() else {
-                return;
-            };
-            let git_graph = cx.entity().downgrade();
-
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    InputModal::new(
-                        InputModalKind::CheckoutRemoteBranch { remote_branch },
-                        "Enter local branch name",
-                        &local_name,
-                        work_dir,
-                        git_graph,
-                        window,
-                        cx,
-                    )
-                });
-            });
-            return;
-        }
-
-        let target = refs
-            .iter()
-            .find(|r| r.starts_with("HEAD -> "))
-            .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
-            .or_else(|| {
-                refs.iter()
-                    .find(|r| {
-                        !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
-                    })
-                    .cloned()
-            })
-            .unwrap_or(sha);
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["checkout", &target]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Checkout failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn checkout_branch(&mut self, branch: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let is_remote = branch.starts_with("origin/");
-
-        if is_remote {
-            let local_name = branch
-                .strip_prefix("origin/")
-                .unwrap_or(&branch)
-                .to_string();
-            let Some(workspace) = self.workspace.upgrade() else {
-                return;
-            };
-            let git_graph = cx.entity().downgrade();
-
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    InputModal::new(
-                        InputModalKind::CheckoutRemoteBranch {
-                            remote_branch: branch,
-                        },
-                        "Enter local branch name",
-                        &local_name,
-                        work_dir,
-                        git_graph,
-                        window,
-                        cx,
-                    )
-                });
-            });
-            return;
-        }
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["checkout", &branch]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Checkout failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn copy_sha(&mut self, cx: &mut Context<Self>) {
-        let sha = match self.get_selected_commit() {
-            Some(commit) => commit.sha.clone(),
-            None => return,
-        };
-        self.error = None;
-        cx.write_to_clipboard(ClipboardItem::new_string(sha));
-        cx.notify();
-    }
-
-    fn create_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let short_sha = commit.short_sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let git_graph = cx.entity().downgrade();
-        let default_name = format!("branch-from-{}", short_sha);
-
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                InputModal::new(
-                    InputModalKind::CreateBranch { sha },
-                    "Enter branch name",
-                    &default_name,
-                    work_dir,
-                    git_graph,
-                    window,
-                    cx,
-                )
-            });
-        });
-    }
-
-    fn cherry_pick_commit(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["cherry-pick", &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Cherry-pick failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn revert_commit(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["revert", "--no-edit", &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Revert failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn reset_soft(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["reset", "--soft", &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Reset failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn reset_hard(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["reset", "--hard", &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Reset failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn reset_mixed(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["reset", "--mixed", &sha]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Reset failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn create_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let short_sha = commit.short_sha.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let git_graph = cx.entity().downgrade();
-        let default_name = format!("v{}", short_sha);
-
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                InputModal::new(
-                    InputModalKind::CreateTag { sha },
-                    "Enter tag name",
-                    &default_name,
-                    work_dir,
-                    git_graph,
-                    window,
-                    cx,
-                )
-            });
-        });
-    }
-
-    fn merge_into_current(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let refs = commit.refs.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let target = refs
-            .iter()
-            .find(|r| !r.starts_with("tag:") && !r.contains("HEAD"))
-            .cloned()
-            .unwrap_or(sha);
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["merge", &target]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Merge failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn pull_into_current(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let refs = commit.refs.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let remote_branch = refs.iter().find(|r| r.starts_with("origin/")).cloned();
-
-        let Some(remote_ref) = remote_branch else {
-            self.error = Some("No remote branch found for this commit".into());
-            cx.notify();
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(
-                &work_dir,
-                &["pull", "origin", remote_ref.trim_start_matches("origin/")],
-            )
-            .await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Pull failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn copy_branch_name(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-
-        let branch_name = commit
-            .refs
-            .iter()
-            .find(|r| r.starts_with("HEAD -> "))
-            .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
-            .or_else(|| {
-                commit
-                    .refs
-                    .iter()
-                    .find(|r| {
-                        !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
-                    })
-                    .cloned()
-            })
-            .or_else(|| {
-                commit
-                    .refs
-                    .iter()
-                    .find(|r| r.starts_with("origin/"))
-                    .cloned()
-            });
-
-        match branch_name {
-            Some(name) => {
-                self.error = None;
-                cx.write_to_clipboard(ClipboardItem::new_string(name));
-            }
-            None => {
-                self.error = Some("No branch found for this commit".into());
-            }
-        }
-        cx.notify();
-    }
-
-    fn rename_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let branch_name = commit
-            .refs
-            .iter()
-            .find(|r| r.starts_with("HEAD -> "))
-            .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).to_string())
-            .or_else(|| {
-                commit
-                    .refs
-                    .iter()
-                    .find(|r| {
-                        !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD")
-                    })
-                    .cloned()
-            });
-
-        let Some(old_name) = branch_name else {
-            self.error = Some("No local branch found to rename".into());
-            cx.notify();
-            return;
-        };
-
-        let git_graph = cx.entity().downgrade();
-
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                InputModal::new(
-                    InputModalKind::RenameBranch {
-                        old_name: old_name.clone(),
-                    },
-                    "Enter new branch name",
-                    &old_name,
-                    work_dir,
-                    git_graph,
-                    window,
-                    cx,
-                )
-            });
-        });
-    }
-
-    fn delete_branch(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let branch_name = commit
-            .refs
-            .iter()
-            .find(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
-            .cloned();
-
-        let Some(branch) = branch_name else {
-            self.error = Some("No local branch found to delete".into());
-            cx.notify();
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["branch", "-d", &branch]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Delete branch failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn delete_remote_branch(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let remote_branch = commit
-            .refs
-            .iter()
-            .find(|r| r.starts_with("origin/"))
-            .cloned();
-
-        let Some(remote_ref) = remote_branch else {
-            self.error = Some("No remote branch found to delete".into());
-            cx.notify();
-            return;
-        };
-
-        let branch = remote_ref.trim_start_matches("origin/").to_string();
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["push", "origin", "--delete", &branch]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Delete remote branch failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn rebase_onto(&mut self, cx: &mut Context<Self>) {
-        let Some(commit) = self.get_selected_commit() else {
-            return;
-        };
-        let sha = commit.sha.clone();
-        let refs = commit.refs.clone();
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        let target = refs
-            .iter()
-            .find(|r| !r.starts_with("origin/") && !r.starts_with("tag:") && !r.contains("HEAD"))
-            .cloned()
-            .unwrap_or(sha);
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["rebase", &target]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Rebase failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn push_branch(&mut self, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["push"]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Push failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn pull_branch(&mut self, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["pull"]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Pull failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn fetch_all(&mut self, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["fetch", "--all"]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Fetch failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn stash_changes(&mut self, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(
-                &work_dir,
-                &["stash", "push", "-m", "Stashed from Git Graph"],
-            )
-            .await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Stash failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    fn stash_pop(&mut self, cx: &mut Context<Self>) {
-        let Some(work_dir) = self.work_dir.clone() else {
-            return;
-        };
-
-        cx.spawn(async move |this, cx| {
-            let result = run_git_command(&work_dir, &["stash", "pop"]).await;
-
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.error = None;
-                    this.load_data(cx);
-                }
-                Err(e) => {
-                    this.error = Some(format!("Stash pop failed: {}", e).into());
-                    cx.notify();
-                }
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
     fn load_data(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
         self.loading = true;
@@ -1456,143 +395,6 @@ impl GitGraph {
         }));
     }
 
-    fn handle_checkout_commit(
-        &mut self,
-        _: &CheckoutCommit,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.checkout_commit(window, cx);
-    }
-
-    fn handle_open_commit_view(
-        &mut self,
-        _: &OpenCommitView,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_commit_view(None, window, cx);
-    }
-
-    fn handle_copy_sha(&mut self, _: &CopySha, _: &mut Window, cx: &mut Context<Self>) {
-        self.copy_sha(cx);
-    }
-
-    fn handle_create_branch(
-        &mut self,
-        _: &CreateBranch,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.create_branch(window, cx);
-    }
-
-    fn handle_cherry_pick_commit(
-        &mut self,
-        _: &CherryPickCommit,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cherry_pick_commit(cx);
-    }
-
-    fn handle_revert_commit(&mut self, _: &RevertCommit, _: &mut Window, cx: &mut Context<Self>) {
-        self.revert_commit(cx);
-    }
-
-    fn handle_reset_soft(&mut self, _: &ResetSoft, _: &mut Window, cx: &mut Context<Self>) {
-        self.reset_soft(cx);
-    }
-
-    fn handle_reset_hard(&mut self, _: &ResetHard, _: &mut Window, cx: &mut Context<Self>) {
-        self.reset_hard(cx);
-    }
-
-    fn handle_refresh_graph(&mut self, _: &RefreshGraph, _: &mut Window, cx: &mut Context<Self>) {
-        self.load_data(cx);
-    }
-
-    fn handle_reset_mixed(&mut self, _: &ResetMixed, _: &mut Window, cx: &mut Context<Self>) {
-        self.reset_mixed(cx);
-    }
-
-    fn handle_create_tag(&mut self, _: &CreateTag, window: &mut Window, cx: &mut Context<Self>) {
-        self.create_tag(window, cx);
-    }
-
-    fn handle_merge_into_current(
-        &mut self,
-        _: &MergeIntoCurrent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.merge_into_current(cx);
-    }
-
-    fn handle_pull_into_current(
-        &mut self,
-        _: &PullIntoCurrent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.pull_into_current(cx);
-    }
-
-    fn handle_copy_branch_name(
-        &mut self,
-        _: &CopyBranchName,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.copy_branch_name(cx);
-    }
-
-    fn handle_rename_branch(
-        &mut self,
-        _: &RenameBranch,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.rename_branch(window, cx);
-    }
-
-    fn handle_delete_branch(&mut self, _: &DeleteBranch, _: &mut Window, cx: &mut Context<Self>) {
-        self.delete_branch(cx);
-    }
-
-    fn handle_delete_remote_branch(
-        &mut self,
-        _: &DeleteRemoteBranch,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.delete_remote_branch(cx);
-    }
-
-    fn handle_rebase_onto(&mut self, _: &RebaseOnto, _: &mut Window, cx: &mut Context<Self>) {
-        self.rebase_onto(cx);
-    }
-
-    fn handle_push_branch(&mut self, _: &PushBranch, _: &mut Window, cx: &mut Context<Self>) {
-        self.push_branch(cx);
-    }
-
-    fn handle_pull_branch(&mut self, _: &PullBranch, _: &mut Window, cx: &mut Context<Self>) {
-        self.pull_branch(cx);
-    }
-
-    fn handle_fetch_all(&mut self, _: &FetchAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.fetch_all(cx);
-    }
-
-    fn handle_stash_changes(&mut self, _: &StashChanges, _: &mut Window, cx: &mut Context<Self>) {
-        self.stash_changes(cx);
-    }
-
-    fn handle_stash_pop(&mut self, _: &StashPop, _: &mut Window, cx: &mut Context<Self>) {
-        self.stash_pop(cx);
-    }
-
     fn render_badges(
         &self,
         refs: &[String],
@@ -1630,127 +432,94 @@ impl GitGraph {
                                     .color(Color::Default),
                             )
                             .into_any_element(),
-                        BadgeType::CurrentBranch(name, has_origin) => {
-                            let branch_name = name.clone();
-                            h_flex()
-                                .id(ElementId::NamedInteger(
-                                    SharedString::from(format!(
-                                        "badge-current-{}-{}",
-                                        commit_idx, badge_idx
-                                    )),
-                                    commit_idx as u64,
-                                ))
-                                .gap_0p5()
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(accent_color)
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(hover_bg))
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        if event.click_count() == 2 {
-                                            this.checkout_branch(branch_name.clone(), window, cx);
-                                        }
-                                    },
-                                ))
-                                .child(
-                                    Icon::new(IconName::GitBranch)
-                                        .size(IconSize::Small)
-                                        .color(Color::Custom(branch_color)),
-                                )
-                                .child(
-                                    Label::new(name)
-                                        .size(LabelSize::Default)
-                                        .color(Color::Default),
-                                )
-                                .when(has_origin, |el| {
-                                    el.child(
-                                        Label::new("origin")
-                                            .size(LabelSize::Default)
-                                            .color(Color::Muted),
-                                    )
-                                })
-                                .into_any_element()
-                        }
-                        BadgeType::LocalBranch(name, has_origin) => {
-                            let branch_name = name.clone();
-                            h_flex()
-                                .id(ElementId::NamedInteger(
-                                    SharedString::from(format!(
-                                        "badge-local-{}-{}",
-                                        commit_idx, badge_idx
-                                    )),
-                                    commit_idx as u64,
-                                ))
-                                .gap_0p5()
-                                .px_1()
-                                .rounded_sm()
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(hover_bg))
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        if event.click_count() == 2 {
-                                            this.checkout_branch(branch_name.clone(), window, cx);
-                                        }
-                                    },
-                                ))
-                                .child(
-                                    Icon::new(IconName::GitBranch)
-                                        .size(IconSize::Small)
-                                        .color(Color::Custom(branch_color)),
-                                )
-                                .child(
-                                    Label::new(name)
-                                        .size(LabelSize::Default)
-                                        .color(Color::Default),
-                                )
-                                .when(has_origin, |el| {
-                                    el.child(
-                                        Label::new("origin")
-                                            .size(LabelSize::Default)
-                                            .color(Color::Muted),
-                                    )
-                                })
-                                .into_any_element()
-                        }
-                        BadgeType::RemoteBranch(name) => {
-                            let branch_name = name.clone();
-                            h_flex()
-                                .id(ElementId::NamedInteger(
-                                    SharedString::from(format!(
-                                        "badge-remote-{}-{}",
-                                        commit_idx, badge_idx
-                                    )),
-                                    commit_idx as u64,
-                                ))
-                                .gap_0p5()
-                                .px_1()
-                                .rounded_sm()
-                                .cursor_pointer()
-                                .hover(move |style| style.bg(hover_bg))
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        if event.click_count() == 2 {
-                                            this.checkout_branch(branch_name.clone(), window, cx);
-                                        }
-                                    },
-                                ))
-                                .child(
-                                    Icon::new(IconName::GitBranch)
-                                        .size(IconSize::Small)
-                                        .color(Color::Custom(branch_color)),
-                                )
-                                .child(
-                                    Label::new(name)
+                        BadgeType::CurrentBranch(name, has_origin) => h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!(
+                                    "badge-current-{}-{}",
+                                    commit_idx, badge_idx
+                                )),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(accent_color)
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Default),
+                            )
+                            .when(has_origin, |el| {
+                                el.child(
+                                    Label::new("origin")
                                         .size(LabelSize::Default)
                                         .color(Color::Muted),
                                 )
-                                .into_any_element()
-                        }
+                            })
+                            .into_any_element(),
+                        BadgeType::LocalBranch(name, has_origin) => h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!(
+                                    "badge-local-{}-{}",
+                                    commit_idx, badge_idx
+                                )),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Default),
+                            )
+                            .when(has_origin, |el| {
+                                el.child(
+                                    Label::new("origin")
+                                        .size(LabelSize::Default)
+                                        .color(Color::Muted),
+                                )
+                            })
+                            .into_any_element(),
+                        BadgeType::RemoteBranch(name) => h_flex()
+                            .id(ElementId::NamedInteger(
+                                SharedString::from(format!(
+                                    "badge-remote-{}-{}",
+                                    commit_idx, badge_idx
+                                )),
+                                commit_idx as u64,
+                            ))
+                            .gap_0p5()
+                            .px_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(hover_bg))
+                            .child(
+                                Icon::new(IconName::GitBranch)
+                                    .size(IconSize::Small)
+                                    .color(Color::Custom(branch_color)),
+                            )
+                            .child(
+                                Label::new(name)
+                                    .size(LabelSize::Default)
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element(),
                     }),
             )
     }
@@ -1851,9 +620,8 @@ impl GitGraph {
             .flex_shrink_0()
             .bg(bg)
             .hover(move |style| style.bg(hover_bg))
-            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, _cx| {
                 this.selected_commit = Some(idx);
-                this.toggle_commit_expansion(idx, cx);
             }))
             .on_mouse_down(
                 MouseButton::Right,
@@ -2295,29 +1063,6 @@ impl Render for GitGraph {
             .bg(cx.theme().colors().editor_background)
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::handle_refresh_graph))
-            .on_action(cx.listener(Self::handle_open_commit_view))
-            .on_action(cx.listener(Self::handle_checkout_commit))
-            .on_action(cx.listener(Self::handle_copy_sha))
-            .on_action(cx.listener(Self::handle_create_branch))
-            .on_action(cx.listener(Self::handle_cherry_pick_commit))
-            .on_action(cx.listener(Self::handle_revert_commit))
-            .on_action(cx.listener(Self::handle_reset_soft))
-            .on_action(cx.listener(Self::handle_reset_hard))
-            .on_action(cx.listener(Self::handle_reset_mixed))
-            .on_action(cx.listener(Self::handle_create_tag))
-            .on_action(cx.listener(Self::handle_merge_into_current))
-            .on_action(cx.listener(Self::handle_pull_into_current))
-            .on_action(cx.listener(Self::handle_copy_branch_name))
-            .on_action(cx.listener(Self::handle_rename_branch))
-            .on_action(cx.listener(Self::handle_delete_branch))
-            .on_action(cx.listener(Self::handle_delete_remote_branch))
-            .on_action(cx.listener(Self::handle_rebase_onto))
-            .on_action(cx.listener(Self::handle_push_branch))
-            .on_action(cx.listener(Self::handle_pull_branch))
-            .on_action(cx.listener(Self::handle_fetch_all))
-            .on_action(cx.listener(Self::handle_stash_changes))
-            .on_action(cx.listener(Self::handle_stash_pop))
             .child(v_flex().size_full().children(error_banner).child(content))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
