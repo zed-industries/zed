@@ -4,6 +4,8 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
+pub const CURSOR_MARKER: &str = "<|user_cursor|>";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -125,7 +127,7 @@ fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
                     &input.cursor_excerpt
                         [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
                 );
-                prompt.push_str("<|user_cursor|>");
+                prompt.push_str(CURSOR_MARKER);
                 prompt.push_str(
                     &input.cursor_excerpt
                         [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],

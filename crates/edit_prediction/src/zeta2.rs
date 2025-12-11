@@ -8,11 +8,11 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use cloud_llm_client::EditPredictionRejectReason;
-use cloud_zeta2_prompt::CURSOR_MARKER;
 use gpui::{Task, prelude::*};
 use language::{OffsetRangeExt as _, ToOffset as _, ToPoint};
 use release_channel::AppVersion;
 use std::{path::Path, sync::Arc, time::Instant};
+use zeta_prompt::CURSOR_MARKER;
 use zeta_prompt::format_zeta_prompt;
 
 const MAX_CONTEXT_TOKENS: usize = 150;
@@ -31,7 +31,6 @@ pub fn request_prediction_with_zeta2(
     }: EditPredictionModelInput,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
-    let options = store.options.clone();
     let buffer_snapshotted_at = Instant::now();
 
     let Some(excerpt_path) = snapshot
@@ -73,7 +72,6 @@ pub fn request_prediction_with_zeta2(
                     .ok();
             }
 
-            let generation_params = cloud_zeta2_prompt::generation_params(options.prompt_format);
             let request = open_ai::Request {
                 model: EDIT_PREDICTIONS_MODEL_ID.clone(),
                 messages: vec![open_ai::RequestMessage::User {
@@ -81,8 +79,8 @@ pub fn request_prediction_with_zeta2(
                 }],
                 stream: false,
                 max_completion_tokens: None,
-                stop: generation_params.stop.unwrap_or_default(),
-                temperature: generation_params.temperature.or(Some(0.7)),
+                stop: Default::default(),
+                temperature: Default::default(),
                 tool_choice: None,
                 parallel_tool_calls: None,
                 tools: vec![],

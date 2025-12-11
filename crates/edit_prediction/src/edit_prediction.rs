@@ -8,7 +8,6 @@ use cloud_llm_client::{
     MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use collections::{HashMap, HashSet};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::EditPredictionExcerptOptions;
@@ -110,7 +109,6 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
         min_bytes: 128,
         target_before_cursor_over_total_bytes: 0.5,
     },
-    max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     prompt_format: PromptFormat::DEFAULT,
 };
 
@@ -196,7 +194,6 @@ pub struct EditPredictionModelInput {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
     pub context: EditPredictionExcerptOptions,
-    pub max_prompt_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
 }
 

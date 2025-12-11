@@ -3,7 +3,6 @@ use crate::{
     headless::EpAppState,
 };
 use anyhow::{Result, anyhow};
-use cloud_zeta2_prompt::CURSOR_MARKER;
 use collections::HashMap;
 use edit_prediction::EditPredictionStore;
 use edit_prediction::udiff::OpenedBuffers;
@@ -22,6 +21,7 @@ use std::{
     sync::Arc,
 };
 use util::{paths::PathStyle, rel_path::RelPath};
+use zeta_prompt::CURSOR_MARKER;
 
 pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>, mut cx: AsyncApp) {
     if example.state.is_some() {
