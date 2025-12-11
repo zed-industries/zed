@@ -584,6 +584,16 @@ impl Copilot {
         .ok();
     }
 
+    pub fn is_authenticated(&self) -> bool {
+        return matches!(
+            self.server,
+            CopilotServer::Running(RunningCopilotServer {
+                sign_in_status: SignInStatus::Authorized,
+                ..
+            })
+        );
+    }
+
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {

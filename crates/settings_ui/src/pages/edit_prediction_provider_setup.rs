@@ -5,7 +5,10 @@ use edit_prediction::{
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::CODESTRAL_API_URL;
-use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar, prelude::*};
+use ui::{
+    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar,
+    prelude::*,
+};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -332,4 +335,48 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
     ])
+}
+
+pub(crate) struct GithubCopilotLogin {}
+
+pub(crate) fn render_github_copilot_provider(cx: &mut App) -> AnyElement {
+    let base_container = v_flex().id("github-copilot").min_w_0().gap_1p5();
+
+    let icon_and_name = h_flex()
+        .gap_1()
+        .child(
+            Icon::new(IconName::Github)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
+        .child(Label::new("GitHub Copilot"));
+
+    let is_authenticated =
+        copilot::Copilot::global(cx).is_some_and(|copilot| copilot.read(cx).is_authenticated());
+
+    let description = format!(
+        "To use GitHub Copilot as an edit prediction provider, you need to authenticate with GitHub.",
+    );
+
+    base_container
+        .child(
+            v_flex()
+                .w_full()
+                .gap_1p5()
+                .child(icon_and_name)
+                .child(Label::new(description).color(Color::Muted)),
+        )
+        .child(
+            ButtonLike::new("github-copilot-auth")
+                .size(ButtonSize::None)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(Icon::new(IconName::Github).size(IconSize::Small))
+                        .child(Label::new("Authenticate with GitHub Copilot")),
+                )
+                .on_click(move |_, window, cx| window.disp)
+                .into_any_element(),
+        )
+        .into_any_element()
 }

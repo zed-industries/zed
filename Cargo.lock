@@ -14775,6 +14775,7 @@ dependencies = [
  "assets",
  "bm25",
  "client",
+ "copilot",
  "edit_prediction",
  "editor",
  "feature_flags",
