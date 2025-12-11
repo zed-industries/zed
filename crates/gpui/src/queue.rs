@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     iter::FusedIterator,
     sync::{Arc, atomic::AtomicUsize},
 };
@@ -29,13 +30,13 @@ struct PriorityQueueState<T> {
 }
 
 impl<T> PriorityQueueState<T> {
-    fn send(&self, priority: Priority, item: T) -> Result<(), Disconnected> {
+    fn send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         if self
             .receiver_count
             .load(std::sync::atomic::Ordering::Relaxed)
             == 0
         {
-            return Err(Disconnected);
+            return Err(SendError(item));
         }
 
         let mut queues = self.queues.lock();
@@ -49,12 +50,12 @@ impl<T> PriorityQueueState<T> {
         Ok(())
     }
 
-    fn recv<'a>(&'a self) -> Result<parking_lot::MutexGuard<'a, PriorityQueues<T>>, Disconnected> {
+    fn recv<'a>(&'a self) -> Result<parking_lot::MutexGuard<'a, PriorityQueues<T>>, RecvError> {
         let mut queues = self.queues.lock();
 
         let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
         if queues.is_empty() && sender_count == 0 {
-            return Err(crate::queue::Disconnected);
+            return Err(crate::queue::RecvError);
         }
 
         // parking_lot doesn't do spurious wakeups so an if is fine
@@ -67,12 +68,12 @@ impl<T> PriorityQueueState<T> {
 
     fn try_recv<'a>(
         &'a self,
-    ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, Disconnected> {
+    ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
         let mut queues = self.queues.lock();
 
         let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
         if queues.is_empty() && sender_count == 0 {
-            return Err(crate::queue::Disconnected);
+            return Err(crate::queue::RecvError);
         }
 
         if queues.is_empty() {
@@ -92,7 +93,7 @@ impl<T> PriorityQueueSender<T> {
         Self { state }
     }
 
-    pub(crate) fn send(&self, priority: Priority, item: T) -> Result<(), Disconnected> {
+    pub(crate) fn send(&self, priority: Priority, item: T) -> Result<(), SendError<T>> {
         self.state.send(priority, item)?;
         Ok(())
     }
@@ -125,8 +126,16 @@ impl<T> Clone for PriorityQueueReceiver<T> {
     }
 }
 
+pub(crate) struct SendError<T>(T);
+
+impl<T: fmt::Debug> fmt::Debug for SendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SendError").field(&self.0).finish()
+    }
+}
+
 #[derive(Debug)]
-pub(crate) struct Disconnected;
+pub(crate) struct RecvError;
 
 #[allow(dead_code)]
 impl<T> PriorityQueueReceiver<T> {
@@ -164,7 +173,7 @@ impl<T> PriorityQueueReceiver<T> {
     /// # Errors
     ///
     /// If the sender was dropped
-    pub(crate) fn try_pop(&mut self) -> Result<Option<T>, Disconnected> {
+    pub(crate) fn try_pop(&mut self) -> Result<Option<T>, RecvError> {
         self.pop_inner(false)
     }
 
@@ -176,7 +185,7 @@ impl<T> PriorityQueueReceiver<T> {
     /// # Errors
     ///
     /// If the sender was dropped
-    pub(crate) fn pop(&mut self) -> Result<T, Disconnected> {
+    pub(crate) fn pop(&mut self) -> Result<T, RecvError> {
         self.pop_inner(true).map(|e| e.unwrap())
     }
 
@@ -198,7 +207,7 @@ impl<T> PriorityQueueReceiver<T> {
     #[inline(always)]
     // algorithm is the loaded die from biased coin from
     // https://www.keithschwarz.com/darts-dice-coins/
-    fn pop_inner(&mut self, block: bool) -> Result<Option<T>, Disconnected> {
+    fn pop_inner(&mut self, block: bool) -> Result<Option<T>, RecvError> {
         use Priority as P;
 
         let mut queues = if !block {
@@ -267,7 +276,7 @@ pub(crate) struct TryIter<T> {
     ended: bool,
 }
 impl<T> Iterator for TryIter<T> {
-    type Item = Result<T, Disconnected>;
+    type Item = Result<T, RecvError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.ended {
