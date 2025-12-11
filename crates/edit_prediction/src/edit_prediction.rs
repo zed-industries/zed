@@ -1,14 +1,13 @@
 use anyhow::Result;
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat};
+use cloud_llm_client::predict_edits_v3::{self, PromptFormat};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, EditPredictionRejectReason,
     EditPredictionRejection, MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST,
     MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use collections::{HashMap, HashSet};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction_context::EditPredictionExcerptOptions;
@@ -16,10 +15,7 @@ use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, Rel
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
-    channel::{
-        mpsc::{self, UnboundedReceiver},
-        oneshot,
-    },
+    channel::mpsc::{self, UnboundedReceiver},
     select_biased,
 };
 use gpui::BackgroundExecutor;
@@ -58,8 +54,10 @@ mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
+
+#[cfg(any(test, feature = "test-support", feature = "eval-support"))]
 pub mod udiff;
-mod xml_edits;
+
 mod zed_edit_prediction_delegate;
 pub mod zeta1;
 pub mod zeta2;
@@ -72,7 +70,6 @@ use crate::mercury::Mercury;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
-pub use crate::prediction::EditPredictionInputs;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
 pub use telemetry_events::EditPredictionRating;
@@ -112,7 +109,6 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
         min_bytes: 128,
         target_before_cursor_over_total_bytes: 0.5,
     },
-    max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     prompt_format: PromptFormat::DEFAULT,
 };
 
@@ -162,7 +158,6 @@ pub struct EditPredictionStore {
     use_context: bool,
     options: ZetaOptions,
     update_required: bool,
-    debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     #[cfg(feature = "eval-support")]
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
@@ -183,10 +178,22 @@ pub enum EditPredictionModel {
     Mercury,
 }
 
+pub struct EditPredictionModelInput {
+    project: Entity<Project>,
+    buffer: Entity<Buffer>,
+    snapshot: BufferSnapshot,
+    position: Anchor,
+    events: Vec<Arc<zeta_prompt::Event>>,
+    related_files: Arc<[RelatedFile]>,
+    recent_paths: VecDeque<ProjectPath>,
+    trigger: PredictEditsRequestTrigger,
+    diagnostic_search_range: Range<Point>,
+    debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
     pub context: EditPredictionExcerptOptions,
-    pub max_prompt_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
 }
 
@@ -194,7 +201,8 @@ pub struct ZetaOptions {
 pub enum DebugEvent {
     ContextRetrievalStarted(ContextRetrievalStartedDebugEvent),
     ContextRetrievalFinished(ContextRetrievalFinishedDebugEvent),
-    EditPredictionRequested(EditPredictionRequestedDebugEvent),
+    EditPredictionStarted(EditPredictionStartedDebugEvent),
+    EditPredictionFinished(EditPredictionFinishedDebugEvent),
 }
 
 #[derive(Debug)]
@@ -212,27 +220,30 @@ pub struct ContextRetrievalFinishedDebugEvent {
 }
 
 #[derive(Debug)]
-pub struct EditPredictionRequestedDebugEvent {
-    pub inputs: EditPredictionInputs,
-    pub retrieval_time: Duration,
+pub struct EditPredictionStartedDebugEvent {
     pub buffer: WeakEntity<Buffer>,
     pub position: Anchor,
-    pub local_prompt: Result<String, String>,
-    pub response_rx: oneshot::Receiver<(Result<open_ai::Response, String>, Duration)>,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct EditPredictionFinishedDebugEvent {
+    pub buffer: WeakEntity<Buffer>,
+    pub position: Anchor,
+    pub model_output: Option<String>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ProjectState {
-    events: VecDeque<Arc<cloud_llm_client::predict_edits_v3::Event>>,
+    events: VecDeque<Arc<zeta_prompt::Event>>,
     last_event: Option<LastEvent>,
     recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2>,
-    context_updates_tx: smol::channel::Sender<()>,
-    context_updates_rx: smol::channel::Receiver<()>,
+    debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_prediction_refresh: Option<(EntityId, Instant)>,
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
@@ -241,7 +252,7 @@ struct ProjectState {
 }
 
 impl ProjectState {
-    pub fn events(&self, cx: &App) -> Vec<Arc<cloud_llm_client::predict_edits_v3::Event>> {
+    pub fn events(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
         self.events
             .iter()
             .cloned()
@@ -376,7 +387,7 @@ impl LastEvent {
         &self,
         license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
         cx: &App,
-    ) -> Option<Arc<predict_edits_v3::Event>> {
+    ) -> Option<Arc<zeta_prompt::Event>> {
         let path = buffer_path_with_id_fallback(&self.new_snapshot, cx);
         let old_path = buffer_path_with_id_fallback(&self.old_snapshot, cx);
 
@@ -396,7 +407,7 @@ impl LastEvent {
         if path == old_path && diff.is_empty() {
             None
         } else {
-            Some(Arc::new(predict_edits_v3::Event::BufferChange {
+            Some(Arc::new(zeta_prompt::Event::BufferChange {
                 old_path,
                 path,
                 diff,
@@ -481,7 +492,6 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            debug_tx: None,
             #[cfg(feature = "eval-support")]
             eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2,
@@ -536,12 +546,6 @@ impl EditPredictionStore {
         self.eval_cache = Some(cache);
     }
 
-    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<DebugEvent> {
-        let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
-        self.debug_tx = Some(debug_watch_tx);
-        debug_watch_rx
-    }
-
     pub fn options(&self) -> &ZetaOptions {
         &self.options
     }
@@ -560,15 +564,35 @@ impl EditPredictionStore {
         }
     }
 
+    pub fn edit_history_for_project(
+        &self,
+        project: &Entity<Project>,
+    ) -> Vec<Arc<zeta_prompt::Event>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| project_state.events.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
         cx: &'a App,
-    ) -> &'a [RelatedFile] {
+    ) -> Arc<[RelatedFile]> {
         self.projects
             .get(&project.entity_id())
             .map(|project| project.context.read(cx).related_files())
-            .unwrap_or(&[])
+            .unwrap_or_else(|| vec![].into())
+    }
+
+    pub fn context_for_project_with_buffers<'a>(
+        &'a self,
+        project: &Entity<Project>,
+        cx: &'a App,
+    ) -> Option<impl 'a + Iterator<Item = (RelatedFile, Entity<Buffer>)>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project| project.context.read(cx).related_files_with_buffers())
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -599,85 +623,21 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) -> &mut ProjectState {
         let entity_id = project.entity_id();
-        let (context_updates_tx, context_updates_rx) = smol::channel::unbounded();
         self.projects
             .entry(entity_id)
             .or_insert_with(|| ProjectState {
                 context: {
                     let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(project, cx));
-                    cx.subscribe(
-                        &related_excerpt_store,
-                        move |this, _, event, _| match event {
-                            RelatedExcerptStoreEvent::StartedRefresh => {
-                                if let Some(debug_tx) = this.debug_tx.clone() {
-                                    debug_tx
-                                        .unbounded_send(DebugEvent::ContextRetrievalStarted(
-                                            ContextRetrievalStartedDebugEvent {
-                                                project_entity_id: entity_id,
-                                                timestamp: Instant::now(),
-                                                search_prompt: String::new(),
-                                            },
-                                        ))
-                                        .ok();
-                                }
-                            }
-                            RelatedExcerptStoreEvent::FinishedRefresh {
-                                cache_hit_count,
-                                cache_miss_count,
-                                mean_definition_latency,
-                                max_definition_latency,
-                            } => {
-                                if let Some(debug_tx) = this.debug_tx.clone() {
-                                    debug_tx
-                                        .unbounded_send(DebugEvent::ContextRetrievalFinished(
-                                            ContextRetrievalFinishedDebugEvent {
-                                                project_entity_id: entity_id,
-                                                timestamp: Instant::now(),
-                                                metadata: vec![
-                                                    (
-                                                        "Cache Hits",
-                                                        format!(
-                                                            "{}/{}",
-                                                            cache_hit_count,
-                                                            cache_hit_count + cache_miss_count
-                                                        )
-                                                        .into(),
-                                                    ),
-                                                    (
-                                                        "Max LSP Time",
-                                                        format!(
-                                                            "{} ms",
-                                                            max_definition_latency.as_millis()
-                                                        )
-                                                        .into(),
-                                                    ),
-                                                    (
-                                                        "Mean LSP Time",
-                                                        format!(
-                                                            "{} ms",
-                                                            mean_definition_latency.as_millis()
-                                                        )
-                                                        .into(),
-                                                    ),
-                                                ],
-                                            },
-                                        ))
-                                        .ok();
-                                }
-                                if let Some(project_state) = this.projects.get(&entity_id) {
-                                    project_state.context_updates_tx.send_blocking(()).ok();
-                                }
-                            }
-                        },
-                    )
+                    cx.subscribe(&related_excerpt_store, move |this, _, event, _| {
+                        this.handle_excerpt_store_event(entity_id, event);
+                    })
                     .detach();
                     related_excerpt_store
                 },
                 events: VecDeque::new(),
                 last_event: None,
                 recent_paths: VecDeque::new(),
-                context_updates_rx,
-                context_updates_tx,
+                debug_tx: None,
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
                 cancelled_predictions: HashSet::default(),
@@ -689,12 +649,79 @@ impl EditPredictionStore {
             })
     }
 
-    pub fn project_context_updates(
-        &self,
+    pub fn remove_project(&mut self, project: &Entity<Project>) {
+        self.projects.remove(&project.entity_id());
+    }
+
+    fn handle_excerpt_store_event(
+        &mut self,
+        project_entity_id: EntityId,
+        event: &RelatedExcerptStoreEvent,
+    ) {
+        if let Some(project_state) = self.projects.get(&project_entity_id) {
+            if let Some(debug_tx) = project_state.debug_tx.clone() {
+                match event {
+                    RelatedExcerptStoreEvent::StartedRefresh => {
+                        debug_tx
+                            .unbounded_send(DebugEvent::ContextRetrievalStarted(
+                                ContextRetrievalStartedDebugEvent {
+                                    project_entity_id: project_entity_id,
+                                    timestamp: Instant::now(),
+                                    search_prompt: String::new(),
+                                },
+                            ))
+                            .ok();
+                    }
+                    RelatedExcerptStoreEvent::FinishedRefresh {
+                        cache_hit_count,
+                        cache_miss_count,
+                        mean_definition_latency,
+                        max_definition_latency,
+                    } => {
+                        debug_tx
+                            .unbounded_send(DebugEvent::ContextRetrievalFinished(
+                                ContextRetrievalFinishedDebugEvent {
+                                    project_entity_id: project_entity_id,
+                                    timestamp: Instant::now(),
+                                    metadata: vec![
+                                        (
+                                            "Cache Hits",
+                                            format!(
+                                                "{}/{}",
+                                                cache_hit_count,
+                                                cache_hit_count + cache_miss_count
+                                            )
+                                            .into(),
+                                        ),
+                                        (
+                                            "Max LSP Time",
+                                            format!("{} ms", max_definition_latency.as_millis())
+                                                .into(),
+                                        ),
+                                        (
+                                            "Mean LSP Time",
+                                            format!("{} ms", mean_definition_latency.as_millis())
+                                                .into(),
+                                        ),
+                                    ],
+                                },
+                            ))
+                            .ok();
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn debug_info(
+        &mut self,
         project: &Entity<Project>,
-    ) -> Option<smol::channel::Receiver<()>> {
-        let project_state = self.projects.get(&project.entity_id())?;
-        Some(project_state.context_updates_rx.clone())
+        cx: &mut Context<Self>,
+    ) -> mpsc::UnboundedReceiver<DebugEvent> {
+        let project_state = self.get_or_init_project(project, cx);
+        let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
+        project_state.debug_tx = Some(debug_watch_tx);
+        debug_watch_rx
     }
 
     fn handle_project_event(
@@ -1348,6 +1375,7 @@ impl EditPredictionStore {
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let events = project_state.events(cx);
         let has_events = !events.is_empty();
+        let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
         let cursor_point = position.to_point(&snapshot);
@@ -1357,55 +1385,29 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = if self.use_context {
-            self.context_for_project(&project, cx).to_vec()
+            self.context_for_project(&project, cx)
         } else {
-            Vec::new()
+            Vec::new().into()
+        };
+
+        let inputs = EditPredictionModelInput {
+            project: project.clone(),
+            buffer: active_buffer.clone(),
+            snapshot: snapshot.clone(),
+            position,
+            events,
+            related_files,
+            recent_paths: project_state.recent_paths.clone(),
+            trigger,
+            diagnostic_search_range: diagnostic_search_range.clone(),
+            debug_tx,
         };
 
         let task = match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(
-                self,
-                &project,
-                &active_buffer,
-                snapshot.clone(),
-                position,
-                events,
-                trigger,
-                cx,
-            ),
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(
-                self,
-                &project,
-                &active_buffer,
-                snapshot.clone(),
-                position,
-                events,
-                related_files,
-                trigger,
-                cx,
-            ),
-            EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(
-                &project,
-                &active_buffer,
-                snapshot.clone(),
-                position,
-                events,
-                &project_state.recent_paths,
-                related_files,
-                diagnostic_search_range.clone(),
-                cx,
-            ),
-            EditPredictionModel::Mercury => self.mercury.request_prediction(
-                &project,
-                &active_buffer,
-                snapshot.clone(),
-                position,
-                events,
-                &project_state.recent_paths,
-                related_files,
-                diagnostic_search_range.clone(),
-                cx,
-            ),
+            EditPredictionModel::Zeta1 => zeta1::request_prediction_with_zeta1(self, inputs, cx),
+            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
+            EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
+            EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {
@@ -1706,6 +1708,20 @@ impl EditPredictionStore {
         }
     }
 
+    #[cfg(feature = "eval-support")]
+    pub fn set_context_for_buffer(
+        &mut self,
+        project: &Entity<Project>,
+        related_files: Vec<RelatedFile>,
+        cx: &mut Context<Self>,
+    ) {
+        self.get_or_init_project(project, cx)
+            .context
+            .update(cx, |store, _| {
+                store.set_related_files(related_files);
+            });
+    }
+
     fn is_file_open_source(
         &self,
         project: &Entity<Project>,
@@ -1729,14 +1745,14 @@ impl EditPredictionStore {
         self.data_collection_choice.is_enabled() && self.is_file_open_source(project, file, cx)
     }
 
-    fn can_collect_events(&self, events: &[Arc<Event>]) -> bool {
+    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>]) -> bool {
         if !self.data_collection_choice.is_enabled() {
             return false;
         }
         events.iter().all(|event| {
             matches!(
                 event.as_ref(),
-                Event::BufferChange {
+                zeta_prompt::Event::BufferChange {
                     in_open_source_repo: true,
                     ..
                 }

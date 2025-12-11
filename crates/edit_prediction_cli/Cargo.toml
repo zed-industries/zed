@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "ep_cli"
+name = "ep"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,10 +20,9 @@ chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 cloud_llm_client.workspace= true
-cloud_zeta2_prompt.workspace = true
 collections.workspace = true
 debug_adapter_extension.workspace = true
-edit_prediction_context.workspace = true
+dirs.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -51,11 +50,20 @@ smol.workspace = true
 sqlez.workspace = true
 sqlez_macros.workspace = true
 terminal_view.workspace = true
-toml.workspace = true
 util.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["eval-support"] }
+wasmtime.workspace = true
+zeta_prompt.workspace = true
 zlog.workspace = true
+
+# Wasmtime is included as a dependency in order to enable the same
+# features that are enabled in Zed.
+#
+# If we don't enable these features we get crashes when creating
+# a Tree-sitter WasmStore.
+[package.metadata.cargo-machete]
+ignored = ["wasmtime"]
 
 [dev-dependencies]
 indoc.workspace = true
