@@ -451,34 +451,53 @@ where
         // This allows us to support providers that send tool calls in different formats
         #[allow(dead_code)]
         NonStandardArray(Vec<serde_json::Value>),
+        // Add a variant to handle malformed data that doesn't match any expected format
+        #[allow(dead_code)]
+        Malformed(serde_json::Value),
     }
 
-    match ToolCallsHelper::deserialize(deserializer)? {
-        ToolCallsHelper::Array(vec) => {
-            if vec.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(vec))
-            }
-        }
-        ToolCallsHelper::Null => Ok(None),
-        ToolCallsHelper::NonStandardArray(values) => {
-            // Try to convert non-standard tool calls to our format
-            let mut converted_tool_calls = Vec::new();
-            
-            for (index, value) in values.into_iter().enumerate() {
-                if let Some(tool_call) = convert_non_standard_tool_call(value, index) {
-                    converted_tool_calls.push(tool_call);
+    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    
+    // Handle empty arrays explicitly
+    if value.is_array() && value.as_array().map_or(false, |arr| arr.is_empty()) {
+        return Ok(None);
+    }
+    
+    // Try to deserialize as standard format first
+    if let Ok(vec) = serde_json::from_value::<Vec<ToolCallChunk>>(value.clone()) {
+        if vec.is_empty() {
+            return Ok(None);
+        } else {
+            // Validate that all tool calls have required fields
+            for tool_call in &vec {
+                if tool_call.r#type.is_none() || tool_call.function.is_none() || tool_call.id.is_none() {
+                    return Ok(None); // Malformed - missing required fields
                 }
             }
-            
-            if converted_tool_calls.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(converted_tool_calls))
-            }
+            return Ok(Some(vec));
         }
     }
+    
+    // If standard deserialization fails, try non-standard formats
+    if let Ok(values) = serde_json::from_value::<Vec<serde_json::Value>>(value.clone()) {
+        // Try to convert non-standard tool calls to our format
+        let mut converted_tool_calls = Vec::new();
+        
+        for (index, value) in values.into_iter().enumerate() {
+            if let Some(tool_call) = convert_non_standard_tool_call(value, index) {
+                converted_tool_calls.push(tool_call);
+            }
+        }
+        
+        if converted_tool_calls.is_empty() {
+            return Ok(None);
+        } else {
+            return Ok(Some(converted_tool_calls));
+        }
+    }
+    
+    // If all deserialization attempts fail, treat as malformed and return None
+    Ok(None)
 }
 
 /// Convert non-standard tool call formats to our standard ToolCallChunk format
@@ -487,11 +506,25 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
     if let Some(tool_type) = value.get("type").and_then(|v| v.as_str()) {
         if tool_type == "function" {
             if let Some(function_value) = value.get("function") {
+                // Validate that function_value has the required fields
+                let function_obj = function_value.as_object()?;
+                
+                // Check if we have at least a name (required field)
+                if function_obj.get("name").is_none() {
+                    return None; // Malformed - no name field
+                }
+                
+                // For standard OpenAI tool calls, we need an id field
+                // If this is missing, it's malformed
+                if value.get("id").is_none() {
+                    return None; // Malformed - no id field
+                }
+                
                 let function_chunk = serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
                 
                 return Some(ToolCallChunk {
                     index,
-                    id: None, // No ID in this format
+                    id: value.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     r#type: Some("function".to_string()),
                     function: Some(function_chunk),
                 });
@@ -500,7 +533,19 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
     }
     
     // Try to deserialize as standard format as fallback
-    serde_json::from_value::<ToolCallChunk>(value).ok()
+    // But validate that it has required fields
+    if let Ok(tool_call) = serde_json::from_value::<ToolCallChunk>(value.clone()) {
+        // Check if the tool call is valid (has type, function, and id)
+        if tool_call.r#type.is_some() && tool_call.function.is_some() && tool_call.id.is_some() {
+            return Some(tool_call);
+        } else {
+            // Missing required fields, treat as malformed
+            return None;
+        }
+    }
+    
+    // If we can't convert it to a valid tool call, return None
+    None
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -603,9 +648,28 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                                     fixed_choices.push(choice);
                                 } else {
                                     // If a choice fails to deserialize, try to create a minimal valid choice
+                                    // but handle malformed tool calls gracefully
+                                    let delta = if let Some(delta_value) = choice_value.get("delta") {
+                                        // Try to deserialize delta, but if it fails, create a minimal valid delta
+                                        match serde_json::from_value::<ResponseMessageDelta>(delta_value.clone()) {
+                                            Ok(delta) => Some(delta),
+                                            Err(_) => {
+                                                // Create a minimal valid delta with malformed tool calls treated as None
+                                                Some(ResponseMessageDelta {
+                                                    role: delta_value.get("role").and_then(|v| serde_json::from_value(v.clone()).ok()),
+                                                    content: delta_value.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                    tool_calls: None, // Treat malformed tool calls as None
+                                                    reasoning_content: None,
+                                                })
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    
                                     let fixed_choice = ChoiceDelta {
                                         index: choice_value.get("index").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(0),
-                                        delta: None, // Skip malformed delta for now
+                                        delta,
                                         finish_reason: choice_value.get("finish_reason").and_then(|v| v.as_str()).map(|s| s.to_string()),
                                     };
                                     fixed_choices.push(fixed_choice);
@@ -883,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_parse_malformed_tool_calls() {
-        // Test parsing responses with malformed tool calls (like DeepSeek V3.2)
+        // Test parsing responses with malformed tool calls (missing required 'id' field)
         let malformed_tool_calls_response = json!({
             "choices": [{
                 "index": 0,
@@ -909,10 +973,10 @@ mod tests {
         match result {
             Ok(ResponseStreamResult::Ok(event)) => {
                 assert_eq!(event.choices.len(), 1);
-                // The malformed tool calls should be ignored and treated as empty
+                // The malformed tool calls (missing id field) should be ignored and treated as empty
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(delta.tool_calls.is_none(), "Malformed tool calls should be treated as None");
+                        assert!(delta.tool_calls.is_none(), "Malformed tool calls (missing id) should be treated as None");
                     }
                 }
             }
@@ -928,6 +992,7 @@ mod tests {
     #[test]
     fn test_deserialize_tool_calls_with_malformed_data() {
         // Test the deserialize_tool_calls function directly with malformed data
+        // This tool call is missing the required 'id' field
         let malformed_tool_calls = json!([
             {
                 "type": "function",
@@ -944,8 +1009,118 @@ mod tests {
         // This should not panic and should return None for malformed tool calls
         match result {
             Ok(None) => {}, // Expected - malformed tool calls should be treated as None
-            Ok(Some(_)) => panic!("Expected malformed tool calls to be treated as None"),
+            Ok(Some(_)) => panic!("Expected malformed tool calls (missing id field) to be treated as None"),
             Err(_) => {}, // Also acceptable - malformed data might cause deserialization error
+        }
+    }
+
+    #[test]
+    fn test_deepseek_response_with_empty_tool_calls() {
+        // Test the DeepSeek response format with empty tool calls arrays
+        let deepseek_response = json!({
+            "id": "7fc265af-e548-44c8-b7e6-8732d764b6ac",
+            "object": "chat.completion.chunk",
+            "created": 1765515413,
+            "model": "deepseek-v3.2",
+            "usage": {
+                "prompt_tokens": 11759,
+                "completion_tokens": 1,
+                "total_tokens": 11760
+            },
+            "extend_fields": {
+                "traceId": "21010ca817655154089108071e1c01",
+                "requestId": "379b33d83dc0c03fda2ba8328ec97fca"
+            },
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "**",
+                        "tool_calls": []
+                    }
+                }
+            ]
+        });
+
+        let response_str = deepseek_response.to_string();
+        let result = parse_response_stream_result(&response_str);
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                // Empty tool calls should be treated as None
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_none(), "Empty tool calls should be treated as None");
+                    }
+                }
+            }
+            Ok(ResponseStreamResult::Err { error }) => {
+                panic!("Expected success response, got error: {}", error.message);
+            }
+            Err(e) => {
+                panic!("Failed to parse DeepSeek response: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_deepseek_response_with_malformed_tool_calls() {
+        // Test the DeepSeek response format with malformed tool calls
+        let deepseek_response = json!({
+            "id": "7fc265af-e548-44c8-b7e6-8732d764b6ac",
+            "object": "chat.completion.chunk",
+            "created": 1765515413,
+            "model": "deepseek-v3.2",
+            "usage": {
+                "prompt_tokens": 11759,
+                "completion_tokens": 1,
+                "total_tokens": 11760
+            },
+            "extend_fields": {
+                "traceId": "21010ca817655154089108071e1c01",
+                "requestId": "379b33d83dc0c03fda2ba8328ec97fca"
+            },
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "**",
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "arguments": "malformed json",
+                                    "name": "grep"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let response_str = deepseek_response.to_string();
+        let result = parse_response_stream_result(&response_str);
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                // Malformed tool calls should be treated as None
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_none(), "Malformed tool calls should be treated as None");
+                    }
+                }
+            }
+            Ok(ResponseStreamResult::Err { error }) => {
+                panic!("Expected success response, got error: {}", error.message);
+            }
+            Err(e) => {
+                panic!("Failed to parse DeepSeek response with malformed tool calls: {}", e);
+            }
         }
     }
 }
