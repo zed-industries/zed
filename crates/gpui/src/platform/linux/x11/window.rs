@@ -65,6 +65,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_MAXIMIZED_HORZ,
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
+        _NET_WM_STATE_DEMANDS_ATTENTION,
         _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
         _NET_WM_SYNC_REQUEST,
@@ -1285,6 +1286,25 @@ impl PlatformWindow for X11Window {
         _answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         None
+    }
+
+    fn request_user_attention(&self, _is_critical: bool) {
+        // X11's _NET_WM_STATE_DEMANDS_ATTENTION doesn't have urgency levels,
+        // so is_critical is ignored.
+        let state = self.0.state.borrow();
+        let data = [1, state.atoms._NET_WM_STATE_DEMANDS_ATTENTION, 0, 0, 0];
+        let message =
+            xproto::ClientMessageEvent::new(32, self.0.x_window, state.atoms._NET_WM_STATE, data);
+        self.0
+            .xcb
+            .send_event(
+                false,
+                state.x_root_window,
+                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                message,
+            )
+            .log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn activate(&self) {

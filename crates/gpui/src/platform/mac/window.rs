@@ -12,9 +12,9 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
-        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSRequestUserAttentionType, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
+        NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
         NSWindowStyleMask, NSWindowTitleVisibility,
     },
@@ -1207,6 +1207,23 @@ impl PlatformWindow for MacWindow {
 
             Some(done_rx)
         }
+    }
+
+    fn request_user_attention(&self, is_critical: bool) {
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    let request_type = if is_critical {
+                        NSRequestUserAttentionType::NSCriticalRequest
+                    } else {
+                        NSRequestUserAttentionType::NSInformationalRequest
+                    };
+                    let _: NSInteger = msg_send![app, requestUserAttention: request_type];
+                }
+            })
+            .detach();
     }
 
     fn activate(&self) {

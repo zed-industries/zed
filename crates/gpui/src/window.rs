@@ -4252,6 +4252,11 @@ impl Window {
         self.platform_window.activate();
     }
 
+    /// Request the platform to draw attention to this window without necessarily activating it.
+    pub fn request_user_attention(&self, is_critical: bool) {
+        self.platform_window.request_user_attention(is_critical);
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.platform_window.minimize();

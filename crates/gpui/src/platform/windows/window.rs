@@ -702,6 +702,28 @@ impl PlatformWindow for WindowsWindow {
         Some(done_rx)
     }
 
+    fn request_user_attention(&self, is_critical: bool) {
+        let hwnd = self.0.hwnd;
+        let executor = self.0.executor.clone();
+        let flags = if is_critical { FLASHW_ALL } else { FLASHW_TRAY } | FLASHW_TIMERNOFG;
+        executor
+            .spawn(async move {
+                unsafe {
+                    let info = FLASHWINFO {
+                        cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                        hwnd,
+                        dwFlags: flags,
+                        uCount: if is_critical { 6 } else { 3 },
+                        dwTimeout: 0,
+                    };
+                    if !FlashWindowEx(&info).as_bool() {
+                        log::warn!("FlashWindowEx failed when requesting user attention");
+                    }
+                }
+            })
+            .detach();
+    }
+
     fn activate(&self) {
         let hwnd = self.0.hwnd;
         let this = self.0.clone();

@@ -696,7 +696,22 @@ impl LinuxClient for WaylandClient {
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        None
+        let state = self.0.borrow();
+        let best = state.outputs.iter().min_by_key(|(_, output)| {
+            (
+                output.bounds.origin.x.0,
+                output.bounds.origin.y.0,
+                output.bounds.size.width.0,
+                output.bounds.size.height.0,
+            )
+        });
+        best.map(|(id, output)| {
+            Rc::new(WaylandDisplay {
+                id: id.clone(),
+                name: output.name.clone(),
+                bounds: output.bounds.to_pixels(output.scale as f32),
+            }) as Rc<dyn PlatformDisplay>
+        })
     }
 
     #[cfg(feature = "screen-capture")]

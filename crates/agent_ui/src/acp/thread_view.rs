@@ -4888,8 +4888,9 @@ impl AcpThreadView {
             return;
         }
 
+        let caption: SharedString = caption.into();
         let settings = AgentSettings::get_global(cx);
-
+        let is_critical = matches!(icon, IconName::Warning);
         let window_is_inactive = !window.is_window_active();
         let panel_is_hidden = self
             .workspace
@@ -4897,30 +4898,27 @@ impl AcpThreadView {
             .map(|workspace| AgentPanel::is_hidden(&workspace, cx))
             .unwrap_or(true);
 
-        let should_notify = window_is_inactive || panel_is_hidden;
-
-        if !should_notify {
+        if !(window_is_inactive || panel_is_hidden) {
             return;
         }
+
+        window.request_user_attention(is_critical);
 
         // TODO: Change this once we have title summarization for external agents.
         let title = self.agent.name();
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
-                if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title, window, primary, cx);
+                if let Some(screen) = cx.primary_display() {
+                    self.pop_up(icon, caption, title, window, screen, cx);
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
-                let caption = caption.into();
                 for screen in cx.displays() {
                     self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
                 }
             }
-            NotifyWhenAgentWaiting::Never => {
-                // Don't show anything
-            }
+            NotifyWhenAgentWaiting::Never => {}
         }
     }
 
@@ -4933,7 +4931,7 @@ impl AcpThreadView {
         screen: Rc<dyn PlatformDisplay>,
         cx: &mut Context<Self>,
     ) {
-        let options = AgentNotification::window_options(screen, cx);
+        let options = AgentNotification::window_options(screen.clone(), cx);
 
         let project_name = self.workspace.upgrade().and_then(|workspace| {
             workspace

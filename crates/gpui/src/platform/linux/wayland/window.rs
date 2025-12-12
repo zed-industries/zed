@@ -482,6 +482,20 @@ impl WaylandWindow {
 
         Ok((this, surface.id()))
     }
+
+    fn request_attention_token(&self) {
+        let state = self.borrow();
+        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
+        {
+            state.client.set_pending_activation(state.surface.id());
+            let token = activation.get_activation_token(&state.globals.qh, ());
+            let serial = state.client.get_serial(SerialKind::MousePress);
+            token.set_app_id(app_id);
+            token.set_serial(serial, &state.globals.seat);
+            token.set_surface(&state.surface);
+            token.commit();
+        }
+    }
 }
 
 impl WaylandWindowStatePtr {
@@ -1095,21 +1109,16 @@ impl PlatformWindow for WaylandWindow {
         None
     }
 
+    fn request_user_attention(&self, _is_critical: bool) {
+        // Wayland's xdg_activation_v1 doesn't have urgency levels,
+        // so is_critical is ignored.
+        self.request_attention_token();
+    }
+
     fn activate(&self) {
         // Try to request an activation token. Even though the activation is likely going to be rejected,
         // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
-        let state = self.borrow();
-        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
-        {
-            state.client.set_pending_activation(state.surface.id());
-            let token = activation.get_activation_token(&state.globals.qh, ());
-            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
-            let serial = state.client.get_serial(SerialKind::MousePress);
-            token.set_app_id(app_id);
-            token.set_serial(serial, &state.globals.seat);
-            token.set_surface(&state.surface);
-            token.commit();
-        }
+        self.request_attention_token();
     }
 
     fn is_active(&self) -> bool {
