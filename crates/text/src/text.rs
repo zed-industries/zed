@@ -2321,8 +2321,13 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             self.visible_text.len()
         } else {
-            debug_assert!(anchor.buffer_id == Some(self.remote_id));
-            debug_assert!(self.version.observed(anchor.timestamp));
+            debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
+            debug_assert!(
+                self.version.observed(anchor.timestamp),
+                "Anchor timestamp {:?} not observed by buffer {:?}",
+                anchor.timestamp,
+                self.version
+            );
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
