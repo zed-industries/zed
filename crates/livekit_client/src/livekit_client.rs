@@ -150,6 +150,27 @@ impl Room {
                 sends_legacy_audio: true,
             });
 
+        {
+            let track = track.clone();
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                loop {
+                    match track.0.get_stats().await {
+                        Ok(stats) if stats.is_empty() => {
+                            log::info!("stream disconnected, no more stats printing");
+                        }
+                        Ok(stats) => print_relevant_stats(&stats),
+
+                        Err(e) => {
+                            log::warn!("Could not get stream stats: {e:?}");
+                            break;
+                        }
+                    }
+                    cx.background_executor().timer(Duration::from_secs(5)).await;
+                }
+            })
+            .detach();
+        }
+
         if AudioSettings::get_global(cx).rodio_audio {
             info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, speaker, cx)
@@ -482,4 +503,35 @@ fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
     };
 
     Some(event)
+}
+
+use livekit::webrtc::stats::RtcStats;
+use std::time::Duration;
+fn print_relevant_stats(stats: &[RtcStats]) {
+    for stat in stats {
+        match stat {
+            RtcStats::InboundRtp(s) => {
+                log::info!(
+                    "frames dropped: {}, jitter buffer delay: {}",
+                    s.inbound.frames_dropped,
+                    s.inbound.jitter_buffer_delay
+                );
+            }
+            RtcStats::RemoteInboundRtp(s) => {
+                log::info!(
+                    "remote lost: {}%, round_trip_time from client: {}s, receiver jitter {}",
+                    s.remote_inbound.fraction_lost * 100.0,
+                    s.remote_inbound.round_trip_time,
+                    s.received.jitter,
+                )
+            }
+            RtcStats::RemoteOutboundRtp(s) => {
+                log::info!(
+                    "round_trip_time to client: {}s",
+                    s.remote_outbound.round_trip_time
+                )
+            }
+            _ => continue,
+        }
+    }
 }
