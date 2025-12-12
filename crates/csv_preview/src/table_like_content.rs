@@ -3,7 +3,7 @@ use ui::SharedString;
 use crate::row_identifiers::LineNumber;
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TableLikeContent {
     pub headers: Vec<SharedString>,
     pub rows: Vec<Vec<SharedString>>,

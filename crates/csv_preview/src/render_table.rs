@@ -7,7 +7,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView, Ordering,
-    data_ordering::{OrderingDirection, generate_ordered_indices},
+    data_ordering::OrderingDirection,
     settings::FontType,
     settings::RowRenderMechanism,
     types::{DisplayCellId, DisplayRow},
@@ -74,6 +74,7 @@ impl CsvPreviewView {
             };
 
             this.ordering = new_ordering;
+            this.update_ordered_indices();
             cx.notify();
         }));
         sort_btn
@@ -187,7 +188,7 @@ impl CsvPreviewView {
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
-        let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+        let ordered_indices = this.get_ordered_indices();
 
         // Get the actual row index from our ordered indices
         let data_row = ordered_indices.get_data_row(DisplayRow::new(display_index))?;
