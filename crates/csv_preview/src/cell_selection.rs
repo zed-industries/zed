@@ -33,7 +33,10 @@ use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use std::collections::HashSet;
 use ui::{div, prelude::*};
 
-use crate::{CsvPreviewView, FontType, VerticalAlignment, data_ordering::generate_ordered_indices};
+use crate::{
+    CsvPreviewView, data_ordering::generate_ordered_indices, settings::FontType,
+    settings::VerticalAlignment,
+};
 
 /// Selected cells using data coordinates (data_row, col).
 ///
