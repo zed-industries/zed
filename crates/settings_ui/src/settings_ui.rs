@@ -29,9 +29,8 @@ use std::{
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Banner, ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape,
-    KeyBinding, KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
+    KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -39,7 +38,8 @@ use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decor
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
-    EnumVariantDropdown, SettingsInputField, font_picker, icon_theme_picker, theme_picker,
+    EnumVariantDropdown, SettingsInputField, SettingsSectionHeader, font_picker, icon_theme_picker,
+    theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -838,18 +838,9 @@ impl SettingsPageItem {
             };
 
         match self {
-            SettingsPageItem::SectionHeader(header) => v_flex()
-                .w_full()
-                .px_8()
-                .gap_1p5()
-                .child(
-                    Label::new(SharedString::new_static(header))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
-                )
-                .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                .into_any_element(),
+            SettingsPageItem::SectionHeader(header) => {
+                SettingsSectionHeader::new(SharedString::new_static(header)).into_any_element()
+            }
             SettingsPageItem::SettingItem(setting_item) => {
                 let (field_with_padding, _) =
                     render_setting_item_inner(setting_item, true, false, cx);

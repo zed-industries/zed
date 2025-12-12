@@ -5,11 +5,11 @@ use edit_prediction::{
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::CODESTRAL_API_URL;
-use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
-    components::SettingsInputField,
+    components::{SettingsInputField, SettingsSectionHeader},
 };
 
 pub struct EditPredictionSetupPage {
@@ -38,11 +38,7 @@ impl Render for EditPredictionSetupPage {
                 render_api_key_provider(
                     IconName::Inception,
                     "Mercury",
-                    ButtonLink::new(
-                        "Mercury's console",
-                        "https://platform.inceptionlabs.ai/dashboard/api-keys",
-                    )
-                    .into_any_element(),
+                    "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
                     |ep_store| &mut ep_store.mercury.api_token,
                     |_cx| MERCURY_CREDENTIALS_URL,
                     ep_store.clone(),
@@ -56,7 +52,7 @@ impl Render for EditPredictionSetupPage {
                 render_api_key_provider(
                     IconName::SweepAi,
                     "Sweep",
-                    ButtonLink::new("Sweep's console", "https://app.sweep.dev/").into_any_element(),
+                    "https://app.sweep.dev/".into(),
                     |ep_store| &mut ep_store.sweep_ai.api_token,
                     |_cx| SWEEP_CREDENTIALS_URL,
                     ep_store.clone(),
@@ -70,11 +66,7 @@ impl Render for EditPredictionSetupPage {
                 render_api_key_provider(
                     IconName::AiMistral,
                     "Codestral",
-                    ButtonLink::new(
-                        "the Codestral section of Mistral's console",
-                        "https://console.mistral.ai/codestral",
-                    )
-                    .into_any_element(),
+                    "https://console.mistral.ai/codestral".into(),
                     |state| &mut state.codestral_api_key_state,
                     |cx| language_models::MistralLanguageModelProvider::api_url(cx),
                     language_models::MistralLanguageModelProvider::try_global(cx)
@@ -107,23 +99,10 @@ impl Render for EditPredictionSetupPage {
                     .min_w_0()
                     .size_full()
                     .px_8()
-                    .pb_32()
-                    .gap_4()
+                    .pb_16()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .child(Headline::new("Edit Prediction Providers"))
-                    .children({
-                        let mut elements = vec![];
-                        for provider in providers {
-                            let Some(provider) = provider else {
-                                continue;
-                            };
-                            elements.push(provider);
-                            elements.push(Divider::horizontal().into_any_element());
-                        }
-                        elements.pop();
-                        elements
-                    }),
+                    .children(providers.into_iter().flatten()),
             )
     }
 }
@@ -131,11 +110,11 @@ impl Render for EditPredictionSetupPage {
 fn render_api_key_provider<Ent: 'static>(
     icon: IconName,
     title: &'static str,
-    link: AnyElement,
+    link: SharedString,
     api_key_state: fn(&mut Ent) -> &mut ApiKeyState,
     current_url: fn(&mut Context<Ent>) -> SharedString,
     entity: Option<Entity<Ent>>,
-    additional_info: Option<AnyElement>,
+    additional_fields: Option<AnyElement>,
     _window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -161,75 +140,83 @@ fn render_api_key_provider<Ent: 'static>(
         }
     };
 
-    let base_container = v_flex().id(title).min_w_0().gap_1p5();
-
-    let icon_and_name = h_flex()
-        .gap_1()
-        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-        .child(Label::new(title));
-
-    let description = format!(
-        "To use {} as an edit prediction provider, you need an API key. Follow these steps:",
-        title
-    );
+    let base_container = v_flex().id(title).min_w_0().pt_8().gap_1p5();
+    let header = SettingsSectionHeader::new(title)
+        .icon(icon)
+        .no_padding(true);
+    let button_link_label = format!("{} dashboard", title);
+    let description = h_flex()
+        .min_w_0()
+        .gap_0p5()
+        .child(
+            Label::new("Visit the")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            ButtonLink::new(button_link_label, link)
+                .no_icon(true)
+                .label_size(LabelSize::Small)
+                .label_color(Color::Muted),
+        )
+        .child(
+            Label::new("to generate an API key.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        );
 
     let container = if has_key {
-        base_container.child(icon_and_name).child(
+        base_container.child(header).child(
             ConfiguredApiCard::new("API key configured")
                 .button_label("Reset Key")
                 .button_tab_index(0)
-                // .disabled()
-                // todo! should be disabled if from env
-                // with message for why
+                // .disabled() TODO: Disable button to reset if the env var is set
                 .on_click(move |_, _, cx| {
                     write_key(entity.clone(), None, cx);
                 }),
         )
     } else {
-        base_container
-            .child(
-                v_flex()
-                    .w_full()
-                    .gap_1p5()
-                    .child(icon_and_name)
-                    .child(Label::new(description).color(Color::Muted)),
-            )
-            .child(
-                List::new()
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("Create one by visiting").color(Color::Muted))
-                            .child(link),
-                    )
-                    .child(
-                        ListBulletItem::new("Paste your API key below and hit enter")
-                            .label_color(Color::Muted),
-                    ),
-            )
-            .child(
-                SettingsInputField::new()
-                    .tab_index(0)
-                    .with_placeholder("sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-                    .on_confirm(move |api_key, cx| {
-                        write_key(entity.clone(), api_key.filter(|key| !key.is_empty()), cx);
-                    }),
-            )
-            .when_some(env_var_name, |this, env_var_name| {
-                this.child({
-                    let label = format!(
-                        "You can also assign the {} environment variable and restart Zed.",
-                        env_var_name.as_ref()
-                    );
-                    Label::new(label)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .mt_0p5()
-                })
-            })
+        base_container.child(header).child(
+            h_flex()
+                .pt_2p5()
+                .w_full()
+                .justify_between()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .max_w_1_2()
+                        .child(Label::new("API Key"))
+                        .child(description)
+                        .when_some(env_var_name, |this, env_var_name| {
+                            this.child({
+                                let label = format!(
+                                    "Or set the {} env var and restart Zed.",
+                                    env_var_name.as_ref()
+                                );
+                                Label::new(label).size(LabelSize::Small).color(Color::Muted)
+                            })
+                        }),
+                )
+                .child(
+                    SettingsInputField::new()
+                        .tab_index(0)
+                        .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .on_confirm(move |api_key, cx| {
+                            write_key(entity.clone(), api_key.filter(|key| !key.is_empty()), cx);
+                        }),
+                ),
+        )
     };
 
-    container.when_some(additional_info, |this, additional_info| {
-        this.child(div().px_neg_8().child(additional_info))
+    container.when_some(additional_fields, |this, additional_fields| {
+        this.child(
+            div()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .mt_4()
+                .px_neg_8()
+                .child(additional_fields),
+        )
     })
 }
 
@@ -237,7 +224,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
     Box::new([
         SettingsPageItem::SettingItem(SettingItem {
             title: "API URL",
-            description: "The API URL to use for Codestral",
+            description: "The API URL to use for Codestral.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -270,7 +257,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Max Tokens",
-            description: "The maximum number of tokens to generate",
+            description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -300,7 +287,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Model",
-            description: "The Codestral model id to use",
+            description: "The Codestral model id to use.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -354,14 +341,9 @@ pub(crate) fn render_github_copilot_provider(
         .min_w_0()
         .gap_1p5()
         .child(
-            h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Copilot)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(Label::new("GitHub Copilot")),
+            SettingsSectionHeader::new("GitHub Copilot")
+                .icon(IconName::Copilot)
+                .no_padding(true),
         )
         .child(configuration_view)
 }

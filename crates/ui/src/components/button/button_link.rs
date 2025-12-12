@@ -16,8 +16,9 @@ use crate::{ButtonLike, prelude::*};
 pub struct ButtonLink {
     label: SharedString,
     label_size: LabelSize,
-    label_color: Option<Color>,
+    label_color: Color,
     link: String,
+    no_icon: bool,
 }
 
 impl ButtonLink {
@@ -26,8 +27,24 @@ impl ButtonLink {
             link: link.into(),
             label: label.into(),
             label_size: LabelSize::Default,
-            label_color: None,
+            label_color: Color::Default,
+            no_icon: false,
         }
+    }
+
+    pub fn no_icon(mut self, no_icon: bool) -> Self {
+        self.no_icon = no_icon;
+        self
+    }
+
+    pub fn label_size(mut self, label_size: LabelSize) -> Self {
+        self.label_size = label_size;
+        self
+    }
+
+    pub fn label_color(mut self, label_color: Color) -> Self {
+        self.label_color = label_color;
+        self
     }
 }
 
@@ -43,14 +60,16 @@ impl RenderOnce for ButtonLink {
                     .child(
                         Label::new(self.label)
                             .size(self.label_size)
-                            .color(self.label_color.unwrap_or(Color::Default))
+                            .color(self.label_color)
                             .underline(),
                     )
-                    .child(
-                        Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    ),
+                    .when(!self.no_icon, |this| {
+                        this.child(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             .on_click(move |_, _, cx| cx.open_url(&self.link))
             .into_any_element()
