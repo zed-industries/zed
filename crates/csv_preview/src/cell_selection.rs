@@ -87,11 +87,11 @@ impl TableSelection {
     /// → If table gets sorted, selection stays with that data row
     pub fn start_selection<F>(
         &mut self,
-        display_row: usize,
+        display_row: DisplayRow,
         col: usize,
         display_to_data_converter: F,
     ) where
-        F: Fn(usize) -> Option<usize>,
+        F: Fn(DisplayRow) -> Option<DataRow>,
     {
         self.selected_cells.clear();
 
@@ -101,7 +101,7 @@ impl TableSelection {
         }
 
         // Remember display coordinates for extend_selection_to
-        self.selection_start_display = Some((display_row, col));
+        self.selection_start_display = Some((display_row.get(), col));
         self.is_selecting = true;
     }
 
@@ -118,25 +118,25 @@ impl TableSelection {
     /// → Stores data coordinates so selection survives sorting
     pub fn extend_selection_to<F>(
         &mut self,
-        display_row: usize,
+        display_row: DisplayRow,
         col: usize,
         display_to_data_converter: F,
     ) where
-        F: Fn(usize) -> Option<usize>,
+        F: Fn(DisplayRow) -> Option<DataRow>,
     {
         if let Some((start_display_row, start_col)) = self.selection_start_display {
             self.selected_cells.clear();
 
             // Create rectangle in display coordinates
-            let min_display_row = start_display_row.min(display_row);
-            let max_display_row = start_display_row.max(display_row);
+            let min_display_row = start_display_row.min(display_row.get());
+            let max_display_row = start_display_row.max(display_row.get());
             let min_col = start_col.min(col);
             let max_col = start_col.max(col);
 
             // Convert each display cell to data coordinates for storage
             for display_r in min_display_row..=max_display_row {
                 for c in min_col..=max_col {
-                    if let Some(data_row) = display_to_data_converter(display_r) {
+                    if let Some(data_row) = display_to_data_converter(DisplayRow::new(display_r)) {
                         self.selected_cells.insert(DataCellId::new(data_row, c));
                     }
                 }
@@ -158,12 +158,12 @@ impl TableSelection {
     /// This ensures selection highlighting follows the data regardless of sort order.
     pub fn is_cell_selected<F>(
         &self,
-        display_row: usize,
+        display_row: DisplayRow,
         col: usize,
         display_to_data_converter: F,
     ) -> bool
     where
-        F: Fn(usize) -> Option<usize>,
+        F: Fn(DisplayRow) -> Option<DataRow>,
     {
         if let Some(data_row) = display_to_data_converter(display_row) {
             self.selected_cells
@@ -210,8 +210,9 @@ impl CsvPreviewView {
             move |_event, _window, cx| {
                 view.update(cx, |this, cx| {
                     let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-                    let display_to_data_converter =
-                        move |dr: usize| ordered_indices.get(dr).copied();
+                    let display_to_data_converter = move |dr: DisplayRow| {
+                        ordered_indices.get(dr.get()).copied().map(Into::into)
+                    };
 
                     this.selection.start_selection(
                         display_cell_id.row,
@@ -232,8 +233,9 @@ impl CsvPreviewView {
                     }
                     // Create converter function without borrowing self
                     let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-                    let display_to_data_converter =
-                        move |dr: usize| ordered_indices.get(dr).copied();
+                    let display_to_data_converter = move |dr: DisplayRow| {
+                        ordered_indices.get(dr.get()).copied().map(Into::into)
+                    };
 
                     this.selection.extend_selection_to(
                         display_cell_id.row,
@@ -258,20 +260,81 @@ impl CsvPreviewView {
     }
 }
 
+/// Row index in display coordinates (what the user sees on screen).
+///
+/// These are visual row positions in the rendered table, taking into account
+/// any sorting that may have been applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DisplayRow(pub usize);
+
+impl DisplayRow {
+    /// Create a new display row
+    pub fn new(row: usize) -> Self {
+        Self(row)
+    }
+
+    /// Get the inner row value
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+/// Row index in data coordinates (original CSV row position).
+///
+/// These represent positions in the original CSV data, regardless of any
+/// sorting or display transformations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DataRow(pub usize);
+
+impl DataRow {
+    /// Create a new data row
+    pub fn new(row: usize) -> Self {
+        Self(row)
+    }
+
+    /// Get the inner row value
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for DisplayRow {
+    fn from(row: usize) -> Self {
+        DisplayRow::new(row)
+    }
+}
+
+impl From<usize> for DataRow {
+    fn from(row: usize) -> Self {
+        DataRow::new(row)
+    }
+}
+
 /// Display coordinates for a cell (what the user sees on screen).
 ///
 /// These coordinates represent the visual position of a cell in the rendered table,
 /// taking into account any sorting that may have been applied.
+///
+/// **Example**: If CSV data is [Alice, Bob, Charlie] and gets sorted alphabetically,
+/// the display coordinates remain [0, 1, 2] but now show [Alice, Bob, Charlie].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisplayCellId {
-    pub row: usize,
+    pub row: DisplayRow,
     pub col: usize,
 }
 
 impl DisplayCellId {
     /// Create a new display cell ID
-    pub fn new(row: usize, col: usize) -> Self {
+    pub fn new(row: DisplayRow, col: usize) -> Self {
         Self { row, col }
+    }
+
+    /// Create a new display cell ID from raw values
+    pub fn from_raw(row: usize, col: usize) -> Self {
+        Self {
+            row: DisplayRow::new(row),
+            col,
+        }
     }
 }
 
@@ -285,14 +348,22 @@ impl DisplayCellId {
 /// even though her display coordinates are now (1, name_col).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataCellId {
-    pub row: usize,
+    pub row: DataRow,
     pub col: usize,
 }
 
 impl DataCellId {
     /// Create a new data cell ID
-    pub fn new(row: usize, col: usize) -> Self {
+    pub fn new(row: DataRow, col: usize) -> Self {
         Self { row, col }
+    }
+
+    /// Create a new data cell ID from raw values
+    pub fn from_raw(row: usize, col: usize) -> Self {
+        Self {
+            row: DataRow::new(row),
+            col,
+        }
     }
 }
 
@@ -309,7 +380,8 @@ fn create_table_cell(
         .id(ElementId::NamedInteger(
             format!(
                 "csv-display-cell-{}-{}",
-                display_cell_id.row, display_cell_id.col
+                display_cell_id.row.get(),
+                display_cell_id.col
             )
             .into(),
             0,
