@@ -882,6 +882,7 @@ pub struct Window {
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
+    pending_input_changed_queued: bool,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
@@ -1305,6 +1306,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             pending_input: None,
+            pending_input_changed_queued: false,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
@@ -1976,6 +1978,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.notify_pending_input_if_needed(cx);
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -3988,6 +3991,7 @@ impl Window {
     }
 
     fn pending_input_changed(&mut self, cx: &mut App) {
+        self.pending_input_changed_queued = false;
         self.pending_input_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
@@ -4050,7 +4054,9 @@ impl Window {
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+        if self.pending_input.take().is_some() {
+            self.pending_input_changed_queued = true;
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -4058,6 +4064,12 @@ impl Window {
         self.pending_input
             .as_ref()
             .map(|pending_input| pending_input.keystrokes.as_slice())
+    }
+
+    pub(crate) fn notify_pending_input_if_needed(&mut self, cx: &mut App) {
+        if self.pending_input_changed_queued {
+            self.pending_input_changed(cx);
+        }
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
