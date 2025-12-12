@@ -390,13 +390,13 @@ fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
 }
 
 fn format_duration(duration: Duration) -> String {
-    const MINUTE_IN_MILLIS: u128 = 60 * 1000;
+    const MINUTE_IN_MILLIS: f32 = 60. * 1000.;
 
-    let millis = duration.as_millis();
-    if millis < 1000 {
+    let millis = duration.as_millis() as f32;
+    if millis < 1000.0 {
         format!("{}ms", millis)
     } else if millis < MINUTE_IN_MILLIS {
-        format!("{:.1}s", millis / 1_000)
+        format!("{:.1}s", millis / 1_000.0)
     } else {
         format!("{:.1}m", millis / MINUTE_IN_MILLIS)
     }
