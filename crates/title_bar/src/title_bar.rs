@@ -39,8 +39,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
+    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, rel_path::RelPath};
 use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
@@ -425,11 +425,21 @@ impl TitleBar {
         }
 
         Some(
-            IconButton::new("restricted_mode_trigger", IconName::Warning)
+            Button::new("restricted_mode_trigger", "Restricted Mode")
+                .style(ButtonStyle::Tinted(TintColor::Warning))
+                .label_size(LabelSize::Small)
+                .color(Color::Warning)
+                .icon(IconName::Warning)
                 .icon_color(Color::Warning)
                 .icon_size(IconSize::Small)
+                .icon_position(IconPosition::Start)
                 .tooltip(|_, cx| {
-                    Tooltip::for_action("Restricted Mode", &ToggleWorktreeSecurity, cx)
+                    Tooltip::with_meta(
+                        "You're in Restricted Mode",
+                        Some(&ToggleWorktreeSecurity),
+                        "Mark this project as trusted and unlock all features",
+                        cx,
+                    )
                 })
                 .on_click({
                     cx.listener(move |this, _, window, cx| {
