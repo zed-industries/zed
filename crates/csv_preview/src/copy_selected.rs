@@ -1,5 +1,6 @@
 use gpui::ClipboardItem;
 use ui::{Context, Window};
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use std::collections::BTreeMap;
 
@@ -9,7 +10,7 @@ impl CsvPreviewView {
     pub(crate) fn copy_selected(
         &mut self,
         _: &CopySelected,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let selected_cells = self.selection.get_selected_cells();
@@ -108,6 +109,31 @@ impl CsvPreviewView {
             lines.join("\n")
         };
         cx.write_to_clipboard(ClipboardItem::new_string(content));
+
+        // Show toast notification
+        if let Some(Some(workspace)) = window.root() {
+            let format_name = match self.settings.copy_format {
+                CopyFormat::Tsv => "TSV",
+                CopyFormat::Csv => "CSV",
+                CopyFormat::Semicolon => "Semicolon",
+                CopyFormat::Markdown => "Markdown",
+            };
+
+            let cell_count = selected_cells.len();
+            let message = if cell_count == 1 {
+                format!("{} cell copied as {}", cell_count, format_name)
+            } else {
+                format!("{} cells copied as {}", cell_count, format_name)
+            };
+
+            workspace.update(cx, |workspace: &mut Workspace, cx| {
+                struct CsvCopyToast;
+                workspace.show_toast(
+                    Toast::new(NotificationId::unique::<CsvCopyToast>(), message).autohide(),
+                    cx,
+                );
+            });
+        }
     }
 
     fn format_as_markdown_table(
