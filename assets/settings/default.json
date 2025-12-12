@@ -2103,7 +2103,7 @@
     // Whether to show the LSP servers button in the status bar.
     "button": true,
     // Maximum amount of time to wait for responses from language servers, in seconds.
-    "request_timeout": 120
+    "request_timeout": 120,
   },
   // Jupyter settings
   "jupyter": {
