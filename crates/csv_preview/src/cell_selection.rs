@@ -38,18 +38,18 @@ use crate::{
     settings::VerticalAlignment,
 };
 
-/// Selected cells using data coordinates (data_row, col).
+/// Selected cells using data coordinates (DataCellId).
 ///
 /// IMPORTANT: This stores CSV data coordinates, NOT display coordinates.
-/// - data_row: The row index in the original CSV data (0-based)
-/// - col: The CSV data column index (0-based, excluding line number column)
+/// - DataCellId.row: The row index in the original CSV data (0-based)
+/// - DataCellId.col: The CSV data column index (0-based, excluding line number column)
 ///
 /// Selection flow:
 /// 1. User clicks/drags using display coordinates (what they see)
 /// 2. Immediately convert display → data coordinates for storage
 /// 3. Selection follows the data when sorting changes (intuitive behavior)
 /// 4. Renderer converts data → display coordinates to highlight correct cells
-pub type SelectedCells = HashSet<(usize, usize)>;
+pub type SelectedCells = HashSet<DataCellId>;
 
 /// Manages table cell selection state and behavior.
 pub struct TableSelection {
@@ -97,7 +97,7 @@ impl TableSelection {
 
         // Convert display coordinates to data coordinates for storage
         if let Some(data_row) = display_to_data_converter(display_row) {
-            self.selected_cells.insert((data_row, col));
+            self.selected_cells.insert(DataCellId::new(data_row, col));
         }
 
         // Remember display coordinates for extend_selection_to
@@ -137,7 +137,7 @@ impl TableSelection {
             for display_r in min_display_row..=max_display_row {
                 for c in min_col..=max_col {
                     if let Some(data_row) = display_to_data_converter(display_r) {
-                        self.selected_cells.insert((data_row, c));
+                        self.selected_cells.insert(DataCellId::new(data_row, c));
                     }
                 }
             }
@@ -166,7 +166,8 @@ impl TableSelection {
         F: Fn(usize) -> Option<usize>,
     {
         if let Some(data_row) = display_to_data_converter(display_row) {
-            self.selected_cells.contains(&(data_row, col))
+            self.selected_cells
+                .contains(&DataCellId::new(data_row, col))
         } else {
             false
         }
@@ -185,8 +186,7 @@ impl CsvPreviewView {
     /// This function creates the interactive cell div with mouse event handlers
     /// that work with the display/data coordinate conversion system.
     pub fn create_selectable_cell(
-        display_row: usize,
-        col: usize,
+        display_cell_id: DisplayCellId,
         cell_content: impl IntoElement,
         view_entity: Entity<CsvPreviewView>,
         selected_bg_color: gpui::Hsla,
@@ -196,8 +196,7 @@ impl CsvPreviewView {
         cx: &Context<CsvPreviewView>,
     ) -> AnyElement {
         create_table_cell(
-            display_row,
-            col,
+            display_cell_id,
             cell_content,
             selected_bg_color,
             is_selected,
@@ -214,8 +213,11 @@ impl CsvPreviewView {
                     let display_to_data_converter =
                         move |dr: usize| ordered_indices.get(dr).copied();
 
-                    this.selection
-                        .start_selection(display_row, col, display_to_data_converter);
+                    this.selection.start_selection(
+                        display_cell_id.row,
+                        display_cell_id.col,
+                        display_to_data_converter,
+                    );
                     cx.notify();
                 });
             }
@@ -233,8 +235,11 @@ impl CsvPreviewView {
                     let display_to_data_converter =
                         move |dr: usize| ordered_indices.get(dr).copied();
 
-                    this.selection
-                        .extend_selection_to(display_row, col, display_to_data_converter);
+                    this.selection.extend_selection_to(
+                        display_cell_id.row,
+                        display_cell_id.col,
+                        display_to_data_converter,
+                    );
                     cx.notify();
                 });
             }
@@ -253,15 +258,46 @@ impl CsvPreviewView {
     }
 }
 
-//TODO: start using it and add docs
+/// Display coordinates for a cell (what the user sees on screen).
+///
+/// These coordinates represent the visual position of a cell in the rendered table,
+/// taking into account any sorting that may have been applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisplayCellId {
-    row: usize,
-    col: usize,
+    pub row: usize,
+    pub col: usize,
+}
+
+impl DisplayCellId {
+    /// Create a new display cell ID
+    pub fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+}
+
+/// Data coordinates for a cell (original CSV row position).
+///
+/// These coordinates represent the position of a cell in the original CSV data,
+/// regardless of any sorting or display transformations.
+///
+/// **Example**: If CSV data is [Alice, Bob, Charlie] and gets sorted by age to
+/// show [Bob, Alice, Charlie], Alice's data coordinates remain (0, name_col)
+/// even though her display coordinates are now (1, name_col).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DataCellId {
+    pub row: usize,
+    pub col: usize,
+}
+
+impl DataCellId {
+    /// Create a new data cell ID
+    pub fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
 }
 
 fn create_table_cell(
-    display_row: usize,
-    col: usize,
+    display_cell_id: DisplayCellId,
     cell_content: impl IntoElement,
     selected_bg_color: gpui::Hsla,
     is_selected: bool,
@@ -271,7 +307,11 @@ fn create_table_cell(
 ) -> gpui::Stateful<Div> {
     div()
         .id(ElementId::NamedInteger(
-            format!("csv-display-cell-{}-{}", display_row, col).into(),
+            format!(
+                "csv-display-cell-{}-{}",
+                display_cell_id.row, display_cell_id.col
+            )
+            .into(),
             0,
         ))
         .cursor_pointer()
