@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/cloud_api_client",
-    "crates/cloud_api_types",
-    "crates/cloud_llm_client",
     "crates/collections",
-    "crates/extension_api",
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
@@ -34,9 +30,6 @@ edition = "2024"
 # Workspace member crates
 #
 
-cloud_api_client = { path = "crates/cloud_api_client" }
-cloud_api_types = { path = "crates/cloud_api_types" }
-cloud_llm_client = { path = "crates/cloud_llm_client" }
 collections = { path = "crates/collections", version = "0.1.0" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 gpui = { path = "crates/gpui", default-features = false }
