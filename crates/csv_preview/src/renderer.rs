@@ -238,7 +238,8 @@ impl CsvPreviewView {
         let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
 
         // Get the actual row index from our ordered indices
-        let row_index = *ordered_indices.get(display_index)?;
+        let data_row = ordered_indices.get_data_row(DisplayRow::new(display_index))?;
+        let row_index = data_row.get();
         let row = this.contents.rows.get(row_index)?;
 
         let mut elements = Vec::with_capacity(COLS);
@@ -255,14 +256,9 @@ impl CsvPreviewView {
             let cell_content: SharedString = row.get(col).cloned().unwrap_or_else(|| "".into());
 
             // Check if this cell is selected using display coordinates
-            let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-            let display_to_data_converter =
-                |dr: DisplayRow| ordered_indices.get(dr.get()).copied().map(Into::into);
-            let is_selected = this.selection.is_cell_selected(
-                display_index.into(),
-                col,
-                display_to_data_converter,
-            );
+            let is_selected =
+                this.selection
+                    .is_cell_selected(display_index.into(), col, &ordered_indices);
 
             elements.push(CsvPreviewView::create_selectable_cell(
                 DisplayCellId::new(display_index.into(), col),
