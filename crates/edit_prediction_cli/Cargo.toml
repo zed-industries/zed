@@ -34,6 +34,7 @@ language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+libc.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
@@ -52,10 +53,9 @@ sqlez_macros.workspace = true
 terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
-edit_prediction = { workspace = true, features = ["eval-support"] }
+edit_prediction = { workspace = true, features = ["cli-support"] }
 wasmtime.workspace = true
 zeta_prompt.workspace = true
-zlog.workspace = true
 
 # Wasmtime is included as a dependency in order to enable the same
 # features that are enabled in Zed.

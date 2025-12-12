@@ -882,7 +882,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.template_value(),
                     RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.template_value(),
                 ],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -904,14 +904,14 @@ impl ContextProvider for RustContextProvider {
                 label: "Run".into(),
                 command: "cargo".into(),
                 args: run_task_args,
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
                 label: "Clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
         ];

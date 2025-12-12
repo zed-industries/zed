@@ -2,10 +2,11 @@ use crate::{
     PredictionProvider, PromptFormat,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction},
-    format_prompt::{PromptParser, TeacherPrompt, run_format_prompt},
+    format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
+    progress::{InfoStyle, Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{DebugEvent, EditPredictionStore};
@@ -30,19 +31,27 @@ pub async fn run_prediction(
         return;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await;
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
-
     let provider = provider.unwrap();
 
-    if matches!(provider, PredictionProvider::Teacher) {
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
+
+    if matches!(
+        provider,
+        PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
+    ) {
+        let _step_progress = Progress::global().start(Step::Predict, &example.name);
+
         if example.prompt.is_none() {
             run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
         }
 
-        let batched = true;
+        let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
     }
+
+    run_load_project(example, app_state.clone(), cx.clone()).await;
+
+    let _step_progress = Progress::global().start(Step::Predict, &example.name);
 
     if matches!(
         provider,
@@ -75,7 +84,9 @@ pub async fn run_prediction(
                 PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
                 PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
                 PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-                PredictionProvider::Teacher => unreachable!(),
+                PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+                    unreachable!()
+                }
             };
             store.set_edit_prediction_model(model);
         })
@@ -175,18 +186,31 @@ pub async fn run_prediction(
             .await
             .unwrap();
 
+        let actual_patch = prediction
+            .and_then(|prediction| {
+                let prediction = prediction.prediction.ok()?;
+                prediction.edit_preview.as_unified_diff(&prediction.edits)
+            })
+            .unwrap_or_default();
+
+        let has_prediction = !actual_patch.is_empty();
+
         updated_example
             .lock()
             .unwrap()
             .predictions
             .last_mut()
             .unwrap()
-            .actual_patch = prediction
-            .and_then(|prediction| {
-                let prediction = prediction.prediction.ok()?;
-                prediction.edit_preview.as_unified_diff(&prediction.edits)
-            })
-            .unwrap_or_default();
+            .actual_patch = actual_patch;
+
+        if ix == repetition_count - 1 {
+            let (info, style) = if has_prediction {
+                ("predicted", InfoStyle::Normal)
+            } else {
+                ("no prediction", InfoStyle::Warning)
+            };
+            _step_progress.set_info(info, style);
+        }
     }
 
     ep_store

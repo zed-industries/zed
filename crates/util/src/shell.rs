@@ -702,7 +702,10 @@ impl ShellKind {
                     .map(|quoted| Cow::Owned(self.prepend_command_prefix(&quoted).into_owned()));
             }
         }
-        self.try_quote(arg)
+        self.try_quote(arg).map(|quoted| match quoted {
+            unquoted @ Cow::Borrowed(_) => unquoted,
+            Cow::Owned(quoted) => Cow::Owned(self.prepend_command_prefix(&quoted).into_owned()),
+        })
     }
 
     pub fn split(&self, input: &str) -> Option<Vec<String>> {
@@ -916,7 +919,7 @@ mod tests {
                 .try_quote_prefix_aware("'uname'")
                 .unwrap()
                 .into_owned(),
-            "\"'uname'\"".to_string()
+            "^\"'uname'\"".to_string()
         );
         assert_eq!(
             shell_kind.try_quote("^uname").unwrap().into_owned(),
@@ -949,7 +952,7 @@ mod tests {
                 .try_quote_prefix_aware("'uname a'")
                 .unwrap()
                 .into_owned(),
-            "\"'uname a'\"".to_string()
+            "^\"'uname a'\"".to_string()
         );
         assert_eq!(
             shell_kind.try_quote("^'uname a'").unwrap().into_owned(),
