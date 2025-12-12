@@ -13,6 +13,9 @@ use crate::{
     settings::RowRenderMechanism,
 };
 
+pub(crate) mod nasty_code_duplication;
+pub(crate) mod render_table;
+
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -258,7 +261,7 @@ impl CsvPreviewView {
                 this.selection
                     .is_cell_selected(display_index, col, display_to_data_converter);
 
-            elements.push(TableSelection::create_selectable_cell(
+            elements.push(CsvPreviewView::create_selectable_cell(
                 display_index,
                 col,
                 cell_content,

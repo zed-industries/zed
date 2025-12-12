@@ -4,14 +4,14 @@ use crate::row_identifiers::LineNumber;
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
 #[derive(Default)]
-pub struct TableData {
+pub struct TableLikeContent {
     pub headers: Vec<SharedString>,
     pub rows: Vec<Vec<SharedString>>,
     /// Follows the same indices as `rows`
     pub line_numbers: Vec<LineNumber>,
 }
 
-impl TableData {
+impl TableLikeContent {
     pub fn from_str(raw_text: String) -> Self {
         if raw_text.trim().is_empty() {
             return Self {
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_csv_parsing_basic() {
         let csv_data = "Name,Age,City\nJohn,30,New York\nJane,25,Los Angeles";
-        let parsed = TableData::from_str(csv_data.to_string());
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.len(), 3);
         assert_eq!(parsed.headers[0].as_ref(), "Name");
@@ -184,7 +184,7 @@ mod tests {
         let csv_data = r#"Name,Description
 "John Doe","A person with ""special"" characters"
 Jane,"Simple name""#;
-        let parsed = TableData::from_str(csv_data.to_string());
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.len(), 2);
         assert_eq!(parsed.rows.len(), 2);
@@ -197,7 +197,7 @@ Jane,"Simple name""#;
     #[test]
     fn test_csv_parsing_with_newlines_in_quotes() {
         let csv_data = "Name,Description,Status\n\"John\nDoe\",\"A person with\nmultiple lines\",Active\n\"Jane Smith\",\"Simple\",\"Also\nActive\"";
-        let parsed = TableData::from_str(csv_data.to_string());
+        let parsed = TableLikeContent::from_str(csv_data.to_string());
 
         assert_eq!(parsed.headers.len(), 3);
         assert_eq!(parsed.headers[0].as_ref(), "Name");
@@ -233,7 +233,7 @@ Jane,"Simple name""#;
 
     #[test]
     fn test_empty_csv() {
-        let parsed = TableData::from_str("".to_string());
+        let parsed = TableLikeContent::from_str("".to_string());
         assert!(parsed.headers.is_empty());
         assert!(parsed.rows.is_empty());
     }

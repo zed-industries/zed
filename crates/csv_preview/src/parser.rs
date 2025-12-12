@@ -1,4 +1,4 @@
-use crate::{CsvPreviewView, table_data::TableData};
+use crate::{CsvPreviewView, table_like_content::TableLikeContent};
 use editor::{Editor, EditorEvent};
 use gpui::{AppContext, Context, Entity, Subscription, Task};
 use std::time::{Duration, Instant};
@@ -70,7 +70,8 @@ impl CsvPreviewView {
                     .unwrap_or_default()
             })?;
 
-            let parsing_task = cx.background_spawn(async move { TableData::from_str(contents) });
+            let parsing_task =
+                cx.background_spawn(async move { TableLikeContent::from_str(contents) });
 
             let parsed_csv = parsing_task.await;
 
