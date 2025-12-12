@@ -375,12 +375,17 @@ impl LocalLspStore {
         );
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
 
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .request_timeout();
+
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
+            let request_timeout = request_timeout.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
                 let binary = binary.await?;
@@ -409,6 +414,7 @@ impl LocalLspStore {
                     &root_path,
                     code_action_kinds,
                     Some(pending_workspace_folders),
+                    request_timeout,
                     cx,
                 )
             }
@@ -12674,8 +12680,7 @@ fn lsp_workspace_diagnostics_refresh(
                 };
 
                 progress_rx.try_recv().ok();
-                let timer =
-                    LanguageServer::default_request_timer(cx.background_executor().clone()).fuse();
+                let timer = LanguageServer::request_timer().fuse();
                 let progress = pin!(progress_rx.recv().fuse());
                 let response_result = server
                     .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(

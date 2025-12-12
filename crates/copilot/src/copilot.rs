@@ -24,7 +24,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
-use project::DisableAiSettings;
+use project::{DisableAiSettings, project_settings::ProjectSettings};
 use request::StatusNotification;
 use semver::Version;
 use serde_json::json;
@@ -506,6 +506,10 @@ impl Copilot {
                 Path::new("/")
             };
 
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .request_timeout();
+
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
                 Arc::new(Mutex::new(None)),
@@ -515,6 +519,7 @@ impl Copilot {
                 root_path,
                 None,
                 Default::default(),
+                request_timeout,
                 cx,
             )?;
 

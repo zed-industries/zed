@@ -5,7 +5,7 @@ use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
-use lsp::LanguageServerName;
+use lsp::{LanguageServerName, DEFAULT_LSP_REQUEST_TIMEOUT_SECS};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
@@ -107,11 +107,36 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
 
 /// Common language server settings.
 #[derive(Debug, Clone, PartialEq)]
+#[serde(default)]
 pub struct GlobalLspSettings {
     /// Whether to show the LSP servers button in the status bar.
     ///
     /// Default: `true`
     pub button: bool,
+    /// The maximum amount of time to wait for responses from language servers, in seconds.
+    /// Ignored if set to `0`.
+    ///
+    /// Default: `120`
+    pub request_timeout: ui64,
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl GlobalLspSettings {
+    /// Returns the timeout duration for the LSP settings, or None if no timeout should be used. 
+    pub fn request_timeout(&self) -> Option<Duration> {
+        match self.request_timeout {
+            0 => None,
+            secs => Some(Duration::from_secs(secs)),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]

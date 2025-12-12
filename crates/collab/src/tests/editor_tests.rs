@@ -22,7 +22,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::FakeLspAdapter;
-use lsp::LSP_REQUEST_TIMEOUT;
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT_SECS;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
@@ -1099,7 +1099,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 
-    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let long_request_time = Duration::from(LSP_REQUEST_TIMEOUT_SECS / 2);
     let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
     let requests_started = Arc::new(AtomicUsize::new(0));
     let requests_completed = Arc::new(AtomicUsize::new(0));

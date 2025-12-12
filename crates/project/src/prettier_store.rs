@@ -28,6 +28,7 @@ use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 use crate::{
     File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
     worktree_store::WorktreeStore,
+    project_settings::ProjectSettings,
 };
 
 pub struct PrettierStore {
@@ -278,13 +279,17 @@ impl PrettierStore {
         worktree_id: Option<WorktreeId>,
         cx: &mut Context<Self>,
     ) -> PrettierTask {
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .request_timeout();
+
         cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
             let new_server_id = prettier_store.read_with(cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
 
-            let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
+            let new_prettier = Prettier::start(new_server_id, prettier_dir,node, request_timeout, cx.clone())
                 .await
                 .context("default prettier spawn")
                 .map(Arc::new)
