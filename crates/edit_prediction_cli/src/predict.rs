@@ -7,6 +7,7 @@ use crate::{
     load_project::run_load_project,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     progress::{InfoStyle, Progress, Step},
+    retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{DebugEvent, EditPredictionStore};
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
@@ -32,6 +33,8 @@ pub async fn run_prediction(
     }
 
     let provider = provider.unwrap();
+
+    run_context_retrieval(example, app_state.clone(), progress.clone(), cx.clone()).await;
 
     if matches!(
         provider,
