@@ -1075,9 +1075,9 @@ fn model_response(request: open_ai::Request, diff_to_apply: &str) -> open_ai::Re
             finish_reason: None,
         }],
         usage: Usage {
-            prompt_tokens: 0u64,
-            completion_tokens: 0u64,
-            total_tokens: 0u64,
+            prompt_tokens: Some(0u64),
+            completion_tokens: Some(0u64),
+            total_tokens: Some(0u64),
         },
     }
 }
