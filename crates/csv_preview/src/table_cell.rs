@@ -20,6 +20,7 @@ impl CsvPreviewView {
         view_entity: Entity<CsvPreviewView>,
         selected_bg_color: gpui::Hsla,
         is_selected: bool,
+        is_focused: bool,
         vertical_alignment: VerticalAlignment,
         font_type: FontType,
         cx: &Context<CsvPreviewView>,
@@ -29,6 +30,7 @@ impl CsvPreviewView {
             cell_content,
             selected_bg_color,
             is_selected,
+            is_focused,
             vertical_alignment,
             font_type,
             cx,
@@ -84,6 +86,7 @@ fn create_table_cell(
     cell_content: impl IntoElement,
     selected_bg_color: gpui::Hsla,
     is_selected: bool,
+    is_focused: bool,
     vertical_alignment: VerticalAlignment,
     font_type: FontType,
     cx: &Context<'_, CsvPreviewView>,
@@ -110,6 +113,7 @@ fn create_table_cell(
             VerticalAlignment::Center => div.content_center(),
         })
         .when(is_selected, |div| div.bg(selected_bg_color))
+        .when(is_focused, |div| div.border_1().border_color(gpui::green()))
         .map(|div| match font_type {
             FontType::Ui => div.font_ui(cx),
             FontType::Monospace => div.font_buffer(cx),

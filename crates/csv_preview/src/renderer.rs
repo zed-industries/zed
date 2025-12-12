@@ -15,6 +15,10 @@ impl Render for CsvPreviewView {
             .key_context(KEY_CONTEXT_NAME)
             .on_action(cx.listener(Self::copy_selected))
             .on_action(cx.listener(Self::clear_selection))
+            .on_action(cx.listener(Self::move_focus_up))
+            .on_action(cx.listener(Self::move_focus_down))
+            .on_action(cx.listener(Self::move_focus_left))
+            .on_action(cx.listener(Self::move_focus_right))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {
