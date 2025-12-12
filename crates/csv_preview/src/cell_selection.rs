@@ -33,7 +33,7 @@ use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use std::collections::HashSet;
 use ui::{div, prelude::*};
 
-use crate::{CsvPreviewView, VerticalAlignment, data_ordering::generate_ordered_indices};
+use crate::{CsvPreviewView, FontType, VerticalAlignment, data_ordering::generate_ordered_indices};
 
 /// Selected cells using data coordinates (data_row, col).
 ///
@@ -189,6 +189,8 @@ impl TableSelection {
         selected_bg_color: gpui::Hsla,
         is_selected: bool,
         vertical_alignment: VerticalAlignment,
+        font_type: FontType,
+        cx: &Context<CsvPreviewView>,
     ) -> AnyElement {
         div()
             .id(ElementId::NamedInteger(
@@ -207,6 +209,10 @@ impl TableSelection {
                 VerticalAlignment::Center => div.content_center(),
             })
             .when(is_selected, |div| div.bg(selected_bg_color))
+            .map(|div| match font_type {
+                FontType::Ui => div.font_ui(cx),
+                FontType::Monospace => div.font_buffer(cx),
+            })
             .child(cell_content)
             // Called when user presses mouse button down on a cell
             .on_mouse_down(MouseButton::Left, {

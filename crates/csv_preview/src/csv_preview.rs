@@ -59,10 +59,20 @@ pub enum VerticalAlignment {
     Center,
 }
 
+#[derive(Default, Clone, Copy)]
+pub enum FontType {
+    /// Use the default UI font
+    #[default]
+    Ui,
+    /// Use monospace font (same as buffer/editor font)
+    Monospace,
+}
+
 #[derive(Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
+    pub(crate) font_type: FontType,
 }
 
 impl CsvPreviewView {
