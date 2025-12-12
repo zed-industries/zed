@@ -226,6 +226,7 @@ pub fn init(
     }
     assistant_slash_command::init(cx);
     agent_panel::init(cx);
+    agents_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
 
