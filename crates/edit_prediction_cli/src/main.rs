@@ -7,6 +7,7 @@ mod load_project;
 mod metrics;
 mod paths;
 mod predict;
+mod progress;
 mod retrieve_context;
 mod score;
 
@@ -15,8 +16,6 @@ use edit_prediction::EditPredictionStore;
 use gpui::Application;
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
@@ -24,6 +23,7 @@ use crate::example::{group_examples_by_repo, read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::predict::run_prediction;
+use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
 use crate::score::run_scoring;
 
@@ -32,7 +32,7 @@ use crate::score::run_scoring;
 struct EpArgs {
     #[arg(long, default_value_t = false)]
     printenv: bool,
-    #[clap(long, default_value_t = 10)]
+    #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
     #[command(subcommand)]
     command: Option<Command>,
@@ -112,8 +112,6 @@ impl EpArgs {
 }
 
 fn main() {
-    zlog::init();
-    zlog::init_output_stderr();
     let args = EpArgs::parse();
 
     if args.printenv {
@@ -151,20 +149,15 @@ fn main() {
                 predict::sync_batches(&args.provider).await
             };
 
-            let example_count = examples.len();
-            let example_ix = AtomicUsize::new(0);
-            let mut grouped_examples = group_examples_by_repo(&mut examples);
+            let total_examples = examples.len();
+            Progress::global().set_total_examples(total_examples);
 
+            let mut grouped_examples = group_examples_by_repo(&mut examples);
             let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+
             for example_batch in example_batches {
                 let futures = example_batch.into_iter().map(|repo_examples| async {
                     for example in repo_examples.iter_mut() {
-                        eprintln!(
-                            "Processing example: {}/{}",
-                            example_ix.load(SeqCst) + 1,
-                            example_count
-                        );
-                        example_ix.fetch_add(1, SeqCst);
                         match &command {
                             Command::ParseExample => {}
                             Command::LoadProject => {
@@ -206,6 +199,7 @@ fn main() {
                 });
                 futures::future::join_all(futures).await;
             }
+            Progress::global().clear();
 
             if args.output.is_some() || !matches!(command, Command::Eval(_)) {
                 write_examples(&examples, output.as_ref());
