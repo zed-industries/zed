@@ -100,6 +100,11 @@ impl TableSelection {
                     }
                 }
             }
+
+            // Update focused cell to follow the current mouse position (selection frontier)
+            if let Some(data_row) = ordered_indices.get_data_row(display_row) {
+                self.focused_cell = Some(DataCellId::new(data_row, col));
+            }
         }
     }
 
