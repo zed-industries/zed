@@ -6,7 +6,7 @@ use workspace::{Item, Workspace};
 
 use crate::{
     data_ordering::Ordering, nasty_code_duplication::ColumnWidths, parser::EditorState,
-    settings::CsvPreviewSettings, table_cell::TableSelection, table_like_content::TableLikeContent,
+    selection::TableSelection, settings::CsvPreviewSettings, table_like_content::TableLikeContent,
 };
 
 mod copy_selected;
@@ -16,9 +16,11 @@ mod parser;
 mod render_table;
 mod renderer;
 mod row_identifiers;
+mod selection;
 mod settings;
 mod table_cell;
 mod table_like_content;
+mod types;
 
 actions!(csv, [OpenPreview, CopySelected]);
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";

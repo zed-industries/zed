@@ -1,6 +1,6 @@
 use crate::{
-    table_cell::{DataRow, DisplayRow},
     table_like_content::TableLikeContent,
+    types::{DataRow, DisplayRow},
 };
 use std::collections::HashMap;
 
