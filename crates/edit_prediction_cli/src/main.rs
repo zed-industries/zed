@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
-use crate::example::{read_examples, write_examples};
+use crate::example::{group_examples_by_repo, read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::predict::run_prediction;
@@ -147,44 +147,54 @@ fn main() {
         EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
 
         cx.spawn(async move |cx| {
-            match &command {
-                Command::Predict(args) => predict::sync_batches(&args.provider).await,
-                _ => (),
+            if let Command::Predict(args) = &command {
+                predict::sync_batches(&args.provider).await
             };
 
             let progress = Progress::new();
             let total_examples = examples.len();
-            let chunks = examples.chunks_mut(args.max_parallelism);
-            let total_batches = chunks.len();
+
+            let mut grouped_examples = group_examples_by_repo(&mut examples);
+            let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+            let total_batches = example_batches.len();
             let mut start_index = 0;
-            for data in chunks {
-                let end_index = start_index + data.len();
+
+            for example_batch in example_batches {
+                let end_index = start_index + example_batch.len();
                 if total_batches > 1 {
                     progress.batch_separator(start_index, end_index, total_examples);
                 }
                 start_index = end_index;
-                let mut futures = Vec::new();
 
-                for example in data.iter_mut() {
-                    let cx = cx.clone();
-                    let app_state = app_state.clone();
-                    let progress = progress.clone();
-                    futures.push(async {
+                let futures = example_batch.into_iter().map(|repo_examples| async {
+                    for example in repo_examples.iter_mut() {
                         match &command {
                             Command::ParseExample => {}
                             Command::LoadProject => {
-                                run_load_project(example, app_state.clone(), progress, cx).await;
+                                run_load_project(
+                                    example,
+                                    app_state.clone(),
+                                    progress.clone(),
+                                    cx.clone(),
+                                )
+                                .await;
                             }
                             Command::Context => {
-                                run_context_retrieval(example, app_state, progress, cx).await;
+                                run_context_retrieval(
+                                    example,
+                                    app_state.clone(),
+                                    progress.clone(),
+                                    cx.clone(),
+                                )
+                                .await;
                             }
                             Command::FormatPrompt(args) => {
                                 run_format_prompt(
                                     example,
                                     args.prompt_format,
-                                    app_state,
-                                    progress,
-                                    cx,
+                                    app_state.clone(),
+                                    progress.clone(),
+                                    cx.clone(),
                                 )
                                 .await;
                             }
@@ -194,8 +204,8 @@ fn main() {
                                     Some(args.provider),
                                     args.repetitions,
                                     app_state.clone(),
-                                    progress,
-                                    cx,
+                                    progress.clone(),
+                                    cx.clone(),
                                 )
                                 .await;
                             }
@@ -203,14 +213,21 @@ fn main() {
                                 run_distill(example).await;
                             }
                             Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(example, &args, app_state, progress, cx).await;
+                                run_scoring(
+                                    example,
+                                    &args,
+                                    app_state.clone(),
+                                    progress.clone(),
+                                    cx.clone(),
+                                )
+                                .await;
                             }
                             Command::Clean => {
                                 unreachable!()
                             }
                         }
-                    });
-                }
+                    }
+                });
                 futures::future::join_all(futures).await;
             }
             progress.clear();
