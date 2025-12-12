@@ -18,7 +18,7 @@ world extension {
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
     use llm-provider.{
         provider-info, model-info, completion-request,
-        credential-type, cache-configuration, completion-event, token-usage
+        cache-configuration, completion-event, token-usage
     };
 
     /// Initializes the extension.
