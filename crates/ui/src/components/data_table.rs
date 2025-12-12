@@ -676,6 +676,8 @@ pub fn render_table_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let mut row = h_flex()
+        // NOTE: `h_flex()` sneakily applies `items_center()` which is not desired behavior here.
+        .items_stretch()
         .id(("table_row", row_index))
         .size_full()
         .when_some(bg, |row, bg| row.bg(bg))
