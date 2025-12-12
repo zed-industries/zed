@@ -78,15 +78,15 @@ impl Render for AcpModelSelectorPopover {
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .when_some(model_icon, |this, icon| match icon {
-                    AgentModelIcon::Path(path) => this.child(
-                        Icon::from_external_svg(path)
-                            .color(color)
-                            .size(IconSize::XSmall),
-                    ),
-                    AgentModelIcon::Named(icon_name) => {
-                        this.child(Icon::new(icon_name).color(color).size(IconSize::XSmall))
-                    }
+                .when_some(model_icon, |this, icon| {
+                    this.child(
+                        match icon {
+                            AgentModelIcon::Path(path) => Icon::from_external_svg(path),
+                            AgentModelIcon::Named(icon_name) => Icon::new(icon_name),
+                        }
+                        .color(color)
+                        .size(IconSize::XSmall),
+                    )
                 })
                 .child(
                     Label::new(model_name)
