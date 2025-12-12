@@ -1209,7 +1209,15 @@
       "shift-down": "csv::SelectDown",
       "shift-left": "csv::SelectLeft",
       "shift-right": "csv::SelectRight",
-      "ctrl-a": "csv::SelectAll"
+      "ctrl-a": "csv::SelectAll",
+      "ctrl-up": "csv::JumpToTopEdge",
+      "ctrl-down": "csv::JumpToBottomEdge",
+      "ctrl-left": "csv::JumpToLeftEdge",
+      "ctrl-right": "csv::JumpToRightEdge",
+      "ctrl-shift-up": "csv::SelectionToTopEdge",
+      "ctrl-shift-down": "csv::SelectionToBottomEdge",
+      "ctrl-shift-left": "csv::SelectionToLeftEdge",
+      "ctrl-shift-right": "csv::SelectionToRightEdge"
     }
   },
   {
