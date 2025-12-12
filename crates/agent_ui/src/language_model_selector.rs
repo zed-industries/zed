@@ -156,11 +156,13 @@ impl LanguageModelPickerDelegate {
                 // Spawn a task that listens for refresh signals and updates the picker
                 cx.spawn_in(window, async move |this, cx| {
                     while let Some(()) = refresh_rx.next().await {
-                        let result = this.update_in(cx, |picker, window, cx| {
-                            picker.delegate.all_models = Arc::new(all_models(cx));
-                            picker.refresh(window, cx);
-                        });
-                        if result.is_err() {
+                        if this
+                            .update_in(cx, |picker, window, cx| {
+                                picker.delegate.all_models = Arc::new(all_models(cx));
+                                picker.refresh(window, cx);
+                            })
+                            .is_err()
+                        {
                             // Picker was dropped, exit the loop
                             break;
                         }
