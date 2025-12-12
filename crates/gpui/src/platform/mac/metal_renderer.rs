@@ -29,13 +29,7 @@ use metal::{
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
-use std::{
-    cell::Cell,
-    collections::{BTreeMap, HashMap},
-    ffi::c_void,
-    mem, ptr,
-    sync::Arc,
-};
+use std::{cell::Cell, collections::HashMap, ffi::c_void, mem, ptr, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = crate::Point<f32>;
@@ -452,37 +446,12 @@ impl MetalRenderer {
         let source = info.to_string();
 
         let result: Result<CustomShaderId, String> = (|| {
-            let (mut module, module_info, _) = naga_validate_custom_shader(
+            let (mut module, module_info, bindings, _) = naga_validate_custom_shader(
                 &source,
                 info.data_definition.map(|_| info.data_name),
                 info.data_size,
                 info.data_align,
             )?;
-
-            let mut bindings = BTreeMap::new();
-            for (_handle, global) in module.global_variables.iter_mut() {
-                assert!(global.binding.is_none()); // Blade doesn't like implicit bindings, so we will assign them here instead of in WGSL
-
-                let binding = match global.name.as_ref().unwrap().as_str() {
-                    "globals" => ShaderInputIndex::Globals,
-                    "b_instances" => ShaderInputIndex::Instances,
-                    _ => unreachable!(),
-                };
-
-                global.binding = Some(naga::ResourceBinding {
-                    group: 0,
-                    binding: binding as u32,
-                });
-                bindings.insert(
-                    global.binding.unwrap(),
-                    naga::back::msl::BindTarget {
-                        buffer: Some(binding as u8),
-                        texture: None,
-                        sampler: None,
-                        mutable: false,
-                    },
-                );
-            }
 
             let mut msl = String::new();
             naga::back::msl::Writer::new(&mut msl)

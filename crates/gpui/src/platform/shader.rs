@@ -132,10 +132,11 @@ impl Display for CustomShaderInfo {
 use {
     crate::ShaderInstance,
     naga::{
-        Module, Type, TypeInner,
+        Module, ResourceBinding, Type, TypeInner,
         front::wgsl,
         valid::{Capabilities, ModuleInfo, ValidationFlags, Validator},
     },
+    std::collections::BTreeMap,
 };
 
 #[repr(C)]
@@ -146,14 +147,61 @@ pub(super) struct CustomShaderGlobalParams {
     pub pad: u32,
 }
 
+#[cfg(target_os = "windows")]
+pub(super) type BindTarget = naga::back::hlsl::BindTarget;
+#[cfg(all(target_os = "macos", not(feature = "macos-blade")))]
+pub(super) type BindTarget = naga::back::msl::BindTarget;
+
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]
 pub(super) fn naga_validate_custom_shader(
     source: &str,
     data_struct_name: Option<&str>,
     data_size: usize,
     data_align: usize,
-) -> Result<(Module, ModuleInfo, usize), String> {
-    let module = wgsl::parse_str(source).map_err(|err| err.to_string())?;
+) -> Result<
+    (
+        Module,
+        ModuleInfo,
+        BTreeMap<ResourceBinding, BindTarget>,
+        usize,
+    ),
+    String,
+> {
+    let mut module = wgsl::parse_str(source).map_err(|err| err.to_string())?;
+    let mut bindings = BTreeMap::new();
+    for (_handle, global) in module.global_variables.iter_mut() {
+        assert!(global.binding.is_none());
+
+        let binding = match global.name.as_ref().unwrap().as_str() {
+            "globals" => 0,
+            "b_instances" => 1,
+            _ => unreachable!(),
+        };
+
+        global.binding = Some(ResourceBinding {
+            group: 0,
+            binding: binding as u32,
+        });
+        bindings.insert(
+            global.binding.unwrap(),
+            #[cfg(target_os = "macos")]
+            naga::back::msl::BindTarget {
+                buffer: Some(binding as u8),
+                texture: None,
+                sampler: None,
+                mutable: false,
+            },
+            #[cfg(target_os = "windows")]
+            naga::back::hlsl::BindTarget {
+                space: global.binding.unwrap().group as u8,
+                register: global.binding.unwrap().binding,
+                binding_array_size: None,
+                dynamic_storage_buffer_offsets_index: None,
+                restrict_indexing: false,
+            },
+        );
+    }
+
     let module_info = Validator::new(
         ValidationFlags::all() ^ ValidationFlags::BINDINGS,
         Capabilities::empty(),
@@ -177,7 +225,7 @@ pub(super) fn naga_validate_custom_shader(
         size_of::<CustomShaderGlobalParams>(),
     )?;
 
-    Ok((module, module_info, instance_size))
+    Ok((module, module_info, bindings, instance_size))
 }
 
 #[cfg(not(any(target_os = "linux", all(target_os = "macos", feature = "macos-blade"))))]

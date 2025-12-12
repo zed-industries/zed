@@ -157,7 +157,7 @@ impl DirectXRenderer {
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectX global elements")?;
         let custom_shader_globals = DirectXGlobalElements::new(&devices.device)
-            .context("Creating DirectX custom global elements")?;
+            .context("Creating DirectX custom shader global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
 
@@ -924,16 +924,23 @@ impl DirectXRenderPipelines {
 
         let source = info.to_string();
         let result: Result<CustomShaderId, String> = (|| {
-            let (module, module_info, instance_size) = naga_validate_custom_shader(
+            let (module, module_info, bindings, instance_size) = naga_validate_custom_shader(
                 &source,
                 info.data_definition.map(|_| info.data_name),
                 info.data_size,
                 info.data_align,
             )?;
             let mut hlsl = String::new();
-            naga::back::hlsl::Writer::new(&mut hlsl, &naga::back::hlsl::Options::default())
-                .write(&module, &module_info, None)
-                .map_err(|err| err.to_string())?;
+            naga::back::hlsl::Writer::new(
+                &mut hlsl,
+                &naga::back::hlsl::Options {
+                    binding_map: bindings,
+                    fake_missing_bindings: false,
+                    ..Default::default()
+                },
+            )
+            .write(&module, &module_info, None)
+            .map_err(|err| err.to_string())?;
             let id = CustomShaderId(self.custom.len() as u32);
             self.custom.push((
                 PipelineState::new_custom(
@@ -1170,8 +1177,8 @@ impl<T> PipelineState<T> {
         );
         unsafe {
             device_context.PSSetSamplers(0, Some(sampler));
-            device_context.VSSetShaderResources(1, Some(texture));
-            device_context.PSSetShaderResources(1, Some(texture));
+            device_context.VSSetShaderResources(0, Some(texture));
+            device_context.PSSetShaderResources(0, Some(texture));
 
             device_context.DrawInstanced(4, instance_count, 0, 0);
         }
@@ -1545,8 +1552,8 @@ fn set_pipeline_state(
     blend_state: &ID3D11BlendState,
 ) {
     unsafe {
-        device_context.VSSetShaderResources(0, Some(buffer_view));
-        device_context.PSSetShaderResources(0, Some(buffer_view));
+        device_context.VSSetShaderResources(1, Some(buffer_view));
+        device_context.PSSetShaderResources(1, Some(buffer_view));
         device_context.IASetPrimitiveTopology(topology);
         device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);
