@@ -83,14 +83,14 @@ impl PlatformDispatcher for MacDispatcher {
 
         let queue_priority = match priority {
             Priority::Realtime(_) => unreachable!(),
-            Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH,
-            Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT,
-            Priority::Low => DISPATCH_QUEUE_PRIORITY_LOW as u32,
+            Priority::High => DISPATCH_QUEUE_PRIORITY_HIGH as isize,
+            Priority::Medium => DISPATCH_QUEUE_PRIORITY_DEFAULT as isize,
+            Priority::Low => DISPATCH_QUEUE_PRIORITY_LOW as isize,
         };
 
         unsafe {
             dispatch_async_f(
-                dispatch_get_global_queue(queue_priority.try_into().unwrap(), 0),
+                dispatch_get_global_queue(queue_priority, 0),
                 context,
                 trampoline,
             );
