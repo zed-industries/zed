@@ -134,9 +134,7 @@ impl Progress {
                 Self::print_completed(&inner, inner.completed.last().unwrap());
                 Self::print_status_lines(&mut inner);
             } else {
-                inner
-                    .in_progress
-                    .insert(example_name.to_string(), task.clone());
+                inner.in_progress.insert(example_name.to_string(), task);
             }
         }
     }
