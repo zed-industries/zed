@@ -91,10 +91,13 @@ impl WrapRows<'_> {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = self.transforms.start().1.row();
-        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_row += (start_row - self.transforms.start().0.row()).0;
         }
-        self.soft_wrapped = self.transforms.item().is_some_and(|t| !t.not_soft_wrapped());
+        self.soft_wrapped = self
+            .transforms
+            .item()
+            .is_some_and(|t| !t.is_isomorphic());
         self.input_buffer_rows.seek(input_row);
         self.input_buffer_row = self.input_buffer_rows.next().unwrap();
         self.output_row = start_row;
@@ -632,7 +635,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(transforms.start().1.0);
-        if transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
+        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
         let input_end = self.to_tab_point(output_end);
@@ -665,7 +668,7 @@ impl WrapSnapshot {
             &WrapPoint::new(row + WrapRow(1), 0),
             Bias::Left,
         );
-        if item.is_some_and(|transform| transform.not_soft_wrapped()) {
+        if item.is_some_and(|transform| transform.is_isomorphic()) {
             let overshoot = row - start.0.row();
             let tab_row = start.1.row() + overshoot.0;
             let tab_line_len = self.tab_snapshot.line_len(tab_row);
@@ -693,7 +696,7 @@ impl WrapSnapshot {
         if let Some(transform) = cursor.item() {
             let start_in_transform = start.0 - cursor.start().0.0;
             let end_in_transform = cmp::min(end, cursor.end().0).0 - cursor.start().0.0;
-            if transform.not_soft_wrapped() {
+            if transform.is_isomorphic() {
                 let tab_start = TabPoint(cursor.start().1.0 + start_in_transform);
                 let tab_end = TabPoint(cursor.start().1.0 + end_in_transform);
                 summary += &self.tab_snapshot.text_summary_for_range(tab_start..tab_end);
@@ -719,7 +722,7 @@ impl WrapSnapshot {
 
             if let Some(transform) = cursor.item() {
                 let end_in_transform = end.0 - cursor.start().0.0;
-                if transform.not_soft_wrapped() {
+                if transform.is_isomorphic() {
                     let char_start = cursor.start().1;
                     let char_end = TabPoint(char_start.0 + end_in_transform);
                     summary += &self
@@ -749,7 +752,7 @@ impl WrapSnapshot {
             Bias::Right,
         );
         item.and_then(|transform| {
-            if transform.not_soft_wrapped() {
+            if transform.is_isomorphic() {
                 None
             } else {
                 Some(transform.summary.output.lines.column)
@@ -769,10 +772,10 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = transforms.start().1.row();
-        if transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
+        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_row += (start_row - transforms.start().0.row()).0;
         }
-        let soft_wrapped = transforms.item().is_some_and(|t| !t.not_soft_wrapped());
+        let soft_wrapped = transforms.item().is_some_and(|t| !t.is_isomorphic());
         let mut input_buffer_rows = self.tab_snapshot.rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         WrapRows {
@@ -791,7 +794,7 @@ impl WrapSnapshot {
             self.transforms
                 .find::<Dimensions<WrapPoint, TabPoint>, _>((), &point, Bias::Right);
         let mut tab_point = start.1.0;
-        if item.is_some_and(|t| t.not_soft_wrapped()) {
+        if item.is_some_and(|t| t.is_isomorphic()) {
             tab_point += point.0 - start.0.0;
         }
         TabPoint(tab_point)
@@ -831,7 +834,7 @@ impl WrapSnapshot {
             let (start, _, item) = self
                 .transforms
                 .find::<WrapPoint, _>((), &point, Bias::Right);
-            if item.is_some_and(|t| !t.not_soft_wrapped()) {
+            if item.is_some_and(|t| !t.is_isomorphic()) {
                 point = start;
                 *point.column_mut() -= 1;
             }
@@ -840,9 +843,37 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
+    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+        if self.transforms.is_empty() {
+            return WrapRow(0);
+        }
+
+        *point.column_mut() = 0;
+
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<WrapPoint, TabPoint>>(());
+
+        cursor.seek(&point, Bias::Right);
+        if cursor.item().is_none() {
+            cursor.prev();
+        }
+
+        while let Some(transform) = cursor.item() {
+            let tab_start = cursor.start().1;
+            if transform.is_isomorphic() && tab_start.row() < point.0.row {
+                return cmp::min(cursor.end().0.row(), point.row());
+            } else {
+                cursor.prev();
+            }
+        }
+
+        todo!();
+    }
+
     // #[ztracing::instrument(skip_all, fields(point=?point, iterations, res))]
     // Self is the wrap map being updated too?
-    pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
+    pub fn _prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         let span = ztracing::debug_span!("prev_row_boundary", point = ?point, iterations = ztracing::field::Empty, res = ztracing::field::Empty);
         let _enter = span.enter();
 
@@ -896,7 +927,8 @@ impl WrapSnapshot {
         while let Some(transform) = cursor.item() {
             iterations += 1;
 
-            if transform.is_soft_wrapped() { // until we're in a transform that has a "plain text" newline
+            if transform.is_soft_wrapped() {
+                // until we're in a transform that has a "plain text" newline
                 // the current transform represents a soft-wrap, so we want to
                 // keep searching backwards until we find a real newline
                 cursor.prev();
@@ -937,7 +969,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         cursor.seek(&point, Bias::Right);
         while let Some(transform) = cursor.item() {
-            if transform.not_soft_wrapped() && cursor.start().1.column() == 0 {
+            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
                 return Some(cmp::max(cursor.start().0.row(), point.row()));
             } else {
                 cursor.next();
@@ -962,29 +994,29 @@ impl WrapSnapshot {
         .map(|h| h.text)
     }
 
-    #[cfg(test)]
-    pub fn debug_transforms(&self) {
-        eprintln!("=== debug wrap snapshot ===");
+    // #[cfg(test)]
+    // pub fn debug_transforms(&self) {
+    //     eprintln!("=== debug wrap snapshot ===");
 
-        let mut current_input = 0;
-        let mut current_output = 0;
+    //     let mut current_input = 0;
+    //     let mut current_output = 0;
 
-        for transform in self.transforms.iter() {            
-            let start_input = current_input;
-            current_input += transform.summary.input.lines.row;
-            let end_input = current_input;
-            
-            let start_output = current_output;
-            current_output += transform.summary.output.lines.row;
-            let start_output = current_output;
-            
-            let is_sw = match transform.is_soft_wrapped() {
-                true => " SW",
-                false => "NSW",
-            };
-            eprintln!("[{is_sw}]")
-        }
-    }
+    //     for transform in self.transforms.iter() {
+    //         let start_input = current_input;
+    //         current_input += transform.summary.input.lines.row;
+    //         let end_input = current_input;
+
+    //         let start_output = current_output;
+    //         current_output += transform.summary.output.lines.row;
+    //         let start_output = current_output;
+
+    //         let is_sw = match transform.is_soft_wrapped() {
+    //             true => " SW",
+    //             false => "NSW",
+    //         };
+    //         eprintln!("[{is_sw}]")
+    //     }
+    // }
 
     #[ztracing::instrument(skip_all)]
     fn check_invariants(&self) {
@@ -999,7 +1031,7 @@ impl WrapSnapshot {
                 let mut transforms = self.transforms.cursor::<()>(()).peekable();
                 while let Some(transform) = transforms.next() {
                     if let Some(next_transform) = transforms.peek() {
-                        assert!(transform.not_soft_wrapped() != next_transform.not_soft_wrapped());
+                        assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
                     }
                 }
             }
@@ -1059,7 +1091,7 @@ impl WrapChunks<'_> {
         let output_end = WrapPoint::new(rows.end, 0);
         self.transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(self.transforms.start().1.0);
-        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
         let input_end = self.snapshot.to_tab_point(output_end);
@@ -1162,7 +1194,7 @@ impl Iterator for WrapRows<'_> {
         self.output_row += WrapRow(1);
         self.transforms
             .seek_forward(&WrapPoint::new(self.output_row, 0), Bias::Left);
-        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
+        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
             self.input_buffer_row = self.input_buffer_rows.next().unwrap();
             self.soft_wrapped = false;
         } else {
@@ -1224,12 +1256,12 @@ impl Transform {
         }
     }
 
-    fn not_soft_wrapped(&self) -> bool {
+    fn is_isomorphic(&self) -> bool {
         self.display_text.is_none()
     }
 
     fn is_soft_wrapped(&self) -> bool {
-        !self.not_soft_wrapped()
+        !self.is_isomorphic()
     }
 }
 
@@ -1243,7 +1275,7 @@ impl sum_tree::Item for Transform {
 
 fn push_not_soft_wrapped(transforms: &mut Vec<Transform>, summary: TextSummary) {
     if let Some(last_transform) = transforms.last_mut()
-        && last_transform.not_soft_wrapped()
+        && last_transform.is_isomorphic()
     {
         last_transform.summary.input += &summary;
         last_transform.summary.output += &summary;
@@ -1262,7 +1294,9 @@ impl SumTreeExt for SumTree<Transform> {
         let mut transform = Some(transform);
         self.update_last(
             |last_transform| {
-                if last_transform.not_soft_wrapped() && transform.as_ref().unwrap().not_soft_wrapped() {
+                if last_transform.is_isomorphic()
+                    && transform.as_ref().unwrap().is_isomorphic()
+                {
                     let transform = transform.take().unwrap();
                     last_transform.summary.input += &transform.summary.input;
                     last_transform.summary.output += &transform.summary.output;
@@ -1380,6 +1414,65 @@ mod tests {
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;
+
+    #[gpui::test]
+    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let text_system = cx.read(|cx| cx.text_system().clone());
+
+        let tab_size = 4.try_into().unwrap();
+        let font = test_font();
+        let _font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
+                cx,
+            )
+        });
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        log::info!("Buffer text: {:?}", buffer_snapshot.text());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
+        log::info!("FoldMap text: {:?}", fold_snapshot.text());
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        log::info!("TabMap text: {:?}", tabs_snapshot.text());
+        let soft_wrapping = Some(font_size * 3);
+        let (wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
+
+        // assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
+
+        // When at the start of a wrap row, we should return the current wrap row, not the one before.
+        // assert_eq!(
+        //     wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(0, 0))),
+        //     WrapRow(0)
+        // );
+        // assert_eq!(
+        //     wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(0, 4))),
+        //     WrapRow(0)
+        // );
+        // assert_eq!(
+        //     wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(1, 0))),
+        //     WrapRow(1)
+        // );
+        // assert_eq!(
+        //     wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(1, 3))),
+        //     WrapRow(1)
+        // );
+        // assert_eq!(
+        //     wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(2, 3))),
+        //     WrapRow(2)
+        // );
+        assert_eq!(
+            wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
+            WrapRow(4)
+        );
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
@@ -1691,3 +1784,145 @@ mod tests {
         }
     }
 }
+
+
+// ---- display_map::wrap_map::tests::test_prev_row_boundary stdout ----
+// [crates/editor/src/display_map/wrap_map.rs:874:9] self.transforms.iter().count() = 13
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 1
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(9:0),
+//     ),
+//     TabPoint(
+//         Point(3:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 2
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(8:5),
+//     ),
+//     TabPoint( // tab.col = 0
+//         Point(3:5), // TODO NOTE col = 0 is never true,
+//                     // are we hitting the wrong side of a newline?
+//                     // The numbers (5 here) look suspiciously like the end of line
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 3
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(7:0),
+//     ),
+//     TabPoint(
+//         Point(2:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 4
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(6:5),
+//     ),
+//     TabPoint(
+//         Point(2:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 5
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(5:0),
+//     ),
+//     TabPoint(
+//         Point(1:10),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 6
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(4:5),
+//     ),
+//     TabPoint(
+//         Point(1:10),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 7
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(4:0),
+//     ),
+//     TabPoint(
+//         Point(1:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 8
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(3:5),
+//     ),
+//     TabPoint(
+//         Point(1:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 9
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(2:0),
+//     ),
+//     TabPoint(
+//         Point(0:10),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 10
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(1:5),
+//     ),
+//     TabPoint(
+//         Point(0:10),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 11
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(1:0),
+//     ),
+//     TabPoint(
+//         Point(0:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 12
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(0:5),
+//     ),
+//     TabPoint(
+//         Point(0:5),
+//     ),
+//     (),
+// )
+// [crates/editor/src/display_map/wrap_map.rs:879:13] iter_count = 13
+// [crates/editor/src/display_map/wrap_map.rs:880:13] cursor.start() = Dimensions(
+//     WrapPoint(
+//         Point(0:0),
+//     ),
+//     TabPoint(
+//         Point(0:0),
+//     ),
+//     (),
+// )
+
+// thread 'display_map::wrap_map::tests::test_prev_row_boundary' (505275) panicked at crates/editor/src/display_map/wrap_map.rs:1490:9:
+// assertion `left == right` failed
+//   left: WrapRow(0)
+//  right: WrapRow(4)
+// note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
