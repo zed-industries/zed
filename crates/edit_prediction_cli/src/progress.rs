@@ -16,6 +16,8 @@ struct ProgressInner {
     is_tty: bool,
     terminal_width: usize,
     max_example_name_len: usize,
+    status_lines_displayed: usize,
+    total_examples: usize,
 }
 
 #[derive(Clone)]
@@ -73,7 +75,7 @@ impl Step {
 const RIGHT_MARGIN: usize = 4;
 
 impl Progress {
-    pub fn new() -> Arc<Self> {
+    pub fn new(total_examples: usize) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(ProgressInner {
                 completed: Vec::new(),
@@ -81,6 +83,8 @@ impl Progress {
                 is_tty: std::io::stderr().is_terminal(),
                 terminal_width: get_terminal_width(),
                 max_example_name_len: 0,
+                status_lines_displayed: 0,
+                total_examples,
             }),
         })
     }
@@ -89,7 +93,7 @@ impl Progress {
         {
             let mut inner = self.inner.lock().unwrap();
 
-            Self::clear_line(&inner);
+            Self::clear_status_lines(&mut inner);
 
             inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
 
@@ -103,7 +107,7 @@ impl Progress {
                 },
             );
 
-            Self::print_status_line(&inner);
+            Self::print_status_lines(&mut inner);
         }
 
         Arc::new(StepProgress {
@@ -126,9 +130,9 @@ impl Progress {
                     info: task.info,
                 });
 
-                Self::clear_line(&inner);
+                Self::clear_status_lines(&mut inner);
                 Self::print_completed(&inner, inner.completed.last().unwrap());
-                Self::print_status_line(&inner);
+                Self::print_status_lines(&mut inner);
             } else {
                 inner
                     .in_progress
@@ -137,10 +141,14 @@ impl Progress {
         }
     }
 
-    fn clear_line(inner: &ProgressInner) {
-        if inner.is_tty {
-            eprint!("\r\x1b[K");
+    fn clear_status_lines(inner: &mut ProgressInner) {
+        if inner.is_tty && inner.status_lines_displayed > 0 {
+            // Move up and clear each line we previously displayed
+            for _ in 0..inner.status_lines_displayed {
+                eprint!("\x1b[A\x1b[K");
+            }
             let _ = std::io::stderr().flush();
+            inner.status_lines_displayed = 0;
         }
     }
 
@@ -159,15 +167,15 @@ impl Progress {
                 .as_ref()
                 .map(|(s, style)| {
                     if *style == InfoStyle::Warning {
-                        format!(" {dim}│{reset} {yellow}{s}{reset}")
+                        format!("{yellow}{s}{reset}")
                     } else {
-                        format!(" {dim}│{reset} {s}")
+                        s.to_string()
                     }
                 })
                 .unwrap_or_default();
 
             let prefix = format!(
-                "{bold}{color}{label:>12}{reset} {name:<name_width$}{info_part}",
+                "{bold}{color}{label:>12}{reset} {name:<name_width$} {dim}│{reset} {info_part}",
                 color = task.step.color_code(),
                 label = task.step.label(),
                 name = task.example_name,
@@ -197,112 +205,75 @@ impl Progress {
         }
     }
 
-    fn print_status_line(inner: &ProgressInner) {
+    fn print_status_lines(inner: &mut ProgressInner) {
         if !inner.is_tty || inner.in_progress.is_empty() {
+            inner.status_lines_displayed = 0;
             return;
         }
 
         let reset = "\x1b[0m";
         let bold = "\x1b[1m";
-        let cyan = "\x1b[36m";
         let dim = "\x1b[2m";
+
+        // Build the done/in-progress/total label
+        let done_count = inner.completed.len();
+        let in_progress_count = inner.in_progress.len();
+        let range_label = format!(
+            " {}/{}/{} ",
+            done_count, in_progress_count, inner.total_examples
+        );
+
+        // Print a divider line with range label aligned with timestamps
+        let range_visible_len = range_label.len();
+        let left_divider_len = inner
+            .terminal_width
+            .saturating_sub(RIGHT_MARGIN)
+            .saturating_sub(range_visible_len);
+        let left_divider = "─".repeat(left_divider_len);
+        let right_divider = "─".repeat(RIGHT_MARGIN);
+        eprintln!("{dim}{left_divider}{reset}{range_label}{dim}{right_divider}{reset}");
 
         let mut tasks: Vec<_> = inner.in_progress.iter().collect();
         tasks.sort_by_key(|(name, _)| *name);
 
-        let prefix_label = format!("{:>12} ", "Working");
-        let prefix_visible_len = prefix_label.len();
-        let prefix = format!("{bold}{cyan}{prefix_label}{reset}");
-
-        let mut line = prefix;
-        let mut visible_len = prefix_visible_len;
-        let mut shown_count = 0;
-        let total_tasks = tasks.len();
+        let mut lines_printed = 0;
 
         for (name, task) in tasks.iter() {
             let elapsed = format_duration(task.started_at.elapsed());
-            let substatus = task
+            let substatus_part = task
                 .substatus
                 .as_ref()
-                .map(|s| format!(": {}", truncate_with_ellipsis(s, 20)))
+                .map(|s| truncate_with_ellipsis(s, 30))
                 .unwrap_or_default();
 
-            let task_str = format!(
-                "{name} {dim}[{step}{substatus}, {elapsed}]{reset}",
-                step = task.step.label(),
-                name = truncate_with_ellipsis(name, 20),
+            let step_label = task.step.label();
+            let step_color = task.step.color_code();
+            let name_width = inner.max_example_name_len;
+
+            let prefix = format!(
+                "{bold}{step_color}{step_label:>12}{reset} {name:<name_width$} {dim}│{reset} {substatus_part}",
+                name = name,
             );
 
-            // Calculate visible length (without ANSI codes)
-            let task_visible_len = format!(
-                "{name} [{step}{substatus}, {elapsed}]",
-                step = task.step.label(),
-                name = truncate_with_ellipsis(name, 20),
-            )
-            .len();
+            let duration_with_margin = format!("{elapsed} ");
+            let padding_needed = inner
+                .terminal_width
+                .saturating_sub(RIGHT_MARGIN)
+                .saturating_sub(duration_with_margin.len())
+                .saturating_sub(strip_ansi_len(&prefix));
+            let padding = " ".repeat(padding_needed);
 
-            let separator = if shown_count > 0 { ", " } else { "" };
-            let separator_len = separator.len();
-
-            // Check if adding this task would exceed terminal width
-            // Leave room for potential "(+N more)" suffix
-            let remaining_suffix_space = 12;
-            if visible_len + separator_len + task_visible_len + remaining_suffix_space
-                > inner.terminal_width
-                && shown_count > 0
-            {
-                break;
-            }
-
-            line.push_str(separator);
-            line.push_str(&task_str);
-            visible_len += separator_len + task_visible_len;
-            shown_count += 1;
+            eprintln!("{prefix}{padding}{dim}{duration_with_margin}{reset}");
+            lines_printed += 1;
         }
 
-        let remaining = total_tasks - shown_count;
-        if remaining > 0 {
-            line.push_str(&format!(" {dim}(+{remaining} more){reset}"));
-        }
-
-        eprint!("{}", line);
+        inner.status_lines_displayed = lines_printed + 1; // +1 for the divider line
         let _ = std::io::stderr().flush();
     }
 
     pub fn clear(&self) {
-        let inner = self.inner.lock().unwrap();
-        Self::clear_line(&inner);
-    }
-
-    pub fn batch_separator(&self, start_index: usize, end_index: usize, total_examples: usize) {
-        let inner = self.inner.lock().unwrap();
-        Self::clear_line(&inner);
-
-        eprintln!();
-
-        let reset = "\x1b[0m";
-        let dim = "\x1b[2m";
-
-        let label = if start_index + 1 == end_index {
-            format!(" {}/{} ", start_index + 1, total_examples)
-        } else {
-            format!(" {}-{}/{} ", start_index + 1, end_index, total_examples)
-        };
-
-        let left_width = inner
-            .terminal_width
-            .saturating_sub(label.chars().count())
-            .saturating_sub(RIGHT_MARGIN);
-        let left_line = "─".repeat(left_width);
-        let right_line = "─".repeat(RIGHT_MARGIN);
-
-        if inner.is_tty {
-            eprintln!("{dim}{left_line}{reset}{label}{dim}{right_line}{reset}");
-        } else {
-            eprintln!("{left_line}{label}{right_line}");
-        }
-
-        eprintln!();
+        let mut inner = self.inner.lock().unwrap();
+        Self::clear_status_lines(&mut inner);
     }
 }
 
@@ -317,8 +288,8 @@ impl StepProgress {
         let mut inner = self.progress.inner.lock().unwrap();
         if let Some(task) = inner.in_progress.get_mut(&self.example_name) {
             task.substatus = Some(substatus.into().into_owned());
-            Progress::clear_line(&inner);
-            Progress::print_status_line(&inner);
+            Progress::clear_status_lines(&mut inner);
+            Progress::print_status_lines(&mut inner);
         }
     }
 
@@ -326,8 +297,8 @@ impl StepProgress {
         let mut inner = self.progress.inner.lock().unwrap();
         if let Some(task) = inner.in_progress.get_mut(&self.example_name) {
             task.substatus = None;
-            Progress::clear_line(&inner);
-            Progress::print_status_line(&inner);
+            Progress::clear_status_lines(&mut inner);
+            Progress::print_status_lines(&mut inner);
         }
     }
 

@@ -177,7 +177,7 @@ async fn setup_project(
                 .update(cx, |buffer, cx| buffer.reload(cx))
                 .unwrap()
                 .await
-                .unwrap();
+                .ok();
         }
         return project;
     }

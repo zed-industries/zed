@@ -151,21 +151,13 @@ fn main() {
                 predict::sync_batches(&args.provider).await
             };
 
-            let progress = Progress::new();
             let total_examples = examples.len();
+            let progress = Progress::new(total_examples);
 
             let mut grouped_examples = group_examples_by_repo(&mut examples);
             let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
-            let total_batches = example_batches.len();
-            let mut start_index = 0;
 
             for example_batch in example_batches {
-                let end_index = start_index + example_batch.len();
-                if total_batches > 1 {
-                    progress.batch_separator(start_index, end_index, total_examples);
-                }
-                start_index = end_index;
-
                 let futures = example_batch.into_iter().map(|repo_examples| async {
                     for example in repo_examples.iter_mut() {
                         match &command {
