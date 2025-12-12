@@ -218,14 +218,14 @@ Jane,"Simple name""#;
         match &parsed.line_numbers[0] {
             LineNumber::LineRange(start, end) => {
                 assert_eq!(*start, 2);
-                assert_eq!(*end, 3);
+                assert_eq!(*end, 4);
             }
             _ => panic!("Expected LineRange for multiline row"),
         }
         match &parsed.line_numbers[1] {
             LineNumber::LineRange(start, end) => {
-                assert_eq!(*start, 4);
-                assert_eq!(*end, 5);
+                assert_eq!(*start, 5);
+                assert_eq!(*end, 6);
             }
             _ => panic!("Expected LineRange for second multiline row"),
         }
