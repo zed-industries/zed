@@ -44,7 +44,6 @@ impl Span {
     pub fn record<T, S>(&self, _t: T, _s: S) {}
 }
 
-
 #[cfg(ztracing)]
 pub fn init() {
     zlog::info!("Starting tracy subscriber, you can now connect the profiler");

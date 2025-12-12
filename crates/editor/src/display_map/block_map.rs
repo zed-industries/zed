@@ -536,8 +536,6 @@ impl BlockMap {
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
-        //
-        // TODO add to benchmark? We are probably not hitting this in there.
         if buffer.trailing_excerpt_update_count()
             != self
                 .wrap_snapshot

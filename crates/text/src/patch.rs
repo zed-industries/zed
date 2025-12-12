@@ -77,9 +77,6 @@ where
         + Default,
     TDelta: Ord + Copy,
 {
-    // |-----e1-----|-----e2-----| ... |-e3--|
-    // is turned into
-    // |-------e1.compose(e2)----| ... |-e3--|
     #[must_use]
     pub fn compose(&self, new_edits_iter: impl IntoIterator<Item = Edit<T>>) -> Self {
         let mut old_edits_iter = self.0.iter().cloned().peekable();
