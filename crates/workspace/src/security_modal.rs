@@ -170,7 +170,7 @@ impl Render for SecurityModal {
                             .child(ListBulletItem::new("MCP Server integrations from installing")),
                     )
                     .map(|this| match trust_label {
-                        Some(trust_label) => this.justify_between().child(
+                        Some(trust_label) => this.child(
                             Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
                                 .label(trust_label)
                                 .on_click(cx.listener(
@@ -181,7 +181,7 @@ impl Render for SecurityModal {
                                     },
                                 )),
                         ),
-                        None => this.justify_end(),
+                        None => this,
                     }),
             )
             .footer(
