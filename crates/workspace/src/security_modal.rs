@@ -82,9 +82,9 @@ impl Render for SecurityModal {
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
                 this.trust_and_dismiss(cx);
             }))
-            .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
-                self.trusted = Some(false);
-                this.dismiss(cx);
+            .on_action(cx.listener(|security_modal, _: &ToggleWorktreeSecurity, _window, cx| {
+                security_modal.trusted = Some(false);
+                security_modal.dismiss(cx);
             }))
             .header(
                 v_flex()
@@ -200,7 +200,7 @@ impl Render for SecurityModal {
                                 .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
-                                self.trusted = Some(false);
+                                security_modal.trusted = Some(false);
                                 security_modal.dismiss(cx);
                                 cx.stop_propagation();
                             })),
