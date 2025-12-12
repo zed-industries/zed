@@ -1301,7 +1301,8 @@
   {
     "context": "CsvPreview",
     "bindings": {
-      "cmd-c": "csv::CopySelected"
+      "cmd-c": "csv::CopySelected",
+      "escape": "csv::ClearSelection"
     }
   },
   {
