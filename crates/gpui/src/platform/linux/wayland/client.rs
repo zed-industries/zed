@@ -33,7 +33,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_shm_pool, wl_surface, wl_touch,
     },
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
@@ -102,6 +102,14 @@ use crate::{
 const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
+
+const TOUCH_SCROLL_SENSITIVITY: f32 = 0.1;
+
+/// Minimum distance change (in pixels) to trigger a zoom level change
+const PINCH_ZOOM_STEP_THRESHOLD: f32 = 50.0;
+
+/// Sensitivity for pinch zoom (lower = more sensitive)
+const PINCH_ZOOM_SENSITIVITY: f32 = 0.8;
 
 #[derive(Clone)]
 pub struct Globals {
@@ -203,6 +211,7 @@ pub(crate) struct WaylandClientState {
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
+    wl_touch: Option<wl_touch::WlTouch>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_selection: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
@@ -234,6 +243,17 @@ pub(crate) struct WaylandClientState {
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
+    // Touch tracking
+    active_touch_id: Option<i32>,
+    touch_location: Option<Point<Pixels>>,
+    // Multi-touch scrolling
+    second_touch_id: Option<i32>,
+    second_touch_location: Option<Point<Pixels>>,
+    scroll_start_position: Option<Point<Pixels>>,
+    is_scrolling: bool,
+    pinch_start_distance: Option<f32>,
+    last_pinch_distance: Option<f32>,
+    pinch_zoom_threshold: f32,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
@@ -591,6 +611,7 @@ impl WaylandClient {
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
+            wl_touch: None,
             cursor_shape_device: None,
             data_device,
             primary_selection,
@@ -640,6 +661,17 @@ impl WaylandClient {
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
+            // Touch tracking
+            active_touch_id: None,
+            touch_location: None,
+            // Multi-touch scrolling
+            second_touch_id: None,
+            second_touch_location: None,
+            scroll_start_position: None,
+            is_scrolling: false,
+            pinch_start_distance: None,
+            last_pinch_distance: None,
+            pinch_zoom_threshold: 0.0,
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
@@ -1242,6 +1274,15 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                 }
 
                 state.wl_pointer = Some(pointer);
+            }
+            if capabilities.contains(wl_seat::Capability::Touch) {
+                let touch = seat.get_touch(qh, ());
+
+                if let Some(wl_touch) = &state.wl_touch {
+                    wl_touch.release();
+                }
+
+                state.wl_touch = Some(touch);
             }
         }
     }
@@ -2220,6 +2261,335 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
             }
             zwp_primary_selection_source_v1::Event::Cancelled => {
                 selection_source.destroy();
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _wl_touch: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            wl_touch::Event::Down {
+                serial,
+                surface,
+                id,
+                x,
+                y,
+                ..
+            } => {
+                state.serial_tracker.update(SerialKind::Touch, serial);
+                let position = point(px(x as f32), px(y as f32));
+
+                if state.active_touch_id.is_none() {
+                    // First touch - start single touch mode
+                    state.active_touch_id = Some(id);
+                    state.touch_location = Some(position);
+
+                    if let Some(window) = get_window(&mut state, &surface.id()) {
+                        state.mouse_location = Some(position);
+                        state.button_pressed = Some(MouseButton::Left);
+
+                        let input = PlatformInput::MouseDown(MouseDownEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: state.modifiers,
+                            click_count: 1,
+                            first_mouse: false,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                } else if state.second_touch_id.is_none() && !state.is_scrolling {
+                    // Second touch - enter scroll mode
+                    state.second_touch_id = Some(id);
+                    state.second_touch_location = Some(position);
+                    state.is_scrolling = true;
+
+                    // Calculate center point between the two touches
+                    if let Some(first_pos) = state.touch_location {
+                        let center = point(
+                            px((first_pos.x.0 + position.x.0) / 2.0),
+                            px((first_pos.y.0 + position.y.0) / 2.0),
+                        );
+                        state.scroll_start_position = Some(center);
+                        state.mouse_location = Some(center);
+
+                        // Initialize pinch distance tracking
+                        let dx = first_pos.x.0 - position.x.0;
+                        let dy = first_pos.y.0 - position.y.0;
+                        let initial_distance = (dx * dx + dy * dy).sqrt();
+                        state.pinch_start_distance = Some(initial_distance);
+                        state.last_pinch_distance = Some(initial_distance);
+                        state.pinch_zoom_threshold = 0.0;
+
+                        // Cancel any active mouse button press when starting scroll
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::MouseUp(MouseUpEvent {
+                                button: MouseButton::Left,
+                                position: center,
+                                modifiers: state.modifiers,
+                                click_count: 1,
+                            });
+                            state.button_pressed = None;
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    }
+                }
+                // Ignore third and subsequent touches
+            }
+            wl_touch::Event::Motion { id, x, y, .. } => {
+                let position = point(px(x as f32), px(y as f32));
+
+                if state.active_touch_id == Some(id) {
+                    state.touch_location = Some(position);
+                } else if state.second_touch_id == Some(id) {
+                    state.second_touch_location = Some(position);
+                }
+
+                if state.is_scrolling
+                    && state.active_touch_id.is_some()
+                    && state.second_touch_id.is_some()
+                {
+                    // Two-finger gesture mode
+                    if let (Some(first_pos), Some(second_pos)) =
+                        (state.touch_location, state.second_touch_location)
+                    {
+                        let current_center = point(
+                            px((first_pos.x.0 + second_pos.x.0) / 2.0),
+                            px((first_pos.y.0 + second_pos.y.0) / 2.0),
+                        );
+                        state.mouse_location = Some(current_center);
+
+                        // Calculate current distance between fingers
+                        let dx = first_pos.x.0 - second_pos.x.0;
+                        let dy = first_pos.y.0 - second_pos.y.0;
+                        let current_distance = (dx * dx + dy * dy).sqrt();
+
+                        // Check for pinch gesture (distance change vs center movement)
+                        if let (Some(start_distance), Some(last_distance)) =
+                            (state.pinch_start_distance, state.last_pinch_distance)
+                        {
+                            let distance_change = current_distance - start_distance;
+                            let center_movement =
+                                if let Some(scroll_start) = state.scroll_start_position {
+                                    let dx = current_center.x.0 - scroll_start.x.0;
+                                    let dy = current_center.y.0 - scroll_start.y.0;
+                                    (dx * dx + dy * dy).sqrt()
+                                } else {
+                                    0.0
+                                };
+
+                            // Determine if this is primarily a pinch (distance change > center movement)
+                            if distance_change.abs() > 20.0
+                                && distance_change.abs() > center_movement
+                            {
+                                // This is a pinch gesture - handle zoom
+                                let distance_delta =
+                                    (current_distance - last_distance) * PINCH_ZOOM_SENSITIVITY;
+                                state.pinch_zoom_threshold += distance_delta;
+                                state.last_pinch_distance = Some(current_distance);
+
+                                // Trigger zoom when threshold is reached
+                                if state.pinch_zoom_threshold.abs() >= PINCH_ZOOM_STEP_THRESHOLD {
+                                    if let Some(window) = state.mouse_focused_window.clone() {
+                                        let zoom_in = state.pinch_zoom_threshold > 0.0;
+
+                                        // Send zoom as keyboard shortcut: ctrl+= (zoom in) or ctrl+- (zoom out)
+                                        let mut zoom_modifiers = Modifiers::default();
+                                        zoom_modifiers.control = true;
+
+                                        let keystroke = if zoom_in {
+                                            Keystroke {
+                                                modifiers: zoom_modifiers,
+                                                key: "=".to_string(),
+                                                key_char: Some("=".to_string()),
+                                            }
+                                        } else {
+                                            Keystroke {
+                                                modifiers: zoom_modifiers,
+                                                key: "-".to_string(),
+                                                key_char: Some("-".to_string()),
+                                            }
+                                        };
+
+                                        let input = PlatformInput::KeyDown(KeyDownEvent {
+                                            keystroke,
+                                            is_held: false,
+                                        });
+
+                                        // Reset threshold after zoom
+                                        state.pinch_zoom_threshold = 0.0;
+                                        drop(state);
+                                        window.handle_input(input);
+                                    }
+                                }
+                            } else {
+                                // This is a scroll gesture - handle scroll
+                                state.last_pinch_distance = Some(current_distance);
+
+                                if let Some(scroll_start) = state.scroll_start_position {
+                                    let scroll_delta = point(
+                                        px((current_center.x.0 - scroll_start.x.0)
+                                            * TOUCH_SCROLL_SENSITIVITY),
+                                        px((current_center.y.0 - scroll_start.y.0)
+                                            * TOUCH_SCROLL_SENSITIVITY),
+                                    );
+
+                                    // Only send scroll events if there's meaningful movement
+                                    if scroll_delta.x.0.abs() > 1.0 || scroll_delta.y.0.abs() > 1.0
+                                    {
+                                        if let Some(window) = state.mouse_focused_window.clone() {
+                                            let input =
+                                                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                                    position: current_center,
+                                                    delta: ScrollDelta::Pixels(point(
+                                                        px(-scroll_delta.x.0),
+                                                        px(-scroll_delta.y.0),
+                                                    )),
+                                                    modifiers: state.modifiers,
+                                                    touch_phase: TouchPhase::Moved,
+                                                });
+                                            drop(state);
+                                            window.handle_input(input);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if state.active_touch_id == Some(id) && !state.is_scrolling {
+                    // Single touch mouse mode
+                    state.mouse_location = Some(position);
+
+                    if let Some(window) = state.mouse_focused_window.clone() {
+                        let input = PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: state.button_pressed,
+                            modifiers: state.modifiers,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                }
+            }
+            wl_touch::Event::Up { id, .. } => {
+                if state.active_touch_id == Some(id) {
+                    // Primary touch lifted
+                    if state.is_scrolling && state.second_touch_id.is_some() {
+                        // Promote second touch to primary and exit scroll mode
+                        state.active_touch_id = state.second_touch_id.take();
+                        state.touch_location = state.second_touch_location.take();
+                        state.is_scrolling = false;
+                        state.scroll_start_position = None;
+                        state.pinch_start_distance = None;
+                        state.last_pinch_distance = None;
+                        state.pinch_zoom_threshold = 0.0;
+
+                        // Send scroll end event
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let position = state.touch_location.unwrap_or_default();
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position,
+                                delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+                                modifiers: state.modifiers,
+                                touch_phase: TouchPhase::Ended,
+                            });
+                            state.mouse_location = Some(position);
+                            state.button_pressed = Some(MouseButton::Left);
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    } else {
+                        // Single touch mode - send mouse up
+                        state.active_touch_id = None;
+                        state.button_pressed = None;
+
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::MouseUp(MouseUpEvent {
+                                button: MouseButton::Left,
+                                position: state.touch_location.unwrap_or_default(),
+                                modifiers: state.modifiers,
+                                click_count: 1,
+                            });
+                            state.touch_location = None;
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    }
+                } else if state.second_touch_id == Some(id) {
+                    // Secondary touch lifted - exit scroll mode
+                    state.second_touch_id = None;
+                    state.second_touch_location = None;
+                    state.is_scrolling = false;
+                    state.scroll_start_position = None;
+                    state.pinch_start_distance = None;
+                    state.last_pinch_distance = None;
+                    state.pinch_zoom_threshold = 0.0;
+
+                    // Send scroll end event and switch back to single touch
+                    if let Some(window) = state.mouse_focused_window.clone() {
+                        let position = state.touch_location.unwrap_or_default();
+                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+                            modifiers: state.modifiers,
+                            touch_phase: TouchPhase::Ended,
+                        });
+                        state.mouse_location = Some(position);
+                        state.button_pressed = Some(MouseButton::Left);
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                }
+            }
+            wl_touch::Event::Cancel => {
+                // Clear all touch and scroll state
+                let was_scrolling = state.is_scrolling;
+                state.active_touch_id = None;
+                state.touch_location = None;
+                state.second_touch_id = None;
+                state.second_touch_location = None;
+                state.is_scrolling = false;
+                state.scroll_start_position = None;
+                state.button_pressed = None;
+                state.pinch_start_distance = None;
+                state.last_pinch_distance = None;
+                state.pinch_zoom_threshold = 0.0;
+
+                if let Some(window) = state.mouse_focused_window.clone() {
+                    if was_scrolling {
+                        // Send scroll end event if we were scrolling
+                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: state.mouse_location.unwrap_or_default(),
+                            delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+                            modifiers: state.modifiers,
+                            touch_phase: TouchPhase::Ended,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    } else {
+                        // Send mouse exit event if we were in single touch mode
+                        let input = PlatformInput::MouseExited(MouseExitEvent {
+                            position: state.mouse_location.unwrap_or_default(),
+                            pressed_button: None,
+                            modifiers: state.modifiers,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                }
             }
             _ => {}
         }
