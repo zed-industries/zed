@@ -133,7 +133,7 @@ use crate::{
         SerializedAxis,
         model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
-    utility_pane::UtilityPane,
+    utility_pane::{UtilityPane, UtilityPaneSlot, UtilityPaneState},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -1179,7 +1179,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
-    utility_pane: bool,
+    utility_pane_state: UtilityPaneState,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1474,6 +1474,7 @@ impl Workspace {
 
         let mut center = PaneGroup::new(center_pane.clone());
         center.set_is_center(true);
+        center.mark_positions(cx);
 
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1528,7 +1529,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
-            utility_pane: false,
+            utility_pane_state: UtilityPaneState::default(),
         }
     }
 
@@ -5689,6 +5690,7 @@ impl Workspace {
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
                     workspace.center.set_is_center(true);
+                    workspace.center.mark_positions(cx);
 
                     if let Some(active_pane) = active_pane {
                         workspace.set_active_pane(&active_pane, window, cx);
@@ -6837,9 +6839,9 @@ impl Render for Workspace {
                                                         window,
                                                         cx,
                                                     ))
-                                                    .when(self.utility_pane, |this| {
+                                                    .when(self.utility_pane_state.left_slot_open, |this| {
                                                         this.child(
-                                                            UtilityPane::new(cx)
+                                                            UtilityPane::new(UtilityPaneSlot::Left, cx)
                                                         )
                                                     })
                                                     .child(
@@ -6883,6 +6885,11 @@ impl Render for Workspace {
                                                                     ),
                                                             ),
                                                     )
+                                                    .when(self.utility_pane_state.right_slot_open, |this| {
+                                                        this.child(
+                                                            UtilityPane::new(UtilityPaneSlot::Right, cx)
+                                                        )
+                                                    })
                                                     .children(self.render_dock(
                                                         DockPosition::Right,
                                                         &self.right_dock,
@@ -6913,6 +6920,11 @@ impl Render for Workspace {
                                                             .flex_row()
                                                             .flex_1()
                                                             .children(self.render_dock(DockPosition::Left, &self.left_dock, window, cx))
+                                                            .when(self.utility_pane_state.left_slot_open, |this| {
+                                                                this.child(
+                                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
+                                                                )
+                                                            })
                                                             .child(
                                                                 div()
                                                                     .flex()
@@ -6940,6 +6952,11 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
+                                                            .when(self.utility_pane_state.right_slot_open, |this| {
+                                                                this.child(
+                                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
+                                                                )
+                                                            })
                                                     )
                                                     .child(
                                                         div()
@@ -6964,6 +6981,11 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
+                                            .when(self.utility_pane_state.left_slot_open, |this| {
+                                                this.child(
+                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
+                                                )
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -7002,6 +7024,11 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
+                                                            .when(self.utility_pane_state.right_slot_open, |this| {
+                                                                this.child(
+                                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
+                                                                )
+                                                            })
                                                             .children(self.render_dock(DockPosition::Right, &self.right_dock, window, cx))
                                                     )
                                                     .child(
@@ -7021,6 +7048,11 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
+                                            .when(self.utility_pane_state.left_slot_open, |this| {
+                                                this.child(
+                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
+                                                )
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -7058,6 +7090,11 @@ impl Render for Workspace {
                                                         cx,
                                                     )),
                                             )
+                                            .when(self.utility_pane_state.right_slot_open, |this| {
+                                                this.child(
+                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
+                                                )
+                                            })
                                             .children(self.render_dock(
                                                 DockPosition::Right,
                                                 &self.right_dock,

@@ -11,6 +11,7 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
+    utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
@@ -3064,14 +3065,27 @@ impl Pane {
                 }
             });
 
-        let open_aside = IconButton::new("open_aside", IconName::Thread)
+        let open_aside_left = IconButton::new("open_aside_left", IconName::Thread)
             .icon_size(IconSize::Small)
             .on_click({
                 let workspace = self.workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, |workspace, cx| {
-                            workspace.toggle_utility_pane(window, cx)
+                            workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
+                        })
+                        .ok();
+                }
+            });
+
+        let open_aside_right = IconButton::new("open_aside_right", IconName::Thread)
+            .icon_size(IconSize::Small)
+            .on_click({
+                let workspace = self.workspace.clone();
+                move |_, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
                         })
                         .ok();
                 }
@@ -3123,19 +3137,29 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
-        let render_aside_toggle = self
+        let render_aside_toggle_left = self
             .is_upper_left
             .then(|| {
                 self.workspace
                     .upgrade()
-                    .map(|entity| !entity.read(cx).utility_pane)
+                    .map(|entity| !entity.read(cx).utility_pane_state.left_slot_open)
+            })
+            .flatten()
+            .unwrap_or(false);
+
+        let render_aside_toggle_right = self
+            .is_upper_right
+            .then(|| {
+                self.workspace
+                    .upgrade()
+                    .map(|entity| !entity.read(cx).utility_pane_state.right_slot_open)
             })
             .flatten()
             .unwrap_or(false);
 
         TabBar::new("tab_bar")
-            .when(render_aside_toggle, |tab_bar| {
-                tab_bar.start_child(open_aside)
+            .when(render_aside_toggle_left, |tab_bar| {
+                tab_bar.start_child(open_aside_left)
             })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
@@ -3155,6 +3179,9 @@ impl Pane {
                 } else {
                     tab_bar
                 }
+            })
+            .when(render_aside_toggle_right, |tab_bar| {
+                tab_bar.end_child(open_aside_right)
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
