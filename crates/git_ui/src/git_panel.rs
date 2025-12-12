@@ -1934,16 +1934,25 @@ impl GitPanel {
         }
     }
 
-    fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.amend_pending {
-            return;
+    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commit(window, cx) {
+            telemetry::event!("Git Committed", source = "Git Panel");
         }
+    }
+
+    /// Commits staged changes with the current commit message.
+    ///
+    /// Returns `true` if the commit was executed, `false` otherwise.
+    pub(crate) fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.amend_pending {
+            return false;
+        }
+
         if self
             .commit_editor
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            telemetry::event!("Git Committed", source = "Git Panel");
             self.commit_changes(
                 CommitOptions {
                     amend: false,
@@ -1951,13 +1960,26 @@ impl GitPanel {
                 },
                 window,
                 cx,
-            )
+            );
+            true
         } else {
             cx.propagate();
+            false
         }
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self.amend(window, cx) {
+            telemetry::event!("Git Amended", source = "Git Panel");
+        }
+    }
+
+    /// Amends the most recent commit with staged changes and/or an updated commit message.
+    ///
+    /// Uses a two-stage workflow where the first invocation loads the commit
+    /// message for editing, second invocation performs the amend. Returns
+    /// `true` if the amend was executed, `false` otherwise.
+    pub(crate) fn amend(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self
             .commit_editor
             .focus_handle(cx)
@@ -1966,9 +1988,10 @@ impl GitPanel {
             if self.head_commit(cx).is_some() {
                 if !self.amend_pending {
                     self.set_amend_pending(true, cx);
-                    self.load_last_commit_message_if_empty(cx);
+                    self.load_last_commit_message(cx);
+
+                    return false;
                 } else {
-                    telemetry::event!("Git Amended", source = "Git Panel");
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
@@ -1977,13 +2000,16 @@ impl GitPanel {
                         window,
                         cx,
                     );
+
+                    return true;
                 }
             }
+            return false;
         } else {
             cx.propagate();
+            return false;
         }
     }
-
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
         self.active_repository
             .as_ref()
@@ -1991,13 +2017,11 @@ impl GitPanel {
             .cloned()
     }
 
-    pub fn load_last_commit_message_if_empty(&mut self, cx: &mut Context<Self>) {
-        if !self.commit_editor.read(cx).is_empty(cx) {
-            return;
-        }
+    pub fn load_last_commit_message(&mut self, cx: &mut Context<Self>) {
         let Some(head_commit) = self.head_commit(cx) else {
             return;
         };
+
         let recent_sha = head_commit.sha.to_string();
         let detail_task = self.load_commit_details(recent_sha, cx);
         cx.spawn(async move |this, cx| {
@@ -2133,11 +2157,16 @@ impl GitPanel {
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
+
                 match result {
                     Ok(()) => {
-                        this.commit_editor
-                            .update(cx, |editor, cx| editor.clear(window, cx));
-                        this.original_commit_message = None;
+                        if options.amend {
+                            this.set_amend_pending(false, cx);
+                        } else {
+                            this.commit_editor
+                                .update(cx, |editor, cx| editor.clear(window, cx));
+                            this.original_commit_message = None;
+                        }
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -2146,9 +2175,6 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
-        if options.amend {
-            self.set_amend_pending(false, cx);
-        }
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5067,6 +5093,9 @@ impl GitPanel {
         self.amend_pending
     }
 
+    /// Sets the pending amend state, ensuring that the original commit message
+    /// is either saved, when `value` is `true` and there's no pending amend, or
+    /// restored, when `value` is `false` and there's a pending amend.
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         if value && !self.amend_pending {
             let current_message = self.commit_message_buffer(cx).read(cx).text();
@@ -5184,7 +5213,7 @@ impl GitPanel {
     pub(crate) fn toggle_amend_pending(&mut self, cx: &mut Context<Self>) {
         self.set_amend_pending(!self.amend_pending, cx);
         if self.amend_pending {
-            self.load_last_commit_message_if_empty(cx);
+            self.load_last_commit_message(cx);
         }
     }
 }
@@ -5215,8 +5244,8 @@ impl Render for GitPanel {
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
-                    .on_action(cx.listener(GitPanel::commit))
-                    .on_action(cx.listener(GitPanel::amend))
+                    .on_action(cx.listener(GitPanel::on_commit))
+                    .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
@@ -6554,6 +6583,94 @@ mod tests {
             panel.set_amend_pending(false, cx);
             let current_message = panel.commit_message_buffer(cx).read(cx).text();
             assert_eq!(current_message, "");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_amend(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        // Wait for the project scanning to finish so that `head_commit(cx)` is
+        // actually set, otherwise no head commit would be available from which
+        // to fetch the latest commit message from.
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        panel.read_with(cx, |panel, cx| {
+            assert!(panel.active_repository.is_some());
+            assert!(panel.head_commit(cx).is_some());
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            // Update the commit editor's message to ensure that its contents
+            // are later restored, after amending is finished.
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                buffer.set_text("refactor: update main.rs", cx);
+            });
+
+            // Start amending the previous commit.
+            panel.focus_editor(&Default::default(), window, cx);
+            panel.on_amend(&Amend, window, cx);
+        });
+
+        // Since `GitPanel.amend` attempts to fetch the latest commit message in
+        // a background task, we need to wait for it to complete before being
+        // able to assert that the commit message editor's state has been
+        // updated.
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "initial commit"
+            );
+            assert_eq!(
+                panel.original_commit_message,
+                Some("refactor: update main.rs".to_string())
+            );
+
+            // Finish amending the previous commit.
+            panel.focus_editor(&Default::default(), window, cx);
+            panel.on_amend(&Amend, window, cx);
+        });
+
+        // Since the actual commit logic is run in a background task, we need to
+        // await its completion to actually ensure that the commit message
+        // editor's contents are set to the original message and haven't been
+        // cleared.
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, _window, cx| {
+            // After amending, the commit editor's message should be restored to
+            // the original message.
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "refactor: update main.rs"
+            );
+            assert!(panel.original_commit_message.is_none());
         });
     }
 
