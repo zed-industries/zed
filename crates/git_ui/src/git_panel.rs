@@ -3961,6 +3961,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         self.active_repository.as_ref()?;
+        if self.tracked_commit_sha.is_some() {
+            return None;
+        }
 
         let (text, action, stage, tooltip) =
             if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
@@ -4048,6 +4051,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if self.tracked_commit_sha.is_some() {
+            return None;
+        }
+
         let active_repository = self.active_repository.clone()?;
         let panel_editor_style = panel_editor_style(true, window, cx);
         let enable_coauthors = self.render_co_authors(cx);
@@ -4746,6 +4753,7 @@ impl GitPanel {
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
+        let show_staging_controls = self.tracked_commit_sha.is_none();
 
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
@@ -4903,30 +4911,32 @@ impl GitPanel {
                 },
             )
             .child(name_row)
-            .child(
-                div()
-                    .id(checkbox_wrapper_id)
-                    .flex_none()
-                    .occlude()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, is_staged)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click_ext({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, click, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
-                                        }
-                                        if click.modifiers().shift {
-                                            this.stage_bulk(ix, cx);
-                                        } else {
-                                            let list_entry =
-                                                if GitPanelSettings::get_global(cx).tree_view {
+            .when(show_staging_controls, |row| {
+                row.child(
+                    div()
+                        .id(checkbox_wrapper_id)
+                        .flex_none()
+                        .occlude()
+                        .cursor_pointer()
+                        .child(
+                            Checkbox::new(checkbox_id, is_staged)
+                                .disabled(!has_write_access)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .on_click_ext({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, click, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access {
+                                                return;
+                                            }
+                                            if click.modifiers().shift {
+                                                this.stage_bulk(ix, cx);
+                                            } else {
+                                                let list_entry = if GitPanelSettings::get_global(cx)
+                                                    .tree_view
+                                                {
                                                     GitListEntry::TreeStatus(GitTreeStatusEntry {
                                                         entry: entry.clone(),
                                                         depth,
@@ -4934,27 +4944,32 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(&list_entry, window, cx);
-                                        }
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                // If is_staging_or_staged is None, this implies the file was partially staged, and so
-                                // we allow the user to stage it in full by displaying `Stage` in the tooltip.
-                                let action = if is_staging_or_staged {
-                                    "Unstage"
-                                } else {
-                                    "Stage"
-                                };
-                                let tooltip_name = action.to_string();
+                                                this.toggle_staged_for_entry(
+                                                    &list_entry,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    // If is_staging_or_staged is None, this implies the file was partially staged, and so
+                                    // we allow the user to stage it in full by displaying `Stage` in the tooltip.
+                                    let action = if is_staging_or_staged {
+                                        "Unstage"
+                                    } else {
+                                        "Stage"
+                                    };
+                                    let tooltip_name = action.to_string();
 
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
-                            }),
-                    ),
-            )
+                                    Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
+                                }),
+                        ),
+                )
+            })
             .into_any_element()
     }
 
@@ -5008,6 +5023,7 @@ impl GitPanel {
             IconName::Folder
         };
         let staged_state = entry.staged_state;
+        let show_staging_controls = self.tracked_commit_sha.is_none();
 
         let name_row = h_flex()
             .items_center()
@@ -5045,45 +5061,47 @@ impl GitPanel {
                 })
             })
             .child(name_row)
-            .child(
-                div()
-                    .id(checkbox_wrapper_id)
-                    .flex_none()
-                    .occlude()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, staged_state)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
-                                        }
-                                        this.toggle_staged_for_entry(
-                                            &GitListEntry::Directory(entry.clone()),
-                                            window,
-                                            cx,
-                                        );
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                let action = if staged_state.selected() {
-                                    "Unstage"
-                                } else {
-                                    "Stage"
-                                };
-                                Tooltip::simple(format!("{action} folder"), cx)
-                            }),
-                    ),
-            )
+            .when(show_staging_controls, |row| {
+                row.child(
+                    div()
+                        .id(checkbox_wrapper_id)
+                        .flex_none()
+                        .occlude()
+                        .cursor_pointer()
+                        .child(
+                            Checkbox::new(checkbox_id, staged_state)
+                                .disabled(!has_write_access)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .on_click({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access {
+                                                return;
+                                            }
+                                            this.toggle_staged_for_entry(
+                                                &GitListEntry::Directory(entry.clone()),
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    let action = if staged_state.selected() {
+                                        "Unstage"
+                                    } else {
+                                        "Stage"
+                                    };
+                                    Tooltip::simple(format!("{action} folder"), cx)
+                                }),
+                        ),
+                )
+            })
             .into_any_element()
     }
 
@@ -5278,6 +5296,8 @@ impl Render for GitPanel {
             .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
 
         let has_write_access = self.has_write_access(cx);
+        let staging_enabled =
+            self.tracked_commit_sha.is_none() && has_write_access && !project.is_read_only(cx);
 
         let has_co_authors = room.is_some_and(|room| {
             self.load_local_committer(cx);
@@ -5291,7 +5311,7 @@ impl Render for GitPanel {
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
-            .when(has_write_access && !project.is_read_only(cx), |this| {
+            .when(staging_enabled, |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::commit))
@@ -5334,7 +5354,7 @@ impl Render for GitPanel {
                     .children(self.render_panel_header(window, cx))
                     .map(|this| {
                         if has_entries {
-                            this.child(self.render_entries(has_write_access, window, cx))
+                            this.child(self.render_entries(staging_enabled, window, cx))
                         } else {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
