@@ -298,7 +298,7 @@ pub struct LanguageModelProviderManifestEntry {
     /// Path to an SVG icon file relative to the extension root (e.g., "icons/provider.svg").
     #[serde(default)]
     pub icon: Option<String>,
-    /// Default models to show even before API connection.
+    /// Hardcoded models to always show (as opposed to a model list loaded over the network).
     #[serde(default)]
     pub models: Vec<LanguageModelManifestEntry>,
     /// Authentication configuration.
