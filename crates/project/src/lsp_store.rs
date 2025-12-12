@@ -409,6 +409,7 @@ impl LocalLspStore {
                     }
                 }
             });
+        let update_binary_status = untrusted_worktree_task.is_none();
 
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
@@ -589,8 +590,10 @@ impl LocalLspStore {
             pending_workspace_folders,
         };
 
-        self.languages
-            .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
+        if update_binary_status {
+            self.languages
+                .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
+        }
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids
@@ -617,7 +620,7 @@ impl LocalLspStore {
             && let Some(path) = settings.path.as_ref().map(PathBuf::from)
         {
             let settings = settings.clone();
-
+            let languages = self.languages.clone();
             return cx.background_spawn(async move {
                 if let Some(untrusted_worktree_task) = untrusted_worktree_task {
                     log::info!(
@@ -625,6 +628,8 @@ impl LocalLspStore {
                         adapter.name(),
                     );
                     untrusted_worktree_task.recv().await.ok();
+                    languages
+                        .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
                 }
                 let mut env = delegate.shell_env().await;
                 env.extend(settings.env.unwrap_or_default());
