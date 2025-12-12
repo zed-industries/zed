@@ -150,6 +150,7 @@ impl CsvPreviewView {
             .h_full()
             // Row identifiers are always centered
             .items_center()
+            .justify_end()
             .map(|div| match self.settings.font_type {
                 FontType::Ui => div.font_ui(cx),
                 FontType::Monospace => div.font_buffer(cx),
