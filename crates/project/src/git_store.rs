@@ -1782,8 +1782,20 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_config(&path, args).await })
             }
-            GitStoreState::Remote { .. } => {
-                todo!("Implement `git_config` implementation for remote repositories");
+            GitStoreState::Remote {
+                upstream_client, ..
+            } => {
+                // Prevent running git config commands for collab.
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Config isn't support for project guests"
+                    )));
+                }
+
+                // TODO: Implement this for remote repositories.
+                Task::ready(Err(anyhow!(
+                    "Git Config isn't yet supported for remote projects"
+                )))
             }
         }
     }
@@ -5969,7 +5981,11 @@ impl Repository {
     pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
-                RepositoryState::Remote(..) => todo!(),
+                // TODO: Correctly handle remote repositories, where the user
+                // that's running the Zed remote may not own the `.git/`
+                // directory. For now we just return `GitAccess::Yes` so that
+                // remoting continues working as expected.
+                RepositoryState::Remote(..) => GitAccess::Yes,
                 RepositoryState::Local(state) => match state.backend.status(&[]).await {
                     Ok(_) => GitAccess::Yes,
                     Err(_) => GitAccess::No,

@@ -2953,8 +2953,6 @@ impl GitPanel {
             return;
         };
 
-        // TODO!: What if the user is on a Windows machine remoting to a Linux
-        // machine? Will the path separators break this implementation?
         let path = active_repository.update(cx, |repository, _cx| {
             repository.snapshot().work_directory_abs_path
         });
@@ -3307,19 +3305,14 @@ impl GitPanel {
 
             cx.spawn_in(window, async move |git_panel, cx| {
                 // When the user does not own the `.git` folder, the
-                // `GitStore.spawn_local_git_worker` will fail to actually
-                // create the receiver for the Git jobs, so the job to try and
-                // determine the `GitAccess` will always be cancelled will
-                // always be cancelled. As such, when that happens, we'll just assume `GitAccess::No`.
+                // `GitStore.spawn_local_git_worker` will fail to create the
+                // receiver for Git jobs, so this access check will be
+                // cancelled.
                 //
-                // TODO!: I believe there's more ways that the job actually gets
-                // cancelled, for example, when the
-                // `update_visible_entries_task` gets updated before the
-                // previous has not run and we were in the middle of checking
-                // the access? The proper solution might be to move this state
-                // setup to repository or git store itself, as I believe those
-                // will be able to determine whether we're able to read the
-                // `.git `folder or not?
+                // We assume `GitAccess::No` on cancellation. I believe this is
+                // imprecise, other failures could also cause cancellation, but
+                // the consequence is just showing the "unsafe repo" UI, which
+                // seems acceptable for this edge case.
                 let access = match access.await {
                     Ok(access) => access,
                     Err(Canceled) => GitAccess::No,
@@ -4409,8 +4402,6 @@ impl GitPanel {
         active_repository: &Entity<Repository>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        // TODO!: What if the user is on a Windows machine remoting to a Linux
-        // machine? Will the path separators break this implementation?
         let directory = active_repository.update(cx, |repository, _cx| {
             repository.snapshot().work_directory_abs_path
         });
