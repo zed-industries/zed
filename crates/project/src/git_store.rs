@@ -159,7 +159,7 @@ pub enum GitAccess {
     /// Either:
     /// - the user owns `.git`
     /// - the user doesn't own `.git`, but has both of:
-    ///   - OS-level read permisions
+    ///   - OS-level read permissions
     ///   - the directory is marked as safe (git config safe.directory)
     #[default]
     Yes,

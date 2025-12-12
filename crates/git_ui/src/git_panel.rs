@@ -5381,15 +5381,9 @@ impl Render for GitPanel {
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
-<<<<<<< HEAD
                     .on_action(cx.listener(GitPanel::on_commit))
                     .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
-=======
-                    .on_action(cx.listener(Self::commit))
-                    .on_action(cx.listener(Self::amend))
-                    .on_action(cx.listener(Self::toggle_signoff_enabled))
->>>>>>> 8270ab41fb (refactor(git): ensure AddSafeDirectory is not shown on command palette)
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
                     .on_action(cx.listener(Self::stage_selected))
@@ -5417,11 +5411,8 @@ impl Render for GitPanel {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
-<<<<<<< HEAD
             .on_action(cx.listener(Self::toggle_tree_view))
-=======
             .on_action(cx.listener(Self::add_safe_directory))
->>>>>>> 8270ab41fb (refactor(git): ensure AddSafeDirectory is not shown on command palette)
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
