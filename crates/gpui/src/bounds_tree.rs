@@ -240,17 +240,21 @@ where
                 unreachable!("Should only traverse internal nodes");
             };
 
+            self.insert_path.push(current_idx);
+
             // Find the best child to descend into
             let mut best_child_idx = children.as_slice()[0];
+            let mut best_child_pos = 0;
             let mut best_cost = bounds
                 .union(&self.nodes[best_child_idx].bounds)
                 .half_perimeter();
 
-            for &child_idx in &children.as_slice()[1..] {
+            for (pos, &child_idx) in children.as_slice().iter().enumerate().skip(1) {
                 let cost = bounds.union(&self.nodes[child_idx].bounds).half_perimeter();
                 if cost < best_cost {
                     best_cost = cost;
                     best_child_idx = child_idx;
+                    best_child_pos = pos;
                 }
             }
 
@@ -259,17 +263,16 @@ where
                 // Best child is a leaf. Check if current node has room for another child.
                 if children.len() < MAX_CHILDREN {
                     // Add new leaf directly to this node
-                    self.insert_path.push(current_idx);
                     let node = &mut self.nodes[current_idx];
                     if let NodeKind::Internal { children } = &mut node.kind {
                         children.push(new_leaf_idx);
                     }
+
                     node.bounds = node.bounds.union(&bounds);
                     node.max_order = cmp::max(node.max_order, order);
                     break;
                 } else {
                     // Node is full, create new internal with [best_leaf, new_leaf]
-                    self.insert_path.push(current_idx);
                     let sibling_bounds = self.nodes[best_child_idx].bounds.clone();
                     let sibling_order = self.nodes[best_child_idx].max_order;
 
@@ -289,19 +292,12 @@ where
                     // Replace the leaf with the new internal in parent
                     let parent = &mut self.nodes[current_idx];
                     if let NodeKind::Internal { children } = &mut parent.kind {
-                        let num_children = children.len();
-                        for child_ref in children.indices[..num_children].iter_mut() {
-                            if *child_ref == best_child_idx {
-                                *child_ref = new_internal_idx;
-                                break;
-                            }
-                        }
+                        children.indices[best_child_pos] = new_internal_idx;
                     }
                     break;
                 }
             } else {
                 // Best child is internal, continue descent
-                self.insert_path.push(current_idx);
                 current_idx = best_child_idx;
             }
         }
