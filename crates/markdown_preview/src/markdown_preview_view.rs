@@ -27,7 +27,6 @@ use crate::{
     markdown_renderer::{RenderContext, render_markdown_block},
 };
 use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
-use editor::actions::{MovePageDown, MovePageUp};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
