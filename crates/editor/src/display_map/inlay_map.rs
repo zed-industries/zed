@@ -56,21 +56,31 @@ impl sum_tree::Item for Transform {
     fn summary(&self, _: ()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
-                input: *summary,
-                output: *summary,
+                excluding: *summary,
+                including: *summary,
             },
             Transform::Inlay(inlay) => TransformSummary {
-                input: MBTextSummary::default(),
-                output: MBTextSummary::from(inlay.text().summary()),
+                excluding: MBTextSummary::default(),
+                including: MBTextSummary::from(inlay.text().summary()),
             },
         }
     }
 }
 
+// display:       let asdfsaff : SomeType = 123;
+// trans:         |-iso--------|---inlay---|iso---|
+// text length:   |------------|           |------|
+//
+// length ~= text
+// because we store lengths in a ordered collection
+// and index into a rope - via fn text_summary_for_range()
+
 #[derive(Clone, Debug, Default)]
 struct TransformSummary {
-    input: MBTextSummary,
-    output: MBTextSummary,
+    /// Summary of the text before inlays have been applied.
+    excluding: MBTextSummary,
+    /// Summary of the text after inlays have been applied.
+    including: MBTextSummary,
 }
 
 impl sum_tree::ContextLessSummary for TransformSummary {
@@ -79,8 +89,8 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     }
 
     fn add_summary(&mut self, other: &Self) {
-        self.input += other.input;
-        self.output += other.output;
+        self.excluding += other.excluding;
+        self.including += other.including;
     }
 }
 
@@ -146,7 +156,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        self.0 += summary.output.len;
+        self.0 += summary.including.len;
     }
 }
 
@@ -175,7 +185,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        self.0 += &summary.output.lines;
+        self.0 += &summary.including.lines;
     }
 }
 
@@ -185,7 +195,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for MultiBufferOffset {
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        *self += summary.input.len;
+        *self += summary.excluding.len;
     }
 }
 
@@ -195,7 +205,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     }
 
     fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
-        *self += &summary.input.lines;
+        *self += &summary.excluding.lines;
     }
 }
 
@@ -206,6 +216,12 @@ pub struct InlayBufferRows<'a> {
     inlay_row: u32,
     max_buffer_row: MultiBufferRow,
 }
+
+
+// sum_tree.cursor().seek(100)
+
+// InlayOffset: offset where inlays count
+// MultiBufferOffset: offset where inlays are skipped
 
 pub struct InlayChunks<'a> {
     transforms: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, MultiBufferOffset>>,
@@ -569,13 +585,13 @@ impl InlayMap {
                 let old_end = cursor.start().1 + (buffer_edit.old.end - cursor.start().0);
 
                 // Push the unchanged prefix.
-                let prefix_start = new_transforms.summary().input.len;
+                let prefix_start = new_transforms.summary().excluding.len;
                 let prefix_end = buffer_edit.new.start;
                 push_isomorphic(
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                 );
-                let new_start = InlayOffset(new_transforms.summary().output.len);
+                let new_start = InlayOffset(new_transforms.summary().including.len);
 
                 let start_ix = match self.inlays.binary_search_by(|probe| {
                     probe
@@ -596,7 +612,7 @@ impl InlayMap {
                         break;
                     }
 
-                    let prefix_start = new_transforms.summary().input.len;
+                    let prefix_start = new_transforms.summary().excluding.len;
                     let prefix_end = buffer_offset;
                     push_isomorphic(
                         &mut new_transforms,
@@ -607,12 +623,12 @@ impl InlayMap {
                 }
 
                 // Apply the rest of the edit.
-                let transform_start = new_transforms.summary().input.len;
+                let transform_start = new_transforms.summary().excluding.len;
                 push_isomorphic(
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
                 );
-                let new_end = InlayOffset(new_transforms.summary().output.len);
+                let new_end = InlayOffset(new_transforms.summary().including.len);
                 inlay_edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_end,
@@ -624,7 +640,7 @@ impl InlayMap {
                     .peek()
                     .is_none_or(|edit| edit.old.start >= cursor.end().0)
                 {
-                    let transform_start = new_transforms.summary().input.len;
+                    let transform_start = new_transforms.summary().excluding.len;
                     let transform_end =
                         buffer_edit.new.end + (cursor.end().0 - buffer_edit.old.end);
                     push_isomorphic(
@@ -802,12 +818,12 @@ impl InlaySnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn len(&self) -> InlayOffset {
-        InlayOffset(self.transforms.summary().output.len)
+        InlayOffset(self.transforms.summary().including.len)
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> InlayPoint {
-        InlayPoint(self.transforms.summary().output.lines)
+        InlayPoint(self.transforms.summary().including.lines)
     }
 
     #[ztracing::instrument(skip_all, fields(point))]
@@ -1005,7 +1021,7 @@ impl InlaySnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn text_summary(&self) -> MBTextSummary {
-        self.transforms.summary().output
+        self.transforms.summary().including
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1044,7 +1060,7 @@ impl InlaySnapshot {
         if range.end > cursor.start().0 {
             summary += cursor
                 .summary::<_, TransformSummary>(&range.end, Bias::Right)
-                .output;
+                .including;
 
             let overshoot = range.end.0 - cursor.start().0.0;
             match cursor.item() {
@@ -1151,7 +1167,7 @@ impl InlaySnapshot {
     fn check_invariants(&self) {
         #[cfg(any(debug_assertions, feature = "test-support"))]
         {
-            assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
+            assert_eq!(self.transforms.summary().excluding, self.buffer.text_summary());
             let mut transforms = self.transforms.iter().peekable();
             while let Some(transform) = transforms.next() {
                 let transform_is_isomorphic = matches!(transform, Transform::Isomorphic(_));
@@ -1207,7 +1223,7 @@ impl InlayPointCursor<'_> {
                     }
                 }
                 None => {
-                    return InlayPoint(self.transforms.summary().output.lines);
+                    return InlayPoint(self.transforms.summary().including.lines);
                 }
             }
         }

@@ -840,9 +840,16 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[ztracing::instrument(skip_all, fields(point=?point, ret))]
+    // #[ztracing::instrument(skip_all, fields(point=?point, iterations, res))]
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+        let span = ztracing::debug_span!("prev_row_boundary", point = ?point, iterations = ztracing::field::Empty, res = ztracing::field::Empty);
+        let _enter = span.enter();
+
         if self.transforms.is_empty() {
+            // ztracing::Span::current().record("res", 0);
+            // ztracing::Span::current().record("iterations", 0);
+            span.record("res", 0);
+            span.record("iterations", 0);
             return WrapRow(0);
         }
 
@@ -859,9 +866,14 @@ impl WrapSnapshot {
         }
 
         // start
+        let mut iterations = 0;
         while let Some(transform) = cursor.item() {
+            iterations += 1;
             if transform.is_isomorphic() && cursor.start().1.column() == 0 {
-                return cmp::min(cursor.end().0.row(), point.row());
+                let res = cmp::min(cursor.end().0.row(), point.row());
+                span.record("res", res.0);
+                span.record("iterations", iterations);
+                return res;
             } else {
                 cursor.prev();
             }

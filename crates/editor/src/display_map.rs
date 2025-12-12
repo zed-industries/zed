@@ -13,6 +13,34 @@
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
 //!   Each one of those builds on top of preceding map.
+//! 
+//! Each layer in the map (and the multibuffer itself to some extent) has a few
+//! structures that are used to implement the public API available to the layer
+//! above:
+//! - a `Transform` type - this represents a region of text that the layer in
+//!   question is "managing", that it transforms into a more "processed" text 
+//!   for the layer above. For example, the inlay map has an `enum Transform`
+//!   that has two variants:
+//!     - `Isomorphic`, representing a region of text that has no inlay hints (i.e.
+//!     is passed through the map transparently)
+//!     - `Inlay`, representing a location where an inlay hint is to be inserted.
+//! - a `TransformSummary` type, which is usually a struct with two fields:
+//!   `input: MBTextSummary` and `output: MBTextSummary`. Here, `input`
+//!   corresponds to "text in the layer below", and `output` corresponds to the
+//!   text exposed to the layer above. So in the inlay map case, a
+//!   `Transform::Isomorphic`'s summary is just `input = output = summary`, where
+//!   `summary` is the `MBTextSummary` stored in that variant. Conversely, a
+//!   `Transform::Inlay` always has an empty `input` summary, because it's not
+//!   "replacing" any text that exists on disk. The `output` is the summary of the
+//!   inlay text to be injected. - Various newtype wrappers for co-ordinate spaces
+//!   (e.g. [`WrapRow`] represents a row index, after soft-wrapping (and all lower
+//!   layers)).
+//! - various APIs which drill through the layers below to work with the underlying text. Notably:
+//!   - `fn text_summary_for_offset()` returns a `TextSummary` for the range in
+//!     the co-ordinate space that the map in question is responsible for.
+//!   - `fn <A>_point_to_<B>_point()` converts a point in co-ordinate space `A`
+//!     into co-ordinate space `B`.
+//! 
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement

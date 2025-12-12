@@ -1,8 +1,8 @@
-pub use tracing::Level;
+pub use tracing::{Level, field};
 
 #[cfg(ztracing)]
 pub use tracing::{
-    debug_span, error_span, event, info_span, instrument, span, trace_span, warn_span,
+    Span, debug_span, error_span, event, info_span, instrument, span, trace_span, warn_span,
 };
 #[cfg(not(ztracing))]
 pub use ztracing_macro::instrument;
@@ -26,17 +26,24 @@ pub use __consume_all_tokens as span;
 #[macro_export]
 macro_rules! __consume_all_tokens {
     ($($t:tt)*) => {
-        $crate::FakeSpan
+        $crate::Span
     };
 }
 
-pub struct FakeSpan;
-impl FakeSpan {
+#[cfg(not(ztracing))]
+pub struct Span;
+
+#[cfg(not(ztracing))]
+impl Span {
+    pub fn current() -> Self {
+        Self
+    }
+
     pub fn enter(&self) {}
+
+    pub fn record<T, S>(&self, _t: T, _s: S) {}
 }
 
-// #[cfg(not(ztracing))]
-// pub use span;
 
 #[cfg(ztracing)]
 pub fn init() {
