@@ -250,6 +250,7 @@ fn collect_files(
             let worktree_id = snapshot.id();
             let path_style = snapshot.path_style();
             let mut directory_stack: Vec<Arc<RelPath>> = Vec::new();
+            let mut folded_directory_path: Option<Arc<RelPath>> = None;
             let mut folded_directory_names: Arc<RelPath> = RelPath::empty().into();
             let mut is_top_level_directory = true;
 
@@ -277,6 +278,16 @@ fn collect_files(
                     )))?;
                 }
 
+                if let Some(folded_path) = &folded_directory_path {
+                    if !entry.path.starts_with(folded_path) {
+                        folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
+                        if directory_stack.is_empty() {
+                            is_top_level_directory = true;
+                        }
+                    }
+                }
+
                 let filename = entry.path.file_name().unwrap_or_default().to_string();
 
                 if entry.is_dir() {
@@ -292,13 +303,17 @@ fn collect_files(
                                 folded_directory_names =
                                     folded_directory_names.join(RelPath::unix(&filename).unwrap());
                             }
+                            folded_directory_path = Some(entry.path.clone());
                             continue;
                         }
                     } else {
                         // Skip empty directories
                         folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
                         continue;
                     }
+
+                    // Render the directory (either folded or normal)
                     if folded_directory_names.is_empty() {
                         let label = if is_top_level_directory {
                             is_top_level_directory = false;
@@ -334,6 +349,8 @@ fn collect_files(
                             },
                         )))?;
                         directory_stack.push(entry.path.clone());
+                        folded_directory_names = RelPath::empty().into();
+                        folded_directory_path = None;
                     }
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
