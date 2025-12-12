@@ -265,6 +265,7 @@ fn main() {
                             .await;
 
                             if let Err(e) = result {
+                                Progress::global().increment_failed();
                                 let failed_example_path =
                                     FAILED_EXAMPLES_DIR.join(format!("{}.json", example.name));
                                 app_state
@@ -305,7 +306,7 @@ fn main() {
                                     failed_example_path.display(),
                                 );
                                 if args.failfast || total_examples == 1 {
-                                    Progress::global().clear();
+                                    Progress::global().finalize();
                                     panic!("{}", msg);
                                 } else {
                                     log::error!("{}", msg);
@@ -315,7 +316,7 @@ fn main() {
                     });
                     futures::future::join_all(futures).await;
                 }
-                Progress::global().clear();
+                Progress::global().finalize();
 
                 if args.output.is_some() || !matches!(command, Command::Eval(_)) {
                     write_examples(&examples, output.as_ref());
