@@ -197,19 +197,16 @@ impl TableSelection {
             ))
             .cursor_pointer()
             .flex()
-            .flex_col()
-            .flex_grow()
             .h_full()
-            // .flex_grow()
+            .map(|div| match vertical_alignment {
+                VerticalAlignment::Top => div.items_start(),
+                VerticalAlignment::Center => div.items_center(),
+            })
+            .map(|div| match vertical_alignment {
+                VerticalAlignment::Top => div.content_start(),
+                VerticalAlignment::Center => div.content_center(),
+            })
             .when(is_selected, |div| div.bg(selected_bg_color))
-            .when(
-                matches!(vertical_alignment, VerticalAlignment::Top),
-                |div| div.justify_start(),
-            )
-            .when(
-                matches!(vertical_alignment, VerticalAlignment::Center),
-                |div| div.justify_center(),
-            )
             .child(cell_content)
             // Called when user presses mouse button down on a cell
             .on_mouse_down(MouseButton::Left, {
