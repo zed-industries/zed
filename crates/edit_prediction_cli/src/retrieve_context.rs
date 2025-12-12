@@ -16,16 +16,17 @@ use std::time::Duration;
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
-    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
     if example.context.is_some() {
         return;
     }
 
-    run_load_project(example, app_state.clone(), progress.clone(), cx.clone()).await;
+    run_load_project(example, app_state.clone(), cx.clone()).await;
 
-    let step_progress = progress.start(Step::Context, &example.name);
+    let step_progress: Arc<StepProgress> = Progress::global()
+        .start(Step::Context, &example.name)
+        .into();
 
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();

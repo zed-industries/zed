@@ -32,7 +32,7 @@ use crate::score::run_scoring;
 struct EpArgs {
     #[arg(long, default_value_t = false)]
     printenv: bool,
-    #[clap(long, default_value_t = 10)]
+    #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
     #[command(subcommand)]
     command: Option<Command>,
@@ -112,8 +112,6 @@ impl EpArgs {
 }
 
 fn main() {
-    let _ = zlog::try_init(Some("error".into()));
-    zlog::init_output_stderr();
     let args = EpArgs::parse();
 
     if args.printenv {
@@ -152,7 +150,7 @@ fn main() {
             };
 
             let total_examples = examples.len();
-            let progress = Progress::new(total_examples);
+            Progress::global().set_total_examples(total_examples);
 
             let mut grouped_examples = group_examples_by_repo(&mut examples);
             let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
@@ -163,29 +161,16 @@ fn main() {
                         match &command {
                             Command::ParseExample => {}
                             Command::LoadProject => {
-                                run_load_project(
-                                    example,
-                                    app_state.clone(),
-                                    progress.clone(),
-                                    cx.clone(),
-                                )
-                                .await;
+                                run_load_project(example, app_state.clone(), cx.clone()).await;
                             }
                             Command::Context => {
-                                run_context_retrieval(
-                                    example,
-                                    app_state.clone(),
-                                    progress.clone(),
-                                    cx.clone(),
-                                )
-                                .await;
+                                run_context_retrieval(example, app_state.clone(), cx.clone()).await;
                             }
                             Command::FormatPrompt(args) => {
                                 run_format_prompt(
                                     example,
                                     args.prompt_format,
                                     app_state.clone(),
-                                    progress.clone(),
                                     cx.clone(),
                                 )
                                 .await;
@@ -196,7 +181,6 @@ fn main() {
                                     Some(args.provider),
                                     args.repetitions,
                                     app_state.clone(),
-                                    progress.clone(),
                                     cx.clone(),
                                 )
                                 .await;
@@ -205,14 +189,7 @@ fn main() {
                                 run_distill(example).await;
                             }
                             Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(
-                                    example,
-                                    &args,
-                                    app_state.clone(),
-                                    progress.clone(),
-                                    cx.clone(),
-                                )
-                                .await;
+                                run_scoring(example, &args, app_state.clone(), cx.clone()).await;
                             }
                             Command::Clean => {
                                 unreachable!()
@@ -222,7 +199,7 @@ fn main() {
                 });
                 futures::future::join_all(futures).await;
             }
-            progress.clear();
+            Progress::global().clear();
 
             if args.output.is_some() || !matches!(command, Command::Eval(_)) {
                 write_examples(&examples, output.as_ref());

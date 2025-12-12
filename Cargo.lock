@@ -5201,7 +5201,6 @@ dependencies = [
  "wasmtime",
  "watch",
  "zeta_prompt",
- "zlog",
 ]
 
 [[package]]

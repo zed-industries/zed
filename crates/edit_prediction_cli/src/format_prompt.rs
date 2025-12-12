@@ -18,12 +18,11 @@ pub async fn run_format_prompt(
     example: &mut Example,
     prompt_format: PromptFormat,
     app_state: Arc<EpAppState>,
-    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
-    run_context_retrieval(example, app_state.clone(), progress.clone(), cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
-    let _step_progress = progress.start(Step::FormatPrompt, &example.name);
+    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.name);
 
     match prompt_format {
         PromptFormat::Teacher => {
@@ -35,7 +34,7 @@ pub async fn run_format_prompt(
             });
         }
         PromptFormat::Zeta2 => {
-            run_load_project(example, app_state, progress.clone(), cx.clone()).await;
+            run_load_project(example, app_state, cx.clone()).await;
 
             let ep_store = cx
                 .update(|cx| EditPredictionStore::try_global(cx).unwrap())
