@@ -7,7 +7,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView, Ordering,
-    cell_selection::DisplayCellId,
+    cell_selection::{DisplayCellId, DisplayRow},
     data_ordering::{OrderingDirection, generate_ordered_indices},
     settings::FontType,
     settings::RowRenderMechanism,
@@ -256,13 +256,16 @@ impl CsvPreviewView {
 
             // Check if this cell is selected using display coordinates
             let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-            let display_to_data_converter = |dr: usize| ordered_indices.get(dr).copied();
-            let is_selected =
-                this.selection
-                    .is_cell_selected(display_index, col, display_to_data_converter);
+            let display_to_data_converter =
+                |dr: DisplayRow| ordered_indices.get(dr.get()).copied().map(Into::into);
+            let is_selected = this.selection.is_cell_selected(
+                display_index.into(),
+                col,
+                display_to_data_converter,
+            );
 
             elements.push(CsvPreviewView::create_selectable_cell(
-                DisplayCellId::new(display_index, col),
+                DisplayCellId::new(display_index.into(), col),
                 cell_content,
                 cx.entity(),
                 selected_bg,
