@@ -7,7 +7,7 @@ use std::{
 
 /// Maximum children per internal node (R-tree style branching factor).
 /// Higher values = shorter tree = fewer cache misses, but more work per node.
-const MAX_CHILDREN: usize = 4;
+const MAX_CHILDREN: usize = 12;
 
 /// A spatial tree optimized for finding maximum ordering among intersecting bounds.
 ///
