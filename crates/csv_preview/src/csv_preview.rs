@@ -104,7 +104,7 @@ impl CsvPreviewView {
     }
 
     fn move_focus_left(&mut self, _: &MoveFocusLeft, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.move_focus_left();
+        self.selection.move_focus_left(&self.ordered_indices);
         cx.notify();
     }
 
@@ -115,7 +115,8 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         let max_cols = self.contents.headers.len();
-        self.selection.move_focus_right(max_cols);
+        self.selection
+            .move_focus_right(&self.ordered_indices, max_cols);
         cx.notify();
     }
 
