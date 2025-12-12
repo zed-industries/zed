@@ -353,8 +353,8 @@ impl ProjectDiff {
         self.rebuild_for_filter_change(window, cx);
     }
 
-    fn should_include_file(&self, status: &FileStatus) -> bool {
-        match self.filter_mode {
+    fn file_matches_filter(filter_mode: DiffFilterMode, status: &FileStatus) -> bool {
+        match filter_mode {
             DiffFilterMode::All => true,
             DiffFilterMode::StagedOnly => status.staging() != StageStatus::Unstaged,
             DiffFilterMode::UnstagedOnly => status.staging() != StageStatus::Staged,
@@ -551,6 +551,7 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
+        let all_diff_hunks_expanded = self.multibuffer.read(cx).all_diff_hunks_expanded();
 
         let excerpt_ranges = {
             let diff_hunk_ranges = diff_read
@@ -559,7 +560,10 @@ impl ProjectDiff {
                     &snapshot,
                     cx,
                 )
-                .filter(|diff_hunk| self.filter_mode.should_include_hunk(diff_hunk))
+                .filter(|diff_hunk| {
+                    self.filter_mode
+                        .should_show_hunk(diff_hunk, all_diff_hunks_expanded)
+                })
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
                 .conflict_set(snapshot.remote_id())
@@ -637,12 +641,12 @@ impl ProjectDiff {
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
-            let (repo, mut buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
+            let filter_mode = this.filter_mode;
+            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                let load_buffers = branch_diff
+                    .load_buffers(|status| Self::file_matches_filter(filter_mode, status), cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-
-            buffers_to_load.retain(|entry| this.should_include_file(&entry.file_status));
 
             let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
