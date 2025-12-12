@@ -150,9 +150,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                     .detach_and_log_err(cx);
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
@@ -162,9 +161,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                 .detach();
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
