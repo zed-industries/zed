@@ -1859,9 +1859,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         language_model::RefreshLlmTokenListener::register(client.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| {
-        EditPredictionStore::new(client, project.read(cx).user_store(), cx)
-    });
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -1913,23 +1911,24 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
             let predict_called = predict_called_clone.clone();
             async move {
                 if uri.contains("predict") {
-                        predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
-                        Ok(gpui::http_client::Response::builder()
-                            .body(
-                                serde_json::to_string(&open_ai::Response {
-                                    id: "test-123".to_string(),
-                                    object: "chat.completion".to_string(),
-                                    created: 0,
-                                    model: "test".to_string(),
-                                    usage: open_ai::Usage {
-                                        prompt_tokens: 0,
-                                        completion_tokens: 0,
-                                        total_tokens: 0,
-                                    },
-                                    choices: vec![open_ai::Choice {
-                                        index: 0,
-                                        message: open_ai::RequestMessage::Assistant {
-                                            content: Some(open_ai::MessageContent::Plain(indoc! {"
+                    predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(gpui::http_client::Response::builder()
+                        .body(
+                            serde_json::to_string(&open_ai::Response {
+                                id: "test-123".to_string(),
+                                object: "chat.completion".to_string(),
+                                created: 0,
+                                model: "test".to_string(),
+                                usage: open_ai::Usage {
+                                    prompt_tokens: 0,
+                                    completion_tokens: 0,
+                                    total_tokens: 0,
+                                },
+                                choices: vec![open_ai::Choice {
+                                    index: 0,
+                                    message: open_ai::RequestMessage::Assistant {
+                                        content: Some(open_ai::MessageContent::Plain(
+                                            indoc! {"
                                                 ```main.rs
                                                 <|start_of_file|>
                                                 <|editable_region_start|>
@@ -1939,16 +1938,17 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
                                                 <|editable_region_end|>
                                                 ```
                                             "}
-                                            .to_string())),
-                                            tool_calls: vec![],
-                                        },
-                                        finish_reason: Some("stop".to_string()),
-                                    }],
-                                })
-                                .unwrap()
-                                .into(),
-                            )
-                            .unwrap())
+                                            .to_string(),
+                                        )),
+                                        tool_calls: vec![],
+                                    },
+                                    finish_reason: Some("stop".to_string()),
+                                }],
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap())
                 } else {
                     Ok(gpui::http_client::Response::builder()
                         .status(401)
@@ -1965,9 +1965,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
         language_model::RefreshLlmTokenListener::register(client.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| {
-        EditPredictionStore::new(client, project.read(cx).user_store(), cx)
-    });
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
 
     let buffer = project
         .update(cx, |project, cx| {
