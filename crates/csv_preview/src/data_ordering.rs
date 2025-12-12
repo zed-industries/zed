@@ -1,4 +1,8 @@
-use crate::table_like_content::TableLikeContent;
+use crate::{
+    cell_selection::{DataRow, DisplayRow},
+    table_like_content::TableLikeContent,
+};
+use std::collections::HashMap;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum OrderingDirection {
@@ -14,20 +18,43 @@ pub struct Ordering {
     pub direction: OrderingDirection,
 }
 
+/// Ordered indices mapping display positions to data positions
+#[derive(Debug, Clone)]
+pub struct OrderedIndices {
+    mapping: HashMap<DisplayRow, DataRow>,
+}
+
+impl OrderedIndices {
+    /// Get the data row for a given display row
+    pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
+        self.mapping.get(&display_row).copied()
+    }
+}
+
 /// Generate ordered row indices based on current ordering settings.
+/// Returns a mapping from DisplayRow to DataRow.
 /// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
 /// (display columns include the line number column at index 0)
 pub fn generate_ordered_indices(
     ordering: Option<Ordering>,
     contents: &TableLikeContent,
-) -> Vec<usize> {
+) -> OrderedIndices {
     let indices: Vec<usize> = (0..contents.rows.len()).collect();
 
-    let Some(ordering) = ordering else {
-        return indices;
+    let ordered_indices = if let Some(ordering) = ordering {
+        order_indices(contents, indices, ordering)
+    } else {
+        indices
     };
 
-    order_indices(contents, indices, ordering)
+    // Create mapping from display position to data row
+    let mapping = ordered_indices
+        .into_iter()
+        .enumerate()
+        .map(|(display_idx, data_idx)| (DisplayRow::new(display_idx), DataRow::new(data_idx)))
+        .collect();
+
+    OrderedIndices { mapping }
 }
 
 fn order_indices(
