@@ -25,6 +25,7 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::select_down))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_all))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {
