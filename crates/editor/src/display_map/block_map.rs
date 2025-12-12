@@ -536,6 +536,8 @@ impl BlockMap {
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
+        //
+        // TODO add to benchmark? We are probably not hitting this in there.
         if buffer.trailing_excerpt_update_count()
             != self
                 .wrap_snapshot
@@ -545,7 +547,7 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,

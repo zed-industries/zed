@@ -91,10 +91,10 @@ impl WrapRows<'_> {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = self.transforms.start().1.row();
-        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
             input_row += (start_row - self.transforms.start().0.row()).0;
         }
-        self.soft_wrapped = self.transforms.item().is_some_and(|t| !t.is_isomorphic());
+        self.soft_wrapped = self.transforms.item().is_some_and(|t| !t.not_soft_wrapped());
         self.input_buffer_rows.seek(input_row);
         self.input_buffer_row = self.input_buffer_rows.next().unwrap();
         self.output_row = start_row;
@@ -517,13 +517,13 @@ impl WrapSnapshot {
                     let mut prev_boundary_ix = 0;
                     for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
-                        push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
+                        push_not_soft_wrapped(&mut edit_transforms, TextSummary::from(wrapped));
                         edit_transforms.push(Transform::wrap(boundary.next_indent));
                         prev_boundary_ix = boundary.ix;
                     }
 
                     if prev_boundary_ix < line.len() {
-                        push_isomorphic(
+                        push_not_soft_wrapped(
                             &mut edit_transforms,
                             TextSummary::from(&line[prev_boundary_ix..]),
                         );
@@ -632,7 +632,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(transforms.start().1.0);
-        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
+        if transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
             input_start.0 += output_start.0 - transforms.start().0.0;
         }
         let input_end = self.to_tab_point(output_end);
@@ -665,7 +665,7 @@ impl WrapSnapshot {
             &WrapPoint::new(row + WrapRow(1), 0),
             Bias::Left,
         );
-        if item.is_some_and(|transform| transform.is_isomorphic()) {
+        if item.is_some_and(|transform| transform.not_soft_wrapped()) {
             let overshoot = row - start.0.row();
             let tab_row = start.1.row() + overshoot.0;
             let tab_line_len = self.tab_snapshot.line_len(tab_row);
@@ -693,7 +693,7 @@ impl WrapSnapshot {
         if let Some(transform) = cursor.item() {
             let start_in_transform = start.0 - cursor.start().0.0;
             let end_in_transform = cmp::min(end, cursor.end().0).0 - cursor.start().0.0;
-            if transform.is_isomorphic() {
+            if transform.not_soft_wrapped() {
                 let tab_start = TabPoint(cursor.start().1.0 + start_in_transform);
                 let tab_end = TabPoint(cursor.start().1.0 + end_in_transform);
                 summary += &self.tab_snapshot.text_summary_for_range(tab_start..tab_end);
@@ -719,7 +719,7 @@ impl WrapSnapshot {
 
             if let Some(transform) = cursor.item() {
                 let end_in_transform = end.0 - cursor.start().0.0;
-                if transform.is_isomorphic() {
+                if transform.not_soft_wrapped() {
                     let char_start = cursor.start().1;
                     let char_end = TabPoint(char_start.0 + end_in_transform);
                     summary += &self
@@ -749,7 +749,7 @@ impl WrapSnapshot {
             Bias::Right,
         );
         item.and_then(|transform| {
-            if transform.is_isomorphic() {
+            if transform.not_soft_wrapped() {
                 None
             } else {
                 Some(transform.summary.output.lines.column)
@@ -769,10 +769,10 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left);
         let mut input_row = transforms.start().1.row();
-        if transforms.item().is_some_and(|t| t.is_isomorphic()) {
+        if transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
             input_row += (start_row - transforms.start().0.row()).0;
         }
-        let soft_wrapped = transforms.item().is_some_and(|t| !t.is_isomorphic());
+        let soft_wrapped = transforms.item().is_some_and(|t| !t.not_soft_wrapped());
         let mut input_buffer_rows = self.tab_snapshot.rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
         WrapRows {
@@ -791,7 +791,7 @@ impl WrapSnapshot {
             self.transforms
                 .find::<Dimensions<WrapPoint, TabPoint>, _>((), &point, Bias::Right);
         let mut tab_point = start.1.0;
-        if item.is_some_and(|t| t.is_isomorphic()) {
+        if item.is_some_and(|t| t.not_soft_wrapped()) {
             tab_point += point.0 - start.0.0;
         }
         TabPoint(tab_point)
@@ -831,7 +831,7 @@ impl WrapSnapshot {
             let (start, _, item) = self
                 .transforms
                 .find::<WrapPoint, _>((), &point, Bias::Right);
-            if item.is_some_and(|t| !t.is_isomorphic()) {
+            if item.is_some_and(|t| !t.not_soft_wrapped()) {
                 point = start;
                 *point.column_mut() -= 1;
             }
@@ -841,10 +841,12 @@ impl WrapSnapshot {
     }
 
     // #[ztracing::instrument(skip_all, fields(point=?point, iterations, res))]
-    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+    // Self is the wrap map being updated too?
+    pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         let span = ztracing::debug_span!("prev_row_boundary", point = ?point, iterations = ztracing::field::Empty, res = ztracing::field::Empty);
         let _enter = span.enter();
 
+        // if there is no text at all to display
         if self.transforms.is_empty() {
             // ztracing::Span::current().record("res", 0);
             // ztracing::Span::current().record("iterations", 0);
@@ -853,32 +855,75 @@ impl WrapSnapshot {
             return WrapRow(0);
         }
 
-        *point.column_mut() = 0;
+        // start seach at start of line (in wrap coordinates)
+        // in sync case this is the last line of the new text/map/everything below
+        let point = WrapPoint::new(point.row(), 0);
 
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
-        // start
         cursor.seek(&point, Bias::Right);
-        // end
+
+        // if we landed on a transform boundary we go to the next tranform
+        // (Bias::Right). If there is no next transform because the last row
+        // (point) has zero columns go back one transform.
         if cursor.item().is_none() {
             cursor.prev();
         }
 
-        // start
+        //                          real newline     fake          fake
+        // text:      helloworldasldlfjasd\njdlasfalsk\naskdjfasdkfj\n
+        // dimensions v       v           v            v            v
+        // transforms |-------|-----NW----|-----W------|-----W------|
+        // cursor    ^        ^^^^^^^^^^^^^                          ^
+        //                               (^)           ^^^^^^^^^^^^^^
+        // point:                                            ^
+        // point(col_zero):                           (^)
+
         let mut iterations = 0;
+        // TODO for thing in cursor.iter().rev?
+        // go back until we hit a non soft-wrapped transform
+        // TODO write it like this:
+        //
+        // let (_start, end) = cursor.iter().rev()
+        //    .filter(|(pos, transform)| transform.not_soft_wrapped())
+        //    .filter(|(pos, transform)| transform.begins_new_plain_text_line())
+        //    .map(|(pos, _)| pos)
+        //    .next().unwrap();
+        //
+        // let row = end.wrap_point().row().min(point.row());
+
         while let Some(transform) = cursor.item() {
             iterations += 1;
-            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
-                let res = cmp::min(cursor.end().0.row(), point.row());
+
+            if transform.is_soft_wrapped() { // until we're in a transform that has a "plain text" newline
+                // the current transform represents a soft-wrap, so we want to
+                // keep searching backwards until we find a real newline
+                cursor.prev();
+                continue;
+            }
+
+            // Becuase we are working with [`TabPoints`] (which do not know
+            // about the wrap map), we know that being at col 0 means we are at
+            // the start of a "plain text" buffer line.
+            let start_of_transform_tab_point = cursor.start().1;
+            let start_of_plain_text_line = start_of_transform_tab_point.column() == 0;
+
+            // ----- (all newlines are softwraps) (buffer text = "helloworldfoobar")
+            // hello
+            // world
+            // foo
+            // ^ `point` (2:0)
+            // bar
+
+            if start_of_plain_text_line {
+                let end_of_transform_wrap_point = cursor.end().0;
+                let res = cmp::min(end_of_transform_wrap_point.row(), point.row());
                 span.record("res", res.0);
                 span.record("iterations", iterations);
                 return res;
-            } else {
-                cursor.prev();
             }
         }
-        // end
 
         unreachable!()
     }
@@ -892,7 +937,7 @@ impl WrapSnapshot {
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
         cursor.seek(&point, Bias::Right);
         while let Some(transform) = cursor.item() {
-            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
+            if transform.not_soft_wrapped() && cursor.start().1.column() == 0 {
                 return Some(cmp::max(cursor.start().0.row(), point.row()));
             } else {
                 cursor.next();
@@ -903,13 +948,11 @@ impl WrapSnapshot {
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.text_chunks(WrapRow(0)).collect()
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
@@ -917,6 +960,30 @@ impl WrapSnapshot {
             Highlights::default(),
         )
         .map(|h| h.text)
+    }
+
+    #[cfg(test)]
+    pub fn debug_transforms(&self) {
+        eprintln!("=== debug wrap snapshot ===");
+
+        let mut current_input = 0;
+        let mut current_output = 0;
+
+        for transform in self.transforms.iter() {            
+            let start_input = current_input;
+            current_input += transform.summary.input.lines.row;
+            let end_input = current_input;
+            
+            let start_output = current_output;
+            current_output += transform.summary.output.lines.row;
+            let start_output = current_output;
+            
+            let is_sw = match transform.is_soft_wrapped() {
+                true => " SW",
+                false => "NSW",
+            };
+            eprintln!("[{is_sw}]")
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -932,7 +999,7 @@ impl WrapSnapshot {
                 let mut transforms = self.transforms.cursor::<()>(()).peekable();
                 while let Some(transform) = transforms.next() {
                     if let Some(next_transform) = transforms.peek() {
-                        assert!(transform.is_isomorphic() != next_transform.is_isomorphic());
+                        assert!(transform.not_soft_wrapped() != next_transform.not_soft_wrapped());
                     }
                 }
             }
@@ -992,7 +1059,7 @@ impl WrapChunks<'_> {
         let output_end = WrapPoint::new(rows.end, 0);
         self.transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(self.transforms.start().1.0);
-        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
             input_start.0 += output_start.0 - self.transforms.start().0.0;
         }
         let input_end = self.snapshot.to_tab_point(output_end);
@@ -1095,7 +1162,7 @@ impl Iterator for WrapRows<'_> {
         self.output_row += WrapRow(1);
         self.transforms
             .seek_forward(&WrapPoint::new(self.output_row, 0), Bias::Left);
-        if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
+        if self.transforms.item().is_some_and(|t| t.not_soft_wrapped()) {
             self.input_buffer_row = self.input_buffer_rows.next().unwrap();
             self.soft_wrapped = false;
         } else {
@@ -1157,8 +1224,12 @@ impl Transform {
         }
     }
 
-    fn is_isomorphic(&self) -> bool {
+    fn not_soft_wrapped(&self) -> bool {
         self.display_text.is_none()
+    }
+
+    fn is_soft_wrapped(&self) -> bool {
+        !self.not_soft_wrapped()
     }
 }
 
@@ -1170,9 +1241,9 @@ impl sum_tree::Item for Transform {
     }
 }
 
-fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
+fn push_not_soft_wrapped(transforms: &mut Vec<Transform>, summary: TextSummary) {
     if let Some(last_transform) = transforms.last_mut()
-        && last_transform.is_isomorphic()
+        && last_transform.not_soft_wrapped()
     {
         last_transform.summary.input += &summary;
         last_transform.summary.output += &summary;
@@ -1191,7 +1262,7 @@ impl SumTreeExt for SumTree<Transform> {
         let mut transform = Some(transform);
         self.update_last(
             |last_transform| {
-                if last_transform.is_isomorphic() && transform.as_ref().unwrap().is_isomorphic() {
+                if last_transform.not_soft_wrapped() && transform.as_ref().unwrap().not_soft_wrapped() {
                     let transform = transform.take().unwrap();
                     last_transform.summary.input += &transform.summary.input;
                     last_transform.summary.output += &transform.summary.output;
