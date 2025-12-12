@@ -147,7 +147,13 @@ impl GitGraph {
             return;
         }
 
-        let last_loaded_chunk = self.graph.commits.len() / CHUNK_SIZE;
+        let last_loaded_chunk = if !fetch_chunks {
+            // When we're refreshing the graph we need to start from the beginning
+            // so the cached commits don't matter
+            0
+        } else {
+            self.graph.commits.len() / CHUNK_SIZE
+        };
 
         let first_visible_worktree = project.read_with(cx, |project, cx| {
             project
