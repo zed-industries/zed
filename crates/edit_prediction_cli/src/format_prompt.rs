@@ -44,7 +44,7 @@ pub async fn run_format_prompt(
             let state = example.state.as_ref().context("state must be set")?;
             let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
             let project = state.project.clone();
-            let (_, input) = ep_store.update(&mut cx, |ep_store, _cx| {
+            let (_, input) = ep_store.update(&mut cx, |ep_store, cx| {
                 anyhow::Ok(zeta2_prompt_input(
                     &snapshot,
                     example
@@ -53,7 +53,7 @@ pub async fn run_format_prompt(
                         .context("context must be set")?
                         .files
                         .clone(),
-                    ep_store.edit_history_for_project(&project),
+                    ep_store.edit_history_for_project(&project, cx),
                     example.cursor_path.clone(),
                     example
                         .buffer
@@ -63,7 +63,7 @@ pub async fn run_format_prompt(
                 ))
             })??;
             let prompt = format_zeta_prompt(&input);
-            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone());
+            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone())?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,

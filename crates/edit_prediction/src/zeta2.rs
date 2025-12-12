@@ -228,13 +228,16 @@ pub fn zeta2_prompt_input(
 }
 
 #[cfg(feature = "cli-support")]
-pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> String {
-    eprintln!("{}", patch);
-    eprintln!("---------------------");
-    eprintln!("{}", input.cursor_excerpt);
-    crate::udiff::apply_diff_to_string(
-        patch,
-        &input.cursor_excerpt[input.editable_range_in_excerpt.clone()],
-    )
-    .unwrap()
+pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+    let text = &input.cursor_excerpt;
+    let editable_region = input.editable_range_in_excerpt.clone();
+    let old_prefix = &text[..editable_region.start];
+    let old_suffix = &text[editable_region.end..];
+
+    let new = crate::udiff::apply_diff_to_string(patch, text)?;
+    if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
+        anyhow::bail!("Patch shouldn't affect text outside of editable region");
+    }
+
+    Ok(new[editable_region.start..new.len() - old_suffix.len()].to_string())
 }
