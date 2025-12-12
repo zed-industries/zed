@@ -1,14 +1,16 @@
 use gpui::{AnyElement, ElementId, Entity, MouseButton};
 use std::ops::Range;
 use ui::{
-    Button, ButtonSize, ButtonStyle, ContextMenu, DefiniteLength, DropdownMenu, SharedString,
-    Table, TableColumnWidths, TableResizeBehavior, Tooltip, div, h_flex, prelude::*,
+    Button, ButtonSize, ButtonStyle, DefiniteLength, SharedString, Table, TableColumnWidths,
+    TableResizeBehavior, div, h_flex, prelude::*,
 };
 
 use crate::{
-    CsvPreviewView, FontType, NumberingType, Ordering, RowRenderMechanism, VerticalAlignment,
+    CsvPreviewView, Ordering,
     cell_selection::TableSelection,
     data_ordering::{OrderingDirection, generate_ordered_indices},
+    settings::FontType,
+    settings::RowRenderMechanism,
 };
 
 impl Render for CsvPreviewView {
@@ -29,14 +31,10 @@ impl Render for CsvPreviewView {
                         .justify_center()
                         .h_32()
                         .text_ui(cx)
-                        .when(
-                            matches!(self.settings.font_type, crate::FontType::Ui),
-                            |div| div.font_ui(cx),
-                        )
-                        .when(
-                            matches!(self.settings.font_type, crate::FontType::Monospace),
-                            |div| div.font_buffer(cx),
-                        )
+                        .map(|div| match self.settings.font_type {
+                            FontType::Ui => div.font_ui(cx),
+                            FontType::Monospace => div.font_buffer(cx),
+                        })
                         .text_color(cx.theme().colors().text_muted)
                         .child("No CSV content to display")
                         .into_any_element()
@@ -163,41 +161,7 @@ impl CsvPreviewView {
         // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(COLS);
 
-        // First column: row identifier (clickable to toggle between Lines and Rows)
-        let row_identifier_text = match self.settings.numbering_type {
-            NumberingType::Lines => "Lines",
-            NumberingType::Rows => "Rows",
-        };
-
-        let view = cx.entity();
-        headers.push(
-            div()
-                .map(|div| match self.settings.font_type {
-                    FontType::Ui => div.font_ui(cx),
-                    FontType::Monospace => div.font_buffer(cx),
-                })
-                .child(
-                    Button::new(
-                        ElementId::Name("row-identifier-toggle".into()),
-                        row_identifier_text,
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Compact)
-                    .tooltip(Tooltip::text(
-                        "Click to toggle between file line numbers and sequential row numbers",
-                    ))
-                    .on_click(move |_event, _window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.settings.numbering_type = match this.settings.numbering_type {
-                                NumberingType::Lines => NumberingType::Rows,
-                                NumberingType::Rows => NumberingType::Lines,
-                            };
-                            cx.notify();
-                        });
-                    }),
-                )
-                .into_any_element(),
-        );
+        headers.push(self.create_row_identitifier_header(cx));
 
         // Add the actual CSV headers with ordering buttons
         for i in 0..(COLS - 1) {
@@ -260,156 +224,6 @@ impl CsvPreviewView {
         }
     }
 
-    /// Render settings panel above the table
-    fn render_settings_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let current_mode_text = match self.settings.rendering_with {
-            RowRenderMechanism::VariableList => "Variable Height",
-            RowRenderMechanism::UniformList => "Uniform Height",
-        };
-
-        let current_alignment_text = match self.settings.vertical_alignment {
-            VerticalAlignment::Top => "Top",
-            VerticalAlignment::Center => "Center",
-        };
-
-        let current_font_text = match self.settings.font_type {
-            FontType::Ui => "UI Font",
-            FontType::Monospace => "Monospace",
-        };
-
-        let view = cx.entity();
-        let rendering_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("Variable Height", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.rendering_with = RowRenderMechanism::VariableList;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Uniform Height", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.rendering_with = RowRenderMechanism::UniformList;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        let alignment_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("Top", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.vertical_alignment = VerticalAlignment::Top;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Center", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.vertical_alignment = VerticalAlignment::Center;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        let font_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("UI Font", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.font_type = FontType::Ui;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Monospace", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.font_type = FontType::Monospace;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        h_flex()
-            .gap_4()
-            .p_2()
-            .bg(cx.theme().colors().surface_background)
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Rendering Mode:"),
-                    )
-                    .child(
-                        DropdownMenu::new(
-                            ElementId::Name("rendering-mode-dropdown".into()),
-                            current_mode_text,
-                            rendering_dropdown_menu,
-                        )
-                        .trigger_size(ButtonSize::Compact)
-                        .trigger_tooltip(Tooltip::text("Choose between variable height (multiline support) or uniform height (better performance)"))
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Text Alignment:"),
-                    )
-                    .child(
-                        DropdownMenu::new(
-                            ElementId::Name("vertical-alignment-dropdown".into()),
-                            current_alignment_text,
-                            alignment_dropdown_menu,
-                        )
-                        .trigger_size(ButtonSize::Compact)
-                        .trigger_tooltip(Tooltip::text("Choose vertical text alignment within cells"))
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Font Type:"),
-                    )
-                    .child(
-                        DropdownMenu::new(
-                            ElementId::Name("font-type-dropdown".into()),
-                            current_font_text,
-                            font_dropdown_menu,
-                        )
-                        .trigger_size(ButtonSize::Compact)
-                        .trigger_tooltip(Tooltip::text("Choose between UI font and monospace font for better readability"))
-                    ),
-            )
-            .into_any_element()
-    }
-
     /// Render a single row for variable_list (supports variable heights)
     fn render_single_table_row<const COLS: usize>(
         this: &CsvPreviewView,
@@ -426,30 +240,12 @@ impl CsvPreviewView {
 
         let mut elements = Vec::with_capacity(COLS);
 
-        // First column: row identifier (line numbers or sequential row numbers)
-        let row_identifier: SharedString = match this.settings.numbering_type {
-            NumberingType::Lines => this
-                .contents
-                .line_numbers
-                .get(row_index)?
-                .display_string()
-                .into(),
-            NumberingType::Rows => (display_index + 1).to_string().into(),
-        };
-        elements.push(
-            div()
-                .flex()
-                .child(row_identifier)
-                .text_color(row_identifier_text_color)
-                .h_full()
-                // Row identifiers are always centered
-                .items_center()
-                .map(|div| match this.settings.font_type {
-                    FontType::Ui => div.font_ui(cx),
-                    FontType::Monospace => div.font_buffer(cx),
-                })
-                .into_any_element(),
-        );
+        elements.push(this.create_row_identifier_cell(
+            display_index,
+            row_identifier_text_color,
+            cx,
+            row_index,
+        )?);
 
         // Remaining columns: actual CSV data
         for col in 0..(COLS - 1) {

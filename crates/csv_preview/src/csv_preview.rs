@@ -6,15 +6,16 @@ use workspace::{Item, Workspace};
 
 use crate::{
     cell_selection::TableSelection, data_ordering::Ordering, nasty_code_duplication::ColumnWidths,
-    parser::EditorState, table_data::TableData,
+    parser::EditorState, settings::CsvPreviewSettings, table_data::TableData,
 };
 
 mod cell_selection;
 mod data_ordering;
-mod line_numbers;
 mod nasty_code_duplication;
 mod parser;
 mod renderer;
+mod row_identifiers;
+mod settings;
 mod table_data;
 
 actions!(csv, [OpenPreview]);
@@ -39,50 +40,6 @@ pub struct CsvPreviewView {
     pub(crate) ordering: Option<Ordering>,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
-}
-
-#[derive(Default)]
-pub enum RowRenderMechanism {
-    /// Default behaviour
-    #[default]
-    VariableList,
-    /// More performance oriented, but all rows are same height
-    UniformList,
-}
-
-#[derive(Default, Clone, Copy)]
-pub enum VerticalAlignment {
-    /// Align text to the top of cells
-    #[default]
-    Top,
-    /// Center text vertically in cells
-    Center,
-}
-
-#[derive(Default, Clone, Copy)]
-pub enum FontType {
-    /// Use the default UI font
-    #[default]
-    Ui,
-    /// Use monospace font (same as buffer/editor font)
-    Monospace,
-}
-
-#[derive(Default, Clone, Copy)]
-pub enum NumberingType {
-    /// Show original line numbers from CSV file
-    #[default]
-    Lines,
-    /// Show sequential row numbers starting from 1
-    Rows,
-}
-
-#[derive(Default)]
-pub(crate) struct CsvPreviewSettings {
-    pub(crate) rendering_with: RowRenderMechanism,
-    pub(crate) vertical_alignment: VerticalAlignment,
-    pub(crate) font_type: FontType,
-    pub(crate) numbering_type: NumberingType,
 }
 
 impl CsvPreviewView {
