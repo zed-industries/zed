@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const MAX_STATUS_LINES: usize = 10;
+
 pub struct Progress {
     inner: Mutex<ProgressInner>,
 }
@@ -232,9 +234,10 @@ impl Progress {
         let mut tasks: Vec<_> = inner.in_progress.iter().collect();
         tasks.sort_by_key(|(name, _)| *name);
 
+        let total_tasks = tasks.len();
         let mut lines_printed = 0;
 
-        for (name, task) in tasks.iter() {
+        for (name, task) in tasks.iter().take(MAX_STATUS_LINES) {
             let elapsed = format_duration(task.started_at.elapsed());
             let substatus_part = task
                 .substatus
@@ -260,6 +263,13 @@ impl Progress {
             let padding = " ".repeat(padding_needed);
 
             eprintln!("{prefix}{padding}{dim}{duration_with_margin}{reset}");
+            lines_printed += 1;
+        }
+
+        // Show "+N more" on its own line if there are more tasks
+        if total_tasks > MAX_STATUS_LINES {
+            let remaining = total_tasks - MAX_STATUS_LINES;
+            eprintln!("{:>12} +{remaining} more", "");
             lines_printed += 1;
         }
 

@@ -32,7 +32,7 @@ use crate::score::run_scoring;
 struct EpArgs {
     #[arg(long, default_value_t = false)]
     printenv: bool,
-    #[clap(long, default_value_t = 10)]
+    #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
     #[command(subcommand)]
     command: Option<Command>,
