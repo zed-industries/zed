@@ -21,16 +21,7 @@ mod table_cell;
 mod table_like_content;
 
 actions!(csv, [OpenPreview, CopySelected]);
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        CsvPreviewView::register(workspace, window, cx);
-    })
-    .detach()
-}
+const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
 
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
@@ -42,6 +33,16 @@ pub struct CsvPreviewView {
     pub(crate) ordering: Option<Ordering>,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        CsvPreviewView::register(workspace, window, cx);
+    })
+    .detach()
 }
 
 impl CsvPreviewView {
