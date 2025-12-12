@@ -75,25 +75,24 @@ async fn wait_for_language_servers_to_start(
         .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
 
-    let lang_server_ids = buffer
+    let (language_server_ids, mut starting_language_server_ids) = buffer
         .update(cx, |buffer, cx| {
             lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store.language_servers_for_local_buffer(buffer, cx)
+                let ids = lsp_store.language_servers_for_local_buffer(buffer, cx);
+                let starting_ids = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !lsp_store.language_server_statuses.contains_key(&id))
+                    .collect::<HashSet<_>>();
+                (ids, starting_ids)
             })
         })
         .unwrap_or_default();
 
-    if !lang_server_ids.is_empty() {
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .unwrap()
-            .detach();
-    }
-
     eprintln!(
         "{}⏵ Waiting for {} language servers",
         log_prefix,
-        lang_server_ids.len()
+        language_server_ids.len()
     );
 
     let timeout = cx
@@ -101,7 +100,7 @@ async fn wait_for_language_servers_to_start(
         .timer(Duration::from_secs(60 * 5))
         .shared();
 
-    let (mut tx, mut rx) = mpsc::channel(lang_server_ids.len());
+    let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let added_subscription = cx.subscribe(project, {
         let log_prefix = log_prefix.clone();
         move |_, event, _| match event {
@@ -113,12 +112,11 @@ async fn wait_for_language_servers_to_start(
         }
     });
 
-    let mut pending_language_server_ids = HashSet::from_iter(lang_server_ids.iter());
-    while !pending_language_server_ids.is_empty() {
+    while !starting_language_server_ids.is_empty() {
         futures::select! {
             language_server_id = rx.next() => {
                 if let Some(id) = language_server_id {
-                    pending_language_server_ids.remove(&id);
+                    starting_language_server_ids.remove(&id);
                 }
             },
             _ = timeout.clone().fuse() => {
@@ -129,7 +127,14 @@ async fn wait_for_language_servers_to_start(
 
     drop(added_subscription);
 
-    let (mut tx, mut rx) = mpsc::channel(lang_server_ids.len());
+    if !language_server_ids.is_empty() {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .unwrap()
+            .detach();
+    }
+
+    let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let subscriptions = [
         cx.subscribe(&lsp_store, {
             let log_prefix = log_prefix.clone();
@@ -172,7 +177,7 @@ async fn wait_for_language_servers_to_start(
         .await
         .unwrap();
 
-    let mut pending_language_server_ids = HashSet::from_iter(lang_server_ids.into_iter());
+    let mut pending_language_server_ids = HashSet::from_iter(language_server_ids.into_iter());
     while !pending_language_server_ids.is_empty() {
         futures::select! {
             language_server_id = rx.next() => {
