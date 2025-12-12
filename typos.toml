@@ -4,77 +4,21 @@ ignore-hidden = false
 extend-exclude = [
     ".git/",
 
-    # Contributor names aren't typos.
-    ".mailmap",
-
-    # File suffixes aren't typos.
-    "crates/theme/src/icon_theme.rs",
-    "crates/extensions_ui/src/extension_suggest.rs",
-
-    # Some mock data is flagged as typos.
-    "crates/assistant_tools/src/web_search_tool.rs",
-
-    # Suppress false positives in database schema.
-    "crates/collab/migrations/20251208000000_test_schema.sql",
-
-    # Not our typos.
-    "crates/livekit_api/",
-    # Vim makes heavy use of partial typing tables.
-    "crates/vim/",
-    # Editor and file finder rely on partial typing and custom in-string syntax.
-    "crates/file_finder/src/file_finder_tests.rs",
-    "crates/editor/src/editor_tests.rs",
-    # There are some names in the test data that are incorrectly flagged as typos.
-    "crates/git/test_data/blame_incremental_complex",
-    "crates/git/test_data/golden/blame_incremental_complex.json",
-    # We have some base64-encoded data that is incorrectly being flagged.
-    "crates/rpc/src/auth.rs",
-    # glsl isn't recognized by this tool.
-    "extensions/glsl/languages/glsl/",
     # Windows likes its abbreviations.
     "crates/gpui/src/platform/windows/directx_renderer.rs",
     "crates/gpui/src/platform/windows/events.rs",
     "crates/gpui/src/platform/windows/direct_write.rs",
     "crates/gpui/src/platform/windows/window.rs",
-    # Some typos in the base mdBook CSS.
-    "docs/theme/css/",
-    # Spellcheck triggers on `|Fixe[sd]|` regex part.
-    "script/danger/dangerfile.ts",
-    # Eval examples for prompts and criteria
-    "crates/eval/src/examples/",
-    # File type extensions are not typos
-    "crates/zed/resources/windows/zed.iss",
-    # typos-cli doesn't understand our `vˇariable` markup
-    "crates/editor/src/hover_links.rs",
-    # typos-cli doesn't understand `setis` is intentional test case
-    "crates/editor/src/code_completion_tests.rs",
-    # Linux repository structure is not a valid text, hence we should not check it for typos
-    "crates/project_panel/benches/linux_repo_snapshot.txt",
-    # Some multibuffer test cases have word fragments that register as typos
-    "crates/multi_buffer/src/multi_buffer_tests.rs",
-    # Macos apis
+
+    # macOS APIs
     "crates/gpui/src/platform/mac/dispatcher.rs",
 ]
 
 [default]
 extend-ignore-re = [
-    'cl\[ist]',
-    '\[lan\]guage',
-    '"ba"',
-    "doas",
-    # ProtoLS crate with tree-sitter Protobuf grammar.
-    "protols",
-    # x11rb SelectionNotifyEvent struct field
-    "requestor",
     # macOS version
     "Big Sur",
-    # Not an actual typo but an intentionally invalid color, in `color_extractor`
-    "#fof",
     # Stripped version of reserved keyword `type`
     "typ",
-    # AMD GPU Services
-    "ags",
-    # AMD GPU Services
-    "AGS"
 ]
 check-filename = true
