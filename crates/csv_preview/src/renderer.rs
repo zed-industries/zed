@@ -7,7 +7,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView, Ordering,
-    cell_selection::TableSelection,
+    cell_selection::DisplayCellId,
     data_ordering::{OrderingDirection, generate_ordered_indices},
     settings::FontType,
     settings::RowRenderMechanism,
@@ -262,8 +262,7 @@ impl CsvPreviewView {
                     .is_cell_selected(display_index, col, display_to_data_converter);
 
             elements.push(CsvPreviewView::create_selectable_cell(
-                display_index,
-                col,
+                DisplayCellId::new(display_index, col),
                 cell_content,
                 cx.entity(),
                 selected_bg,
