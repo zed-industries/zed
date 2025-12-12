@@ -3,9 +3,6 @@ use ui::{div, prelude::*};
 
 use crate::{CsvPreviewView, settings::FontType};
 
-pub(crate) mod nasty_code_duplication;
-pub(crate) mod render_table;
-
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
