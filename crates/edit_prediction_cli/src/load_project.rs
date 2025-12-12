@@ -1,6 +1,7 @@
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
+    paths::{REPOS_DIR, WORKTREES_DIR},
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -29,29 +30,11 @@ pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>,
     }
 
     let project = setup_project(example, &app_state, &mut cx).await;
-    let buffer_store = project
-        .read_with(&cx, |project, _| project.buffer_store().clone())
-        .unwrap();
-
-    let ep_store = cx
-        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
-        .unwrap();
-
-    cx.subscribe(&buffer_store, {
-        let project = project.clone();
-        move |_, event, cx| match event {
-            BufferStoreEvent::BufferAdded(buffer) => {
-                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
-            }
-            _ => {}
-        }
-    })
-    .unwrap()
-    .detach();
 
     let _open_buffers = apply_edit_history(example, &project, &mut cx)
         .await
         .unwrap();
+
     let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await;
     example.buffer = buffer
         .read_with(&cx, |buffer, _cx| {
@@ -64,6 +47,7 @@ pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>,
             })
         })
         .unwrap();
+
     example.state = Some(ExampleState {
         buffer,
         project,
@@ -149,7 +133,35 @@ async fn setup_project(
     app_state: &Arc<EpAppState>,
     cx: &mut AsyncApp,
 ) -> Entity<Project> {
-    setup_worktree(example).await;
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
+        .unwrap();
+
+    let worktree_path = setup_worktree(example).await;
+
+    if let Some(project) = app_state.project_cache.get(&example.repository_url) {
+        ep_store
+            .update(cx, |ep_store, _| {
+                ep_store.clear_history_for_project(&project);
+            })
+            .unwrap();
+        let buffer_store = project
+            .read_with(cx, |project, _| project.buffer_store().clone())
+            .unwrap();
+        let buffers = buffer_store
+            .read_with(cx, |buffer_store, _| {
+                buffer_store.buffers().collect::<Vec<_>>()
+            })
+            .unwrap();
+        for buffer in buffers {
+            buffer
+                .update(cx, |buffer, cx| buffer.reload(cx))
+                .unwrap()
+                .await
+                .unwrap();
+        }
+        return project;
+    }
 
     let project = cx
         .update(|cx| {
@@ -168,30 +180,44 @@ async fn setup_project(
     project
         .update(cx, |project, cx| {
             project.disable_worktree_scanner(cx);
-        })
-        .unwrap();
-
-    let worktree = project
-        .update(cx, |project, cx| {
-            project.create_worktree(&example.worktree_path(), true, cx)
+            project.create_worktree(&worktree_path, true, cx)
         })
         .unwrap()
         .await
         .unwrap();
-    worktree
-        .read_with(cx, |worktree, _cx| {
-            worktree.as_local().unwrap().scan_complete()
-        })
-        .unwrap()
-        .await;
+
+    app_state
+        .project_cache
+        .insert(example.repository_url.clone(), project.clone());
+
+    let buffer_store = project
+        .read_with(cx, |project, _| project.buffer_store().clone())
+        .unwrap();
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })
+    .unwrap()
+    .detach();
+
     project
 }
 
-pub async fn setup_worktree(example: &Example) {
-    let repo_dir = example.repo_path();
+pub async fn setup_worktree(example: &Example) -> PathBuf {
+    let (repo_owner, repo_name) = example.repo_name().expect("failed to get repo name");
+    let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
+    let worktree_path = WORKTREES_DIR
+        .join(repo_owner.as_ref())
+        .join(repo_name.as_ref());
     let repo_lock = lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
+        eprintln!("Cloning repository {}", example.repository_url);
         fs::create_dir_all(&repo_dir).unwrap();
         run_git(&repo_dir, &["init"]).await.unwrap();
         run_git(
@@ -227,7 +253,6 @@ pub async fn setup_worktree(example: &Example) {
     };
 
     // Create the worktree for this example if needed.
-    let worktree_path = example.worktree_path();
     if worktree_path.is_dir() {
         run_git(&worktree_path, &["clean", "--force", "-d"])
             .await
@@ -288,6 +313,8 @@ pub async fn setup_worktree(example: &Example) {
             );
         }
     }
+
+    worktree_path
 }
 
 async fn apply_edit_history(

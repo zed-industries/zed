@@ -1,9 +1,6 @@
-use crate::{
-    PredictionProvider, PromptFormat,
-    metrics::ClassificationMetrics,
-    paths::{REPOS_DIR, WORKTREES_DIR},
-};
+use crate::{PredictionProvider, PromptFormat, metrics::ClassificationMetrics};
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 use edit_prediction::udiff::OpenedBuffers;
 use gpui::Entity;
 use http_client::Url;
@@ -102,7 +99,7 @@ pub struct ExampleScore {
 }
 
 impl Example {
-    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+    pub fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
         if self.repository_url.contains('@') {
             let (owner, repo) = self
@@ -133,17 +130,6 @@ impl Example {
 
             Ok((owner.into(), repo.into()))
         }
-    }
-
-    pub fn worktree_path(&self) -> PathBuf {
-        WORKTREES_DIR
-            .join(&self.name)
-            .join(self.repo_name().unwrap().1.as_ref())
-    }
-
-    pub fn repo_path(&self) -> PathBuf {
-        let (repo_owner, repo_name) = self.repo_name().expect("failed to get repo name");
-        REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref())
     }
 }
 
@@ -218,6 +204,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
             }
         }
     }
+
+    sort_examples_by_repo_and_rev(&mut examples);
     examples
 }
 
@@ -233,6 +221,25 @@ pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
     } else {
         std::io::stdout().write_all(&content.as_bytes()).unwrap();
     }
+}
+
+pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
+    examples.sort_by(|a, b| {
+        a.repository_url
+            .cmp(&b.repository_url)
+            .then(b.revision.cmp(&a.revision))
+    });
+}
+
+pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+    let mut examples_by_repo = HashMap::default();
+    for example in examples.iter_mut() {
+        examples_by_repo
+            .entry(example.repository_url.clone())
+            .or_insert_with(Vec::new)
+            .push(example);
+    }
+    examples_by_repo.into_values().collect()
 }
 
 fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
