@@ -14216,6 +14216,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "theme",
 ]
 
