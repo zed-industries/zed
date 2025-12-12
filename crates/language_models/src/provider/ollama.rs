@@ -56,6 +56,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
+    last_error: Option<SharedString>,
 }
 
 impl State {
@@ -104,8 +105,12 @@ impl State {
         let api_key = self.api_key_state.key(&api_url);
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
+        self.last_error = None;
+        cx.notify();
+
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let result: Result<Vec<ollama::Model>> = async {
+                let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
 
             let tasks = models
                 .into_iter()
@@ -145,8 +150,46 @@ impl State {
 
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
+            Ok(ollama_models)
+        }
+        .await;
+
             this.update(cx, |this, cx| {
-                this.fetched_models = ollama_models;
+                match result {
+                    Ok(ollama_models) => {
+                        this.fetched_models = ollama_models;
+                        this.last_error = None;
+                    }
+                    Err(err) => {
+                        use std::io::ErrorKind;
+
+                        this.fetched_models.clear();
+
+                        let mut connection_refused = false;
+                        for cause in err.chain() {
+                            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                                if matches!(
+                                    io_err.kind(),
+                                    ErrorKind::ConnectionRefused
+                                        | ErrorKind::ConnectionAborted
+                                        | ErrorKind::ConnectionReset
+                                        | ErrorKind::TimedOut
+                                ) {
+                                    connection_refused = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        let message = if connection_refused {
+                            format!("Could not reach Ollama at {api_url}. Is it running?")
+                        } else {
+                            format!("Ollama request failed: {err}")
+                        };
+
+                        this.last_error = Some(SharedString::from(message));
+                    }
+                }
                 cx.notify();
             })
         })
@@ -186,6 +229,7 @@ impl OllamaLanguageModelProvider {
                     fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                    last_error: None,
                 }
             }),
         };
@@ -826,21 +870,31 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_authenticated = self.state.read(cx).is_authenticated();
+        let state = self.state.read(cx);
+        let is_authenticated = state.is_authenticated();
+        let last_error = state.last_error.clone();
 
         v_flex()
             .gap_2()
             .child(Self::render_instructions())
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .when(last_error.is_some(), |this| {
+                this.child(
+                    Label::new(last_error.unwrap())
+                        .size(LabelSize::Small)
+                        .color(Color::Error),
+                )
+            })
             .child(
                 h_flex()
+                .w_full()
+                .justify_between()
+                .gap_2()
+                .child(
+                    h_flex()
                     .w_full()
-                    .justify_between()
                     .gap_2()
-                    .child(
-                        h_flex()
-                            .w_full()
                             .gap_2()
                             .map(|this| {
                                 if is_authenticated {
