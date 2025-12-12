@@ -1309,24 +1309,17 @@ impl llm_provider::Host for WasmState {
                             .map_err(|e| anyhow::anyhow!("Failed to read request: {}", e))?;
                     }
 
-                    let callback_url = if let Some(path_start) = request_line.find(' ') {
-                        if let Some(path_end) = request_line[path_start + 1..].find(' ') {
-                            let path = &request_line[path_start + 1..path_start + 1 + path_end];
-                            if path.starts_with(&callback_path)
-                                || path.starts_with(&format!(
-                                    "/{}",
-                                    callback_path.trim_start_matches('/')
-                                ))
-                            {
-                                format!("http://localhost:{}{}", port, path)
-                            } else {
-                                return Err(anyhow::anyhow!("Unexpected callback path: {}", path));
-                            }
-                        } else {
-                            return Err(anyhow::anyhow!("Malformed HTTP request"));
-                        }
+                    let path = request_line
+                        .split_whitespace()
+                        .nth(1)
+                        .ok_or_else(|| anyhow::anyhow!("Malformed HTTP request"))?;
+
+                    let callback_url = if path.starts_with(&callback_path)
+                        || path.starts_with(&format!("/{}", callback_path.trim_start_matches('/')))
+                    {
+                        format!("http://localhost:{}{}", port, path)
                     } else {
-                        return Err(anyhow::anyhow!("Malformed HTTP request"));
+                        return Err(anyhow::anyhow!("Unexpected callback path: {}", path));
                     };
 
                     let response = format!(
