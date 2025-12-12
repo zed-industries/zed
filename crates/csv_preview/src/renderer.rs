@@ -6,7 +6,7 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView, Ordering, RowRenderMechanism, VerticalAlignment,
+    CsvPreviewView, FontType, Ordering, RowRenderMechanism, VerticalAlignment,
     cell_selection::TableSelection,
     data_ordering::{OrderingDirection, generate_ordered_indices},
 };
@@ -29,6 +29,14 @@ impl Render for CsvPreviewView {
                         .justify_center()
                         .h_32()
                         .text_ui(cx)
+                        .when(
+                            matches!(self.settings.font_type, crate::FontType::Ui),
+                            |div| div.font_ui(cx),
+                        )
+                        .when(
+                            matches!(self.settings.font_type, crate::FontType::Monospace),
+                            |div| div.font_buffer(cx),
+                        )
                         .text_color(cx.theme().colors().text_muted)
                         .child("No CSV content to display")
                         .into_any_element()
@@ -70,6 +78,14 @@ impl CsvPreviewView {
             .justify_between()
             .items_center()
             .w_full()
+            .when(
+                matches!(self.settings.font_type, crate::FontType::Ui),
+                |div| div.font_ui(cx),
+            )
+            .when(
+                matches!(self.settings.font_type, crate::FontType::Monospace),
+                |div| div.font_buffer(cx),
+            )
             .child(
                 // Header text on the left
                 div().child(header_text),
@@ -155,7 +171,15 @@ impl CsvPreviewView {
         let mut headers = Vec::with_capacity(COLS);
 
         // First column: line numbers (not sortable)
-        headers.push(div().child("Line #".to_string()).into_any_element());
+        headers.push(
+            div()
+                .map(|div| match self.settings.font_type {
+                    FontType::Ui => div.font_ui(cx),
+                    FontType::Monospace => div.font_buffer(cx),
+                })
+                .child("Line #".to_string())
+                .into_any_element(),
+        );
 
         // Add the actual CSV headers with ordering buttons
         for i in 0..(COLS - 1) {
@@ -230,6 +254,11 @@ impl CsvPreviewView {
             VerticalAlignment::Center => "Center",
         };
 
+        let current_font_text = match self.settings.font_type {
+            crate::FontType::Ui => "UI Font",
+            crate::FontType::Monospace => "Monospace",
+        };
+
         let view = cx.entity();
         let rendering_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
             menu.entry("Variable Height", None, {
@@ -267,6 +296,27 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.vertical_alignment = VerticalAlignment::Center;
+                        cx.notify();
+                    });
+                }
+            })
+        });
+
+        let font_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("UI Font", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.font_type = crate::FontType::Ui;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("Monospace", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.font_type = crate::FontType::Monospace;
                         cx.notify();
                     });
                 }
@@ -319,6 +369,26 @@ impl CsvPreviewView {
                         .trigger_tooltip(Tooltip::text("Choose vertical text alignment within cells"))
                     ),
             )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child("Font Type:"),
+                    )
+                    .child(
+                        DropdownMenu::new(
+                            ElementId::Name("font-type-dropdown".into()),
+                            current_font_text,
+                            font_dropdown_menu,
+                        )
+                        .trigger_size(ButtonSize::Compact)
+                        .trigger_tooltip(Tooltip::text("Choose between UI font and monospace font for better readability"))
+                    ),
+            )
             .into_any_element()
     }
 
@@ -357,6 +427,14 @@ impl CsvPreviewView {
                     matches!(this.settings.vertical_alignment, VerticalAlignment::Center),
                     |div| div.items_center(),
                 )
+                .when(
+                    matches!(this.settings.font_type, crate::FontType::Ui),
+                    |div| div.font_ui(cx),
+                )
+                .when(
+                    matches!(this.settings.font_type, crate::FontType::Monospace),
+                    |div| div.font_buffer(cx),
+                )
                 .into_any_element(),
         );
 
@@ -379,6 +457,8 @@ impl CsvPreviewView {
                 selected_bg,
                 is_selected,
                 this.settings.vertical_alignment,
+                this.settings.font_type,
+                cx,
             ));
         }
 
