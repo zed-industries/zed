@@ -19,16 +19,16 @@ use crate::{
 ///
 /// - **Focus**: Green border for the currently focused cell (keyboard navigation)
 /// - **Anchor**: Blue border for the selection anchor (starting point of range selection)
-/// - **Focus+Anchor**: Orange border when a cell is both focused and anchor (thicker border)
+/// - **Focus+Anchor**: Automatically blended color when a cell is both focused and anchor (thicker border)
 pub struct CellBorderColors;
 
 impl CellBorderColors {
-    /// Bright green for focused cell only
+    /// Red for focused cell only
     pub const FOCUS: Hsla = Hsla {
-        h: 0.25, // 90 degrees = lime green
+        h: 0.0, // 0 degrees = pure red
         s: 1.0,
         l: 0.4,
-        a: 1.0,
+        a: 0.7,
     };
 
     /// Bright blue for anchor cell only
@@ -36,16 +36,36 @@ impl CellBorderColors {
         h: 0.6, // 216 degrees = bright blue
         s: 1.0,
         l: 0.5,
-        a: 1.0,
+        a: 0.7,
     };
 
-    /// Orange for cell that is both focus and anchor (blended state)
-    pub const FOCUS_ANCHOR: Hsla = Hsla {
-        h: 0.08333, // 30 degrees = orange hue
-        s: 1.0,
-        l: 0.5,
-        a: 1.0,
-    };
+    /// Automatically blended color for cells that are both focus and anchor
+    pub const FOCUS_ANCHOR: Hsla = Self::blend_colors(Self::FOCUS, Self::ANCHOR);
+
+    /// Blend two HSLA colors at compile time by averaging their components
+    const fn blend_colors(color1: Hsla, color2: Hsla) -> Hsla {
+        // Handle hue wrapping for proper color wheel blending
+        let h1 = color1.h;
+        let h2 = color2.h;
+        let hue_diff = if (h2 - h1).abs() > 0.5 {
+            // Cross the 0/1 boundary - blend through the shorter path
+            if h1 > h2 {
+                (h1 + h2 + 1.0) / 2.0 % 1.0
+            } else {
+                (h1 + h2 + 1.0) / 2.0 % 1.0
+            }
+        } else {
+            // Normal blending
+            (h1 + h2) / 2.0
+        };
+
+        Hsla {
+            h: hue_diff,
+            s: (color1.s + color2.s) / 2.0,
+            l: (color1.l + color2.l) / 2.0,
+            a: (color1.a + color2.a) / 2.0,
+        }
+    }
 }
 
 impl CsvPreviewView {
@@ -155,7 +175,7 @@ fn create_table_cell(
         })
         .when(is_selected, |div| div.bg(selected_bg_color))
         .when(is_focused && is_anchor, |div| {
-            div.border_2().border_color(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
+            div.border_1().border_color(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
         })
         .when(is_focused && !is_anchor, |div| {
             div.border_1().border_color(CellBorderColors::FOCUS) // Focus only
