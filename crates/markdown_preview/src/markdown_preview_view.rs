@@ -21,13 +21,13 @@ use workspace::{Pane, Workspace};
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
 use crate::{
-    CopyAll, MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
-    ScrollPageDown, ScrollPageUp,
+    CopyAll, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
 use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
+use editor::actions::{MovePageDown, MovePageUp};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
