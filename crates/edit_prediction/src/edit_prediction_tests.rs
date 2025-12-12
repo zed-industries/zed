@@ -1822,8 +1822,17 @@ fn from_completion_edits(
         .collect()
 }
 
+/// Tests called sequentially to avoid concurrency errors with TEST_FORCE_CUSTOM_URL_MODE.
 #[gpui::test]
-async fn test_unauthenticated_without_custom_url_blocks_prediction(cx: &mut TestAppContext) {
+async fn test_authentication_behavior(cx: &mut TestAppContext) {
+    test_unauthenticated_without_custom_url_blocks_prediction_impl(cx).await;
+
+    super::set_test_custom_url_mode(true);
+    test_unauthenticated_with_custom_url_allows_prediction_impl(cx).await;
+    super::set_test_custom_url_mode(false);
+}
+
+async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -1881,13 +1890,8 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction(cx: &mut Test
     );
 }
 
-#[gpui::test]
-async fn test_unauthenticated_with_custom_url_allows_prediction(cx: &mut TestAppContext) {
+async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
     init_test(cx);
-
-    unsafe {
-        std::env::set_var("ZED_PREDICT_EDITS_URL", "http://localhost:8080/predict");
-    }
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -1908,8 +1912,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction(cx: &mut TestApp
             let uri = req.uri().path().to_string();
             let predict_called = predict_called_clone.clone();
             async move {
-                match uri.as_str() {
-                    "/predict" => {
+                if uri.contains("predict") {
                         predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
                         Ok(gpui::http_client::Response::builder()
                             .body(
@@ -1946,11 +1949,11 @@ async fn test_unauthenticated_with_custom_url_allows_prediction(cx: &mut TestApp
                                 .into(),
                             )
                             .unwrap())
-                    }
-                    _ => Ok(gpui::http_client::Response::builder()
+                } else {
+                    Ok(gpui::http_client::Response::builder()
                         .status(401)
                         .body("Unauthorized".into())
-                        .unwrap()),
+                        .unwrap())
                 }
             }
         }
@@ -1992,10 +1995,6 @@ async fn test_unauthenticated_with_custom_url_allows_prediction(cx: &mut TestApp
         predict_called.load(std::sync::atomic::Ordering::SeqCst),
         "With custom URL, predict endpoint should be called even without authentication"
     );
-
-    unsafe {
-        std::env::remove_var("ZED_PREDICT_EDITS_URL");
-    }
 }
 
 #[ctor::ctor]
