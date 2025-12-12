@@ -314,7 +314,7 @@ pub struct AdapterServerCapabilities {
 
 impl LanguageServer {
     /// Starts a language server process.
-    pub async fn new(
+    pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
         server_name: LanguageServerName,
@@ -338,23 +338,19 @@ impl LanguageServer {
             working_dir,
             &binary.arguments
         );
-        let mut server = cx
-            .background_executor()
-            .await_on_background(async {
-                let mut command = util::command::new_smol_command(&binary.path);
-                command
-                    .current_dir(working_dir)
-                    .args(&binary.arguments)
-                    .envs(binary.env.clone().unwrap_or_default())
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true);
-                command
-                    .spawn()
-                    .with_context(|| format!("failed to spawn command {command:?}",))
-            })
-            .await?;
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
+            .current_dir(working_dir)
+            .args(&binary.arguments)
+            .envs(binary.env.clone().unwrap_or_default())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let mut server = command
+            .spawn()
+            .with_context(|| format!("failed to spawn command {command:?}",))?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
