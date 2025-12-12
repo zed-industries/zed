@@ -41,7 +41,7 @@ impl CsvPreviewView {
 
         let base_width = (digit_count as f32) * char_width_px;
         let padding = 20.0;
-        let min_width = 50.;
+        let min_width = 60.;
         (base_width + padding).max(min_width)
     }
 }
