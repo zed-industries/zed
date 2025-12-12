@@ -5,7 +5,7 @@ use crate::CsvPreviewView;
 pub enum LineNumber {
     /// Single line row
     Line(usize),
-    /// Multi-line row spanning from start to end line
+    /// Multi-line row spanning from start to end line. Incluisive
     LineRange(usize, usize),
 }
 
@@ -13,11 +13,13 @@ impl LineNumber {
     pub fn display_string(&self) -> String {
         match *self {
             LineNumber::Line(line) => line.to_string(),
-            LineNumber::LineRange(start, end) => format!("{}\n...\n{}", start, end),
-            // LineNumber::LineRange(start, end) => (start..=end)
-            //     .map(|n| n.to_string())
-            //     .collect::<Vec<_>>()
-            //     .join("\n"),
+            LineNumber::LineRange(start, end) => {
+                if start + 1 == end {
+                    format!("{start}\n{end}")
+                } else {
+                    format!("{start}\n...\n{end}")
+                }
+            }
         }
     }
 }
