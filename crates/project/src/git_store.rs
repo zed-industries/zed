@@ -1031,6 +1031,7 @@ impl GitStore {
             Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
+        let line_ending = buffer.line_ending();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
@@ -1042,7 +1043,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content)
+                    .blame(repo_path.clone(), content, line_ending)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -1451,7 +1452,7 @@ impl GitStore {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
                 cx.subscribe(buffer, |this, buffer, event, cx| {
-                    if let BufferEvent::LanguageChanged = event {
+                    if let BufferEvent::LanguageChanged(_) = event {
                         let buffer_id = buffer.read(cx).remote_id();
                         if let Some(diff_state) = this.diffs.get(&buffer_id) {
                             diff_state.update(cx, |diff_state, cx| {
@@ -3296,6 +3297,8 @@ impl RepositorySnapshot {
                 .iter()
                 .map(stash_to_proto)
                 .collect(),
+            remote_upstream_url: self.remote_upstream_url.clone(),
+            remote_origin_url: self.remote_origin_url.clone(),
         }
     }
 
@@ -3365,6 +3368,8 @@ impl RepositorySnapshot {
                 .iter()
                 .map(stash_to_proto)
                 .collect(),
+            remote_upstream_url: self.remote_upstream_url.clone(),
+            remote_origin_url: self.remote_origin_url.clone(),
         }
     }
 
@@ -4688,11 +4693,9 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let rx = self.run_hook(RunHook::PrePush, cx);
         self.send_job(
             Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
-                rx.await??;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,
@@ -5395,6 +5398,8 @@ impl Repository {
             cx.emit(RepositoryEvent::StashEntriesChanged)
         }
         self.snapshot.stash_entries = new_stash_entries;
+        self.snapshot.remote_upstream_url = update.remote_upstream_url;
+        self.snapshot.remote_origin_url = update.remote_origin_url;
 
         let edits = update
             .removed_statuses
@@ -5954,11 +5959,7 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
         .collect::<Vec<_>>();
 
     proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse {
-            entries,
-            messages,
-            remote_url: blame.remote_url,
-        }),
+        blame_response: Some(proto::blame_buffer_response::BlameResponse { entries, messages }),
     }
 }
 
@@ -5995,11 +5996,7 @@ fn deserialize_blame_buffer_response(
         .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
         .collect::<HashMap<_, _>>();
 
-    Some(Blame {
-        entries,
-        messages,
-        remote_url: response.remote_url,
-    })
+    Some(Blame { entries, messages })
 }
 
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
@@ -6147,7 +6144,6 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::BranchChanged);
     }
 
-    // Used by edit prediction data collection
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
 

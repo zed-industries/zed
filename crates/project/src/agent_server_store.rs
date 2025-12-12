@@ -137,6 +137,7 @@ pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
     agent_icons: HashMap<ExternalAgentServerName, SharedString>,
+    agent_display_names: HashMap<ExternalAgentServerName, SharedString>,
 }
 
 pub struct AgentServersUpdated;
@@ -155,6 +156,7 @@ mod ext_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -258,6 +260,7 @@ impl AgentServerStore {
         self.external_agents.retain(|name, agent| {
             if agent.downcast_mut::<LocalExtensionArchiveAgent>().is_some() {
                 self.agent_icons.remove(name);
+                self.agent_display_names.remove(name);
                 false
             } else {
                 // Keep the hardcoded external agents that don't come from extensions
@@ -275,6 +278,12 @@ impl AgentServerStore {
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         let icon_path = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
                             // Canonicalize to resolve symlinks (dev extensions are symlinked)
@@ -310,6 +319,12 @@ impl AgentServerStore {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
+                        // Store display name from manifest
+                        self.agent_display_names.insert(
+                            ExternalAgentServerName(agent_name.clone().into()),
+                            SharedString::from(agent_entry.name.clone()),
+                        );
+
                         // Store absolute icon path if provided, resolving symlinks for dev extensions
                         let icon = if let Some(icon) = &agent_entry.icon {
                             let icon_path = extensions_dir.join(ext_id).join(icon);
@@ -367,6 +382,10 @@ impl AgentServerStore {
 
     pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
         self.agent_icons.get(name).cloned()
+    }
+
+    pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+        self.agent_display_names.get(name).cloned()
     }
 
     pub fn init_remote(session: &AnyProtoClient) {
@@ -453,7 +472,9 @@ impl AgentServerStore {
                     .clone()
                     .and_then(|settings| settings.custom_command()),
                 http_client: http_client.clone(),
-                is_remote: downstream_client.is_some(),
+                no_browser: downstream_client
+                    .as_ref()
+                    .is_some_and(|(_, client)| !client.has_wsl_interop()),
             }),
         );
         self.external_agents.insert(
@@ -557,6 +578,7 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -607,6 +629,7 @@ impl AgentServerStore {
             },
             external_agents: external_agents.into_iter().collect(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         }
     }
 
@@ -615,6 +638,7 @@ impl AgentServerStore {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
             agent_icons: Default::default(),
+            agent_display_names: Default::default(),
         }
     }
 
@@ -1355,7 +1379,7 @@ struct LocalCodex {
     project_environment: Entity<ProjectEnvironment>,
     http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
-    is_remote: bool,
+    no_browser: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -1363,7 +1387,7 @@ impl ExternalAgentServer for LocalCodex {
         &mut self,
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
-        status_tx: Option<watch::Sender<SharedString>>,
+        mut status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
@@ -1375,7 +1399,7 @@ impl ExternalAgentServer for LocalCodex {
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
             .into();
-        let is_remote = self.is_remote;
+        let no_browser = self.no_browser;
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1388,7 +1412,7 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
-            if is_remote {
+            if no_browser {
                 env.insert("NO_BROWSER".to_owned(), "1".to_owned());
             }
 
@@ -1400,58 +1424,115 @@ impl ExternalAgentServer for LocalCodex {
                 let dir = paths::external_agents_dir().join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
 
-                // Find or install the latest Codex release (no update checks for now).
-                let release = ::http_client::github::latest_github_release(
+                let bin_name = if cfg!(windows) {
+                    "codex-acp.exe"
+                } else {
+                    "codex-acp"
+                };
+
+                let find_latest_local_version = async || -> Option<PathBuf> {
+                    let mut local_versions: Vec<(semver::Version, String)> = Vec::new();
+                    let mut stream = fs.read_dir(&dir).await.ok()?;
+                    while let Some(entry) = stream.next().await {
+                        let Ok(entry) = entry else { continue };
+                        let Some(file_name) = entry.file_name() else {
+                            continue;
+                        };
+                        let version_path = dir.join(&file_name);
+                        if fs.is_file(&version_path.join(bin_name)).await {
+                            let version_str = file_name.to_string_lossy();
+                            if let Ok(version) =
+                                semver::Version::from_str(version_str.trim_start_matches('v'))
+                            {
+                                local_versions.push((version, version_str.into_owned()));
+                            }
+                        }
+                    }
+                    local_versions.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    local_versions.last().map(|(_, v)| dir.join(v))
+                };
+
+                let fallback_to_latest_local_version =
+                    async |err: anyhow::Error| -> Result<PathBuf, anyhow::Error> {
+                        if let Some(local) = find_latest_local_version().await {
+                            log::info!(
+                                "Falling back to locally installed Codex version: {}",
+                                local.display()
+                            );
+                            Ok(local)
+                        } else {
+                            Err(err)
+                        }
+                    };
+
+                let version_dir = match ::http_client::github::latest_github_release(
                     CODEX_ACP_REPO,
                     true,
                     false,
                     http.clone(),
                 )
                 .await
-                .context("fetching Codex latest release")?;
+                {
+                    Ok(release) => {
+                        let version_dir = dir.join(&release.tag_name);
+                        if !fs.is_dir(&version_dir).await {
+                            if let Some(ref mut status_tx) = status_tx {
+                                status_tx.send("Installing…".into()).ok();
+                            }
 
-                let version_dir = dir.join(&release.tag_name);
-                if !fs.is_dir(&version_dir).await {
-                    if let Some(mut status_tx) = status_tx {
-                        status_tx.send("Installing…".into()).ok();
-                    }
-
-                    let tag = release.tag_name.clone();
-                    let version_number = tag.trim_start_matches('v');
-                    let asset_name = asset_name(version_number)
-                        .context("codex acp is not supported for this architecture")?;
-                    let asset = release
-                        .assets
-                        .into_iter()
-                        .find(|asset| asset.name == asset_name)
-                        .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-                    // Strip "sha256:" prefix from digest if present (GitHub API format)
-                    let digest = asset
-                        .digest
-                        .as_deref()
-                        .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
-                    ::http_client::github_download::download_server_binary(
-                        &*http,
-                        &asset.browser_download_url,
-                        digest,
-                        &version_dir,
-                        if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-                            AssetKind::Zip
+                            let tag = release.tag_name.clone();
+                            let version_number = tag.trim_start_matches('v');
+                            let asset_name = asset_name(version_number)
+                                .context("codex acp is not supported for this architecture")?;
+                            let asset = release
+                                .assets
+                                .into_iter()
+                                .find(|asset| asset.name == asset_name)
+                                .with_context(|| {
+                                    format!("no asset found matching `{asset_name:?}`")
+                                })?;
+                            // Strip "sha256:" prefix from digest if present (GitHub API format)
+                            let digest = asset
+                                .digest
+                                .as_deref()
+                                .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
+                            match ::http_client::github_download::download_server_binary(
+                                &*http,
+                                &asset.browser_download_url,
+                                digest,
+                                &version_dir,
+                                if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+                                    AssetKind::Zip
+                                } else {
+                                    AssetKind::TarGz
+                                },
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    // remove older versions
+                                    util::fs::remove_matching(&dir, |entry| entry != version_dir)
+                                        .await;
+                                    version_dir
+                                }
+                                Err(err) => {
+                                    log::error!(
+                                        "Failed to download Codex release {}: {err:#}",
+                                        release.tag_name
+                                    );
+                                    fallback_to_latest_local_version(err).await?
+                                }
+                            }
                         } else {
-                            AssetKind::TarGz
-                        },
-                    )
-                    .await?;
-
-                    // remove older versions
-                    util::fs::remove_matching(&dir, |entry| entry != version_dir).await;
-                }
-
-                let bin_name = if cfg!(windows) {
-                    "codex-acp.exe"
-                } else {
-                    "codex-acp"
+                            version_dir
+                        }
+                    }
+                    Err(err) => {
+                        log::error!("Failed to fetch Codex latest release: {err:#}");
+                        fallback_to_latest_local_version(err).await?
+                    }
                 };
+
                 let bin_path = version_dir.join(bin_name);
                 anyhow::ensure!(
                     fs.is_file(&bin_path).await,
@@ -1499,8 +1580,8 @@ fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
         return None;
     };
 
-    // Only Windows x86_64 uses .zip in release assets
-    let ext = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+    // Windows uses .zip in release assets
+    let ext = if cfg!(target_os = "windows") {
         "zip"
     } else {
         "tar.gz"
@@ -1981,6 +2062,7 @@ mod extension_agent_tests {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
             agent_icons: HashMap::default(),
+            agent_display_names: HashMap::default(),
         };
 
         // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")

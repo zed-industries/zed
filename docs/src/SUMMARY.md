@@ -41,6 +41,7 @@
 - [Debugger](./debugger.md)
 - [Diagnostics](./diagnostics.md)
 - [Tasks](./tasks.md)
+- [Tab Switcher](./tab-switcher.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)

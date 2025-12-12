@@ -1,7 +1,7 @@
 mod messages;
-mod supermaven_completion_provider;
+mod supermaven_edit_prediction_delegate;
 
-pub use supermaven_completion_provider::*;
+pub use supermaven_edit_prediction_delegate::*;
 
 use anyhow::{Context as _, Result};
 #[allow(unused_imports)]

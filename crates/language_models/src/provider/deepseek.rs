@@ -332,9 +332,11 @@ pub fn into_deepseek(
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
 ) -> deepseek::Request {
-    let is_reasoner = *model == deepseek::Model::Reasoner;
+    let is_reasoner = model == &deepseek::Model::Reasoner;
 
     let mut messages = Vec::new();
+    let mut current_reasoning: Option<String> = None;
+
     for message in request.messages {
         for content in message.content {
             match content {
@@ -343,10 +345,14 @@ pub fn into_deepseek(
                     Role::Assistant => deepseek::RequestMessage::Assistant {
                         content: Some(text),
                         tool_calls: Vec::new(),
+                        reasoning_content: current_reasoning.take(),
                     },
                     Role::System => deepseek::RequestMessage::System { content: text },
                 }),
-                MessageContent::Thinking { .. } => {}
+                MessageContent::Thinking { text, .. } => {
+                    // Accumulate reasoning content for next assistant message
+                    current_reasoning.get_or_insert_default().push_str(&text);
+                }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
@@ -369,6 +375,7 @@ pub fn into_deepseek(
                         messages.push(deepseek::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }

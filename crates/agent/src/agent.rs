@@ -947,8 +947,8 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
+    fn telemetry_id(&self) -> SharedString {
+        "zed".into()
     }
 
     fn new_thread(

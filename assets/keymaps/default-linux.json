@@ -25,7 +25,8 @@
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "open": "workspace::Open",
-      "ctrl-o": "workspace::Open",
+      "ctrl-o": "workspace::OpenFiles",
+      "ctrl-k ctrl-o": "workspace::Open",
       "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
@@ -41,7 +42,7 @@
       "ctrl-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
-      "ctrl-alt-z": "edit_prediction::RateCompletions",
+      "ctrl-alt-z": "edit_prediction::RatePredictions",
       "ctrl-alt-shift-i": "edit_prediction::ToggleMenu",
       "ctrl-alt-l": "lsp_tool::ToggleMenu"
     }
@@ -616,8 +617,8 @@
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
-      "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
+      "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-e": "file_finder::Toggle",
       "f1": "command_palette::Toggle",
       "ctrl-shift-p": "command_palette::Toggle",
@@ -811,7 +812,9 @@
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "ctrl-shift-enter": "inline_assistant::ThumbsUpResult",
+      "ctrl-shift-backspace": "inline_assistant::ThumbsDownResult"
     }
   },
   {
@@ -1189,8 +1192,12 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
-      "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown"
+      "pageup": "markdown::ScrollPageUp",
+      "pagedown": "markdown::ScrollPageDown",
+      "up": "markdown::ScrollUp",
+      "down": "markdown::ScrollDown",
+      "alt-up": "markdown::ScrollUpByItem",
+      "alt-down": "markdown::ScrollDownByItem"
     }
   },
   {
@@ -1322,25 +1329,18 @@
     }
   },
   {
-    "context": "Zeta2Feedback > Editor",
+    "context": "EditPredictionContext > Editor",
     "bindings": {
-      "enter": "editor::Newline",
-      "ctrl-enter up": "dev::Zeta2RatePredictionPositive",
-      "ctrl-enter down": "dev::Zeta2RatePredictionNegative"
-    }
-  },
-  {
-    "context": "Zeta2Context > Editor",
-    "bindings": {
-      "alt-left": "dev::Zeta2ContextGoBack",
-      "alt-right": "dev::Zeta2ContextGoForward"
+      "alt-left": "dev::EditPredictionContextGoBack",
+      "alt-right": "dev::EditPredictionContextGoForward"
     }
   },
   {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "branch_picker::DeleteBranch"
+      "ctrl-shift-backspace": "branch_picker::DeleteBranch",
+      "ctrl-shift-i": "branch_picker::FilterRemotes"
     }
   }
 ]
