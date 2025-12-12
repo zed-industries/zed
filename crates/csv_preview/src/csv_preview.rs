@@ -68,11 +68,21 @@ pub enum FontType {
     Monospace,
 }
 
+#[derive(Default, Clone, Copy)]
+pub enum NumberingType {
+    /// Show original line numbers from CSV file
+    #[default]
+    Lines,
+    /// Show sequential row numbers starting from 1
+    Rows,
+}
+
 #[derive(Default)]
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
     pub(crate) font_type: FontType,
+    pub(crate) numbering_type: NumberingType,
 }
 
 impl CsvPreviewView {

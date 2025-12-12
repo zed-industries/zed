@@ -6,7 +6,7 @@ use ui::{
 };
 
 use crate::{
-    CsvPreviewView, FontType, Ordering, RowRenderMechanism, VerticalAlignment,
+    CsvPreviewView, FontType, NumberingType, Ordering, RowRenderMechanism, VerticalAlignment,
     cell_selection::TableSelection,
     data_ordering::{OrderingDirection, generate_ordered_indices},
 };
@@ -137,7 +137,7 @@ impl CsvPreviewView {
             1. // only columns with line numbers is present. Put 100%, but it will be overwritten anyways :D
         };
         let mut widths = [DefiniteLength::Fraction(fraction); COLS];
-        let line_number_width = self.calculate_line_number_column_width();
+        let line_number_width = self.calculate_row_identifier_column_width();
         widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
 
         let mut resize_behaviors = [TableResizeBehavior::Resizable; COLS];
@@ -163,14 +163,39 @@ impl CsvPreviewView {
         // Create headers array with interactive elements
         let mut headers = Vec::with_capacity(COLS);
 
-        // First column: line numbers (not sortable)
+        // First column: row identifier (clickable to toggle between Lines and Rows)
+        let row_identifier_text = match self.settings.numbering_type {
+            NumberingType::Lines => "Lines",
+            NumberingType::Rows => "Rows",
+        };
+
+        let view = cx.entity();
         headers.push(
             div()
                 .map(|div| match self.settings.font_type {
                     FontType::Ui => div.font_ui(cx),
                     FontType::Monospace => div.font_buffer(cx),
                 })
-                .child("L#")
+                .child(
+                    Button::new(
+                        ElementId::Name("row-identifier-toggle".into()),
+                        row_identifier_text,
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .size(ButtonSize::Compact)
+                    .tooltip(Tooltip::text(
+                        "Click to toggle between file line numbers and sequential row numbers",
+                    ))
+                    .on_click(move |_event, _window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.settings.numbering_type = match this.settings.numbering_type {
+                                NumberingType::Lines => NumberingType::Rows,
+                                NumberingType::Rows => NumberingType::Lines,
+                            };
+                            cx.notify();
+                        });
+                    }),
+                )
                 .into_any_element(),
         );
 
@@ -204,13 +229,13 @@ impl CsvPreviewView {
         match self.settings.rendering_with {
             RowRenderMechanism::VariableList => table
                 .variable_list(row_count, {
-                    let line_num_text_color = cx.theme().colors().editor_line_number;
+                    let row_identifier_text_color = cx.theme().colors().editor_line_number;
                     let selected_bg = cx.theme().colors().element_selected;
                     cx.processor(move |this, display_index: usize, _window, cx| {
                         Self::render_table_row_for_variable_list::<COLS>(
                             this,
                             display_index,
-                            line_num_text_color,
+                            row_identifier_text_color,
                             selected_bg,
                             cx,
                         )
@@ -219,13 +244,13 @@ impl CsvPreviewView {
                 .into_any_element(),
             RowRenderMechanism::UniformList => table
                 .uniform_list("csv-table", row_count, {
-                    let line_num_text_color = cx.theme().colors().editor_line_number;
+                    let row_identifier_text_color = cx.theme().colors().editor_line_number;
                     let selected_bg = cx.theme().colors().element_selected;
                     cx.processor(move |this, range: Range<usize>, _window, cx| {
                         Self::render_table_rows_for_uniform_list::<COLS>(
                             this,
                             range,
-                            line_num_text_color,
+                            row_identifier_text_color,
                             selected_bg,
                             cx,
                         )
@@ -389,7 +414,7 @@ impl CsvPreviewView {
     fn render_single_table_row<const COLS: usize>(
         this: &CsvPreviewView,
         display_index: usize,
-        line_num_text_color: gpui::Hsla,
+        row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
         cx: &Context<CsvPreviewView>,
     ) -> Option<[AnyElement; COLS]> {
@@ -401,20 +426,23 @@ impl CsvPreviewView {
 
         let mut elements = Vec::with_capacity(COLS);
 
-        // First column: original line number from parsed data
-        let line_number: SharedString = this
-            .contents
-            .line_numbers
-            .get(row_index)?
-            .display_string()
-            .into();
+        // First column: row identifier (line numbers or sequential row numbers)
+        let row_identifier: SharedString = match this.settings.numbering_type {
+            NumberingType::Lines => this
+                .contents
+                .line_numbers
+                .get(row_index)?
+                .display_string()
+                .into(),
+            NumberingType::Rows => (display_index + 1).to_string().into(),
+        };
         elements.push(
             div()
                 .flex()
-                .child(line_number)
-                .text_color(line_num_text_color)
+                .child(row_identifier)
+                .text_color(row_identifier_text_color)
                 .h_full()
-                // Lines are always centered
+                // Row identifiers are always centered
                 .items_center()
                 .map(|div| match this.settings.font_type {
                     FontType::Ui => div.font_ui(cx),
@@ -454,28 +482,34 @@ impl CsvPreviewView {
     fn render_table_row_for_variable_list<const COLS: usize>(
         this: &CsvPreviewView,
         display_index: usize,
-        line_num_text_color: gpui::Hsla,
+        row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
-        cx: &mut Context<CsvPreviewView>,
+        cx: &Context<CsvPreviewView>,
     ) -> [AnyElement; COLS] {
-        Self::render_single_table_row(this, display_index, line_num_text_color, selected_bg, cx)
-            .unwrap_or_else(|| std::array::from_fn(|_| div().into_any_element()))
+        Self::render_single_table_row(
+            this,
+            display_index,
+            row_identifier_text_color,
+            selected_bg,
+            cx,
+        )
+        .unwrap_or_else(|| std::array::from_fn(|_| div().into_any_element()))
     }
 
     /// Render multiple rows for uniform_list (uniform heights only)
     fn render_table_rows_for_uniform_list<const COLS: usize>(
         this: &CsvPreviewView,
-        range: Range<usize>,
-        line_num_text_color: gpui::Hsla,
+        display_indices: Range<usize>,
+        row_identifier_text_color: gpui::Hsla,
         selected_bg: gpui::Hsla,
-        cx: &mut Context<CsvPreviewView>,
+        cx: &Context<CsvPreviewView>,
     ) -> Vec<[AnyElement; COLS]> {
-        range
+        display_indices
             .filter_map(|display_index| {
                 Self::render_single_table_row(
                     this,
                     display_index,
-                    line_num_text_color,
+                    row_identifier_text_color,
                     selected_bg,
                     cx,
                 )
