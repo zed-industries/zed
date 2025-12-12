@@ -1306,7 +1306,11 @@
       "up": "csv::MoveFocusUp",
       "down": "csv::MoveFocusDown",
       "left": "csv::MoveFocusLeft",
-      "right": "csv::MoveFocusRight"
+      "right": "csv::MoveFocusRight",
+      "shift-up": "csv::SelectUp",
+      "shift-down": "csv::SelectDown",
+      "shift-left": "csv::SelectLeft",
+      "shift-right": "csv::SelectRight"
     }
   },
   {

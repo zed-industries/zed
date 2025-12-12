@@ -35,6 +35,8 @@ pub struct TableSelection {
     is_selecting: bool,
     /// Currently focused cell in data coordinates
     focused_cell: Option<DataCellId>,
+    /// Anchor cell for keyboard range selection (shift+arrow keys) in data coordinates
+    selection_anchor: Option<DataCellId>,
 }
 
 impl Default for TableSelection {
@@ -51,6 +53,7 @@ impl TableSelection {
             selection_start_display: None,
             is_selecting: false,
             focused_cell: None,
+            selection_anchor: None,
         }
     }
 
@@ -231,6 +234,8 @@ impl TableSelection {
         // Update focus and selection if movement was valid
         if let Some(new_cell) = new_cell {
             self.focused_cell = Some(new_cell);
+            // Clear selection anchor when moving without extending
+            self.selection_anchor = None;
             self.selected_cells.clear();
             self.selected_cells.insert(new_cell);
         }
@@ -269,6 +274,163 @@ impl TableSelection {
     /// Move focus right by one column.
     pub fn move_focus_right(&mut self, ordered_indices: &OrderedIndices, max_cols: usize) {
         self.move_focus_direction(
+            NavigationDirection::Right,
+            ordered_indices,
+            usize::MAX,
+            max_cols,
+        );
+    }
+
+    /// Set selection anchor for range selection. Called when starting range selection.
+    fn set_selection_anchor(&mut self) {
+        if let Some(focused) = self.focused_cell {
+            self.selection_anchor = Some(focused);
+        }
+    }
+
+    /// Update selection from anchor to focused cell (rectangular selection).
+    fn update_range_selection(&mut self, ordered_indices: &OrderedIndices) {
+        if let (Some(anchor), Some(focused)) = (self.selection_anchor, self.focused_cell) {
+            self.selected_cells.clear();
+
+            // Get display coordinates for both anchor and focus
+            if let (Some(anchor_display_row), Some(focused_display_row)) = (
+                ordered_indices.get_display_row(anchor.row),
+                ordered_indices.get_display_row(focused.row),
+            ) {
+                // Create rectangle in display coordinates
+                let min_display_row = anchor_display_row.get().min(focused_display_row.get());
+                let max_display_row = anchor_display_row.get().max(focused_display_row.get());
+                let min_col = anchor.col.min(focused.col);
+                let max_col = anchor.col.max(focused.col);
+
+                // Convert each display cell to data coordinates for storage
+                for display_r in min_display_row..=max_display_row {
+                    for c in min_col..=max_col {
+                        if let Some(data_row) =
+                            ordered_indices.get_data_row(DisplayRow::new(display_r))
+                        {
+                            self.selected_cells.insert(DataCellId::new(data_row, c));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Move focus in the specified direction and extend selection.
+    /// For range selection (shift + arrow keys).
+    fn extend_selection_direction(
+        &mut self,
+        direction: NavigationDirection,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) {
+        // Initialize focus if not set
+        if self.focused_cell.is_none() {
+            self.ensure_focus_initialized(ordered_indices);
+        }
+
+        // Set anchor if not already set (first range selection)
+        if self.selection_anchor.is_none() {
+            self.set_selection_anchor();
+        }
+
+        // Move focus in the specified direction
+        let Some(focused) = self.focused_cell else {
+            return;
+        };
+
+        let new_cell = match direction {
+            NavigationDirection::Up => {
+                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
+                    if display_row.get() > 0 {
+                        let new_display_row = DisplayRow::new(display_row.get() - 1);
+                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
+                            Some(DataCellId::new(new_data_row, focused.col))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            NavigationDirection::Down => {
+                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
+                    if display_row.get() < max_rows.saturating_sub(1) {
+                        let new_display_row = DisplayRow::new(display_row.get() + 1);
+                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
+                            Some(DataCellId::new(new_data_row, focused.col))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            NavigationDirection::Left => {
+                if focused.col > 0 {
+                    Some(DataCellId::new(focused.row, focused.col - 1))
+                } else {
+                    None
+                }
+            }
+            NavigationDirection::Right => {
+                if focused.col < max_cols.saturating_sub(1) {
+                    Some(DataCellId::new(focused.row, focused.col + 1))
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Update focus and selection if movement was valid
+        if let Some(new_cell) = new_cell {
+            self.focused_cell = Some(new_cell);
+            self.update_range_selection(ordered_indices);
+        }
+    }
+
+    /// Extend selection up by one row (shift+up).
+    pub fn extend_selection_up(&mut self, ordered_indices: &OrderedIndices) {
+        self.extend_selection_direction(
+            NavigationDirection::Up,
+            ordered_indices,
+            usize::MAX,
+            usize::MAX,
+        );
+    }
+
+    /// Extend selection down by one row (shift+down).
+    pub fn extend_selection_down(&mut self, ordered_indices: &OrderedIndices, max_rows: usize) {
+        self.extend_selection_direction(
+            NavigationDirection::Down,
+            ordered_indices,
+            max_rows,
+            usize::MAX,
+        );
+    }
+
+    /// Extend selection left by one column (shift+left).
+    pub fn extend_selection_left(&mut self, ordered_indices: &OrderedIndices) {
+        self.extend_selection_direction(
+            NavigationDirection::Left,
+            ordered_indices,
+            usize::MAX,
+            usize::MAX,
+        );
+    }
+
+    /// Extend selection right by one column (shift+right).
+    pub fn extend_selection_right(&mut self, ordered_indices: &OrderedIndices, max_cols: usize) {
+        self.extend_selection_direction(
             NavigationDirection::Right,
             ordered_indices,
             usize::MAX,
