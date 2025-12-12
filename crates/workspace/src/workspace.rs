@@ -7574,7 +7574,6 @@ pub fn open_paths(
 > {
     let abs_paths = abs_paths.to_vec();
     let mut existing = None;
-    let mut best_match = None;
     let mut open_visible = OpenVisible::All;
     #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
@@ -7593,16 +7592,23 @@ pub fn open_paths(
             cx.update(|cx| {
                 for window in local_workspace_windows(cx) {
                     if let Ok(workspace) = window.read(cx) {
-                        let m = workspace.project.read(cx).visibility_for_paths(
-                            &abs_paths,
-                            &all_metadatas,
-                            open_options.open_new_workspace == None,
-                            cx,
-                        );
-                        if m > best_match {
+                        // Only reuse an existing window if the paths match its primary worktree
+                        // (the first visible worktree, typically the directory originally opened).
+                        // This allows `zed foo` to open a new window even if `foo` is already
+                        // open as a secondary worktree in another window.
+                        let dominated_by_this_window = workspace
+                            .project
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .and_then(|w| w.read(cx).as_local().map(|w| w.abs_path()))
+                            .is_some_and(|primary_path| {
+                                abs_paths.iter().any(|path| path.starts_with(&primary_path))
+                            });
+                        if dominated_by_this_window {
                             existing = Some(window);
-                            best_match = m;
-                        } else if best_match.is_none()
+                            break;
+                        } else if existing.is_none()
                             && open_options.open_new_workspace == Some(false)
                         {
                             existing = Some(window)

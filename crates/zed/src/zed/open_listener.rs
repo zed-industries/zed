@@ -754,6 +754,85 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_secondary_worktree_in_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": {
+                        "file1.txt": "content1",
+                    },
+                    "dir2": {
+                        "file2.txt": "content2",
+                    },
+                }),
+            )
+            .await;
+
+        assert_eq!(cx.windows().len(), 0);
+
+        // Open dir1 as the first worktree
+        open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
+
+        assert_eq!(cx.windows().len(), 1);
+        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
+
+        // Add dir2 as a secondary worktree to the same window
+        workspace_1
+            .update(cx, |workspace, _, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.find_or_create_worktree(path!("/root/dir2"), true, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        // Verify both worktrees are in the same window
+        workspace_1
+            .update(cx, |workspace, _, cx| {
+                let worktrees: Vec<_> = workspace.worktrees(cx).collect();
+                assert_eq!(worktrees.len(), 2, "Should have two worktrees");
+            })
+            .unwrap();
+
+        assert_eq!(cx.windows().len(), 1);
+
+        // Now open dir2 via CLI - this should open a NEW window since dir2 is not
+        // the first worktree of the existing window
+        open_workspace_file(path!("/root/dir2"), None, app_state.clone(), cx).await;
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Opening a secondary worktree should create a new window"
+        );
+
+        // Verify the new window has dir2 as its first (and only) worktree
+        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        workspace_2
+            .update(cx, |workspace, _, cx| {
+                let worktrees: Vec<_> = workspace.worktrees(cx).collect();
+                assert_eq!(worktrees.len(), 1, "New window should have one worktree");
+                assert_eq!(worktrees[0].read(cx).root_name(), "dir2");
+            })
+            .unwrap();
+
+        // Opening dir1 should still reuse the first window since it's the first worktree there
+        open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Opening a file in the first worktree should reuse the existing window"
+        );
+    }
+
+    #[gpui::test]
     async fn test_open_workspace_with_nonexistent_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
