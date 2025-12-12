@@ -11401,17 +11401,10 @@ impl Editor {
         }
     }
 
-    pub fn align_cursors(
-        &mut self,
-        _: &crate::actions::AlignCursors,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-
+    fn get_selections_left_point(&self, cx: &mut App) -> Vec<Point> {
         let display_snapshot = self.display_snapshot(cx);
         let selections = self.selections.all_adjusted(&display_snapshot);
-        let cursor_positions: Vec<Point> = selections
+        selections
             .iter()
             .map(|selection| {
                 if selection.reversed {
@@ -11420,23 +11413,93 @@ impl Editor {
                     selection.tail()
                 }
             })
-            .collect();
+            .collect()
+    }
 
-        let target_column = cursor_positions.iter().map(|p| p.column).max().unwrap_or(0);
+    pub fn align_selections(
+        &mut self,
+        _: &crate::actions::AlignSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let mut edits = Vec::new();
-        for cursor in cursor_positions {
-            let size_of_align = target_column - cursor.column;
-            if size_of_align <= 0 {
-                continue;
+        let initial_cursors = self.get_selections_left_point(cx);
+
+        // Group cursors by row and track row information
+        let mut rows: Vec<(u32, usize)> = Vec::new(); // (row_number, cursor_count)
+        let mut current_row = None;
+        let mut current_row_count = 0;
+        for cursor in &initial_cursors {
+            match current_row {
+                Some(row) if row == cursor.row => {
+                    current_row_count += 1;
+                }
+                _ => {
+                    // Save previous row if any
+                    if let Some(row) = current_row {
+                        rows.push((row, current_row_count));
+                    }
+                    // Start new row
+                    current_row = Some(cursor.row);
+                    current_row_count = 1;
+                }
             }
-            edits.push((cursor..cursor, " ".repeat(size_of_align as usize)))
+        }
+        if let Some(row) = current_row {
+            rows.push((row, current_row_count));
         }
 
-        if !edits.is_empty() {
-            self.transact(window, cx, |editor, _window, cx| {
-                editor.edit(edits, cx);
-            });
+        // For every column of alignments
+        let max_columns = rows.iter().map(|(_, count)| *count).max().unwrap_or(0);
+        for column_idx in 0..max_columns {
+            let cursor_positions = self.get_selections_left_point(cx);
+
+            let mut target_column = 0;
+            let mut cursor_index = 0;
+
+            // Calculate target_column
+            for (row_num, cursor_count) in &rows {
+                if column_idx >= *cursor_count {
+                    cursor_index += cursor_count;
+                    // Skip rows that don't have this column
+                    continue;
+                }
+
+                let cursor = &cursor_positions[cursor_index + column_idx];
+                if cursor.row == *row_num {
+                    if cursor.column > target_column {
+                        target_column = cursor.column;
+                    }
+                }
+                cursor_index += cursor_count;
+            }
+
+            // Gather edits for this column
+            let mut edits = Vec::new();
+            cursor_index = 0;
+            for (row_num, cursor_count) in &rows {
+                if column_idx >= *cursor_count {
+                    cursor_index += cursor_count;
+                    continue;
+                }
+
+                let cursor = &cursor_positions[cursor_index + column_idx];
+                if cursor.row == *row_num {
+                    let spaces_needed = target_column - cursor.column;
+                    if spaces_needed > 0 {
+                        edits.push((*cursor..*cursor, " ".repeat(spaces_needed as usize)));
+                    }
+                }
+                cursor_index += cursor_count;
+            }
+
+            // Apply edits for this column
+            if !edits.is_empty() {
+                self.transact(window, cx, |editor, _window, cx| {
+                    editor.edit(edits, cx);
+                });
+            }
         }
     }
 

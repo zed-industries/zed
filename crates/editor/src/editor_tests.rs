@@ -29188,14 +29188,14 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_align_cursors_spaces(cx: &mut TestAppContext) {
+async fn test_align_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
     // 1) one cursor, no action
     let before = " abc\n  abc\nabc\n     ˇabc";
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(before);
 
     // 2) multiple cursors at different rows
@@ -29216,7 +29216,7 @@ async fn test_align_cursors_spaces(cx: &mut TestAppContext) {
         "#
     );
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
 
     // 3) multiple selections at different rows
@@ -29237,13 +29237,14 @@ async fn test_align_cursors_spaces(cx: &mut TestAppContext) {
         "#
     );
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
 
     // 4) multiple selections at different rows, inverted head
     let before = indoc!(
         r#"
             let    «abcˇ» = 123;
+            // comment
             let  «xyzˇ» = 456;
             let «fooˇ» = 789;
             let    «barˇ» = 0;
@@ -29252,26 +29253,29 @@ async fn test_align_cursors_spaces(cx: &mut TestAppContext) {
     let after = indoc!(
         r#"
             let    «abcˇ» = 123;
+            // comment
             let    «xyzˇ» = 456;
             let    «fooˇ» = 789;
             let    «barˇ» = 0;
         "#
     );
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
 }
 
 #[gpui::test]
-async fn test_align_cursors_multicolumn(cx: &mut TestAppContext) {
+async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
+    // 1) Multicolumn, one non affected editor row
     let before = indoc!(
         r#"
             name «|ˇ» age «|ˇ» height «|ˇ» note
             Matthew «|ˇ» 7 «|ˇ» 2333 «|ˇ» smart
             Mike «|ˇ» 1234 «|ˇ» 567 «|ˇ» lazy
+            Anything that is not selected
             Miles «|ˇ» 88 «|ˇ» 99 «|ˇ» funny
         "#
     );
@@ -29280,13 +29284,15 @@ async fn test_align_cursors_multicolumn(cx: &mut TestAppContext) {
             name    «|ˇ» age  «|ˇ» height «|ˇ» note
             Matthew «|ˇ» 7    «|ˇ» 2333   «|ˇ» smart
             Mike    «|ˇ» 1234 «|ˇ» 567    «|ˇ» lazy
+            Anything that is not selected
             Miles   «|ˇ» 88   «|ˇ» 99     «|ˇ» funny
         "#
     );
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
 
+    // 2) not all alignment rows has the number of alignment columns
     let before = indoc!(
         r#"
             name «|ˇ» age «|ˇ» height
@@ -29297,13 +29303,13 @@ async fn test_align_cursors_multicolumn(cx: &mut TestAppContext) {
     );
     let after = indoc!(
         r#"
-            name    «|ˇ» age  «|ˇ» height
-            Matthew «|ˇ» 7    «|ˇ» 2333
+            name    «|ˇ» age «|ˇ» height
+            Matthew «|ˇ» 7   «|ˇ» 2333
             Mike    «|ˇ» 1234
-            Miles   «|ˇ» 88   «|ˇ» 99
+            Miles   «|ˇ» 88  «|ˇ» 99
         "#
     );
     cx.set_state(before);
-    cx.update_editor(|e, window, cx| e.align_cursors(&AlignCursors::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
 }
