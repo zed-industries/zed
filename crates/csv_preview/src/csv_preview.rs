@@ -22,7 +22,18 @@ mod table_cell;
 mod table_like_content;
 mod types;
 
-actions!(csv, [OpenPreview, CopySelected, ClearSelection]);
+actions!(
+    csv,
+    [
+        OpenPreview,
+        CopySelected,
+        ClearSelection,
+        MoveFocusUp,
+        MoveFocusDown,
+        MoveFocusLeft,
+        MoveFocusRight
+    ]
+);
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
 
 pub struct CsvPreviewView {
@@ -72,6 +83,37 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         self.selection = TableSelection::new();
+        cx.notify();
+    }
+
+    fn move_focus_up(&mut self, _: &MoveFocusUp, _window: &mut Window, cx: &mut Context<Self>) {
+        let ordered_indices =
+            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
+        self.selection.move_focus_up(&ordered_indices);
+        cx.notify();
+    }
+
+    fn move_focus_down(&mut self, _: &MoveFocusDown, _window: &mut Window, cx: &mut Context<Self>) {
+        let ordered_indices =
+            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
+        let max_rows = self.contents.rows.len();
+        self.selection.move_focus_down(&ordered_indices, max_rows);
+        cx.notify();
+    }
+
+    fn move_focus_left(&mut self, _: &MoveFocusLeft, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selection.move_focus_left();
+        cx.notify();
+    }
+
+    fn move_focus_right(
+        &mut self,
+        _: &MoveFocusRight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_cols = self.contents.headers.len();
+        self.selection.move_focus_right(max_cols);
         cx.notify();
     }
 

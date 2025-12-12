@@ -212,12 +212,18 @@ impl CsvPreviewView {
                 this.selection
                     .is_cell_selected(display_index.into(), col, &ordered_indices);
 
+            // Check if this cell is focused using display coordinates
+            let is_focused =
+                this.selection
+                    .is_cell_focused(display_index.into(), col, &ordered_indices);
+
             elements.push(CsvPreviewView::create_selectable_cell(
                 DisplayCellId::new(display_index.into(), col),
                 cell_content,
                 cx.entity(),
                 selected_bg,
                 is_selected,
+                is_focused,
                 this.settings.vertical_alignment,
                 this.settings.font_type,
                 cx,

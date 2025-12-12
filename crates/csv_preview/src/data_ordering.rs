@@ -22,12 +22,18 @@ pub struct Ordering {
 #[derive(Debug, Clone)]
 pub struct OrderedIndices {
     mapping: HashMap<DisplayRow, DataRow>,
+    reverse_mapping: HashMap<DataRow, DisplayRow>,
 }
 
 impl OrderedIndices {
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
+    }
+
+    /// Get the display row for a given data row
+    pub fn get_display_row(&self, data_row: DataRow) -> Option<DisplayRow> {
+        self.reverse_mapping.get(&data_row).copied()
     }
 }
 
@@ -48,13 +54,23 @@ pub fn generate_ordered_indices(
     };
 
     // Create mapping from display position to data row
-    let mapping = ordered_indices
-        .into_iter()
+    let mapping: HashMap<DisplayRow, DataRow> = ordered_indices
+        .iter()
         .enumerate()
-        .map(|(display_idx, data_idx)| (DisplayRow::new(display_idx), DataRow::new(data_idx)))
+        .map(|(display_idx, &data_idx)| (DisplayRow::new(display_idx), DataRow::new(data_idx)))
         .collect();
 
-    OrderedIndices { mapping }
+    // Create reverse mapping from data row to display position
+    let reverse_mapping: HashMap<DataRow, DisplayRow> = ordered_indices
+        .into_iter()
+        .enumerate()
+        .map(|(display_idx, data_idx)| (DataRow::new(data_idx), DisplayRow::new(display_idx)))
+        .collect();
+
+    OrderedIndices {
+        mapping,
+        reverse_mapping,
+    }
 }
 
 fn order_indices(

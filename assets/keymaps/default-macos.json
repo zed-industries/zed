@@ -1302,7 +1302,11 @@
     "context": "CsvPreview",
     "bindings": {
       "cmd-c": "csv::CopySelected",
-      "escape": "csv::ClearSelection"
+      "escape": "csv::ClearSelection",
+      "up": "csv::MoveFocusUp",
+      "down": "csv::MoveFocusDown",
+      "left": "csv::MoveFocusLeft",
+      "right": "csv::MoveFocusRight"
     }
   },
   {
