@@ -454,13 +454,13 @@ where
             return Ok(None);
         } else {
             // Validate that all tool calls have required fields
+            // For streaming scenarios, we're more lenient about missing id fields
             for tool_call in &vec {
-                if tool_call.r#type.is_none()
-                    || tool_call.function.is_none()
-                    || tool_call.id.is_none()
-                {
-                    return Ok(None); // Malformed - missing required fields
+                if tool_call.r#type.is_none() || tool_call.function.is_none() {
+                    return Ok(None); // Malformed - missing required type/function fields
                 }
+                // Note: We allow missing id fields for streaming chunks
+                // They will be handled by the conversion logic
             }
             return Ok(Some(vec));
         }
@@ -503,21 +503,20 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
                     return None; // Malformed - no name field
                 }
 
-                // For standard OpenAI tool calls, we need an id field
-                // If this is missing, it's malformed
-                if value.get("id").is_none() {
-                    return None; // Malformed - no id field
-                }
-
                 let function_chunk =
                     serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
 
+                // For streaming chunks, generate a temporary ID if missing
+                // This handles DeepSeek's format where id comes in separate chunks
+                let tool_call_id = value
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| Some(format!("temp-id-{}", index)));
+
                 return Some(ToolCallChunk {
                     index,
-                    id: value
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                    id: tool_call_id,
                     r#type: Some("function".to_string()),
                     function: Some(function_chunk),
                 });
@@ -958,7 +957,7 @@ mod tests {
 
     #[test]
     fn test_parse_malformed_tool_calls() {
-        // Test parsing responses with malformed tool calls (missing required 'id' field)
+        // Test parsing responses with tool calls missing 'id' field (common in streaming)
         let malformed_tool_calls_response = json!({
             "choices": [{
                 "index": 0,
@@ -984,13 +983,22 @@ mod tests {
         match result {
             Ok(ResponseStreamResult::Ok(event)) => {
                 assert_eq!(event.choices.len(), 1);
-                // The malformed tool calls (missing id field) should be ignored and treated as empty
+                // With our lenient streaming handling, tool calls without id fields should be accepted
+                // and given temporary IDs
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
                         assert!(
-                            delta.tool_calls.is_none(),
-                            "Malformed tool calls (missing id) should be treated as None"
+                            delta.tool_calls.is_some(),
+                            "Tool calls without id should be accepted with temporary IDs for streaming"
                         );
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1, "Should have one tool call");
+                            assert!(tool_calls[0].id.is_some(), "Should have a generated ID");
+                            assert!(
+                                tool_calls[0].id.as_ref().unwrap().starts_with("temp-id-"),
+                                "Should have temporary ID"
+                            );
+                        }
                     }
                 }
             }
