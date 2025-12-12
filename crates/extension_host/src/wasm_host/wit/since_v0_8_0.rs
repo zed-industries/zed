@@ -1280,6 +1280,8 @@ impl llm_provider::Host for WasmState {
 
         self.on_main_thread(move |cx| {
             async move {
+                // Bind to port 0 to let the OS assign an available port, then substitute
+                // it into the auth URL's {port} placeholder for the OAuth callback.
                 let listener = TcpListener::bind("127.0.0.1:0")
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to bind localhost server: {}", e))?;
