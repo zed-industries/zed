@@ -22,7 +22,8 @@ use git::{
     COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
+    Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -4144,7 +4145,7 @@ impl BackgroundScanner {
 
         let progress_update_count = AtomicUsize::new(0);
         self.executor
-            .scoped(|scope| {
+            .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         let mut last_progress_update_count = 0;
