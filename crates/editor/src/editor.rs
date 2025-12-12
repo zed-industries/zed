@@ -21070,6 +21070,70 @@ impl Editor {
         }
     }
 
+    pub fn copy_code_context(
+        &mut self,
+        _: &CopyCodeContext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let display_snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<Point>(&display_snapshot);
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.read(cx);
+
+        let file_path = self
+            .target_file(cx)
+            .map(|file| file.path().display(file.path_style(cx)).to_string())
+            .unwrap_or_else(|| "untitled".to_string());
+
+        let language_name = self
+            .active_excerpt(cx)
+            .and_then(|(_, buffer, _)| {
+                buffer
+                    .read(cx)
+                    .language()
+                    .map(|lang| lang.code_fence_block_name().to_string())
+            })
+            .unwrap_or_else(|| "text".to_string());
+
+        let mut result = String::new();
+        let mut is_first = true;
+
+        for selection in &selections {
+            let (start, end) = if selection.is_empty() {
+                let row = selection.head().row;
+                let line_start = Point::new(row, 0);
+                let line_end = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                (line_start, line_end)
+            } else {
+                (selection.start, selection.end)
+            };
+
+            let start_row = start.row + 1;
+            let end_row = end.row + 1;
+
+            let text: String = snapshot.text_for_range(start..end).collect();
+
+            let line_range = if start_row == end_row {
+                format!("[{}]", start_row)
+            } else {
+                format!("[{}-{}]", start_row, end_row)
+            };
+
+            if !is_first {
+                result.push_str("\n\n");
+            }
+            is_first = false;
+
+            result.push_str(&format!(
+                "file:{}:{}\n```{}\n{}\n```",
+                file_path, line_range, language_name, text
+            ));
+        }
+
+        cx.write_to_clipboard(ClipboardItem::new_string(result));
+    }
+
     pub fn open_permalink_to_line(
         &mut self,
         _: &OpenPermalinkToLine,

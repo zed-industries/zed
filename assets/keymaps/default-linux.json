@@ -74,6 +74,7 @@
       "copy": "editor::Copy",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
+      "ctrl-shift-alt-c": "editor::CopyCodeContext",
       "paste": "editor::Paste",
       "shift-insert": "editor::Paste",
       "ctrl-v": "editor::Paste",

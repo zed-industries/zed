@@ -289,6 +289,7 @@ impl EditorElement {
         register_action(editor, window, Editor::kill_ring_yank);
         register_action(editor, window, Editor::copy);
         register_action(editor, window, Editor::copy_and_trim);
+        register_action(editor, window, Editor::copy_code_context);
         register_action(editor, window, Editor::diff_clipboard_with_selection);
         register_action(editor, window, Editor::paste);
         register_action(editor, window, Editor::undo);

@@ -72,6 +72,7 @@
       "ctrl-x": "editor::Cut",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
+      "ctrl-shift-alt-c": "editor::CopyCodeContext",
       "shift-insert": "editor::Paste",
       "ctrl-v": "editor::Paste",
       "ctrl-z": "editor::Undo",

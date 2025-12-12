@@ -7526,6 +7526,113 @@ if is_entire_line {
 }
 
 #[gpui::test]
+async fn test_copy_code_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    cx.set_state(indoc! {"
+        fn main() {
+            «let x = 42;ˇ»
+            println!(\"{}\", x);
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.copy_code_context(&CopyCodeContext, window, cx));
+    let clipboard_content = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string))
+        .unwrap();
+
+    assert!(
+        clipboard_content.contains("file:"),
+        "Should contain file path"
+    );
+    assert!(
+        clipboard_content.contains("[2]"),
+        "Should contain line number"
+    );
+    assert!(
+        clipboard_content.contains("```rust"),
+        "Should contain rust code fence"
+    );
+    assert!(
+        clipboard_content.contains("let x = 42;"),
+        "Should contain selected code"
+    );
+    assert!(
+        clipboard_content.contains("```"),
+        "Should end with code fence"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_code_context_multiline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    cx.set_state(indoc! {"
+        fn main() {
+            «let x = 42;
+            let y = 10;ˇ»
+            println!(\"{}\", x + y);
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.copy_code_context(&CopyCodeContext, window, cx));
+    let clipboard_content = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string))
+        .unwrap();
+
+    assert!(
+        clipboard_content.contains("[2-3]"),
+        "Should contain line range for multiline selection"
+    );
+    assert!(
+        clipboard_content.contains("let x = 42;"),
+        "Should contain first line"
+    );
+    assert!(
+        clipboard_content.contains("let y = 10;"),
+        "Should contain second line"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_code_context_no_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = ˇ42;
+            println!(\"{}\", x);
+        }
+    "});
+
+    cx.update_editor(|e, window, cx| e.copy_code_context(&CopyCodeContext, window, cx));
+    let clipboard_content = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string))
+        .unwrap();
+
+    assert!(
+        clipboard_content.contains("[2]"),
+        "Should contain current line number when no selection"
+    );
+    assert!(
+        clipboard_content.contains("let x = 42;"),
+        "Should contain the entire current line when no selection"
+    );
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
