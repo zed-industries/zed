@@ -63,7 +63,7 @@ pub async fn run_format_prompt(
                 ))
             })??;
             let prompt = format_zeta_prompt(&input);
-            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone());
+            let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone())?;
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output,
