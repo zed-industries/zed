@@ -39,7 +39,8 @@ actions!(
         SelectUp,
         SelectDown,
         SelectLeft,
-        SelectRight
+        SelectRight,
+        SelectAll
     ]
 );
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
@@ -145,6 +146,14 @@ impl CsvPreviewView {
         let max_cols = self.contents.headers.len();
         self.selection
             .extend_selection_right(&self.ordered_indices, max_cols);
+        cx.notify();
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let max_rows = self.contents.rows.len();
+        let max_cols = self.contents.headers.len();
+        self.selection
+            .select_all(&self.ordered_indices, max_rows, max_cols);
         cx.notify();
     }
 

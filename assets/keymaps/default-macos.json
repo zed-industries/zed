@@ -1310,7 +1310,8 @@
       "shift-up": "csv::SelectUp",
       "shift-down": "csv::SelectDown",
       "shift-left": "csv::SelectLeft",
-      "shift-right": "csv::SelectRight"
+      "shift-right": "csv::SelectRight",
+      "cmd-a": "csv::SelectAll"
     }
   },
   {

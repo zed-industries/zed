@@ -437,4 +437,40 @@ impl TableSelection {
             max_cols,
         );
     }
+
+    /// Select all visible cells in the table (cmd+a / ctrl+a).
+    pub fn select_all(
+        &mut self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) {
+        if max_rows == 0 || max_cols == 0 {
+            return;
+        }
+
+        self.selected_cells.clear();
+
+        // Select all cells from (0,0) to (max_rows-1, max_cols-1) in display coordinates
+        for display_row_index in 0..max_rows {
+            for col in 0..max_cols {
+                if let Some(data_row) =
+                    ordered_indices.get_data_row(DisplayRow::new(display_row_index))
+                {
+                    self.selected_cells.insert(DataCellId::new(data_row, col));
+                }
+            }
+        }
+
+        // Set focus to the first cell and anchor to the last cell
+        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+            self.focused_cell = Some(DataCellId::new(first_data_row, 0));
+
+            // Set anchor to the last cell for potential extending
+            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
+            {
+                self.selection_anchor = Some(DataCellId::new(last_data_row, max_cols - 1));
+            }
+        }
+    }
 }
