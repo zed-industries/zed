@@ -57,18 +57,18 @@ enum NodeKind {
     /// Internal node with children.
     Internal {
         /// Indices of child nodes (2 to MAX_CHILDREN).
-        children: ChildArray,
+        children: NodeChildren,
     },
 }
 
 /// Fixed-size array for child indices, avoiding heap allocation.
 #[derive(Debug, Clone)]
-struct ChildArray {
+struct NodeChildren {
     indices: [usize; MAX_CHILDREN],
     len: u8,
 }
 
-impl ChildArray {
+impl NodeChildren {
     fn new() -> Self {
         Self {
             indices: [0; MAX_CHILDREN],
@@ -216,7 +216,7 @@ where
             let root_bounds = self.nodes[root_idx].bounds.clone();
             let root_order = self.nodes[root_idx].max_order;
 
-            let mut children = ChildArray::new();
+            let mut children = NodeChildren::new();
             children.push(root_idx);
             children.push(new_leaf_idx);
 
@@ -273,7 +273,7 @@ where
                     let sibling_bounds = self.nodes[best_child_idx].bounds.clone();
                     let sibling_order = self.nodes[best_child_idx].max_order;
 
-                    let mut new_children = ChildArray::new();
+                    let mut new_children = NodeChildren::new();
                     new_children.push(best_child_idx);
                     new_children.push(new_leaf_idx);
 
