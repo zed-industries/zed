@@ -23,7 +23,6 @@ use crate::{ModalView, ToggleWorktreeSecurity};
 pub struct SecurityModal {
     restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
     home_dir: Option<PathBuf>,
-    dismissed: bool,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
@@ -49,14 +48,8 @@ impl ModalView for SecurityModal {
     fn fade_out_background(&self) -> bool {
         true
     }
-
-    fn undismissable(&self) -> bool {
-        true
-    }
 }
 
-// TODO kb captures events from other windows, bad
-// TODO dl hover and other regular keybindings still trigger elements underneath the alert modal
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
@@ -78,9 +71,6 @@ impl Render for SecurityModal {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
                 this.trust_and_dismiss(cx);
-            }))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
-                this.dismiss(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
                 this.dismiss(cx);
@@ -232,7 +222,6 @@ impl SecurityModal {
             remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
-            dismissed: false,
             trust_parents: false,
             home_dir: std::env::home_dir(),
         };
@@ -311,7 +300,6 @@ impl SecurityModal {
     }
 
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
-        self.dismissed = true;
         cx.emit(DismissEvent);
     }
 
