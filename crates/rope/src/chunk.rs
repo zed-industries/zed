@@ -47,17 +47,6 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("sse2") {
-                return unsafe { Self::new_sse2(text) };
-            }
-        }
-
-        Self::new_scalar(text)
-    }
-
-    fn new_scalar(text: &str) -> Self {
         let text = ArrayString::from(text).unwrap();
 
         const CHUNK_SIZE: usize = 8;
@@ -105,88 +94,6 @@ impl Chunk {
             chars_utf16: (Bitmap::from_le_bytes(chars_utf16_bytes) << 1) | chars,
             newlines: Bitmap::from_le_bytes(newlines_bytes),
             tabs: Bitmap::from_le_bytes(tabs_bytes),
-        }
-    }
-
-    #[target_feature(enable = "sse2")]
-    #[cfg(target_arch = "x86_64")]
-    fn new_sse2(text: &str) -> Self {
-        use std::arch::x86_64::*;
-
-        let text = ArrayString::from(text).unwrap();
-
-        const CHUNK_SIZE: usize = std::mem::size_of::<__m128i>();
-        let (chunks, last) = text.as_bytes().as_chunks::<CHUNK_SIZE>();
-
-        let mut chars = [0u16; MAX_BASE / CHUNK_SIZE];
-        let mut newlines = [0u16; MAX_BASE / CHUNK_SIZE];
-        let mut tabs = [0u16; MAX_BASE / CHUNK_SIZE];
-        let mut chars_utf16 = [0u16; MAX_BASE / CHUNK_SIZE];
-
-        let mut process_chunk = |v, ix| {
-            // This is equivalent to: byte < 128 || byte >= 192
-            // see util::is_utf8_char_boundary
-            let cmp = _mm_cmpgt_epi8(v, _mm_set1_epi8(-0x40 - 1));
-            chars[ix] = _mm_movemask_epi8(cmp) as u16;
-
-            let cmp = _mm_cmpeq_epi8(v, _mm_set1_epi8(b'\n' as i8));
-            newlines[ix] = _mm_movemask_epi8(cmp) as u16;
-
-            let cmp = _mm_cmpeq_epi8(v, _mm_set1_epi8(b'\t' as i8));
-            tabs[ix] = _mm_movemask_epi8(cmp) as u16;
-
-            // This is equivalent to: byte >= 240
-            // additional -0x80 is required to convert this unsigned comparison into signed
-            let v = _mm_add_epi8(v, _mm_set1_epi8(-0x80));
-            let cmp = _mm_cmpgt_epi8(v, _mm_set1_epi8((0xF0 - 0x80 - 1) as i8));
-            chars_utf16[ix] = _mm_movemask_epi8(cmp) as u16;
-        };
-
-        for (ix, chunk) in chunks.iter().enumerate() {
-            // SAFETY: since ArrayString was created without panic we can show
-            // that text.len() <= MAX_BASE, therefore each chunk of size
-            // CHUNK_SIZE will have index in 0..MAX_BASE / CHUNK_SIZE
-            // For some reason compiler struggles to prove it and generates
-            // bound checks without this assert
-            unsafe { std::hint::assert_unchecked(ix < MAX_BASE / CHUNK_SIZE) };
-
-            // SAFETY: chunk is fully inside text slice
-            let v = unsafe { _mm_loadu_si128(chunk.as_ptr() as *const __m128i) };
-
-            process_chunk(v, ix);
-        }
-
-        if !last.is_empty() {
-            // The last chunk is smaller than others so we pad it to
-            // CHUNK_SIZE with 191 which is chosen because it gives false for
-            // all comparisons
-            let mut chunk = [191u8; CHUNK_SIZE];
-            chunk[..last.len()].copy_from_slice(last);
-            let ix = chunks.len();
-
-            // SAFETY: the remainder slice is not empty, therefore chunks.len()
-            // must be < MAX_BASE / CHUNK_SIZE
-            unsafe { std::hint::assert_unchecked(ix < MAX_BASE / CHUNK_SIZE) };
-
-            // SAFETY: chunk is on stack and has the same size as __m128i
-            let v = unsafe { _mm_loadu_si128(chunk.as_ptr() as *const __m128i) };
-
-            process_chunk(v, ix);
-        }
-
-        // SAFETY: any [u16; 8] is a valid u128.
-        // This assumes little endian, which x86_64 always is
-        let chars_utf16: Bitmap = unsafe { std::mem::transmute(chars_utf16) };
-        let chars: Bitmap = unsafe { std::mem::transmute(chars) };
-        let newlines: Bitmap = unsafe { std::mem::transmute(newlines) };
-        let tabs: Bitmap = unsafe { std::mem::transmute(tabs) };
-
-        Chunk {
-            text,
-            chars,
-            chars_utf16: (chars_utf16 << 1) | chars,
-            newlines,
-            tabs,
         }
     }
 
