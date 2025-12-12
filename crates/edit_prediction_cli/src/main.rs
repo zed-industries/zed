@@ -1,4 +1,5 @@
 mod anthropic_client;
+mod distill;
 mod example;
 mod format_prompt;
 mod headless;
@@ -17,6 +18,7 @@ use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 
+use crate::distill::run_distill;
 use crate::example::{read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
@@ -56,6 +58,9 @@ enum Command {
     Predict(PredictArgs),
     /// Computes a score based on actual and expected patches
     Score(PredictArgs),
+    /// Prepares a distillation dataset by copying expected outputs to
+    /// predicted outputs and removing actual outputs and prompts.
+    Distill,
     /// Print aggregated scores
     Eval(PredictArgs),
     /// Remove git repositories and worktrees
@@ -89,6 +94,7 @@ enum PredictionProvider {
     Zeta1,
     Zeta2,
     Teacher,
+    TeacherNonBatching,
 }
 
 impl EpArgs {
@@ -192,6 +198,9 @@ fn main() {
                                     cx,
                                 )
                                 .await;
+                            }
+                            Command::Distill => {
+                                run_distill(example).await;
                             }
                             Command::Score(args) | Command::Eval(args) => {
                                 run_scoring(example, &args, app_state, progress, cx).await;

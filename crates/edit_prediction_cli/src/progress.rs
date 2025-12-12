@@ -1,29 +1,36 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fmt::Display,
     io::{IsTerminal, Write},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-#[cfg(unix)]
-fn get_terminal_width() -> usize {
-    unsafe {
-        let mut winsize: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut winsize) == 0
-            && winsize.ws_col > 0
-        {
-            winsize.ws_col as usize
-        } else {
-            80
-        }
-    }
+pub struct Progress {
+    inner: Mutex<ProgressInner>,
 }
 
-#[cfg(not(unix))]
-fn get_terminal_width() -> usize {
-    80
+struct ProgressInner {
+    completed: Vec<CompletedTask>,
+    in_progress: HashMap<String, InProgressTask>,
+    is_tty: bool,
+    terminal_width: usize,
+    max_example_name_len: usize,
+}
+
+#[derive(Clone)]
+struct InProgressTask {
+    step: Step,
+    started_at: Instant,
+    substatus: Option<String>,
+    info: Option<(String, InfoStyle)>,
+}
+
+struct CompletedTask {
+    step: Step,
+    example_name: String,
+    duration: Duration,
+    info: Option<(String, InfoStyle)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,6 +40,12 @@ pub enum Step {
     FormatPrompt,
     Predict,
     Score,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InfoStyle {
+    Normal,
+    Warning,
 }
 
 impl Step {
@@ -57,44 +70,7 @@ impl Step {
     }
 }
 
-impl Display for Step {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InfoStyle {
-    Normal,
-    Warning,
-}
-
-#[derive(Clone)]
-struct InProgressTask {
-    step: Step,
-    started_at: Instant,
-    substatus: Option<String>,
-    info: Option<(String, InfoStyle)>,
-}
-
-struct CompletedTask {
-    step: Step,
-    example_name: String,
-    duration: Duration,
-    info: Option<(String, InfoStyle)>,
-}
-
-struct ProgressInner {
-    completed: Vec<CompletedTask>,
-    in_progress: HashMap<String, InProgressTask>,
-    is_tty: bool,
-    terminal_width: usize,
-    max_example_name_len: usize,
-}
-
-pub struct Progress {
-    inner: Mutex<ProgressInner>,
-}
+const RIGHT_MARGIN: usize = 4;
 
 impl Progress {
     pub fn new() -> Arc<Self> {
@@ -171,7 +147,6 @@ impl Progress {
     fn print_completed(inner: &ProgressInner, task: &CompletedTask) {
         let duration = format_duration(task.duration);
         let name_width = inner.max_example_name_len;
-        let right_margin = 4;
 
         if inner.is_tty {
             let reset = "\x1b[0m";
@@ -201,7 +176,7 @@ impl Progress {
             let duration_with_margin = format!("{duration} ");
             let padding_needed = inner
                 .terminal_width
-                .saturating_sub(right_margin)
+                .saturating_sub(RIGHT_MARGIN)
                 .saturating_sub(duration_with_margin.len())
                 .saturating_sub(strip_ansi_len(&prefix));
             let padding = " ".repeat(padding_needed);
@@ -235,8 +210,9 @@ impl Progress {
         let mut tasks: Vec<_> = inner.in_progress.iter().collect();
         tasks.sort_by_key(|(name, _)| *name);
 
-        let prefix = format!("{bold}{cyan}{:>12}{reset} ", "Working");
-        let prefix_visible_len = 13; // "     Working " without ANSI codes
+        let prefix_label = format!("{:>12} ", "Working");
+        let prefix_visible_len = prefix_label.len();
+        let prefix = format!("{bold}{cyan}{prefix_label}{reset}");
 
         let mut line = prefix;
         let mut visible_len = prefix_visible_len;
@@ -312,13 +288,13 @@ impl Progress {
         } else {
             format!(" {}-{}/{} ", start_index + 1, end_index, total_examples)
         };
-        let right_width = 4;
+
         let left_width = inner
             .terminal_width
             .saturating_sub(label.chars().count())
-            .saturating_sub(right_width);
+            .saturating_sub(RIGHT_MARGIN);
         let left_line = "─".repeat(left_width);
-        let right_line = "─".repeat(right_width);
+        let right_line = "─".repeat(RIGHT_MARGIN);
 
         if inner.is_tty {
             eprintln!("{dim}{left_line}{reset}{label}{dim}{right_line}{reset}");
@@ -327,46 +303,6 @@ impl Progress {
         }
 
         eprintln!();
-    }
-}
-
-fn strip_ansi_len(s: &str) -> usize {
-    let mut len = 0;
-    let mut in_escape = false;
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c == 'm' {
-                in_escape = false;
-            }
-        } else {
-            len += 1;
-        }
-    }
-    len
-}
-
-fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
-    }
-}
-
-fn format_duration(duration: Duration) -> String {
-    let millis = duration.as_millis();
-    if millis < 1000 {
-        format!("{}ms", millis)
-    } else {
-        let secs = duration.as_secs_f64();
-        if secs < 60.0 {
-            format!("{:.1}s", secs)
-        } else {
-            let mins = secs / 60.0;
-            format!("{:.1}m", mins)
-        }
     }
 }
 
@@ -406,5 +342,62 @@ impl StepProgress {
 impl Drop for StepProgress {
     fn drop(&mut self) {
         self.progress.finish(self.step, &self.example_name);
+    }
+}
+
+#[cfg(unix)]
+fn get_terminal_width() -> usize {
+    unsafe {
+        let mut winsize: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut winsize) == 0
+            && winsize.ws_col > 0
+        {
+            winsize.ws_col as usize
+        } else {
+            80
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn get_terminal_width() -> usize {
+    80
+}
+
+fn strip_ansi_len(s: &str) -> usize {
+    let mut len = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            len += 1;
+        }
+    }
+    len
+}
+
+fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len.saturating_sub(1)])
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    const MINUTE_IN_MILLIS: u128 = 60 * 1000;
+
+    let millis = duration.as_millis();
+    if millis < 1000 {
+        format!("{}ms", millis)
+    } else if millis < MINUTE_IN_MILLIS {
+        format!("{:.1}s", millis / 1_000)
+    } else {
+        format!("{:.1}m", millis / MINUTE_IN_MILLIS)
     }
 }
