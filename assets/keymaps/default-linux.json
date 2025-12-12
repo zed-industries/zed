@@ -1186,6 +1186,12 @@
     },
   },
   {
+    "context": "CsvPreview",
+    "bindings": {
+      "ctrl-c": "csv::CopySelected"
+    }
+  },
+  {
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
