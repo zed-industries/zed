@@ -9,6 +9,7 @@ use crate::{
     settings::CsvPreviewSettings, table_cell::TableSelection, table_like_content::TableLikeContent,
 };
 
+mod copy_selected;
 mod data_ordering;
 mod nasty_code_duplication;
 mod parser;
@@ -19,7 +20,7 @@ mod settings;
 mod table_cell;
 mod table_like_content;
 
-actions!(csv, [OpenPreview]);
+actions!(csv, [OpenPreview, CopySelected]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {

@@ -1,7 +1,7 @@
 use gpui::MouseButton;
 use ui::{div, prelude::*};
 
-use crate::{CsvPreviewView, settings::FontType};
+use crate::{CsvPreviewView, KEY_CONTEXT_NAME, settings::FontType};
 
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -12,6 +12,7 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
+            .on_action(cx.listener(Self::copy_selected))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {
