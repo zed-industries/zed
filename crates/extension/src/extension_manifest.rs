@@ -314,19 +314,14 @@ pub struct LanguageModelManifestEntry {
     /// Display name for the model.
     pub name: String,
     /// Maximum input token count.
-    #[serde(default)]
     pub max_token_count: u64,
     /// Maximum output tokens (optional).
-    #[serde(default)]
     pub max_output_tokens: Option<u64>,
     /// Whether the model supports image inputs.
-    #[serde(default)]
     pub supports_images: bool,
     /// Whether the model supports tool/function calling.
-    #[serde(default)]
     pub supports_tools: bool,
     /// Whether the model supports extended thinking/reasoning.
-    #[serde(default)]
     pub supports_thinking: bool,
 }
 
