@@ -5,17 +5,16 @@ use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    cell_selection::TableSelection, data_ordering::Ordering, parser::EditorState,
-    renderer::nasty_code_duplication::ColumnWidths, settings::CsvPreviewSettings,
-    table_like_content::TableLikeContent,
+    data_ordering::Ordering, parser::EditorState, renderer::nasty_code_duplication::ColumnWidths,
+    settings::CsvPreviewSettings, table_cell::TableSelection, table_like_content::TableLikeContent,
 };
 
-mod cell_selection;
 mod data_ordering;
 mod parser;
 mod renderer;
 mod row_identifiers;
 mod settings;
+mod table_cell;
 mod table_like_content;
 
 actions!(csv, [OpenPreview]);
