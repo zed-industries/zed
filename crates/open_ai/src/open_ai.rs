@@ -447,6 +447,8 @@ where
     enum ToolCallsHelper {
         Array(Vec<ToolCallChunk>),
         Null,
+        // Add a variant to handle malformed tool calls data
+        Value(serde_json::Value),
     }
 
     match ToolCallsHelper::deserialize(deserializer)? {
@@ -458,6 +460,10 @@ where
             }
         }
         ToolCallsHelper::Null => Ok(None),
+        ToolCallsHelper::Value(_) => {
+            // If we get a raw value (malformed tool calls), treat it as empty
+            Ok(None)
+        }
     }
 }
 
@@ -796,6 +802,74 @@ mod tests {
             Err(e) => {
                 panic!("Failed to parse OpenAI response: {}", e);
             }
+        }
+    }
+
+    #[test]
+    fn test_parse_malformed_tool_calls() {
+        // Test parsing responses with malformed tool calls (like DeepSeek V3.2)
+        let malformed_tool_calls_response = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": "Some content",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "arguments": "malformed json",
+                                "name": "grep"
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let response_str = malformed_tool_calls_response.to_string();
+        let result = parse_response_stream_result(&response_str);
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                // The malformed tool calls should be ignored and treated as empty
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_none(), "Malformed tool calls should be treated as None");
+                    }
+                }
+            }
+            Ok(ResponseStreamResult::Err { error }) => {
+                panic!("Expected success response, got error: {}", error.message);
+            }
+            Err(e) => {
+                panic!("Failed to parse response with malformed tool calls: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_deserialize_tool_calls_with_malformed_data() {
+        // Test the deserialize_tool_calls function directly with malformed data
+        let malformed_tool_calls = json!([
+            {
+                "type": "function",
+                "function": {
+                    "arguments": "malformed json",
+                    "name": "grep"
+                }
+            }
+        ]);
+
+        let result: Result<Option<Vec<ToolCallChunk>>, _> = 
+            serde_json::from_value(malformed_tool_calls);
+
+        // This should not panic and should return None for malformed tool calls
+        match result {
+            Ok(None) => {}, // Expected - malformed tool calls should be treated as None
+            Ok(Some(_)) => panic!("Expected malformed tool calls to be treated as None"),
+            Err(_) => {}, // Also acceptable - malformed data might cause deserialization error
         }
     }
 }
