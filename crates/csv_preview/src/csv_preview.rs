@@ -5,18 +5,18 @@ use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    cell_selection::TableSelection, data_ordering::Ordering, nasty_code_duplication::ColumnWidths,
-    parser::EditorState, settings::CsvPreviewSettings, table_data::TableData,
+    cell_selection::TableSelection, data_ordering::Ordering, parser::EditorState,
+    renderer::nasty_code_duplication::ColumnWidths, settings::CsvPreviewSettings,
+    table_like_content::TableLikeContent,
 };
 
 mod cell_selection;
 mod data_ordering;
-mod nasty_code_duplication;
 mod parser;
 mod renderer;
 mod row_identifiers;
 mod settings;
-mod table_data;
+mod table_like_content;
 
 actions!(csv, [OpenPreview]);
 
@@ -33,7 +33,7 @@ pub fn init(cx: &mut App) {
 pub struct CsvPreviewView {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) active_editor: Option<EditorState>,
-    pub(crate) contents: TableData,
+    pub(crate) contents: TableLikeContent,
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
@@ -78,7 +78,7 @@ impl CsvPreviewView {
 
     fn from_editor(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-        let contents = TableData::default();
+        let contents = TableLikeContent::default();
 
         cx.new(|cx| {
             let mut view = Self {

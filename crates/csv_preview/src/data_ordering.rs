@@ -1,4 +1,4 @@
-use crate::table_data::TableData;
+use crate::table_like_content::TableLikeContent;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum OrderingDirection {
@@ -17,7 +17,10 @@ pub struct Ordering {
 /// Generate ordered row indices based on current ordering settings.
 /// Note: ordering.col_idx refers to CSV data columns (0-based), not display columns
 /// (display columns include the line number column at index 0)
-pub fn generate_ordered_indices(ordering: Option<Ordering>, contents: &TableData) -> Vec<usize> {
+pub fn generate_ordered_indices(
+    ordering: Option<Ordering>,
+    contents: &TableLikeContent,
+) -> Vec<usize> {
     let indices: Vec<usize> = (0..contents.rows.len()).collect();
 
     let Some(ordering) = ordering else {
@@ -27,7 +30,11 @@ pub fn generate_ordered_indices(ordering: Option<Ordering>, contents: &TableData
     order_indices(contents, indices, ordering)
 }
 
-fn order_indices(contents: &TableData, mut indices: Vec<usize>, ordering: Ordering) -> Vec<usize> {
+fn order_indices(
+    contents: &TableLikeContent,
+    mut indices: Vec<usize>,
+    ordering: Ordering,
+) -> Vec<usize> {
     indices.sort_by(|&a, &b| {
         let row_a = &contents.rows[a];
         let row_b = &contents.rows[b];
