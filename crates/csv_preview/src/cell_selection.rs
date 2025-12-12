@@ -34,7 +34,9 @@ use std::collections::HashSet;
 use ui::{div, prelude::*};
 
 use crate::{
-    CsvPreviewView, data_ordering::generate_ordered_indices, settings::FontType,
+    CsvPreviewView,
+    data_ordering::{OrderedIndices, generate_ordered_indices},
+    settings::FontType,
     settings::VerticalAlignment,
 };
 
@@ -85,18 +87,16 @@ impl TableSelection {
     /// Example: User clicks visually displayed row 2, column 1
     /// → Converts to original CSV data row (e.g. row 5) for storage
     /// → If table gets sorted, selection stays with that data row
-    pub fn start_selection<F>(
+    pub fn start_selection(
         &mut self,
         display_row: DisplayRow,
         col: usize,
-        display_to_data_converter: F,
-    ) where
-        F: Fn(DisplayRow) -> Option<DataRow>,
-    {
+        ordered_indices: &OrderedIndices,
+    ) {
         self.selected_cells.clear();
 
         // Convert display coordinates to data coordinates for storage
-        if let Some(data_row) = display_to_data_converter(display_row) {
+        if let Some(data_row) = ordered_indices.get_data_row(display_row) {
             self.selected_cells.insert(DataCellId::new(data_row, col));
         }
 
@@ -116,14 +116,12 @@ impl TableSelection {
     /// → Creates 3×2 rectangle in display space
     /// → Converts each cell: display(0,0)→data(3,0), display(0,1)→data(3,1), etc.
     /// → Stores data coordinates so selection survives sorting
-    pub fn extend_selection_to<F>(
+    pub fn extend_selection_to(
         &mut self,
         display_row: DisplayRow,
         col: usize,
-        display_to_data_converter: F,
-    ) where
-        F: Fn(DisplayRow) -> Option<DataRow>,
-    {
+        ordered_indices: &OrderedIndices,
+    ) {
         if let Some((start_display_row, start_col)) = self.selection_start_display {
             self.selected_cells.clear();
 
@@ -136,7 +134,8 @@ impl TableSelection {
             // Convert each display cell to data coordinates for storage
             for display_r in min_display_row..=max_display_row {
                 for c in min_col..=max_col {
-                    if let Some(data_row) = display_to_data_converter(DisplayRow::new(display_r)) {
+                    if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(display_r))
+                    {
                         self.selected_cells.insert(DataCellId::new(data_row, c));
                     }
                 }
@@ -156,16 +155,13 @@ impl TableSelection {
     /// **Output**: True if the data at this display position is selected
     ///
     /// This ensures selection highlighting follows the data regardless of sort order.
-    pub fn is_cell_selected<F>(
+    pub fn is_cell_selected(
         &self,
         display_row: DisplayRow,
         col: usize,
-        display_to_data_converter: F,
-    ) -> bool
-    where
-        F: Fn(DisplayRow) -> Option<DataRow>,
-    {
-        if let Some(data_row) = display_to_data_converter(display_row) {
+        ordered_indices: &OrderedIndices,
+    ) -> bool {
+        if let Some(data_row) = ordered_indices.get_data_row(display_row) {
             self.selected_cells
                 .contains(&DataCellId::new(data_row, col))
         } else {
@@ -209,15 +205,10 @@ impl CsvPreviewView {
             let view = view_entity.clone();
             move |_event, _window, cx| {
                 view.update(cx, |this, cx| {
-                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-                    let display_to_data_converter = move |dr: DisplayRow| {
-                        ordered_indices.get(dr.get()).copied().map(Into::into)
-                    };
-
                     this.selection.start_selection(
                         display_cell_id.row,
                         display_cell_id.col,
-                        display_to_data_converter,
+                        &generate_ordered_indices(this.ordering, &this.contents),
                     );
                     cx.notify();
                 });
@@ -231,16 +222,10 @@ impl CsvPreviewView {
                     if !this.selection.is_selecting() {
                         return;
                     }
-                    // Create converter function without borrowing self
-                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
-                    let display_to_data_converter = move |dr: DisplayRow| {
-                        ordered_indices.get(dr.get()).copied().map(Into::into)
-                    };
-
                     this.selection.extend_selection_to(
                         display_cell_id.row,
                         display_cell_id.col,
-                        display_to_data_converter,
+                        &generate_ordered_indices(this.ordering, &this.contents),
                     );
                     cx.notify();
                 });
@@ -264,7 +249,7 @@ impl CsvPreviewView {
 ///
 /// These are visual row positions in the rendered table, taking into account
 /// any sorting that may have been applied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DisplayRow(pub usize);
 
 impl DisplayRow {
@@ -356,14 +341,6 @@ impl DataCellId {
     /// Create a new data cell ID
     pub fn new(row: DataRow, col: usize) -> Self {
         Self { row, col }
-    }
-
-    /// Create a new data cell ID from raw values
-    pub fn from_raw(row: usize, col: usize) -> Self {
-        Self {
-            row: DataRow::new(row),
-            col,
-        }
     }
 }
 
