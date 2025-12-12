@@ -1276,22 +1276,28 @@ impl PickerDelegate for DebugDelegate {
         };
         let file = location.buffer.read(cx).file();
         let language = location.buffer.read(cx).language();
+        let modeline = location.buffer.read(cx).modeline();
         let language_name = language.as_ref().map(|l| l.name());
         let Some(adapter): Option<DebugAdapterName> =
-            language::language_settings::language_settings(language_name, file, cx)
-                .debuggers
-                .first()
-                .map(SharedString::from)
-                .map(Into::into)
-                .or_else(|| {
-                    language.and_then(|l| {
-                        l.config()
-                            .debuggers
-                            .first()
-                            .map(SharedString::from)
-                            .map(Into::into)
-                    })
+            language::language_settings::language_settings(
+                language_name,
+                modeline.map(Arc::as_ref),
+                file,
+                cx,
+            )
+            .debuggers
+            .first()
+            .map(SharedString::from)
+            .map(Into::into)
+            .or_else(|| {
+                language.and_then(|l| {
+                    l.config()
+                        .debuggers
+                        .first()
+                        .map(SharedString::from)
+                        .map(Into::into)
                 })
+            })
         else {
             return;
         };
