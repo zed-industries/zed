@@ -188,10 +188,22 @@ pub fn selections_creases(
         let crease_title = if let Some(path) = filename {
             let start_line = range.start.row + 1;
             let end_line = range.end.row + 1;
-            if start_line == end_line {
-                format!("{path}, Line {start_line}")
+
+            // For short selections (like keywords), show the text in the title
+            // For longer selections, show line numbers as before
+            if selected_text.len() < 50 && !selected_text.contains('\n') {
+                let trimmed_text = selected_text.trim();
+                if start_line == end_line {
+                    format!("{path}, Line {start_line}: {trimmed_text}")
+                } else {
+                    format!("{path}, Lines {start_line} to {end_line}: {trimmed_text}")
+                }
             } else {
-                format!("{path}, Lines {start_line} to {end_line}")
+                if start_line == end_line {
+                    format!("{path}, Line {start_line}")
+                } else {
+                    format!("{path}, Lines {start_line} to {end_line}")
+                }
             }
         } else {
             "Quoted selection".to_string()
