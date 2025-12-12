@@ -254,10 +254,7 @@ fn main() {
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Image Gallery".into(),
-            items: vec![MenuItem::action("Quit", Quit)],
-        }]);
+        cx.set_menus([Menu::new("Image Gallery").items([MenuItem::action("Quit", Quit)])]);
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {
