@@ -66,68 +66,61 @@ impl CsvPreviewView {
         col_idx: usize,
     ) -> AnyElement {
         // CSV data columns: text + sort button
-        let sort_symbol = match self.ordering {
-            Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
-                OrderingDirection::Asc => "↑",
-                OrderingDirection::Desc => "↓",
-            },
-            _ => "↕", // Unsorted/available for sorting
-        };
-
         h_flex()
             .justify_between()
             .items_center()
             .w_full()
-            .when(
-                matches!(self.settings.font_type, crate::FontType::Ui),
-                |div| div.font_ui(cx),
-            )
-            .when(
-                matches!(self.settings.font_type, crate::FontType::Monospace),
-                |div| div.font_buffer(cx),
-            )
-            .child(
-                // Header text on the left
-                div().child(header_text),
-            )
-            .child(
-                // Clickable sort button on the right
-                Button::new(
-                    ElementId::NamedInteger("sort-button".into(), col_idx as u64),
-                    sort_symbol,
-                )
-                .size(ButtonSize::Compact)
-                .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
-                    ButtonStyle::Filled
-                } else {
-                    ButtonStyle::Subtle
-                })
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    let new_ordering = match this.ordering {
-                        Some(ordering) if ordering.col_idx == col_idx => {
-                            // Same column clicked - cycle through states
-                            match ordering.direction {
-                                OrderingDirection::Asc => Some(Ordering {
-                                    col_idx,
-                                    direction: OrderingDirection::Desc,
-                                }),
-                                OrderingDirection::Desc => None, // Clear sorting
-                            }
-                        }
-                        _ => {
-                            // Different column or no sorting - start with ascending
-                            Some(Ordering {
-                                col_idx,
-                                direction: OrderingDirection::Asc,
-                            })
-                        }
-                    };
-
-                    this.ordering = new_ordering;
-                    cx.notify();
-                })),
-            )
+            .map(|div| match self.settings.font_type {
+                FontType::Ui => div.font_ui(cx),
+                FontType::Monospace => div.font_buffer(cx),
+            })
+            .child(div().child(header_text))
+            .child(self.create_sort_button(cx, col_idx))
             .into_any_element()
+    }
+
+    fn create_sort_button(&self, cx: &mut Context<'_, CsvPreviewView>, col_idx: usize) -> Button {
+        let sort_btn = Button::new(
+            ElementId::NamedInteger("sort-button".into(), col_idx as u64),
+            match self.ordering {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    OrderingDirection::Asc => "↑",
+                    OrderingDirection::Desc => "↓",
+                },
+                _ => "↕", // Unsorted/available for sorting
+            },
+        )
+        .size(ButtonSize::Compact)
+        .style(if self.ordering.is_some_and(|o| o.col_idx == col_idx) {
+            ButtonStyle::Filled
+        } else {
+            ButtonStyle::Subtle
+        })
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            let new_ordering = match this.ordering {
+                Some(ordering) if ordering.col_idx == col_idx => {
+                    // Same column clicked - cycle through states
+                    match ordering.direction {
+                        OrderingDirection::Asc => Some(Ordering {
+                            col_idx,
+                            direction: OrderingDirection::Desc,
+                        }),
+                        OrderingDirection::Desc => None, // Clear sorting
+                    }
+                }
+                _ => {
+                    // Different column or no sorting - start with ascending
+                    Some(Ordering {
+                        col_idx,
+                        direction: OrderingDirection::Asc,
+                    })
+                }
+            };
+
+            this.ordering = new_ordering;
+            cx.notify();
+        }));
+        sort_btn
     }
 
     pub(crate) fn create_table<const COLS: usize>(
@@ -177,7 +170,7 @@ impl CsvPreviewView {
                     FontType::Ui => div.font_ui(cx),
                     FontType::Monospace => div.font_buffer(cx),
                 })
-                .child("Line #".to_string())
+                .child("L#")
                 .into_any_element(),
         );
 
@@ -255,8 +248,8 @@ impl CsvPreviewView {
         };
 
         let current_font_text = match self.settings.font_type {
-            crate::FontType::Ui => "UI Font",
-            crate::FontType::Monospace => "Monospace",
+            FontType::Ui => "UI Font",
+            FontType::Monospace => "Monospace",
         };
 
         let view = cx.entity();
@@ -307,7 +300,7 @@ impl CsvPreviewView {
                 let view = view.clone();
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
-                        this.settings.font_type = crate::FontType::Ui;
+                        this.settings.font_type = FontType::Ui;
                         cx.notify();
                     });
                 }
@@ -316,7 +309,7 @@ impl CsvPreviewView {
                 let view = view.clone();
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
-                        this.settings.font_type = crate::FontType::Monospace;
+                        this.settings.font_type = FontType::Monospace;
                         cx.notify();
                     });
                 }
@@ -417,24 +410,16 @@ impl CsvPreviewView {
             .into();
         elements.push(
             div()
+                .flex()
                 .child(line_number)
                 .text_color(line_num_text_color)
-                .when(
-                    matches!(this.settings.vertical_alignment, VerticalAlignment::Top),
-                    |div| div.items_start(),
-                )
-                .when(
-                    matches!(this.settings.vertical_alignment, VerticalAlignment::Center),
-                    |div| div.items_center(),
-                )
-                .when(
-                    matches!(this.settings.font_type, crate::FontType::Ui),
-                    |div| div.font_ui(cx),
-                )
-                .when(
-                    matches!(this.settings.font_type, crate::FontType::Monospace),
-                    |div| div.font_buffer(cx),
-                )
+                .h_full()
+                // Lines are always centered
+                .items_center()
+                .map(|div| match this.settings.font_type {
+                    FontType::Ui => div.font_ui(cx),
+                    FontType::Monospace => div.font_buffer(cx),
+                })
                 .into_any_element(),
         );
 
