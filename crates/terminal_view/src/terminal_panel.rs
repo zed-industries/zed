@@ -550,7 +550,7 @@ impl TerminalPanel {
 
         let builder = ShellBuilder::new(&shell, is_windows);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-        let (command, args) = builder.build(task.command.clone(), &task.args);
+        let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
 
         let task = SpawnInTerminal {
             command_label,

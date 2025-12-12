@@ -11,8 +11,6 @@ use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
-#[cfg(windows)]
-use task::ShellKind;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -92,23 +90,8 @@ impl AcpConnection {
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
         let builder = ShellBuilder::new(&shell, cfg!(windows));
-        #[cfg(windows)]
-        let kind = builder.kind();
-        let (cmd, args) = builder.build(Some(command.path.display().to_string()), &command.args);
-
-        let mut child = util::command::new_smol_command(cmd);
-        #[cfg(windows)]
-        if kind == ShellKind::Cmd {
-            use smol::process::windows::CommandExt;
-            for arg in args {
-                child.raw_arg(arg);
-            }
-        } else {
-            child.args(args);
-        }
-        #[cfg(not(windows))]
-        child.args(args);
-
+        let mut child =
+            builder.build_command(Some(command.path.display().to_string()), &command.args);
         child
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
