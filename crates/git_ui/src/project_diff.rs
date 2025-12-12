@@ -5,7 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffFilterMode, DiffHunk, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
@@ -60,14 +60,6 @@ actions!(
         LeaderAndFollower,
     ]
 );
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum DiffFilterMode {
-    #[default]
-    All,
-    StagedOnly,
-    UnstagedOnly,
-}
 
 pub struct ProjectDiff {
     project: Entity<Project>,
@@ -343,34 +335,26 @@ impl ProjectDiff {
         self.filter_mode == DiffFilterMode::StagedOnly
     }
 
-    pub fn toggle_show_staged_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter_mode = if self.filter_mode == DiffFilterMode::StagedOnly {
-            DiffFilterMode::All
-        } else {
-            DiffFilterMode::StagedOnly
-        };
-        self.rebuild_for_filter_change(window, cx);
-    }
-
     pub fn show_unstaged_only(&self) -> bool {
         self.filter_mode == DiffFilterMode::UnstagedOnly
     }
 
-    pub fn toggle_show_unstaged_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter_mode = if self.filter_mode == DiffFilterMode::UnstagedOnly {
+    pub fn toggle_filter_mode(
+        &mut self,
+        mode: DiffFilterMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_mode = if self.filter_mode == mode {
             DiffFilterMode::All
         } else {
-            DiffFilterMode::UnstagedOnly
+            mode
         };
         self.rebuild_for_filter_change(window, cx);
     }
 
     fn should_include_hunk(&self, hunk: &DiffHunk) -> bool {
-        match self.filter_mode {
-            DiffFilterMode::All => true,
-            DiffFilterMode::StagedOnly => hunk.is_visible_when_staged_only(),
-            DiffFilterMode::UnstagedOnly => hunk.is_visible_when_unstaged_only(),
-        }
+        self.filter_mode.should_include_hunk(hunk)
     }
 
     fn should_include_file(&self, status: &FileStatus) -> bool {
@@ -386,11 +370,8 @@ impl ProjectDiff {
         // The MultiBuffer's update_path_excerpts only expands ranges (never contracts),
         // so filtering at render time would leave incorrect context around hidden hunks.
         // Rebuilding ensures context lines are properly recalculated around visible hunks.
-        let show_staged_only = self.filter_mode == DiffFilterMode::StagedOnly;
-        let show_unstaged_only = self.filter_mode == DiffFilterMode::UnstagedOnly;
         self.multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.set_show_only_staged_hunks(show_staged_only, cx);
-            multibuffer.set_show_only_unstaged_hunks(show_unstaged_only, cx);
+            multibuffer.set_diff_filter_mode(self.filter_mode, cx);
             let paths: Vec<_> = multibuffer.paths().collect();
             for path in paths {
                 multibuffer.remove_excerpts_for_path(path, cx);
@@ -1179,7 +1160,7 @@ impl ProjectDiffToolbar {
                     });
                 }
             })
-            .ok();
+            .log_err();
     }
 
     fn unstage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1192,7 +1173,7 @@ impl ProjectDiffToolbar {
                     panel.unstage_all(&Default::default(), window, cx);
                 });
             })
-            .ok();
+            .log_err();
     }
 }
 
@@ -1259,9 +1240,13 @@ impl Render for ProjectDiffToolbar {
                             move |_, window, cx| {
                                 project_diff_weak
                                     .update(cx, |project_diff, cx| {
-                                        project_diff.toggle_show_staged_only(window, cx);
+                                        project_diff.toggle_filter_mode(
+                                            DiffFilterMode::StagedOnly,
+                                            window,
+                                            cx,
+                                        );
                                     })
-                                    .ok();
+                                    .log_err();
                             },
                         )
                     })
@@ -1276,9 +1261,13 @@ impl Render for ProjectDiffToolbar {
                             move |_, window, cx| {
                                 project_diff_weak
                                     .update(cx, |project_diff, cx| {
-                                        project_diff.toggle_show_unstaged_only(window, cx);
+                                        project_diff.toggle_filter_mode(
+                                            DiffFilterMode::UnstagedOnly,
+                                            window,
+                                            cx,
+                                        );
                                     })
-                                    .ok();
+                                    .log_err();
                             },
                         )
                     })

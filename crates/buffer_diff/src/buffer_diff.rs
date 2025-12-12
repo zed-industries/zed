@@ -71,6 +71,29 @@ pub enum DiffHunkSecondaryStatus {
     SecondaryHunkRemovalPending,
 }
 
+/// Filter mode for displaying diff hunks based on their staged/unstaged status.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum DiffFilterMode {
+    /// Show all hunks regardless of staged status
+    #[default]
+    All,
+    /// Show only staged hunks (or partially staged)
+    StagedOnly,
+    /// Show only unstaged hunks (or partially staged)
+    UnstagedOnly,
+}
+
+impl DiffFilterMode {
+    /// Returns whether the given hunk should be included based on this filter mode.
+    pub fn should_include_hunk(&self, hunk: &DiffHunk) -> bool {
+        match self {
+            DiffFilterMode::All => true,
+            DiffFilterMode::StagedOnly => hunk.is_visible_when_staged_only(),
+            DiffFilterMode::UnstagedOnly => hunk.is_visible_when_unstaged_only(),
+        }
+    }
+}
+
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
@@ -1439,11 +1462,17 @@ impl DiffHunk {
             self.secondary_status,
             DiffHunkSecondaryStatus::NoSecondaryHunk
                 | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
         )
     }
 
     pub fn is_visible_when_unstaged_only(&self) -> bool {
-        self.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
+        matches!(
+            self.secondary_status,
+            DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+        )
     }
 }
 
@@ -2521,8 +2550,8 @@ mod tests {
             ),
             (
                 DiffHunkSecondaryStatus::SecondaryHunkRemovalPending,
-                false,
                 true,
+                false,
             ),
         ];
 
