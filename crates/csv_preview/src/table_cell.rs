@@ -2,7 +2,7 @@
 //!
 //! Creates interactive cell elements with mouse event handlers for selection.
 
-use gpui::{AnyElement, ElementId, Entity, MouseButton};
+use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
 use ui::{div, prelude::*};
 
 use crate::{
@@ -10,6 +10,43 @@ use crate::{
     settings::{FontType, VerticalAlignment},
     types::DisplayCellId,
 };
+
+/// Colors for cell borders in different selection states.
+///
+/// This unit struct provides a centralized location for all cell border colors
+/// used in the CSV preview table. The colors are designed to be visually distinct
+/// and follow common spreadsheet application conventions:
+///
+/// - **Focus**: Green border for the currently focused cell (keyboard navigation)
+/// - **Anchor**: Blue border for the selection anchor (starting point of range selection)
+/// - **Focus+Anchor**: Orange border when a cell is both focused and anchor (thicker border)
+pub struct CellBorderColors;
+
+impl CellBorderColors {
+    /// Bright green for focused cell only
+    pub const FOCUS: Hsla = Hsla {
+        h: 0.25, // 90 degrees = lime green
+        s: 1.0,
+        l: 0.4,
+        a: 1.0,
+    };
+
+    /// Bright blue for anchor cell only
+    pub const ANCHOR: Hsla = Hsla {
+        h: 0.6, // 216 degrees = bright blue
+        s: 1.0,
+        l: 0.5,
+        a: 1.0,
+    };
+
+    /// Orange for cell that is both focus and anchor (blended state)
+    pub const FOCUS_ANCHOR: Hsla = Hsla {
+        h: 0.08333, // 30 degrees = orange hue
+        s: 1.0,
+        l: 0.5,
+        a: 1.0,
+    };
+}
 
 impl CsvPreviewView {
     /// Create selectable table cell with mouse event handlers.
@@ -20,6 +57,7 @@ impl CsvPreviewView {
         selected_bg_color: gpui::Hsla,
         is_selected: bool,
         is_focused: bool,
+        is_anchor: bool,
         vertical_alignment: VerticalAlignment,
         font_type: FontType,
         cx: &Context<CsvPreviewView>,
@@ -30,6 +68,7 @@ impl CsvPreviewView {
             selected_bg_color,
             is_selected,
             is_focused,
+            is_anchor,
             vertical_alignment,
             font_type,
             cx,
@@ -88,6 +127,7 @@ fn create_table_cell(
     selected_bg_color: gpui::Hsla,
     is_selected: bool,
     is_focused: bool,
+    is_anchor: bool,
     vertical_alignment: VerticalAlignment,
     font_type: FontType,
     cx: &Context<'_, CsvPreviewView>,
@@ -114,7 +154,15 @@ fn create_table_cell(
             VerticalAlignment::Center => div.content_center(),
         })
         .when(is_selected, |div| div.bg(selected_bg_color))
-        .when(is_focused, |div| div.border_1().border_color(gpui::green()))
+        .when(is_focused && is_anchor, |div| {
+            div.border_2().border_color(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
+        })
+        .when(is_focused && !is_anchor, |div| {
+            div.border_1().border_color(CellBorderColors::FOCUS) // Focus only
+        })
+        .when(is_anchor && !is_focused, |div| {
+            div.border_1().border_color(CellBorderColors::ANCHOR) // Anchor only
+        })
         .map(|div| match font_type {
             FontType::Ui => div.font_ui(cx),
             FontType::Monospace => div.font_buffer(cx),
