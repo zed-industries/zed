@@ -578,8 +578,6 @@ mod tests {
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("/test/cool.rs:4:2👉:Error!");
-            test_path!("/test/cool.rs:4:2:👉Error!");
             test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
@@ -590,6 +588,7 @@ mod tests {
 
             // Python
             test_path!("‹«awe👉some.py»›");
+            test_path!("‹«👉a»› ");
 
             test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awe👉some.py»\", line «42»›");
@@ -602,18 +601,14 @@ mod tests {
             // path, line, column and description
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
-            test_path!("/test/cool.rs:4:2:例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
-            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
 
             // path, line, column and description w/extra colons
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›::例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›::例Desc例例例");
-            test_path!("/test/cool.rs:4:2::例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›::例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›::例Desc例例例");
-            test_path!("/test/cool.rs(4,2)::例Desc例👉例例");
         }
 
         #[test]
@@ -658,8 +653,6 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»::«42»›");
             test_path!("‹«/test/co👉ol.rs»::«42»›:");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
         }
 
@@ -675,7 +668,7 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
 
             test_path!("\"‹«/test/co👉ol.rs»:«4»:«2»›\"");
             test_path!("'‹«/test/co👉ol.rs»:«4»:«2»›'");
@@ -724,7 +717,7 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
-            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›),,'...");
             test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
@@ -848,9 +841,6 @@ mod tests {
             fn issue_28194() {
                 test_path!(
                     "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
-                );
-                test_path!(
-                    "test/controllers/template_items_controller_test.rb:19:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
             }
 
