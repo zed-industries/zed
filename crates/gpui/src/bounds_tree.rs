@@ -172,7 +172,7 @@ where
                     max_found = cmp::max(max_found, *order);
                 }
                 NodeKind::Internal { children } => {
-                    // Children are maintained with heighest max_order at the end.
+                    // Children are maintained with highest max_order at the end.
                     // Push in forward order to highest (last) is popped first.
                     for &child_idx in children.as_slice() {
                         if self.nodes[child_idx].max_order > max_found {
@@ -307,7 +307,7 @@ where
                         children.indices[best_child_pos] = new_internal_idx;
 
                         // If new internal has highest max_order, swap it to the end
-                        // to mantain sorting invariant
+                        // to maintain sorting invariant
                         if new_internal_max > parent.max_order {
                             children.indices.swap(best_child_pos, children_len - 1);
                         }
