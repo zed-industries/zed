@@ -25,7 +25,7 @@ pub async fn run_context_retrieval(
 
     run_load_project(example, app_state.clone(), progress.clone(), cx.clone()).await;
 
-    let step_progress = progress.start(Step::Context, &example.name);
+    let step_progress: Arc<StepProgress> = progress.start(Step::Context, &example.name).into();
 
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();

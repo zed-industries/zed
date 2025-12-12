@@ -89,53 +89,51 @@ impl Progress {
         })
     }
 
-    pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> Arc<StepProgress> {
-        {
-            let mut inner = self.inner.lock().unwrap();
+    pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepProgress {
+        let mut inner = self.inner.lock().unwrap();
 
-            Self::clear_status_lines(&mut inner);
+        Self::clear_status_lines(&mut inner);
 
-            inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
+        inner.max_example_name_len = inner.max_example_name_len.max(example_name.len());
+        inner.in_progress.insert(
+            example_name.to_string(),
+            InProgressTask {
+                step,
+                started_at: Instant::now(),
+                substatus: None,
+                info: None,
+            },
+        );
 
-            inner.in_progress.insert(
-                example_name.to_string(),
-                InProgressTask {
-                    step,
-                    started_at: Instant::now(),
-                    substatus: None,
-                    info: None,
-                },
-            );
+        Self::print_status_lines(&mut inner);
 
-            Self::print_status_lines(&mut inner);
-        }
-
-        Arc::new(StepProgress {
+        StepProgress {
             progress: self.clone(),
             step,
             example_name: example_name.to_string(),
-        })
+        }
     }
 
-    pub fn finish(&self, step: Step, example_name: &str) {
+    fn finish(&self, step: Step, example_name: &str) {
         let mut inner = self.inner.lock().unwrap();
 
-        let task = inner.in_progress.remove(example_name);
-        if let Some(task) = task {
-            if task.step == step {
-                inner.completed.push(CompletedTask {
-                    step: task.step,
-                    example_name: example_name.to_string(),
-                    duration: task.started_at.elapsed(),
-                    info: task.info,
-                });
+        let Some(task) = inner.in_progress.remove(example_name) else {
+            return;
+        };
 
-                Self::clear_status_lines(&mut inner);
-                Self::print_completed(&inner, inner.completed.last().unwrap());
-                Self::print_status_lines(&mut inner);
-            } else {
-                inner.in_progress.insert(example_name.to_string(), task);
-            }
+        if task.step == step {
+            inner.completed.push(CompletedTask {
+                step: task.step,
+                example_name: example_name.to_string(),
+                duration: task.started_at.elapsed(),
+                info: task.info,
+            });
+
+            Self::clear_status_lines(&mut inner);
+            Self::print_completed(&inner, inner.completed.last().unwrap());
+            Self::print_status_lines(&mut inner);
+        } else {
+            inner.in_progress.insert(example_name.to_string(), task);
         }
     }
 
