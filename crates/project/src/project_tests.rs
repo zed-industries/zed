@@ -35,7 +35,7 @@ use lsp::{
     Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
-use paths::{config_dir, global_gitignore_path, home_dir, tasks_file};
+use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
 use rand::{Rng as _, rngs::StdRng};
@@ -1543,9 +1543,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     let mut new_watched_paths = fs.watched_paths();
     new_watched_paths.retain(|path| {
-        !path.starts_with(config_dir())
-            && !path.starts_with(home_dir())
-            && !path.starts_with(global_gitignore_path().unwrap())
+        !path.starts_with(config_dir()) && !path.starts_with(global_gitignore_path().unwrap())
     });
     assert_eq!(
         &new_watched_paths,

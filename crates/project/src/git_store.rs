@@ -435,38 +435,42 @@ impl GitStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let paths = [
-            config_dir().join("git/config"),
-            home_dir().join(".gitconfig"),
-        ];
-        let mut watchers = vec![];
-        for path in paths {
-            let fs = fs.clone();
-            let watch_task = cx.spawn(async move |this, cx| {
-                let watcher = fs.watch(&path, Duration::from_millis(100));
-                let (mut watcher, _) = watcher.await;
-                while let Some(_) = watcher.next().await {
-                    let Ok(_) = this.update(cx, |this, cx| {
-                        for repo in this.repositories.values() {
-                            repo.update(cx, |this, cx| {
-                                if this.job_sender.is_closed() {
-                                    let (job_sender, state) = (this.refetch_repo_state)(cx);
-                                    this.repository_state = state;
-                                    this.job_sender = job_sender;
-                                    this.schedule_scan(None, cx);
-                                }
-                            })
-                        }
-                        cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
-                    }) else {
-                        return;
-                    };
-                }
-            });
-            watchers.push(watch_task);
-        }
+        let _fs_watches = if fs.is_fake() {
+            Box::new([])
+        } else {
+            [
+                config_dir().join("git/config"),
+                home_dir().join(".gitconfig"),
+            ]
+            .into_iter()
+            .map(|path| {
+                let fs = fs.clone();
 
-        let _fs_watches = watchers.into_boxed_slice();
+                cx.spawn(async move |this, cx| {
+                    let watcher = fs.watch(&path, Duration::from_millis(100));
+                    let (mut watcher, _) = watcher.await;
+                    while let Some(_) = watcher.next().await {
+                        let Ok(_) = this.update(cx, |this, cx| {
+                            for repo in this.repositories.values() {
+                                repo.update(cx, |this, cx| {
+                                    if this.job_sender.is_closed() {
+                                        let (job_sender, state) = (this.refetch_repo_state)(cx);
+                                        this.repository_state = state;
+                                        this.job_sender = job_sender;
+                                        this.schedule_scan(None, cx);
+                                    }
+                                })
+                            }
+                            cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
+                        }) else {
+                            return;
+                        };
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+        };
 
         Self::new(
             worktree_store.clone(),
