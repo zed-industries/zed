@@ -23,7 +23,10 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-use crate::{graph::CHUNK_SIZE, graph_rendering::render_graph};
+use crate::{
+    graph::{AllCommitCount, CHUNK_SIZE},
+    graph_rendering::render_graph,
+};
 
 actions!(
     git_graph,
@@ -138,6 +141,7 @@ impl GitGraph {
         let project = self.project.clone();
         self.loading = true;
         self.error = None;
+        let commit_count_loaded = !matches!(self.graph.max_commit_count, AllCommitCount::NotLoaded);
 
         if self._load_task.is_some() {
             return;
@@ -162,7 +166,7 @@ impl GitGraph {
             };
 
             // todo! don't count commits everytime
-            let commit_count = if fetch_chunks {
+            let commit_count = if fetch_chunks && commit_count_loaded {
                 None
             } else {
                 crate::graph::commit_count(&worktree_path).await.ok()
@@ -182,7 +186,7 @@ impl GitGraph {
                         this.work_dir = Some(worktree_path);
 
                         if let Some(commit_count) = commit_count {
-                            this.graph.max_commit_count = commit_count;
+                            this.graph.max_commit_count = AllCommitCount::Loaded(commit_count);
                             this.list_state.reset(commit_count);
                         }
                     }
@@ -234,7 +238,7 @@ impl GitGraph {
         commit_width: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if (idx + CHUNK_SIZE).min(self.graph.max_commit_count) > self.graph.commits.len() {
+        if (idx + CHUNK_SIZE).min(self.graph.max_commit_count.count()) > self.graph.commits.len() {
             self.load_data(true, cx);
         }
 

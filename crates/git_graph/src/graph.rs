@@ -18,7 +18,7 @@ use util::command::new_smol_command;
 /// %D - Ref names
 /// %x1E - ASCII record separator, used to split up commit data
 static COMMIT_FORMAT: &str = "--format=%H%x1E%aN%x1E%aE%x1E%at%x1E%ct%x1E%s%x1E%P%x1E%D%x1E";
-pub(crate) const CHUNK_SIZE: usize = 60;
+pub(crate) const CHUNK_SIZE: usize = 1000;
 
 pub fn format_timestamp(timestamp: i64) -> String {
     let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
@@ -174,13 +174,27 @@ pub struct CommitEntry {
 
 type ActiveLaneIdx = usize;
 
+pub(crate) enum AllCommitCount {
+    NotLoaded,
+    Loaded(usize),
+}
+
+impl AllCommitCount {
+    pub fn count(&self) -> usize {
+        match self {
+            AllCommitCount::NotLoaded => 0,
+            AllCommitCount::Loaded(count) => *count,
+        }
+    }
+}
+
 pub struct GitGraph {
     lane_states: SmallVec<[LaneState; 8]>,
     lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     next_color: BranchColor,
     accent_colors_count: usize,
     pub commits: Vec<Rc<CommitEntry>>,
-    pub max_commit_count: usize,
+    pub max_commit_count: AllCommitCount,
     pub max_lanes: usize,
 }
 
@@ -192,7 +206,7 @@ impl GitGraph {
             next_color: BranchColor(0),
             accent_colors_count,
             commits: Vec::default(),
-            max_commit_count: 0,
+            max_commit_count: AllCommitCount::NotLoaded,
             max_lanes: 0,
         }
     }
