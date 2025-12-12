@@ -16,12 +16,14 @@ use edit_prediction::EditPredictionStore;
 use gpui::Application;
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::{path::PathBuf, sync::Arc};
 
 use crate::distill::run_distill;
 use crate::example::{group_examples_by_repo, read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
+use crate::paths::FAILED_EXAMPLES_DIR;
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::retrieve_context::run_context_retrieval;
@@ -42,6 +44,8 @@ struct EpArgs {
     output: Option<PathBuf>,
     #[arg(long, short, global = true)]
     in_place: bool,
+    #[arg(long, short, global = true)]
+    failfast: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -65,6 +69,58 @@ enum Command {
     Eval(PredictArgs),
     /// Remove git repositories and worktrees
     Clean,
+}
+
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::ParseExample => write!(f, "parse-example"),
+            Command::LoadProject => write!(f, "load-project"),
+            Command::Context => write!(f, "context"),
+            Command::FormatPrompt(format_prompt_args) => write!(
+                f,
+                "format-prompt --prompt-format={}",
+                format_prompt_args
+                    .prompt_format
+                    .to_possible_value()
+                    .unwrap()
+                    .get_name()
+            ),
+            Command::Predict(predict_args) => {
+                write!(
+                    f,
+                    "predict --provider={:?}",
+                    predict_args
+                        .provider
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                )
+            }
+            Command::Score(predict_args) => {
+                write!(
+                    f,
+                    "score --provider={:?}",
+                    predict_args
+                        .provider
+                        .to_possible_value()
+                        .unwrap()
+                        .get_name()
+                )
+            }
+            Command::Distill => write!(f, "distill"),
+            Command::Eval(predict_args) => write!(
+                f,
+                "eval --provider={:?}",
+                predict_args
+                    .provider
+                    .to_possible_value()
+                    .unwrap()
+                    .get_name()
+            ),
+            Command::Clean => write!(f, "clean"),
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -145,71 +201,140 @@ fn main() {
         EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
 
         cx.spawn(async move |cx| {
-            if let Command::Predict(args) = &command {
-                predict::sync_batches(&args.provider).await
-            };
+            let result = async {
+                if let Command::Predict(args) = &command {
+                    predict::sync_batches(&args.provider).await?;
+                }
 
-            let total_examples = examples.len();
-            Progress::global().set_total_examples(total_examples);
+                let total_examples = examples.len();
+                Progress::global().set_total_examples(total_examples);
 
-            let mut grouped_examples = group_examples_by_repo(&mut examples);
-            let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+                let mut grouped_examples = group_examples_by_repo(&mut examples);
+                let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
 
-            for example_batch in example_batches {
-                let futures = example_batch.into_iter().map(|repo_examples| async {
-                    for example in repo_examples.iter_mut() {
-                        match &command {
-                            Command::ParseExample => {}
-                            Command::LoadProject => {
-                                run_load_project(example, app_state.clone(), cx.clone()).await;
+                for example_batch in example_batches {
+                    let futures = example_batch.into_iter().map(|repo_examples| async {
+                        for example in repo_examples.iter_mut() {
+                            let result = async {
+                                match &command {
+                                    Command::ParseExample => {}
+                                    Command::LoadProject => {
+                                        run_load_project(example, app_state.clone(), cx.clone())
+                                            .await?;
+                                    }
+                                    Command::Context => {
+                                        run_context_retrieval(
+                                            example,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::FormatPrompt(args) => {
+                                        run_format_prompt(
+                                            example,
+                                            args.prompt_format,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::Predict(args) => {
+                                        run_prediction(
+                                            example,
+                                            Some(args.provider),
+                                            args.repetitions,
+                                            app_state.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    }
+                                    Command::Distill => {
+                                        run_distill(example).await?;
+                                    }
+                                    Command::Score(args) | Command::Eval(args) => {
+                                        run_scoring(example, &args, app_state.clone(), cx.clone())
+                                            .await?;
+                                    }
+                                    Command::Clean => {
+                                        unreachable!()
+                                    }
+                                }
+                                anyhow::Ok(())
                             }
-                            Command::Context => {
-                                run_context_retrieval(example, app_state.clone(), cx.clone()).await;
-                            }
-                            Command::FormatPrompt(args) => {
-                                run_format_prompt(
-                                    example,
-                                    args.prompt_format,
-                                    app_state.clone(),
-                                    cx.clone(),
-                                )
-                                .await;
-                            }
-                            Command::Predict(args) => {
-                                run_prediction(
-                                    example,
-                                    Some(args.provider),
-                                    args.repetitions,
-                                    app_state.clone(),
-                                    cx.clone(),
-                                )
-                                .await;
-                            }
-                            Command::Distill => {
-                                run_distill(example).await;
-                            }
-                            Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(example, &args, app_state.clone(), cx.clone()).await;
-                            }
-                            Command::Clean => {
-                                unreachable!()
+                            .await;
+
+                            if let Err(e) = result {
+                                Progress::global().increment_failed();
+                                let failed_example_path =
+                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example.name));
+                                app_state
+                                    .fs
+                                    .write(
+                                        &failed_example_path,
+                                        &serde_json::to_vec_pretty(&example).unwrap(),
+                                    )
+                                    .await
+                                    .unwrap();
+                                let err_path =
+                                    FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example.name));
+                                app_state
+                                    .fs
+                                    .write(&err_path, e.to_string().as_bytes())
+                                    .await
+                                    .unwrap();
+
+                                let msg = format!(
+                                    indoc::indoc! {"
+                                        While processing {}:
+
+                                        {:?}
+
+                                        Written to: \x1b[36m{}\x1b[0m
+
+                                        Explore this example data with:
+                                            fx \x1b[36m{}\x1b[0m
+
+                                        Re-run this example with:
+                                            cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
+                                    "},
+                                    example.name,
+                                    e,
+                                    err_path.display(),
+                                    failed_example_path.display(),
+                                    command,
+                                    failed_example_path.display(),
+                                );
+                                if args.failfast || total_examples == 1 {
+                                    Progress::global().finalize();
+                                    panic!("{}", msg);
+                                } else {
+                                    log::error!("{}", msg);
+                                }
                             }
                         }
-                    }
-                });
-                futures::future::join_all(futures).await;
-            }
-            Progress::global().clear();
+                    });
+                    futures::future::join_all(futures).await;
+                }
+                Progress::global().finalize();
 
-            if args.output.is_some() || !matches!(command, Command::Eval(_)) {
-                write_examples(&examples, output.as_ref());
-            }
+                if args.output.is_some() || !matches!(command, Command::Eval(_)) {
+                    write_examples(&examples, output.as_ref());
+                }
 
-            match &command {
-                Command::Predict(args) => predict::sync_batches(&args.provider).await,
-                Command::Eval(_) => score::print_report(&examples),
-                _ => (),
-            };
+                match &command {
+                    Command::Predict(args) => predict::sync_batches(&args.provider).await?,
+                    Command::Eval(_) => score::print_report(&examples),
+                    _ => (),
+                };
+
+                anyhow::Ok(())
+            }
+            .await;
+
+            if let Err(e) = result {
+                panic!("Fatal error: {:?}", e);
+            }
 
             let _ = cx.update(|cx| cx.quit());
         })
