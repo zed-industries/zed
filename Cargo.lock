@@ -5179,6 +5179,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "libc",
  "log",
  "node_runtime",
  "paths",
@@ -5200,7 +5201,6 @@ dependencies = [
  "wasmtime",
  "watch",
  "zeta_prompt",
- "zlog",
 ]
 
 [[package]]
@@ -7239,6 +7239,7 @@ dependencies = [
  "libc",
  "log",
  "lyon",
+ "mach2 0.5.0",
  "media",
  "metal",
  "naga",

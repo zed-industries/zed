@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
+use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -452,7 +453,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames

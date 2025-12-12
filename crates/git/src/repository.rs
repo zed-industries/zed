@@ -14,6 +14,7 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
@@ -487,7 +488,12 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
     fn file_history_paginated(
         &self,
@@ -1512,7 +1518,12 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
@@ -1524,6 +1535,7 @@ impl GitRepository for RealGitRepository {
                     &working_directory?,
                     &path,
                     &content,
+                    line_ending,
                 )
                 .await
             })
