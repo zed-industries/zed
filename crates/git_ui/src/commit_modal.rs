@@ -493,20 +493,18 @@ impl CommitModal {
     }
 
     fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .git_panel
-            .update(cx, |git_panel, cx| git_panel.commit(window, cx))
-        {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.commit(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
             telemetry::event!("Git Committed", source = "Git Modal");
             cx.emit(DismissEvent);
         }
     }
 
     fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .git_panel
-            .update(cx, |git_panel, cx| git_panel.amend(window, cx))
-        {
+        if self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.amend(&self.commit_editor.focus_handle(cx), window, cx)
+        }) {
             telemetry::event!("Git Amended", source = "Git Modal");
             cx.emit(DismissEvent);
         }
