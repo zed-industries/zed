@@ -696,8 +696,7 @@ impl ExtensionStore {
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                let dominated = SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref());
-                !is_already_installed && !dominated
+                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
             })
             .cloned()
             .collect::<Vec<_>>();
