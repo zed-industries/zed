@@ -11,8 +11,8 @@ use theme::{
 };
 use ui::{
     Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*,
-    rems_from_px,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip,
+    prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -416,13 +416,13 @@ fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> imp
     } else {
         ui::ToggleState::Unselected
     };
+
+    let tooltip_description = "New projects in Zed are set to Restricted Mode by default. That means language servers, project settings, and MCP servers, for example, can't run until you mark them as trusted.";
+
     SwitchField::new(
         "onboarding-auto-trust-worktrees",
-        Some("Auto trust opened projects by default"),
-        Some(
-            "Allow automatic project settings processing, language and MCP servers downloads and startup"
-                .into(),
-        ),
+        Some("Trust All Projects By Default"),
+        Some("Automatically mark all new projects as trusted to unlock all Zed's features".into()),
         toggle_state,
         {
             let fs = <dyn Fs>::global(cx);
@@ -449,6 +449,7 @@ fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> imp
         *tab_index += 1;
         *tab_index - 1
     })
+    .tooltip(Tooltip::text(tooltip_description))
 }
 
 fn render_setting_import_button(
