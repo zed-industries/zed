@@ -400,3 +400,294 @@ impl Editor {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor_tests::init_test;
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle, point};
+    use indoc::indoc;
+    use language::Point;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use std::{collections::HashMap, ops::Range, path::PathBuf};
+    use util::path;
+    use workspace::{OpenOptions, Workspace, item::SaveOptions};
+
+    struct InlineReferencesTestHarness {
+        cx: VisualTestContext,
+        _workspace: WindowHandle<Workspace>,
+        workspace_entity: Entity<Workspace>,
+        editor: Entity<Editor>,
+    }
+
+    impl InlineReferencesTestHarness {
+        async fn new(cx: &mut TestAppContext, file_text: &str) -> Self {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                path!("/inline_refs_project"),
+                json!({ "main.rs": file_text }),
+            )
+            .await;
+            let project = Project::test(fs, [path!("/inline_refs_project").as_ref()], cx).await;
+            let workspace =
+                cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let mut visual_cx = VisualTestContext::from_window(*workspace, cx);
+            let workspace_entity = workspace.root(&mut visual_cx).unwrap();
+            let editor = workspace
+                .update(&mut visual_cx, |workspace, window, cx| {
+                    workspace.open_abs_path(
+                        PathBuf::from(path!("/inline_refs_project/main.rs")),
+                        OpenOptions::default(),
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap()
+                .await
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap();
+
+            Self {
+                cx: visual_cx,
+                _workspace: workspace,
+                workspace_entity,
+                editor,
+            }
+        }
+
+        fn open_inline_references(
+            &mut self,
+            ranges: Vec<Range<Point>>,
+            title: &str,
+        ) -> Entity<Editor> {
+            self.editor.update_in(&mut self.cx, |editor, window, cx| {
+                editor.set_visible_line_count(3.0, window, cx);
+                editor.set_scroll_position(point(0., 0.), window, cx);
+                let selection = editor.selections.newest_anchor().range();
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .next()
+                    .unwrap();
+                let num_locations = ranges.len();
+                let mut locations = HashMap::new();
+                locations.insert(buffer, ranges);
+                editor.show_inline_references(
+                    selection,
+                    locations,
+                    title.to_string(),
+                    self.workspace_entity.clone(),
+                    num_locations,
+                    window,
+                    cx,
+                );
+                editor
+                    .inline_references_editor()
+                    .expect("inline references editor is created")
+            })
+        }
+    }
+
+    #[gpui::test]
+    async fn inline_references_not_created_for_empty_locations(app: &mut TestAppContext) {
+        init_test(app, |_| {});
+
+        let mut harness = InlineReferencesTestHarness::new(app, "fn main() {}\n").await;
+        let workspace = harness.workspace_entity.clone();
+        harness
+            .editor
+            .update_in(&mut harness.cx, |editor, window, cx| {
+                editor.set_visible_line_count(3.0, window, cx);
+                let selection = editor.selections.newest_anchor().range();
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .next()
+                    .unwrap();
+                let mut locations = HashMap::new();
+                locations.insert(buffer, Vec::new());
+                editor.show_inline_references(
+                    selection,
+                    locations,
+                    "References".into(),
+                    workspace.clone(),
+                    0,
+                    window,
+                    cx,
+                );
+                assert!(editor.inline_references_editor().is_none());
+            });
+    }
+
+    #[gpui::test]
+    async fn inline_references_render_and_close(app: &mut TestAppContext) {
+        init_test(app, |_| {});
+
+        let mut harness = InlineReferencesTestHarness::new(
+            app,
+            indoc! {"
+                fn main() {
+                    call_target();
+                }
+
+                fn helper() {
+                    call_target();
+                }
+            "},
+        )
+        .await;
+
+        let inline_editor = harness
+            .open_inline_references(vec![Point::new(1, 4)..Point::new(1, 16)], "call_target");
+
+        let scroll_y = harness
+            .editor
+            .update_in(&mut harness.cx, |editor, _, editor_cx| {
+                editor.scroll_position(editor_cx).y
+            });
+        assert!(
+            scroll_y > 0.0,
+            "inline references block should reserve space by scrolling"
+        );
+
+        inline_editor.update_in(&mut harness.cx, |inline_editor, _, cx| {
+            assert!(
+                inline_editor.inline_references_host.is_some(),
+                "inline editor should know its host"
+            );
+            let text = inline_editor.display_text(cx);
+            assert!(
+                text.contains("call_target()"),
+                "inline references excerpt should include referenced text"
+            );
+        });
+
+        harness
+            .editor
+            .update_in(&mut harness.cx, |editor, _, editor_cx| {
+                assert!(editor.close_inline_references(editor_cx));
+                assert!(editor.inline_references_editor().is_none());
+            });
+    }
+
+    #[gpui::test]
+    async fn inline_references_can_be_closed_from_inline_editor(app: &mut TestAppContext) {
+        init_test(app, |_| {});
+
+        let mut harness = InlineReferencesTestHarness::new(
+            app,
+            indoc! {"
+                fn alpha() {
+                    call_beta();
+                }
+            "},
+        )
+        .await;
+
+        let inline_editor =
+            harness.open_inline_references(vec![Point::new(1, 4)..Point::new(1, 14)], "call_beta");
+
+        inline_editor.update_in(&mut harness.cx, |inline_editor, _, cx| {
+            assert!(
+                inline_editor.close_inline_references(cx),
+                "closing from the inline editor should notify the host"
+            );
+        });
+
+        harness.editor.update_in(&mut harness.cx, |editor, _, _cx| {
+            assert!(
+                editor.inline_references_editor().is_none(),
+                "host editor should remove inline references when child closes"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn inline_references_save_forwards_focus(app: &mut TestAppContext) {
+        init_test(app, |_| {});
+
+        let mut harness = InlineReferencesTestHarness::new(
+            app,
+            indoc! {"
+                fn entry() {
+                    referenced();
+                }
+            "},
+        )
+        .await;
+        let workspace = harness.workspace_entity.clone();
+
+        harness
+            .editor
+            .update_in(&mut harness.cx, |editor, window, cx| {
+                let selection = editor.selections.newest_anchor().range();
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .next()
+                    .unwrap();
+                let mut locations = HashMap::new();
+                locations.insert(buffer, vec![Point::new(1, 4)..Point::new(1, 15)]);
+                editor.show_inline_references(
+                    selection,
+                    locations,
+                    "referenced".to_string(),
+                    workspace.clone(),
+                    1,
+                    window,
+                    cx,
+                );
+                let inline_editor = editor
+                    .inline_references_editor()
+                    .expect("inline references editor should exist");
+                assert!(
+                    editor
+                        .try_handle_inline_references_save(
+                            &SaveOptions {
+                                format: true,
+                                autosave: true
+                            },
+                            window,
+                            cx
+                        )
+                        .is_none(),
+                    "autosave should never trigger inline reference saves"
+                );
+                assert!(
+                    editor
+                        .try_handle_inline_references_save(
+                            &SaveOptions {
+                                format: true,
+                                autosave: false
+                            },
+                            window,
+                            cx
+                        )
+                        .is_none(),
+                    "unfocused inline editor should not handle save"
+                );
+                inline_editor.update(cx, |inline_editor, cx| {
+                    window.focus(&inline_editor.focus_handle(cx));
+                });
+                let task = editor
+                    .try_handle_inline_references_save(
+                        &SaveOptions {
+                            format: false,
+                            autosave: false,
+                        },
+                        window,
+                        cx,
+                    )
+                    .expect("focused inline editor should intercept save");
+                task.detach();
+            });
+    }
+}
