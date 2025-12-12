@@ -187,8 +187,10 @@ pub async fn create_terminal_entity(
         Default::default()
     };
 
-    // Disables paging for `git` and hopefully other commands
+    // Disable pagers so agent/terminal commands don't hang behind interactive UIs
     env.insert("PAGER".into(), "".into());
+    // Override user core.pager (e.g. delta) which Git prefers over PAGER
+    env.insert("GIT_PAGER".into(), "cat".into());
     env.extend(env_vars);
 
     // Use remote shell or default system shell, as appropriate
