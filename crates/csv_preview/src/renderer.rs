@@ -12,6 +12,7 @@ impl Render for CsvPreviewView {
             .h_full()
             .p_4()
             .bg(theme.colors().editor_background)
+            .key_context(KEY_CONTEXT_NAME)
             .on_action(cx.listener(Self::copy_selected))
             .child(self.render_settings_panel(window, cx))
             .child({
