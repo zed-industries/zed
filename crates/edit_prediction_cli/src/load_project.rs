@@ -25,17 +25,12 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::CURSOR_MARKER;
 
-pub async fn run_load_project(
-    example: &mut Example,
-    app_state: Arc<EpAppState>,
-    progress: Arc<Progress>,
-    mut cx: AsyncApp,
-) {
+pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>, mut cx: AsyncApp) {
     if example.state.is_some() {
         return;
     }
 
-    let progress = progress.start(Step::LoadProject, &example.name);
+    let progress = Progress::global().start(Step::LoadProject, &example.name);
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await;
 

@@ -25,7 +25,6 @@ pub async fn run_prediction(
     provider: Option<PredictionProvider>,
     repetition_count: usize,
     app_state: Arc<EpAppState>,
-    progress: Arc<Progress>,
     mut cx: AsyncApp,
 ) {
     if !example.predictions.is_empty() {
@@ -34,32 +33,25 @@ pub async fn run_prediction(
 
     let provider = provider.unwrap();
 
-    run_context_retrieval(example, app_state.clone(), progress.clone(), cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
 
     if matches!(
         provider,
         PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
     ) {
-        let _step_progress = progress.start(Step::Predict, &example.name);
+        let _step_progress = Progress::global().start(Step::Predict, &example.name);
 
         if example.prompt.is_none() {
-            run_format_prompt(
-                example,
-                PromptFormat::Teacher,
-                app_state.clone(),
-                progress,
-                cx,
-            )
-            .await;
+            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
         }
 
         let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
     }
 
-    run_load_project(example, app_state.clone(), progress.clone(), cx.clone()).await;
+    run_load_project(example, app_state.clone(), cx.clone()).await;
 
-    let _step_progress = progress.start(Step::Predict, &example.name);
+    let _step_progress = Progress::global().start(Step::Predict, &example.name);
 
     if matches!(
         provider,

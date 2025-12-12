@@ -2,11 +2,11 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     io::{IsTerminal, Write},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
-const MAX_STATUS_LINES: usize = 10;
+use log::{Level, Log, Metadata, Record};
 
 pub struct Progress {
     inner: Mutex<ProgressInner>,
@@ -20,6 +20,7 @@ struct ProgressInner {
     max_example_name_len: usize,
     status_lines_displayed: usize,
     total_examples: usize,
+    last_line_is_logging: bool,
 }
 
 #[derive(Clone)]
@@ -74,21 +75,56 @@ impl Step {
     }
 }
 
+static GLOBAL: OnceLock<Arc<Progress>> = OnceLock::new();
+static LOGGER: ProgressLogger = ProgressLogger;
+
 const RIGHT_MARGIN: usize = 4;
+const MAX_STATUS_LINES: usize = 10;
 
 impl Progress {
-    pub fn new(total_examples: usize) -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(ProgressInner {
-                completed: Vec::new(),
-                in_progress: HashMap::new(),
-                is_tty: std::io::stderr().is_terminal(),
-                terminal_width: get_terminal_width(),
-                max_example_name_len: 0,
-                status_lines_displayed: 0,
-                total_examples,
-            }),
-        })
+    /// Returns the global Progress instance, initializing it if necessary.
+    pub fn global() -> Arc<Progress> {
+        GLOBAL
+            .get_or_init(|| {
+                let progress = Arc::new(Self {
+                    inner: Mutex::new(ProgressInner {
+                        completed: Vec::new(),
+                        in_progress: HashMap::new(),
+                        is_tty: std::io::stderr().is_terminal(),
+                        terminal_width: get_terminal_width(),
+                        max_example_name_len: 0,
+                        status_lines_displayed: 0,
+                        total_examples: 0,
+                        last_line_is_logging: false,
+                    }),
+                });
+                let _ = log::set_logger(&LOGGER);
+                log::set_max_level(log::LevelFilter::Error);
+                progress
+            })
+            .clone()
+    }
+
+    pub fn set_total_examples(&self, total: usize) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.total_examples = total;
+    }
+
+    /// Prints a message to stderr, clearing and redrawing status lines to avoid corruption.
+    /// This should be used for any output that needs to appear above the status lines.
+    fn log(&self, message: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        Self::clear_status_lines(&mut inner);
+
+        if !inner.last_line_is_logging {
+            let reset = "\x1b[0m";
+            let dim = "\x1b[2m";
+            let divider = "─".repeat(inner.terminal_width.saturating_sub(RIGHT_MARGIN));
+            eprintln!("{dim}{divider}{reset}");
+            inner.last_line_is_logging = true;
+        }
+
+        eprintln!("{}", message);
     }
 
     pub fn start(self: &Arc<Self>, step: Step, example_name: &str) -> StepProgress {
@@ -132,10 +168,21 @@ impl Progress {
             });
 
             Self::clear_status_lines(&mut inner);
+            Self::print_logging_closing_divider(&mut inner);
             Self::print_completed(&inner, inner.completed.last().unwrap());
             Self::print_status_lines(&mut inner);
         } else {
             inner.in_progress.insert(example_name.to_string(), task);
+        }
+    }
+
+    fn print_logging_closing_divider(inner: &mut ProgressInner) {
+        if inner.last_line_is_logging {
+            let reset = "\x1b[0m";
+            let dim = "\x1b[2m";
+            let divider = "─".repeat(inner.terminal_width.saturating_sub(RIGHT_MARGIN));
+            eprintln!("{dim}{divider}{reset}");
+            inner.last_line_is_logging = false;
         }
     }
 
@@ -319,6 +366,53 @@ impl StepProgress {
 impl Drop for StepProgress {
     fn drop(&mut self) {
         self.progress.finish(self.step, &self.example_name);
+    }
+}
+
+struct ProgressLogger;
+
+impl Log for ProgressLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+
+    fn log(&self, record: &Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+
+        let level_color = match record.level() {
+            Level::Error => "\x1b[31m",
+            Level::Warn => "\x1b[33m",
+            Level::Info => "\x1b[32m",
+            Level::Debug => "\x1b[34m",
+            Level::Trace => "\x1b[35m",
+        };
+        let reset = "\x1b[0m";
+        let bold = "\x1b[1m";
+
+        let level_label = match record.level() {
+            Level::Error => "Error",
+            Level::Warn => "Warn",
+            Level::Info => "Info",
+            Level::Debug => "Debug",
+            Level::Trace => "Trace",
+        };
+
+        let message = format!(
+            "{bold}{level_color}{level_label:>12}{reset} {}",
+            record.args()
+        );
+
+        if let Some(progress) = GLOBAL.get() {
+            progress.log(&message);
+        } else {
+            eprintln!("{}", message);
+        }
+    }
+
+    fn flush(&self) {
+        let _ = std::io::stderr().flush();
     }
 }
 
