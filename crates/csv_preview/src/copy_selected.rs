@@ -3,7 +3,7 @@ use ui::{Context, Window};
 
 use std::collections::BTreeMap;
 
-use crate::{CopySelected, CsvPreviewView};
+use crate::{CopySelected, CsvPreviewView, settings::CopyFormat};
 impl CsvPreviewView {
     pub(crate) fn copy_selected(
         &mut self,
@@ -56,10 +56,50 @@ impl CsvPreviewView {
                 row_cells.push(cell_value);
             }
 
-            tsv_lines.push(row_cells.join("\t"));
+            let separator = match self.settings.copy_format {
+                CopyFormat::Tsv => "\t",
+                CopyFormat::Csv => ",",
+                CopyFormat::Semicolon => ";",
+            };
+
+            // Escape cells if they contain separators, quotes, or newlines
+            let formatted_cells: Vec<String> = match self.settings.copy_format {
+                CopyFormat::Tsv => row_cells
+                    .into_iter()
+                    .map(|cell| {
+                        if cell.contains('\t') || cell.contains('"') || cell.contains('\n') {
+                            format!("\"{}\"", cell.replace("\"", "\"\""))
+                        } else {
+                            cell
+                        }
+                    })
+                    .collect(),
+                CopyFormat::Csv => row_cells
+                    .into_iter()
+                    .map(|cell| {
+                        if cell.contains(',') || cell.contains('"') || cell.contains('\n') {
+                            format!("\"{}\"", cell.replace("\"", "\"\""))
+                        } else {
+                            cell
+                        }
+                    })
+                    .collect(),
+                CopyFormat::Semicolon => row_cells
+                    .into_iter()
+                    .map(|cell| {
+                        if cell.contains(';') || cell.contains('"') || cell.contains('\n') {
+                            format!("\"{}\"", cell.replace("\"", "\"\""))
+                        } else {
+                            cell
+                        }
+                    })
+                    .collect(),
+            };
+
+            tsv_lines.push(formatted_cells.join(separator));
         }
 
-        let tsv_content = tsv_lines.join("\n");
-        cx.write_to_clipboard(ClipboardItem::new_string(tsv_content));
+        let content = tsv_lines.join("\n");
+        cx.write_to_clipboard(ClipboardItem::new_string(content));
     }
 }
