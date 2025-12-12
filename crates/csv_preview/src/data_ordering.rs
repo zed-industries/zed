@@ -1,5 +1,5 @@
 use crate::{
-    cell_selection::{DataRow, DisplayRow},
+    table_cell::{DataRow, DisplayRow},
     table_like_content::TableLikeContent,
 };
 use std::collections::HashMap;
