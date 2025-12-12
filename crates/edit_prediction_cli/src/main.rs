@@ -1,4 +1,5 @@
 mod anthropic_client;
+mod distill;
 mod example;
 mod format_prompt;
 mod headless;
@@ -14,9 +15,12 @@ use edit_prediction::EditPredictionStore;
 use gpui::Application;
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 use std::{path::PathBuf, sync::Arc};
 
-use crate::example::{read_examples, write_examples};
+use crate::distill::run_distill;
+use crate::example::{group_examples_by_repo, read_examples, write_examples};
 use crate::format_prompt::run_format_prompt;
 use crate::load_project::run_load_project;
 use crate::predict::run_prediction;
@@ -45,7 +49,7 @@ enum Command {
     /// Parse markdown examples and output a combined .jsonl file
     ParseExample,
     /// Create git worktrees for each example and load file contents
-    LoadBuffer,
+    LoadProject,
     /// Retrieve context for input examples.
     Context,
     /// Generate a prompt string for a specific model
@@ -54,6 +58,9 @@ enum Command {
     Predict(PredictArgs),
     /// Computes a score based on actual and expected patches
     Score(PredictArgs),
+    /// Prepares a distillation dataset by copying expected outputs to
+    /// predicted outputs and removing actual outputs and prompts.
+    Distill,
     /// Print aggregated scores
     Eval(PredictArgs),
     /// Remove git repositories and worktrees
@@ -87,6 +94,7 @@ enum PredictionProvider {
     Zeta1,
     Zeta2,
     Teacher,
+    TeacherNonBatching,
 }
 
 impl EpArgs {
@@ -139,27 +147,40 @@ fn main() {
         EditPredictionStore::global(&app_state.client, &app_state.user_store, cx);
 
         cx.spawn(async move |cx| {
-            match &command {
-                Command::Predict(args) => predict::sync_batches(&args.provider).await,
-                _ => (),
+            if let Command::Predict(args) = &command {
+                predict::sync_batches(&args.provider).await
             };
 
-            for data in examples.chunks_mut(args.max_parallelism) {
-                let mut futures = Vec::new();
-                for example in data.iter_mut() {
-                    let cx = cx.clone();
-                    let app_state = app_state.clone();
-                    futures.push(async {
+            let example_count = examples.len();
+            let example_ix = AtomicUsize::new(0);
+            let mut grouped_examples = group_examples_by_repo(&mut examples);
+
+            let example_batches = grouped_examples.chunks_mut(args.max_parallelism);
+            for example_batch in example_batches {
+                let futures = example_batch.into_iter().map(|repo_examples| async {
+                    for example in repo_examples.iter_mut() {
+                        eprintln!(
+                            "Processing example: {}/{}",
+                            example_ix.load(SeqCst) + 1,
+                            example_count
+                        );
+                        example_ix.fetch_add(1, SeqCst);
                         match &command {
                             Command::ParseExample => {}
-                            Command::LoadBuffer => {
-                                run_load_project(example, app_state.clone(), cx).await;
+                            Command::LoadProject => {
+                                run_load_project(example, app_state.clone(), cx.clone()).await;
                             }
                             Command::Context => {
-                                run_context_retrieval(example, app_state, cx).await;
+                                run_context_retrieval(example, app_state.clone(), cx.clone()).await;
                             }
                             Command::FormatPrompt(args) => {
-                                run_format_prompt(example, args.prompt_format, app_state, cx).await;
+                                run_format_prompt(
+                                    example,
+                                    args.prompt_format,
+                                    app_state.clone(),
+                                    cx.clone(),
+                                )
+                                .await;
                             }
                             Command::Predict(args) => {
                                 run_prediction(
@@ -167,19 +188,22 @@ fn main() {
                                     Some(args.provider),
                                     args.repetitions,
                                     app_state.clone(),
-                                    cx,
+                                    cx.clone(),
                                 )
                                 .await;
                             }
+                            Command::Distill => {
+                                run_distill(example).await;
+                            }
                             Command::Score(args) | Command::Eval(args) => {
-                                run_scoring(example, &args, app_state, cx).await;
+                                run_scoring(example, &args, app_state.clone(), cx.clone()).await;
                             }
                             Command::Clean => {
                                 unreachable!()
                             }
                         }
-                    });
-                }
+                    }
+                });
                 futures::future::join_all(futures).await;
             }
 

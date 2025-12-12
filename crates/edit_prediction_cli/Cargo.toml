@@ -52,7 +52,7 @@ sqlez_macros.workspace = true
 terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
-edit_prediction = { workspace = true, features = ["eval-support"] }
+edit_prediction = { workspace = true, features = ["cli-support"] }
 wasmtime.workspace = true
 zeta_prompt.workspace = true
 zlog.workspace = true

@@ -28,6 +28,7 @@ impl VimTestContext {
             search::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             settings_ui::init(cx);
+            markdown_preview::init(cx);
         });
     }
 

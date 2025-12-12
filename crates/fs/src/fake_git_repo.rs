@@ -200,6 +200,7 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
+                message: "initial commit".into(),
                 ..Default::default()
             })
         }
@@ -568,7 +569,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn run_hook(
@@ -576,7 +577,7 @@ impl GitRepository for FakeGitRepository {
         _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn push(

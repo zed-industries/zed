@@ -691,7 +691,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -720,7 +720,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -791,7 +791,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })

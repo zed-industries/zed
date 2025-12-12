@@ -331,14 +331,13 @@ impl LanguageServer {
         };
         let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
-
         log::info!(
-            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: \
+            {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
         );
-
         let mut command = util::command::new_smol_command(&binary.path);
         command
             .current_dir(working_dir)
@@ -348,6 +347,7 @@ impl LanguageServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
         let mut server = command
             .spawn()
             .with_context(|| format!("failed to spawn command {command:?}",))?;

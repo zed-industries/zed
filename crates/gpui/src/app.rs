@@ -38,11 +38,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1493,24 +1492,6 @@ impl App {
 
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
-    }
-
-    /// Spawns the future returned by the given function on the main thread with
-    /// the given priority. The closure will be invoked with [AsyncApp], which
-    /// allows the application state to be accessed across await points.
-    pub fn spawn_with_priority<AsyncFn, R>(&self, priority: Priority, f: AsyncFn) -> Task<R>
-    where
-        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
-        R: 'static,
-    {
-        if self.quitting {
-            debug_panic!("Can't spawn on main thread after on_app_quit")
-        };
-
-        let mut cx = self.to_async();
-
-        self.foreground_executor
-            .spawn_with_priority(priority, async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities

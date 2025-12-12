@@ -55,7 +55,7 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-#[cfg(any(test, feature = "test-support", feature = "eval-support"))]
+#[cfg(any(test, feature = "test-support", feature = "cli-support"))]
 pub mod udiff;
 
 mod zed_edit_prediction_delegate;
@@ -158,7 +158,7 @@ pub struct EditPredictionStore {
     use_context: bool,
     options: ZetaOptions,
     update_required: bool,
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
@@ -283,6 +283,18 @@ impl ProjectState {
         })
         .detach()
     }
+
+    fn active_buffer(
+        &self,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, Option<Anchor>)> {
+        let project = project.read(cx);
+        let active_path = project.path_for_entry(project.active_entry()?, cx)?;
+        let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
+        let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
+        Some((active_buffer, registered_buffer.last_position))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +385,7 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 
 struct RegisteredBuffer {
     snapshot: BufferSnapshot,
+    last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
@@ -492,7 +505,7 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            #[cfg(feature = "eval-support")]
+            #[cfg(feature = "cli-support")]
             eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2,
             sweep_ai: SweepAi::new(cx),
@@ -541,7 +554,7 @@ impl EditPredictionStore {
             .is_some()
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
     }
@@ -560,6 +573,12 @@ impl EditPredictionStore {
 
     pub fn clear_history(&mut self) {
         for project_state in self.projects.values_mut() {
+            project_state.events.clear();
+        }
+    }
+
+    pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
             project_state.events.clear();
         }
     }
@@ -795,6 +814,7 @@ impl EditPredictionStore {
                 let project_entity_id = project.entity_id();
                 entry.insert(RegisteredBuffer {
                     snapshot,
+                    last_position: None,
                     _subscriptions: [
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
@@ -882,13 +902,21 @@ impl EditPredictionStore {
         });
     }
 
-    fn current_prediction_for_buffer(
-        &self,
+    fn prediction_at(
+        &mut self,
         buffer: &Entity<Buffer>,
+        position: Option<language::Anchor>,
         project: &Entity<Project>,
         cx: &App,
     ) -> Option<BufferEditPrediction<'_>> {
-        let project_state = self.projects.get(&project.entity_id())?;
+        let project_state = self.projects.get_mut(&project.entity_id())?;
+        if let Some(position) = position
+            && let Some(buffer) = project_state
+                .registered_buffers
+                .get_mut(&buffer.entity_id())
+        {
+            buffer.last_position = Some(position);
+        }
 
         let CurrentEditPrediction {
             requested_by,
@@ -1131,12 +1159,21 @@ impl EditPredictionStore {
         };
 
         self.queue_prediction_refresh(project.clone(), project.entity_id(), cx, move |this, cx| {
-            let Some(open_buffer_task) = project
-                .update(cx, |project, cx| {
-                    project
-                        .active_entry()
-                        .and_then(|entry| project.path_for_entry(entry, cx))
-                        .map(|path| project.open_buffer(path, cx))
+            let Some((active_buffer, snapshot, cursor_point)) = this
+                .read_with(cx, |this, cx| {
+                    let project_state = this.projects.get(&project.entity_id())?;
+                    let (buffer, position) = project_state.active_buffer(&project, cx)?;
+                    let snapshot = buffer.read(cx).snapshot();
+
+                    if !Self::predictions_enabled_at(&snapshot, position, cx) {
+                        return None;
+                    }
+
+                    let cursor_point = position
+                        .map(|pos| pos.to_point(&snapshot))
+                        .unwrap_or_default();
+
+                    Some((buffer, snapshot, cursor_point))
                 })
                 .log_err()
                 .flatten()
@@ -1145,14 +1182,11 @@ impl EditPredictionStore {
             };
 
             cx.spawn(async move |cx| {
-                let active_buffer = open_buffer_task.await?;
-                let snapshot = active_buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
                 let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
                     active_buffer,
                     &snapshot,
                     Default::default(),
-                    Default::default(),
+                    cursor_point,
                     &project,
                     cx,
                 )
@@ -1195,6 +1229,37 @@ impl EditPredictionStore {
                 })
             })
         });
+    }
+
+    fn predictions_enabled_at(
+        snapshot: &BufferSnapshot,
+        position: Option<language::Anchor>,
+        cx: &App,
+    ) -> bool {
+        let file = snapshot.file();
+        let all_settings = all_language_settings(file, cx);
+        if !all_settings.show_edit_predictions(snapshot.language(), cx)
+            || file.is_some_and(|file| !all_settings.edit_predictions_enabled_for_file(file, cx))
+        {
+            return false;
+        }
+
+        if let Some(last_position) = position {
+            let settings = snapshot.settings_at(last_position, cx);
+
+            if !settings.edit_predictions_disabled_in.is_empty()
+                && let Some(scope) = snapshot.language_scope_at(last_position)
+                && let Some(scope_name) = scope.override_name()
+                && settings
+                    .edit_predictions_disabled_in
+                    .iter()
+                    .any(|s| s == scope_name)
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     #[cfg(not(test))]
@@ -1531,8 +1596,8 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
-        #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
-        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
+        #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
         let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
             http_client::Url::parse(&predict_edits_url)?
@@ -1542,7 +1607,7 @@ impl EditPredictionStore {
                 .build_zed_llm_url("/predict_edits/raw", &[])?
         };
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {
             use collections::FxHasher;
             use std::hash::{Hash, Hasher};
@@ -1576,7 +1641,7 @@ impl EditPredictionStore {
         )
         .await?;
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         if let Some((cache, request, key)) = cache_key {
             cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
@@ -1708,7 +1773,7 @@ impl EditPredictionStore {
         }
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn set_context_for_buffer(
         &mut self,
         project: &Entity<Project>,
@@ -1833,10 +1898,10 @@ pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub type EvalCacheKey = (EvalCacheEntryKind, u64);
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EvalCacheEntryKind {
     Context,
@@ -1844,7 +1909,7 @@ pub enum EvalCacheEntryKind {
     Prediction,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 impl std::fmt::Display for EvalCacheEntryKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1855,7 +1920,7 @@ impl std::fmt::Display for EvalCacheEntryKind {
     }
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub trait EvalCache: Send + Sync {
     fn read(&self, key: EvalCacheKey) -> Option<String>;
     fn write(&self, key: EvalCacheKey, input: &str, value: &str);

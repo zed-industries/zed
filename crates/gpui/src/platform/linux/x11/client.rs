@@ -1,4 +1,4 @@
-use crate::{Capslock, ResultExt as _, RunnableVariant, TaskTiming, profiler, xcb_flush};
+use crate::{Capslock, LinuxDispatcher, ResultExt as _, RunnableVariant, TaskTiming, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -322,7 +322,7 @@ impl X11Client {
                                         start,
                                         end: None,
                                     };
-                                    profiler::add_task_timing(timing);
+                                    LinuxDispatcher::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -334,7 +334,7 @@ impl X11Client {
                                         start,
                                         end: None,
                                     };
-                                    profiler::add_task_timing(timing);
+                                    LinuxDispatcher::add_task_timing(timing);
 
                                     runnable.run();
                                     timing
@@ -343,7 +343,7 @@ impl X11Client {
 
                             let end = Instant::now();
                             timing.end = Some(end);
-                            profiler::add_task_timing(timing);
+                            LinuxDispatcher::add_task_timing(timing);
                         });
                     }
                 }
