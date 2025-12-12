@@ -35,7 +35,11 @@ actions!(
         MoveFocusUp,
         MoveFocusDown,
         MoveFocusLeft,
-        MoveFocusRight
+        MoveFocusRight,
+        SelectUp,
+        SelectDown,
+        SelectLeft,
+        SelectRight
     ]
 );
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
@@ -117,6 +121,30 @@ impl CsvPreviewView {
         let max_cols = self.contents.headers.len();
         self.selection
             .move_focus_right(&self.ordered_indices, max_cols);
+        cx.notify();
+    }
+
+    fn select_up(&mut self, _: &SelectUp, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selection.extend_selection_up(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn select_down(&mut self, _: &SelectDown, _window: &mut Window, cx: &mut Context<Self>) {
+        let max_rows = self.contents.rows.len();
+        self.selection
+            .extend_selection_down(&self.ordered_indices, max_rows);
+        cx.notify();
+    }
+
+    fn select_left(&mut self, _: &SelectLeft, _window: &mut Window, cx: &mut Context<Self>) {
+        self.selection.extend_selection_left(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn select_right(&mut self, _: &SelectRight, _window: &mut Window, cx: &mut Context<Self>) {
+        let max_cols = self.contents.headers.len();
+        self.selection
+            .extend_selection_right(&self.ordered_indices, max_cols);
         cx.notify();
     }
 
