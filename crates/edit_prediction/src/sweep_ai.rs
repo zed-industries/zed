@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, SharedString, Task,
+    App, AppContext as _, Entity, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Point, ToOffset as _};
@@ -15,22 +15,19 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    EditPredictionId, EditPredictionModelInput, EditPredictionStore,
-    prediction::EditPredictionResult,
-};
+use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult};
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
 pub struct SweepAi {
-    pub api_token: ApiKeyState,
+    pub api_token: Entity<ApiKeyState>,
     pub debug_info: Arc<str>,
 }
 
 impl SweepAi {
-    pub fn new(cx: &mut Context<EditPredictionStore>) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         SweepAi {
-            api_token: load_api_token(cx),
+            api_token: sweep_api_token(cx),
             debug_info: debug_info(cx),
         }
     }
@@ -41,7 +38,10 @@ impl SweepAi {
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
-        let Some(api_token) = self.api_token.key(&SWEEP_CREDENTIALS_URL) else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = inputs
@@ -272,15 +272,14 @@ pub const SWEEP_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://autocomplete.sweep.dev");
 pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
 pub static SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP_AI_TOKEN");
+pub static SWEEP_API_KEY: std::sync::OnceLock<Entity<ApiKeyState>> = std::sync::OnceLock::new();
 
-pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone());
-    _ = key.load_if_needed(
-        SWEEP_CREDENTIALS_URL,
-        |ep_store| &mut ep_store.sweep_ai.api_token,
-        cx,
-    );
-    key
+pub fn sweep_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    SWEEP_API_KEY
+        .get_or_init(|| {
+            cx.new(|_| ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone()))
+        })
+        .clone()
 }
 
 #[derive(Debug, Clone, Serialize)]

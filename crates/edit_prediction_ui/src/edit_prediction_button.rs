@@ -309,14 +309,14 @@ impl Render for EditPredictionButton {
                             "Powered by Sweep"
                         };
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token());
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
                     }
                     EditPredictionProvider::Experimental(
                         EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
                     ) => {
                         ep_icon = IconName::Inception;
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token());
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
                         tooltip_meta = if missing_token {
                             "Missing API key for Mercury"
                         } else {
@@ -530,12 +530,12 @@ impl EditPredictionButton {
             providers.push(EditPredictionProvider::Codestral);
         }
 
-        let ep_store = EditPredictionStore::try_global(cx)
-            .as_ref()
-            .map(|ep_store| ep_store.read(cx));
+        let ep_store = EditPredictionStore::try_global(cx);
 
         if cx.has_flag::<SweepFeatureFlag>()
-            && ep_store.is_some_and(|ep_store| ep_store.has_sweep_api_token())
+            && ep_store
+                .as_ref()
+                .is_some_and(|ep_store| ep_store.read(cx).has_sweep_api_token(cx))
         {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
@@ -543,7 +543,9 @@ impl EditPredictionButton {
         }
 
         if cx.has_flag::<MercuryFeatureFlag>()
-            && ep_store.is_some_and(|ep_store| ep_store.has_mercury_api_token())
+            && ep_store
+                .as_ref()
+                .is_some_and(|ep_store| ep_store.read(cx).has_mercury_api_token(cx))
         {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,

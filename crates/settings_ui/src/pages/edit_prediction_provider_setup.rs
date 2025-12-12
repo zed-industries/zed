@@ -1,6 +1,7 @@
 use edit_prediction::{
-    ApiKeyState, EditPredictionStore, Zeta2FeatureFlag, mercury::MERCURY_CREDENTIALS_URL,
-    sweep_ai::SWEEP_CREDENTIALS_URL,
+    ApiKeyState, Zeta2FeatureFlag,
+    mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
+    sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
@@ -29,20 +30,18 @@ impl EditPredictionSetupPage {
 impl Render for EditPredictionSetupPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings_window = self.settings_window.clone();
-
-        // TODO: Skip ep_store for loading keys
+        // todo! skip ep_store for loading keys
         let ep_store = EditPredictionStore::try_global(cx);
 
         let providers = [
             Some(render_github_copilot_provider(window, cx).into_any_element()),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
-                render_api_key_provider(
+                render_api_key_provider_state(
                     IconName::Inception,
                     "Mercury",
                     "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
-                    |ep_store| &mut ep_store.mercury.api_token,
+                    mercury_api_token(cx),
                     |_cx| MERCURY_CREDENTIALS_URL,
-                    ep_store.clone(),
                     None,
                     window,
                     cx,
@@ -50,13 +49,12 @@ impl Render for EditPredictionSetupPage {
                 .into_any_element()
             }),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
-                render_api_key_provider(
+                render_api_key_provider_state(
                     IconName::SweepAi,
                     "Sweep",
                     "https://app.sweep.dev/".into(),
-                    |ep_store| &mut ep_store.sweep_ai.api_token,
+                    sweep_api_token(cx),
                     |_cx| SWEEP_CREDENTIALS_URL,
-                    ep_store.clone(),
                     None,
                     window,
                     cx,
@@ -105,6 +103,125 @@ impl Render for EditPredictionSetupPage {
                     .children(providers.into_iter().flatten()),
             )
     }
+}
+
+fn render_api_key_provider_state(
+    icon: IconName,
+    title: &'static str,
+    link: SharedString,
+    api_key_state: Entity<ApiKeyState>,
+    current_url: fn(&mut App) -> SharedString,
+    additional_fields: Option<AnyElement>,
+    _window: &mut Window,
+    cx: &mut Context<EditPredictionSetupPage>,
+) -> impl IntoElement {
+    let weak_page = cx.weak_entity();
+    _ = _window.use_keyed_state(title, cx, |_, cx| {
+        let task = api_key_state.update(cx, |key_state, cx| {
+            key_state.load_if_needed(current_url(cx), |state| state, cx)
+        });
+        dbg!("spawning");
+        cx.spawn(async move |_, cx| {
+            task.await.ok();
+            weak_page
+                .update(cx, |_, cx| {
+                    cx.notify();
+                })
+                .ok();
+        })
+    });
+
+    let (has_key, env_var_name) = api_key_state.read_with(cx, |state, _| {
+        (state.has_key(), Some(state.env_var_name().clone()))
+    });
+
+    let write_key = move |api_key: Option<String>, cx: &mut App| {
+        api_key_state
+            .update(cx, |key_state, cx| {
+                let url = current_url(cx);
+                key_state.store(url, api_key, |key_state| key_state, cx)
+            })
+            .detach_and_log_err(cx);
+    };
+
+    let base_container = v_flex().id(title).min_w_0().pt_8().gap_1p5();
+    let header = SettingsSectionHeader::new(title)
+        .icon(icon)
+        .no_padding(true);
+    let button_link_label = format!("{} dashboard", title);
+    let description = h_flex()
+        .min_w_0()
+        .gap_0p5()
+        .child(
+            Label::new("Visit the")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(
+            ButtonLink::new(button_link_label, link)
+                .no_icon(true)
+                .label_size(LabelSize::Small)
+                .label_color(Color::Muted),
+        )
+        .child(
+            Label::new("to generate an API key.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        );
+
+    let container = if has_key {
+        base_container.child(header).child(
+            ConfiguredApiCard::new("API key configured")
+                .button_label("Reset Key")
+                .button_tab_index(0)
+                // .disabled() TODO: Disable button to reset if the env var is set
+                .on_click(move |_, _, cx| {
+                    write_key(None, cx);
+                }),
+        )
+    } else {
+        base_container.child(header).child(
+            h_flex()
+                .pt_2p5()
+                .w_full()
+                .justify_between()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .max_w_1_2()
+                        .child(Label::new("API Key"))
+                        .child(description)
+                        .when_some(env_var_name, |this, env_var_name| {
+                            this.child({
+                                let label = format!(
+                                    "Or set the {} env var and restart Zed.",
+                                    env_var_name.as_ref()
+                                );
+                                Label::new(label).size(LabelSize::Small).color(Color::Muted)
+                            })
+                        }),
+                )
+                .child(
+                    SettingsInputField::new()
+                        .tab_index(0)
+                        .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .on_confirm(move |api_key, cx| {
+                            write_key(api_key.filter(|key| !key.is_empty()), cx);
+                        }),
+                ),
+        )
+    };
+
+    container.when_some(additional_fields, |this, additional_fields| {
+        this.child(
+            div()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .mt_4()
+                .px_neg_8()
+                .child(additional_fields),
+        )
+    })
 }
 
 fn render_api_key_provider<Ent: 'static>(

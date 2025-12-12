@@ -1,12 +1,12 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
+    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, SharedString, Task,
+    App, AppContext as _, Entity, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
@@ -19,13 +19,13 @@ const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 
 pub struct Mercury {
-    pub api_token: ApiKeyState,
+    pub api_token: Entity<ApiKeyState>,
 }
 
 impl Mercury {
-    pub fn new(cx: &mut Context<EditPredictionStore>) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         Mercury {
-            api_token: load_api_token(cx),
+            api_token: mercury_api_token(cx),
         }
     }
 
@@ -42,7 +42,10 @@ impl Mercury {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let Some(api_token) = self.api_token.key(&MERCURY_CREDENTIALS_URL) else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = snapshot
@@ -297,13 +300,12 @@ pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
 pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
+pub static MERCURY_API_KEY: std::sync::OnceLock<Entity<ApiKeyState>> = std::sync::OnceLock::new();
 
-pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
-    let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone());
-    _ = key.load_if_needed(
-        MERCURY_CREDENTIALS_URL,
-        |ep_store| &mut ep_store.sweep_ai.api_token,
-        cx,
-    );
-    key
+pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    MERCURY_API_KEY
+        .get_or_init(|| {
+            cx.new(|_| ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone()))
+        })
+        .clone()
 }

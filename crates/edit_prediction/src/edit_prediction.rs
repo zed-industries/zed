@@ -537,12 +537,12 @@ impl EditPredictionStore {
         self.edit_prediction_model = model;
     }
 
-    pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai.api_token.has_key()
+    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
+        self.sweep_ai.api_token.read(cx).has_key()
     }
 
-    pub fn has_mercury_api_token(&self) -> bool {
-        self.mercury.api_token.has_key()
+    pub fn has_mercury_api_token(&self, cx: &App) -> bool {
+        self.mercury.api_token.read(cx).has_key()
     }
 
     #[cfg(feature = "cli-support")]
