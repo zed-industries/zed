@@ -7,9 +7,9 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache,
+    Styled, Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -21,7 +21,8 @@ use workspace::{Pane, Workspace};
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
+    CopyAll, MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -501,6 +502,13 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn copy_all(&mut self, _: &CopyAll, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(contents) = &self.contents {
+            let text = contents.to_plain_text();
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -557,6 +565,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::copy_all))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
