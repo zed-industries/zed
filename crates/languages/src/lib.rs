@@ -19,7 +19,9 @@ use crate::{
 
 mod bash;
 mod c;
+mod cpp;
 mod css;
+mod eslint;
 mod go;
 mod json;
 mod package_json;
@@ -83,11 +85,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
 
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
-    let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
+    let eslint_adapter = Arc::new(eslint::EsLintLspAdapter::new(node.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(JsonTaskProvider);
-    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
+    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(languages.clone(), node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
@@ -281,7 +283,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         "CSS",
         "ERB",
         "HTML+ERB",
-        "HTML/ERB",
         "HEEX",
         "HTML",
         "JavaScript",

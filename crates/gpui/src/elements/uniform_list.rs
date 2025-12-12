@@ -11,7 +11,7 @@ use crate::{
     StyleRefinement, Styled, Window, point, size,
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
 
 use super::ListHorizontalSizingBehavior;
 
@@ -234,6 +234,11 @@ impl UniformListScrollHandle {
         } else {
             false
         }
+    }
+
+    /// Scroll to the bottom of the list.
+    pub fn scroll_to_bottom(&self) {
+        self.scroll_to_item(usize::MAX, ScrollStrategy::Bottom);
     }
 }
 
@@ -663,9 +668,9 @@ impl UniformList {
     }
 
     /// Track and render scroll state of this list with reference to the given scroll handle.
-    pub fn track_scroll(mut self, handle: UniformListScrollHandle) -> Self {
+    pub fn track_scroll(mut self, handle: &UniformListScrollHandle) -> Self {
         self.interactivity.tracked_scroll_handle = Some(handle.0.borrow().base_handle.clone());
-        self.scroll_handle = Some(handle);
+        self.scroll_handle = Some(handle.clone());
         self
     }
 
@@ -775,7 +780,7 @@ mod test {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.scroll_handle.clone())
+                        .track_scroll(&self.scroll_handle)
                         .h(px(200.0)),
                     )
             }

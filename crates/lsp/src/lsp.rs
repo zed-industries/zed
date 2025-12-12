@@ -69,7 +69,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -341,14 +341,13 @@ impl LanguageServer {
         };
         let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
-
         log::info!(
-            "starting language server process. binary path: {:?}, working directory: {:?}, args: {:?}",
+            "starting language server process. binary path: \
+            {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
             &binary.arguments
         );
-
         let mut command = util::command::new_smol_command(&binary.path);
         command
             .current_dir(working_dir)
@@ -358,6 +357,7 @@ impl LanguageServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
         let mut server = command
             .spawn()
             .with_context(|| format!("failed to spawn command {command:?}",))?;
@@ -680,7 +680,7 @@ impl LanguageServer {
 
         #[allow(deprecated)]
         InitializeParams {
-            process_id: None,
+            process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
@@ -776,6 +776,10 @@ impl LanguageServer {
                                     // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
                                     // "textEdit".to_string(),
                                 ],
+                            }),
+                            deprecated_support: Some(true),
+                            tag_support: Some(TagSupport {
+                                value_set: vec![CompletionItemTag::DEPRECATED],
                             }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
@@ -1879,7 +1883,7 @@ impl FakeLanguageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{SemanticVersion, TestAppContext};
+    use gpui::TestAppContext;
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1890,7 +1894,7 @@ mod tests {
     #[gpui::test]
     async fn test_fake(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
             LanguageServerId(0),

@@ -59,7 +59,7 @@ impl MouseContextMenu {
                 x: editor.gutter_dimensions.width,
                 y: Pixels::ZERO,
             };
-        let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, window, cx)?;
         let menu_position = MenuPosition::PinnedToEditor {
             source,
             offset: position - (source_position + content_origin),
@@ -235,7 +235,10 @@ pub fn deploy_context_menu(
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
-                .action("Find All References", Box::new(FindAllReferences))
+                .action(
+                    "Find All References",
+                    Box::new(FindAllReferences::default()),
+                )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
@@ -276,6 +279,11 @@ pub fn deploy_context_menu(
                     !has_git_repo,
                     "Copy Permalink",
                     Box::new(CopyPermalinkToLine),
+                )
+                .action_disabled_when(
+                    !has_git_repo,
+                    "View File History",
+                    Box::new(git::FileHistory),
                 );
             match focus {
                 Some(focus) => builder.context(focus),

@@ -1,8 +1,9 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
-    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight,
-    GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
-    TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
+    FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
+    StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
+    relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -13,8 +14,9 @@ const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
+// gate on rust-analyzer so rust-analyzer never needs to expand this macro, it takes up to 10 seconds to expand due to inefficiencies in rust-analyzers proc-macro srv
 #[cfg_attr(
-    any(feature = "inspector", debug_assertions),
+    all(any(feature = "inspector", debug_assertions), not(rust_analyzer)),
     gpui_macros::derive_inspector_reflection
 )]
 pub trait Styled: Sized {
@@ -626,6 +628,14 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_family = Some(family_name.into());
+        self
+    }
+
+    /// Sets the font features of this element and its children.
+    fn font_features(mut self, features: FontFeatures) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_features = Some(features);
         self
     }
 

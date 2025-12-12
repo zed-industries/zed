@@ -1,14 +1,12 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
-use smol::fs;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -142,13 +140,6 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-            "userLanguages": {
-                "html": "html",
-                "css": "css",
-                "javascript": "javascript",
-                "typescript": "typescript",
-                "typescriptreact": "typescriptreact",
-            },
         })))
     }
 
@@ -156,6 +147,7 @@ impl LspAdapter for TailwindLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut tailwind_user_settings = cx.update(|cx| {
@@ -168,27 +160,49 @@ impl LspAdapter for TailwindLspAdapter {
             tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
+        if tailwind_user_settings.get("includeLanguages").is_none() {
+            tailwind_user_settings["includeLanguages"] = json!({
+                "html": "html",
+                "css": "css",
+                "javascript": "javascript",
+                "typescript": "typescript",
+                "typescriptreact": "typescriptreact",
+            });
+        }
+
         Ok(json!({
-            "tailwindCSS": tailwind_user_settings,
+            "tailwindCSS": tailwind_user_settings
         }))
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("Astro"), "astro".to_string()),
-            (LanguageName::new("HTML"), "html".to_string()),
-            (LanguageName::new("CSS"), "css".to_string()),
-            (LanguageName::new("JavaScript"), "javascript".to_string()),
-            (LanguageName::new("TypeScript"), "typescript".to_string()),
-            (LanguageName::new("TSX"), "typescriptreact".to_string()),
-            (LanguageName::new("Svelte"), "svelte".to_string()),
-            (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
-            (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
-            (LanguageName::new("ERB"), "erb".to_string()),
-            (LanguageName::new("HTML+ERB"), "erb".to_string()),
-            (LanguageName::new("HTML/ERB"), "erb".to_string()),
-            (LanguageName::new("PHP"), "php".to_string()),
-            (LanguageName::new("Vue.js"), "vue".to_string()),
+            (LanguageName::new_static("Astro"), "astro".to_string()),
+            (LanguageName::new_static("HTML"), "html".to_string()),
+            (LanguageName::new_static("Gleam"), "html".to_string()),
+            (LanguageName::new_static("CSS"), "css".to_string()),
+            (
+                LanguageName::new_static("JavaScript"),
+                "javascript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TypeScript"),
+                "typescript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TSX"),
+                "typescriptreact".to_string(),
+            ),
+            (LanguageName::new_static("Svelte"), "svelte".to_string()),
+            (
+                LanguageName::new_static("Elixir"),
+                "phoenix-heex".to_string(),
+            ),
+            (LanguageName::new_static("HEEX"), "phoenix-heex".to_string()),
+            (LanguageName::new_static("ERB"), "erb".to_string()),
+            (LanguageName::new_static("HTML+ERB"), "erb".to_string()),
+            (LanguageName::new_static("PHP"), "php".to_string()),
+            (LanguageName::new_static("Vue.js"), "vue".to_string()),
         ])
     }
 }
@@ -198,19 +212,10 @@ async fn get_cached_server_binary(
     node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
-        let mut last_version_dir = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
-            if entry.file_type().await?.is_dir() {
-                last_version_dir = Some(entry.path());
-            }
-        }
-        let last_version_dir = last_version_dir.context("no cached binary")?;
-        let server_path = last_version_dir.join(SERVER_PATH);
+        let server_path = container_dir.join(SERVER_PATH);
         anyhow::ensure!(
             server_path.exists(),
-            "missing executable in directory {last_version_dir:?}"
+            "missing executable in directory {server_path:?}"
         );
         Ok(LanguageServerBinary {
             path: node.binary_path().await?,

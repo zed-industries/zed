@@ -7,6 +7,7 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use ui::Checkbox;
 
 use std::borrow::Cow;
 use std::iter;
@@ -54,6 +55,7 @@ pub struct HeadingLevelStyles {
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
+    pub container_style: StyleRefinement,
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
@@ -74,6 +76,7 @@ impl Default for MarkdownStyle {
     fn default() -> Self {
         Self {
             base_text_style: Default::default(),
+            container_style: Default::default(),
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
@@ -748,6 +751,12 @@ impl MarkdownElement {
     }
 }
 
+impl Styled for MarkdownElement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style.container_style
+    }
+}
+
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = Hitbox;
@@ -768,6 +777,7 @@ impl Element for MarkdownElement {
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
@@ -786,7 +796,7 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
-        for (range, event) in parsed_markdown.events.iter() {
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -880,7 +890,7 @@ impl Element for MarkdownElement {
                                     {
                                         let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
                                             .id(("markdown-code-block-scrollbar", range.start))
-                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .tracked_scroll_handle(scroll_handle)
                                             .with_track_along(
                                                 ScrollAxes::Horizontal,
                                                 cx.theme().colors().editor_background,
@@ -936,13 +946,29 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_4(), range, markdown_end);
+                            builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
-                                format!("{}.", bullet_index)
+                            let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
+                                parsed_markdown.events.get(index.saturating_add(1))
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+
+                                Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    if *checked {
+                                        ToggleState::Selected
+                                    } else {
+                                        ToggleState::Unselected
+                                    },
+                                )
+                                .fill()
+                                .visualization_only(true)
+                                .into_any_element()
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
                             } else {
-                                "•".to_string()
+                                div().child("•").into_any_element()
                             };
                             builder.push_div(
                                 div()
@@ -1193,6 +1219,15 @@ impl Element for MarkdownElement {
                     builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<code>") {
+                        builder.push_text_style(self.style.inline_code.clone());
+                        continue;
+                    }
+                    if html.trim_end().starts_with("</code>") {
+                        builder.pop_text_style();
+                        continue;
+                    }
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {
@@ -1208,6 +1243,9 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::TaskListMarker(_) => {
+                    // handled inside the `MarkdownTag::Item` case
+                }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }
         }
@@ -1441,9 +1479,17 @@ struct ListStackEntry {
 }
 
 impl MarkdownElementBuilder {
-    fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
+    fn new(
+        container_style: &StyleRefinement,
+        base_text_style: TextStyle,
+        syntax_theme: Arc<SyntaxTheme>,
+    ) -> Self {
         Self {
-            div_stack: vec![div().debug_selector(|| "inner".into()).into()],
+            div_stack: vec![{
+                let mut base_div = div();
+                base_div.style().refine(container_style);
+                base_div.debug_selector(|| "inner".into()).into()
+            }],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),

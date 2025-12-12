@@ -965,7 +965,7 @@ impl VimCommand {
                 }
             };
 
-            let rel_path = if args.ends_with(PathStyle::local().separator()) {
+            let rel_path = if args.ends_with(PathStyle::local().primary_separator()) {
                 rel_path
             } else {
                 rel_path
@@ -998,7 +998,7 @@ impl VimCommand {
                         .display(PathStyle::local())
                         .to_string();
                     if dir.is_dir {
-                        path_string.push_str(PathStyle::local().separator());
+                        path_string.push_str(PathStyle::local().primary_separator());
                     }
                     path_string
                 })

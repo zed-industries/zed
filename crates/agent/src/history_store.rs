@@ -188,6 +188,15 @@ impl HistoryStore {
         })
     }
 
+    pub fn delete_threads(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.delete_threads().await?;
+            this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
     pub fn delete_text_thread(
         &mut self,
         path: Arc<Path>,
@@ -345,9 +354,9 @@ impl HistoryStore {
                 .into_iter()
                 .take(MAX_RECENTLY_OPENED_ENTRIES)
                 .flat_map(|entry| match entry {
-                    SerializedRecentOpen::AcpThread(id) => Some(HistoryEntryId::AcpThread(
-                        acp::SessionId(id.as_str().into()),
-                    )),
+                    SerializedRecentOpen::AcpThread(id) => {
+                        Some(HistoryEntryId::AcpThread(acp::SessionId::new(id.as_str())))
+                    }
                     SerializedRecentOpen::TextThread(file_name) => Some(
                         HistoryEntryId::TextThread(text_threads_dir().join(file_name).into()),
                     ),
