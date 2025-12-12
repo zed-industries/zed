@@ -17,7 +17,8 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
+env_logger.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+log.workspace = true
 rand.workspace = true
-zlog.workspace = true

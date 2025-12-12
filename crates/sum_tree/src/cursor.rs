@@ -1,7 +1,7 @@
 use super::*;
 use arrayvec::ArrayVec;
 use std::{cmp::Ordering, mem, sync::Arc};
-use ztracing::instrument;
+use tracing::instrument;
 
 #[derive(Clone)]
 struct StackEntry<'a, T: Item, D> {

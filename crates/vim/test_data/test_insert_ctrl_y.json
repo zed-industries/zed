@@ -1,5 +1,0 @@
-{"Put":{"state":"hello\nˇ\nworld"}}
-{"Key":"i"}
-{"Key":"ctrl-y"}
-{"Key":"ctrl-e"}
-{"Get":{"state":"hello\nhoˇ\nworld","mode":"Insert"}}

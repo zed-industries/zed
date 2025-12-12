@@ -1,9 +1,0 @@
-name = "Go Work"
-code_fence_block_name = "gowork"
-grammar = "gowork"
-path_suffixes = ["work"]
-line_comments = ["//"]
-autoclose_before = ")"
-brackets = [
-    { start = "(", end = ")", close = true, newline = true}
-]

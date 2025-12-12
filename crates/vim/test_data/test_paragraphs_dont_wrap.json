@@ -1,8 +1,0 @@
-{"Put":{"state":"one\nˇ\ntwo"}}
-{"Key":"}"}
-{"Key":"}"}
-{"Get":{"state":"one\n\ntwˇo","mode":"Normal"}}
-{"Key":"{"}
-{"Key":"{"}
-{"Key":"{"}
-{"Get":{"state":"ˇone\n\ntwo","mode":"Normal"}}

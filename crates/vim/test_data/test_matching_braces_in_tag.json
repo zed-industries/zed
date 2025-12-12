@@ -1,3 +1,0 @@
-{"Put":{"state":"function f() {\n    return (\n        <div rules={ˇ[{ a: 1 }]}>\n            <h1>test</h1>\n        </div>\n    );\n}"}}
-{"Key":"%"}
-{"Get":{"state":"function f() {\n    return (\n        <div rules={[{ a: 1 }ˇ]}>\n            <h1>test</h1>\n        </div>\n    );\n}","mode":"Normal"}}

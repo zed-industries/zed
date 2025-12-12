@@ -1,8 +1,0 @@
-{"SetOption":{"value":"filetype=rust"}}
-{"Put":{"state":"// helloˇ\n"}}
-{"Key":"o"}
-{"Get":{"state":"// hello\n// ˇ\n","mode":"Insert"}}
-{"Key":"x"}
-{"Key":"escape"}
-{"Key":"shift-o"}
-{"Get":{"state":"// hello\n// ˇ\n// x\n","mode":"Insert"}}

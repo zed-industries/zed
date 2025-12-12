@@ -238,7 +238,7 @@ mod tests {
                 for _ in 0..16 {
                     executor.simulate_random_delay().await;
                     let id = next_id.fetch_add(1, SeqCst);
-                    zlog::info!("sending {}", id);
+                    log::info!("sending {}", id);
                     tx.send(id).ok();
                 }
                 closed.store(true, SeqCst);
@@ -255,23 +255,23 @@ mod tests {
                 for _ in 0..16 {
                     executor.simulate_random_delay().await;
 
-                    zlog::info!("{}: receiving", receiver_id);
+                    log::info!("{}: receiving", receiver_id);
                     let mut timeout = executor.simulate_random_delay().fuse();
                     let mut recv = pin!(rx.recv().fuse());
                     select_biased! {
                         _ = timeout => {
-                            zlog::info!("{}: dropping recv future", receiver_id);
+                            log::info!("{}: dropping recv future", receiver_id);
                         }
                         result = recv => {
                             match result {
                                 Ok(value) => {
-                                    zlog::info!("{}: received {}", receiver_id, value);
+                                    log::info!("{}: received {}", receiver_id, value);
                                     assert_eq!(value, next_id.load(SeqCst) - 1);
                                     assert_ne!(value, prev_observed_value);
                                     prev_observed_value = value;
                                 }
                                 Err(NoSenderError) => {
-                                    zlog::info!("{}: closed", receiver_id);
+                                    log::info!("{}: closed", receiver_id);
                                     assert!(closed.load(SeqCst));
                                     break;
                                 }
@@ -287,6 +287,6 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        zlog::init_test();
+        let _ = env_logger::try_init();
     }
 }

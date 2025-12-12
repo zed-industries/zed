@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
-use ztracing::instrument;
+use tracing::instrument;
 
 #[cfg(test)]
 pub const TREE_BASE: usize = 2;
