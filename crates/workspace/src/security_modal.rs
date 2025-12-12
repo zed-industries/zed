@@ -18,7 +18,7 @@ use ui::{
     AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, prelude::*,
 };
 
-use crate::{ModalView, ToggleWorktreeSecurity};
+use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
@@ -27,6 +27,7 @@ pub struct SecurityModal {
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
+    trusted: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +48,15 @@ impl EventEmitter<DismissEvent> for SecurityModal {}
 impl ModalView for SecurityModal {
     fn fade_out_background(&self) -> bool {
         true
+    }
+
+    fn on_before_dismiss(&mut self, _: &mut Window, _: &mut Context<Self>) -> DismissDecision {
+        match self.trusted {
+            Some(false) => telemetry::event!("Open in Restricted", source = "Worktree Trust Modal"),
+            Some(true) => telemetry::event!("Trust and Continue", source = "Worktree Trust Modal"),
+            None => telemetry::event!("Dismissed", source = "Worktree Trust Modal"),
+        }
+        DismissDecision::Dismiss(true)
     }
 }
 
@@ -73,6 +83,7 @@ impl Render for SecurityModal {
                 this.trust_and_dismiss(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
+                self.trusted = Some(false);
                 this.dismiss(cx);
             }))
             .header(
@@ -189,6 +200,7 @@ impl Render for SecurityModal {
                                 .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                self.trusted = Some(false);
                                 security_modal.dismiss(cx);
                                 cx.stop_propagation();
                             })),
@@ -224,6 +236,7 @@ impl SecurityModal {
             focus_handle: cx.focus_handle(),
             trust_parents: false,
             home_dir: std::env::home_dir(),
+            trusted: None,
         };
         this.refresh_restricted_paths(cx);
 
@@ -296,6 +309,7 @@ impl SecurityModal {
             });
         }
 
+        self.trusted = Some(true);
         self.dismiss(cx);
     }
 

@@ -410,17 +410,17 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     })
 }
 
-fn render_worktree_security_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
+fn render_worktree_auto_trust_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let toggle_state = if ProjectSettings::get_global(cx).session.trust_all_worktrees {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
     };
     SwitchField::new(
-        "onboarding-trust-worktrees",
-        Some("Start in trusted mode by default"),
+        "onboarding-auto-trust-worktrees",
+        Some("Auto trust opened projects by default"),
         Some(
-            "Allow automatic project settings processing, language and MCP servers downloads and start"
+            "Allow automatic project settings processing, language and MCP servers downloads and startup"
                 .into(),
         ),
         toggle_state,
@@ -437,6 +437,11 @@ fn render_worktree_security_switch(tab_index: &mut isize, cx: &mut App) -> impl 
                 update_settings_file(fs.clone(), cx, move |setting, _| {
                     setting.session.get_or_insert_default().trust_all_worktrees = Some(trust);
                 });
+
+                telemetry::event!(
+                    "Welcome Page Worktree Auto Trust Toggled",
+                    options = if trust { "on" } else { "off" }
+                );
             }
         },
     )
@@ -518,7 +523,7 @@ pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))
-        .child(render_worktree_security_switch(&mut tab_index, cx))
+        .child(render_worktree_auto_trust_switch(&mut tab_index, cx))
         .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
         .child(render_telemetry_section(&mut tab_index, cx))
 }
