@@ -14,6 +14,7 @@ impl Render for CsvPreviewView {
             .bg(theme.colors().editor_background)
             .key_context(KEY_CONTEXT_NAME)
             .on_action(cx.listener(Self::copy_selected))
+            .on_action(cx.listener(Self::clear_selection))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {
