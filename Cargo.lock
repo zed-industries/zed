@@ -14585,6 +14585,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "search_everywhere"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette_hooks",
+ "ctor",
+ "editor",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "parking_lot",
+ "picker",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "sec1"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20755,6 +20777,7 @@ dependencies = [
  "reqwest_client",
  "rope",
  "search",
+ "search_everywhere",
  "semver",
  "serde",
  "serde_json",

@@ -4834,6 +4834,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "search_everywhere",
                 "settings_editor",
                 "settings_profile_selector",
                 "snippets",
