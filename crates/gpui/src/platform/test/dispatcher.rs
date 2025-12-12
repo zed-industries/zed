@@ -14,8 +14,8 @@ use std::{
 };
 use util::post_inc;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct TestDispatcherId(usize);
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct TestDispatcherId(usize);
 
 #[doc(hidden)]
 pub struct TestDispatcher {
@@ -64,6 +64,31 @@ impl TestDispatcher {
         TestDispatcher {
             id: TestDispatcherId(0),
             state: Arc::new(Mutex::new(state)),
+        }
+    }
+
+    pub fn drain_tasks(&self) {
+        // dropping runnables may reschedule tasks
+        // so drop until we reach a fixpoint
+        loop {
+            let mut state = self.state.lock();
+            if state.background.is_empty()
+                && state.deprioritized_background.is_empty()
+                && state.delayed.is_empty()
+                && state.foreground.is_empty()
+            {
+                break;
+            }
+            let background = std::mem::take(&mut state.background);
+            let deprioritized_background = std::mem::take(&mut state.deprioritized_background);
+            let delayed = std::mem::take(&mut state.delayed);
+            let foreground = std::mem::take(&mut state.foreground);
+            drop(state);
+
+            drop(background);
+            drop(deprioritized_background);
+            drop(delayed);
+            drop(foreground);
         }
     }
 

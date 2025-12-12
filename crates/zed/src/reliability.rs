@@ -117,7 +117,11 @@ fn save_hang_trace(
     background_executor: &gpui::BackgroundExecutor,
     hang_time: chrono::DateTime<chrono::Local>,
 ) {
-    let thread_timings = background_executor.dispatcher.get_all_timings();
+    let thread_timings = background_executor
+        .dispatcher
+        .upgrade()
+        .unwrap()
+        .get_all_timings();
     let thread_timings = thread_timings
         .into_iter()
         .map(|mut timings| {

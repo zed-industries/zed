@@ -1,9 +1,9 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDispatcher,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata,
+    Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -23,9 +23,8 @@ use windows::Win32::{
 
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
-    background_executor: BackgroundExecutor,
-    foreground_executor: ForegroundExecutor,
-
+    background_executor: Arc<dyn PlatformDispatcher>,
+    foreground_executor: Arc<dyn PlatformDispatcher>,
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
@@ -92,7 +91,10 @@ pub(crate) struct TestPrompts {
 }
 
 impl TestPlatform {
-    pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
+    pub fn new(
+        background_executor: Arc<dyn PlatformDispatcher>,
+        foreground_executor: Arc<dyn PlatformDispatcher>,
+    ) -> Rc<Self> {
         #[cfg(target_os = "windows")]
         let bitmap_factory = unsafe {
             windows::Win32::System::Ole::OleInitialize(None)
@@ -106,7 +108,7 @@ impl TestPlatform {
         let text_system = Arc::new(NoopTextSystem);
 
         Rc::new_cyclic(|weak| TestPlatform {
-            background_executor: executor,
+            background_executor,
             foreground_executor,
             prompts: Default::default(),
             screen_capture_sources: Default::default(),
@@ -225,11 +227,11 @@ impl TestPlatform {
 
 impl Platform for TestPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.background_executor.clone()
+        BackgroundExecutor::new(Arc::downgrade(&self.background_executor))
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.foreground_executor.clone()
+        ForegroundExecutor::new(Arc::downgrade(&self.foreground_executor))
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {

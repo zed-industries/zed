@@ -123,10 +123,7 @@ impl ProfilerWindow {
     fn begin_listen(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
-                let data = cx
-                    .foreground_executor()
-                    .dispatcher
-                    .get_current_thread_timings();
+                let data = cx.foreground_executor().get_current_thread_timings();
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {
                     this.data = DataMode::Realtime(Some(data));
