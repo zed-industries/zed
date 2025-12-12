@@ -7239,6 +7239,7 @@ dependencies = [
  "libc",
  "log",
  "lyon",
+ "mach2 0.5.0",
  "media",
  "metal",
  "naga",
