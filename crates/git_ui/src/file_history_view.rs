@@ -380,6 +380,7 @@ impl Render for FileHistoryView {
         let entry_count = self.history.entries.len();
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(
