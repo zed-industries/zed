@@ -1097,7 +1097,8 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    /// Whether the cursor is offset one character to the left when something is selected (needed for vim visual mode)
+    /// Whether the cursor is offset one character to the left when something is
+    /// selected (needed for vim visual mode)
     cursor_offset_on_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     pub collapse_matches: bool,

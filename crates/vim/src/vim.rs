@@ -1160,10 +1160,6 @@ impl Vim {
         // Sync editor settings like clip mode
         self.sync_vim_settings(window, cx);
 
-        self.update_editor(cx, |_, editor, _| {
-            editor.set_cursor_offset_on_selection(mode.is_visual());
-        });
-
         if VimSettings::get_global(cx).toggle_relative_line_numbers
             && self.mode != self.last_mode
             && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
@@ -1946,6 +1942,7 @@ impl Vim {
             editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
+            editor.set_cursor_offset_on_selection(vim.mode.is_visual());
             editor
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));
