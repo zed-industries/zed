@@ -5,8 +5,8 @@ use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
-    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{Avatar, DiffStat, Tooltip, prelude::*};
+use ui::{DiffStat, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -33,6 +33,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
@@ -318,17 +319,7 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                return Avatar::new(url.to_string())
-                    .size(size)
-                    .into_element()
-                    .into_any();
-            }
-        }
+        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
 
         v_flex()
             .w(size)
@@ -339,10 +330,15 @@ impl CommitView {
             .justify_center()
             .items_center()
             .child(
-                Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Medium)
-                    .into_element(),
+                avatar
+                    .avatar(window, cx)
+                    .map(|a| a.size(size).into_any_element())
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::Person)
+                            .color(Color::Muted)
+                            .size(IconSize::Medium)
+                            .into_any_element()
+                    }),
             )
             .into_any()
     }
@@ -644,54 +640,6 @@ impl CommitView {
             })?
             .await?;
         anyhow::Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
     }
 }
 
