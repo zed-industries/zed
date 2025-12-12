@@ -214,7 +214,7 @@ impl CopilotCodeVerification {
                 let status = copilot.read(cx).status();
                 match status {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
-                        this.set_status(dbg!(status), cx)
+                        this.set_status(status, cx)
                     }
                     _ => cx.emit(DismissEvent),
                 }
