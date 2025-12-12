@@ -2,7 +2,7 @@ use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
     paths::{REPOS_DIR, WORKTREES_DIR},
-    progress::{InfoStyle, Progress, Step},
+    progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -37,7 +37,7 @@ pub async fn run_load_project(
 
     let progress = progress.start(Step::LoadProject, &example.name);
 
-    let project = setup_project(example, &app_state, &mut cx).await;
+    let project = setup_project(example, &app_state, &progress, &mut cx).await;
 
     let _open_buffers = apply_edit_history(example, &project, &mut cx)
         .await
@@ -149,13 +149,14 @@ async fn cursor_position(
 async fn setup_project(
     example: &mut Example,
     app_state: &Arc<EpAppState>,
+    step_progress: &Arc<StepProgress>,
     cx: &mut AsyncApp,
 ) -> Entity<Project> {
     let ep_store = cx
         .update(|cx| EditPredictionStore::try_global(cx).unwrap())
         .unwrap();
 
-    let worktree_path = setup_worktree(example).await;
+    let worktree_path = setup_worktree(example, step_progress).await;
 
     if let Some(project) = app_state.project_cache.get(&example.repository_url) {
         ep_store
@@ -226,7 +227,7 @@ async fn setup_project(
     project
 }
 
-pub async fn setup_worktree(example: &Example) -> PathBuf {
+async fn setup_worktree(example: &Example, step_progress: &Arc<StepProgress>) -> PathBuf {
     let (repo_owner, repo_name) = example.repo_name().expect("failed to get repo name");
     let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
     let worktree_path = WORKTREES_DIR
@@ -235,7 +236,7 @@ pub async fn setup_worktree(example: &Example) -> PathBuf {
     let repo_lock = lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
-        eprintln!("Cloning repository {}", example.repository_url);
+        step_progress.set_substatus(format!("cloning {}", repo_name));
         fs::create_dir_all(&repo_dir).unwrap();
         run_git(&repo_dir, &["init"]).await.unwrap();
         run_git(
@@ -255,6 +256,7 @@ pub async fn setup_worktree(example: &Example) -> PathBuf {
     let revision = if let Ok(revision) = revision {
         revision
     } else {
+        step_progress.set_substatus("fetching");
         if run_git(
             &repo_dir,
             &["fetch", "--depth", "1", "origin", &example.revision],
@@ -271,6 +273,7 @@ pub async fn setup_worktree(example: &Example) -> PathBuf {
     };
 
     // Create the worktree for this example if needed.
+    step_progress.set_substatus("preparing worktree");
     if worktree_path.is_dir() {
         run_git(&worktree_path, &["clean", "--force", "-d"])
             .await
@@ -306,6 +309,7 @@ pub async fn setup_worktree(example: &Example) -> PathBuf {
 
     // Apply the uncommitted diff for this example.
     if !example.uncommitted_diff.is_empty() {
+        step_progress.set_substatus("applying diff");
         let mut apply_process = smol::process::Command::new("git")
             .current_dir(&worktree_path)
             .args(&["apply", "-"])
@@ -332,6 +336,7 @@ pub async fn setup_worktree(example: &Example) -> PathBuf {
         }
     }
 
+    step_progress.clear_substatus();
     worktree_path
 }
 
