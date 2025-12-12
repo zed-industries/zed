@@ -442,12 +442,12 @@ where
     D: serde::Deserializer<'de>,
 {
     let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
-    
+
     // Handle empty arrays explicitly
     if value.is_array() && value.as_array().map_or(false, |arr| arr.is_empty()) {
         return Ok(None);
     }
-    
+
     // Try to deserialize as standard format first
     if let Ok(vec) = serde_json::from_value::<Vec<ToolCallChunk>>(value.clone()) {
         if vec.is_empty() {
@@ -455,32 +455,35 @@ where
         } else {
             // Validate that all tool calls have required fields
             for tool_call in &vec {
-                if tool_call.r#type.is_none() || tool_call.function.is_none() || tool_call.id.is_none() {
+                if tool_call.r#type.is_none()
+                    || tool_call.function.is_none()
+                    || tool_call.id.is_none()
+                {
                     return Ok(None); // Malformed - missing required fields
                 }
             }
             return Ok(Some(vec));
         }
     }
-    
+
     // If standard deserialization fails, try non-standard formats
     if let Ok(values) = serde_json::from_value::<Vec<serde_json::Value>>(value) {
         // Try to convert non-standard tool calls to our format
         let mut converted_tool_calls = Vec::new();
-        
+
         for (index, value) in values.into_iter().enumerate() {
             if let Some(tool_call) = convert_non_standard_tool_call(value, index) {
                 converted_tool_calls.push(tool_call);
             }
         }
-        
+
         if converted_tool_calls.is_empty() {
             return Ok(None);
         } else {
             return Ok(Some(converted_tool_calls));
         }
     }
-    
+
     // If all deserialization attempts fail, treat as malformed and return None
     Ok(None)
 }
@@ -494,30 +497,34 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
             if let Some(function_value) = value.get("function") {
                 // Validate that function_value has the required fields
                 let function_obj = function_value.as_object()?;
-                
+
                 // Check if we have at least a name (required field)
                 if function_obj.get("name").is_none() {
                     return None; // Malformed - no name field
                 }
-                
+
                 // For standard OpenAI tool calls, we need an id field
                 // If this is missing, it's malformed
                 if value.get("id").is_none() {
                     return None; // Malformed - no id field
                 }
-                
-                let function_chunk = serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
-                
+
+                let function_chunk =
+                    serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
+
                 return Some(ToolCallChunk {
                     index,
-                    id: value.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    id: value
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     r#type: Some("function".to_string()),
                     function: Some(function_chunk),
                 });
             }
         }
     }
-    
+
     // Try to deserialize as standard format as fallback
     // But validate that it has required fields
     if let Ok(tool_call) = serde_json::from_value::<ToolCallChunk>(value.clone()) {
@@ -529,7 +536,7 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
             return None;
         }
     }
-    
+
     // If we can't convert it to a valid tool call, return None
     None
 }
@@ -539,13 +546,13 @@ pub struct ToolCallChunk {
     #[serde(default)]
     pub index: usize,
     pub id: Option<String>,
-    
+
     // There is also an optional `type` field that would determine if a
     // function is there. Sometimes this streams in with the `function` before
     // it streams in the `type`
     #[serde(default)]
     pub r#type: Option<String>,
-    
+
     pub function: Option<FunctionChunk>,
 }
 
@@ -618,8 +625,9 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
             // Check if this looks like a success response (has choices)
             if let Some(choices) = value.get("choices") {
                 // Try to build a ResponseStreamEvent manually with robust error handling
-                let choices_result: Result<Vec<ChoiceDelta>, _> = serde_json::from_value(choices.clone());
-                
+                let choices_result: Result<Vec<ChoiceDelta>, _> =
+                    serde_json::from_value(choices.clone());
+
                 let choices = match choices_result {
                     Ok(choices) => choices,
                     Err(_) => {
@@ -627,23 +635,33 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                         // This can happen with malformed data from some providers
                         if let Some(choices_array) = choices.as_array() {
                             let mut fixed_choices = Vec::new();
-                            
+
                             for choice_value in choices_array {
                                 // Try to deserialize each choice individually
-                                if let Ok(choice) = serde_json::from_value::<ChoiceDelta>(choice_value.clone()) {
+                                if let Ok(choice) =
+                                    serde_json::from_value::<ChoiceDelta>(choice_value.clone())
+                                {
                                     fixed_choices.push(choice);
                                 } else {
                                     // If a choice fails to deserialize, try to create a minimal valid choice
                                     // but handle malformed tool calls gracefully
-                                    let delta = if let Some(delta_value) = choice_value.get("delta") {
+                                    let delta = if let Some(delta_value) = choice_value.get("delta")
+                                    {
                                         // Try to deserialize delta, but if it fails, create a minimal valid delta
-                                        match serde_json::from_value::<ResponseMessageDelta>(delta_value.clone()) {
+                                        match serde_json::from_value::<ResponseMessageDelta>(
+                                            delta_value.clone(),
+                                        ) {
                                             Ok(delta) => Some(delta),
                                             Err(_) => {
                                                 // Create a minimal valid delta with malformed tool calls treated as None
                                                 Some(ResponseMessageDelta {
-                                                    role: delta_value.get("role").and_then(|v| serde_json::from_value(v.clone()).ok()),
-                                                    content: delta_value.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                    role: delta_value.get("role").and_then(|v| {
+                                                        serde_json::from_value(v.clone()).ok()
+                                                    }),
+                                                    content: delta_value
+                                                        .get("content")
+                                                        .and_then(|v| v.as_str())
+                                                        .map(|s| s.to_string()),
                                                     tool_calls: None, // Treat malformed tool calls as None
                                                     reasoning_content: None,
                                                 })
@@ -652,16 +670,23 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                                     } else {
                                         None
                                     };
-                                    
+
                                     let fixed_choice = ChoiceDelta {
-                                        index: choice_value.get("index").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(0),
+                                        index: choice_value
+                                            .get("index")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|v| v as u32)
+                                            .unwrap_or(0),
                                         delta,
-                                        finish_reason: choice_value.get("finish_reason").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                        finish_reason: choice_value
+                                            .get("finish_reason")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
                                     };
                                     fixed_choices.push(fixed_choice);
                                 }
                             }
-                            
+
                             if !fixed_choices.is_empty() {
                                 fixed_choices
                             } else {
@@ -673,7 +698,7 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                         }
                     }
                 };
-                
+
                 let usage = value
                     .get("usage")
                     .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok());
@@ -962,7 +987,10 @@ mod tests {
                 // The malformed tool calls (missing id field) should be ignored and treated as empty
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(delta.tool_calls.is_none(), "Malformed tool calls (missing id) should be treated as None");
+                        assert!(
+                            delta.tool_calls.is_none(),
+                            "Malformed tool calls (missing id) should be treated as None"
+                        );
                     }
                 }
             }
@@ -1013,7 +1041,10 @@ mod tests {
                 // Empty tool calls should be treated as None
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(delta.tool_calls.is_none(), "Empty tool calls should be treated as None");
+                        assert!(
+                            delta.tool_calls.is_none(),
+                            "Empty tool calls should be treated as None"
+                        );
                     }
                 }
             }
@@ -1072,7 +1103,10 @@ mod tests {
                 // Malformed tool calls should be treated as None
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(delta.tool_calls.is_none(), "Malformed tool calls should be treated as None");
+                        assert!(
+                            delta.tool_calls.is_none(),
+                            "Malformed tool calls should be treated as None"
+                        );
                     }
                 }
             }
@@ -1080,7 +1114,10 @@ mod tests {
                 panic!("Expected success response, got error: {}", error.message);
             }
             Err(e) => {
-                panic!("Failed to parse DeepSeek response with malformed tool calls: {}", e);
+                panic!(
+                    "Failed to parse DeepSeek response with malformed tool calls: {}",
+                    e
+                );
             }
         }
     }
