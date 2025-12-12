@@ -116,7 +116,7 @@ impl MasterProcess {
             .args(additional_args)
             .args(args);
 
-        master_process.arg(format!("ControlPath='{}'", socket_path.display()));
+        master_process.arg(format!("ControlPath={}", socket_path.display()));
 
         let process = master_process.arg(&url).spawn()?;
 
