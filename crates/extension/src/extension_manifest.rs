@@ -328,11 +328,10 @@ pub struct LanguageModelManifestEntry {
 /// Authentication configuration for a language model provider.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageModelAuthConfig {
-    /// Environment variable name for the API key.
+    /// Environment variable name for the API key (if env var auth supported).
     #[serde(default)]
     pub env_var: Option<String>,
     /// Human-readable name for the credential shown in the UI input field (e.g., "API Key", "Access Token").
-    #[serde(default)]
     pub credential_label: Option<String>,
     /// OAuth configuration for web-based authentication flows.
     #[serde(default)]
