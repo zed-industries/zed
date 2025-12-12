@@ -23,7 +23,8 @@ use std::{
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
-    shell::ShellKind,
+    shell::{Shell, ShellKind},
+    shell_builder::ShellBuilder,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
@@ -453,8 +454,10 @@ impl RemoteConnection for WslRemoteConnection {
         } else {
             write!(&mut exec, "{} -l", self.shell)?;
         }
+        let (command, args) =
+            ShellBuilder::new(&Shell::Program(self.shell.clone()), false).build(Some(exec), &[]);
 
-        let wsl_args = if let Some(user) = &self.connection_options.user {
+        let mut wsl_args = if let Some(user) = &self.connection_options.user {
             vec![
                 "--distribution".to_string(),
                 self.connection_options.distro_name.clone(),
@@ -463,9 +466,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--cd".to_string(),
                 working_dir,
                 "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                exec,
+                command,
             ]
         } else {
             vec![
@@ -474,11 +475,10 @@ impl RemoteConnection for WslRemoteConnection {
                 "--cd".to_string(),
                 working_dir,
                 "--".to_string(),
-                self.shell.clone(),
-                "-c".to_string(),
-                exec,
+                command,
             ]
         };
+        wsl_args.extend(args);
 
         Ok(CommandTemplate {
             program: "wsl.exe".to_string(),

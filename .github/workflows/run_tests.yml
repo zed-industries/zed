@@ -497,6 +497,8 @@ jobs:
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
+      GIT_COMMITTER_NAME: Protobuf Action
+      GIT_COMMITTER_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

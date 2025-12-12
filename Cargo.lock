@@ -401,6 +401,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "watch",
  "workspace",
  "zed_actions",
@@ -3111,16 +3112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cloud_zeta2_prompt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cloud_llm_client",
- "indoc",
- "serde",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3594,6 +3585,7 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "url",
  "util",
 ]
@@ -5117,7 +5109,6 @@ dependencies = [
  "clock",
  "cloud_api_types",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "collections",
  "copilot",
  "credentials_provider",
@@ -5148,8 +5139,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
- "strsim",
  "strum 0.27.2",
  "telemetry",
  "telemetry_events",
@@ -5160,6 +5149,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -5173,11 +5163,10 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "collections",
  "debug_adapter_extension",
+ "dirs 4.0.0",
  "edit_prediction",
- "edit_prediction_context",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5190,6 +5179,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "libc",
  "log",
  "node_runtime",
  "paths",
@@ -5207,10 +5197,10 @@ dependencies = [
  "sqlez",
  "sqlez_macros",
  "terminal_view",
- "toml 0.8.23",
  "util",
+ "wasmtime",
  "watch",
- "zlog",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -5237,6 +5227,7 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "zeta_prompt",
  "zlog",
 ]
 
@@ -5258,7 +5249,6 @@ dependencies = [
  "buffer_diff",
  "client",
  "cloud_llm_client",
- "cloud_zeta2_prompt",
  "codestral",
  "command_palette_hooks",
  "copilot",
@@ -5289,6 +5279,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zeta_prompt",
 ]
 
 [[package]]
@@ -7248,6 +7239,7 @@ dependencies = [
  "libc",
  "log",
  "lyon",
+ "mach2 0.5.0",
  "media",
  "metal",
  "naga",
@@ -13155,6 +13147,7 @@ dependencies = [
  "askpass",
  "auto_update",
  "dap",
+ "db",
  "editor",
  "extension_host",
  "file_finder",
@@ -13166,6 +13159,7 @@ dependencies = [
  "log",
  "markdown",
  "menu",
+ "node_runtime",
  "ordered-float 2.10.1",
  "paths",
  "picker",
@@ -13184,6 +13178,7 @@ dependencies = [
  "util",
  "windows-registry 0.6.1",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 
@@ -14451,12 +14446,14 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "tracing",
  "ui",
  "unindent",
  "util",
  "util_macros",
  "workspace",
  "zed_actions",
+ "ztracing",
 ]
 
 [[package]]
@@ -16369,13 +16366,13 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "fancy-regex",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
  "libc",
  "log",
  "rand 0.9.2",
+ "regex",
  "release_channel",
  "schemars",
  "serde",
@@ -18103,6 +18100,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "markdown_preview",
  "menu",
  "multi_buffer",
  "nvim-rs",
@@ -20468,7 +20466,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.217.0"
+version = "0.218.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20929,6 +20927,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeta_prompt"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "zip"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21020,6 +21025,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "zlog",
  "ztracing_macro",
 ]
 

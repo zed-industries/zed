@@ -28,6 +28,7 @@ gpui.workspace = true
 itertools.workspace = true
 libc.workspace = true
 log.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -38,7 +39,6 @@ task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
-fancy-regex.workspace = true
 urlencoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]

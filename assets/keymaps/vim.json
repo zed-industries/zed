@@ -180,7 +180,6 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "ctrl-6": "pane::AlternateFile",
       "ctrl-^": "pane::AlternateFile",
       ".": "vim::Repeat"
     }
@@ -902,7 +901,11 @@
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
-      "g /": "pane::DeploySearch"
+      "g /": "pane::DeploySearch",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0]
     }
   },
   {
@@ -1042,6 +1045,15 @@
       "j": "settings_editor::FocusNextNavEntry",
       "g g": "settings_editor::FocusFirstNavEntry",
       "shift-g": "settings_editor::FocusLastNavEntry"
+    }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "ctrl-u": "markdown::ScrollPageUp",
+      "ctrl-d": "markdown::ScrollPageDown",
+      "ctrl-y": "markdown::ScrollUp",
+      "ctrl-e": "markdown::ScrollDown"
     }
   }
 ]

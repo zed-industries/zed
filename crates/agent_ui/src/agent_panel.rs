@@ -305,6 +305,7 @@ impl ActiveView {
                 project,
                 history_store,
                 prompt_store,
+                false,
                 window,
                 cx,
             )
@@ -885,10 +886,6 @@ impl AgentPanel {
 
             let server = ext_agent.server(fs, history);
 
-            if !loading {
-                telemetry::event!("Agent Thread Started", agent = server.telemetry_id());
-            }
-
             this.update_in(cx, |this, window, cx| {
                 let selected_agent = ext_agent.into();
                 if this.selected_agent != selected_agent {
@@ -905,6 +902,7 @@ impl AgentPanel {
                         project,
                         this.history_store.clone(),
                         this.prompt_store.clone(),
+                        !loading,
                         window,
                         cx,
                     )
@@ -2083,8 +2081,11 @@ impl AgentPanel {
 
                                 for agent_name in agent_names {
                                     let icon_path = agent_server_store.agent_icon(&agent_name);
+                                    let display_name = agent_server_store
+                                        .agent_display_name(&agent_name)
+                                        .unwrap_or_else(|| agent_name.0.clone());
 
-                                    let mut entry = ContextMenuEntry::new(agent_name.clone());
+                                    let mut entry = ContextMenuEntry::new(display_name);
 
                                     if let Some(icon_path) = icon_path {
                                         entry = entry.custom_icon_svg(icon_path);
