@@ -447,8 +447,10 @@ where
     enum ToolCallsHelper {
         Array(Vec<ToolCallChunk>),
         Null,
-        // Add a variant to handle malformed tool calls data
-        Value(serde_json::Value),
+        // Add a variant to handle non-standard tool calls data from some providers
+        // This allows us to support providers that send tool calls in different formats
+        #[allow(dead_code)]
+        NonStandardArray(Vec<serde_json::Value>),
     }
 
     match ToolCallsHelper::deserialize(deserializer)? {
@@ -460,21 +462,59 @@ where
             }
         }
         ToolCallsHelper::Null => Ok(None),
-        ToolCallsHelper::Value(_) => {
-            // If we get a raw value (malformed tool calls), treat it as empty
-            Ok(None)
+        ToolCallsHelper::NonStandardArray(values) => {
+            // Try to convert non-standard tool calls to our format
+            let mut converted_tool_calls = Vec::new();
+            
+            for (index, value) in values.into_iter().enumerate() {
+                if let Some(tool_call) = convert_non_standard_tool_call(value, index) {
+                    converted_tool_calls.push(tool_call);
+                }
+            }
+            
+            if converted_tool_calls.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(converted_tool_calls))
+            }
         }
     }
 }
 
+/// Convert non-standard tool call formats to our standard ToolCallChunk format
+fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Option<ToolCallChunk> {
+    // Handle the DeepSeek-style format: {"type": "function", "function": {...}}
+    if let Some(tool_type) = value.get("type").and_then(|v| v.as_str()) {
+        if tool_type == "function" {
+            if let Some(function_value) = value.get("function") {
+                let function_chunk = serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
+                
+                return Some(ToolCallChunk {
+                    index,
+                    id: None, // No ID in this format
+                    r#type: Some("function".to_string()),
+                    function: Some(function_chunk),
+                });
+            }
+        }
+    }
+    
+    // Try to deserialize as standard format as fallback
+    serde_json::from_value::<ToolCallChunk>(value).ok()
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
+    #[serde(default)]
     pub index: usize,
     pub id: Option<String>,
-
+    
     // There is also an optional `type` field that would determine if a
     // function is there. Sometimes this streams in with the `function` before
     // it streams in the `type`
+    #[serde(default)]
+    pub r#type: Option<String>,
+    
     pub function: Option<FunctionChunk>,
 }
 
@@ -546,8 +586,44 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
 
             // Check if this looks like a success response (has choices)
             if let Some(choices) = value.get("choices") {
-                // Try to build a ResponseStreamEvent manually
-                let choices = serde_json::from_value::<Vec<ChoiceDelta>>(choices.clone())?;
+                // Try to build a ResponseStreamEvent manually with robust error handling
+                let choices_result: Result<Vec<ChoiceDelta>, _> = serde_json::from_value(choices.clone());
+                
+                let choices = match choices_result {
+                    Ok(choices) => choices,
+                    Err(_) => {
+                        // If standard deserialization fails, try to handle it more gracefully
+                        // This can happen with malformed data from some providers
+                        if let Some(choices_array) = choices.as_array() {
+                            let mut fixed_choices = Vec::new();
+                            
+                            for choice_value in choices_array {
+                                // Try to deserialize each choice individually
+                                if let Ok(choice) = serde_json::from_value::<ChoiceDelta>(choice_value.clone()) {
+                                    fixed_choices.push(choice);
+                                } else {
+                                    // If a choice fails to deserialize, try to create a minimal valid choice
+                                    let fixed_choice = ChoiceDelta {
+                                        index: choice_value.get("index").and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(0),
+                                        delta: None, // Skip malformed delta for now
+                                        finish_reason: choice_value.get("finish_reason").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                    };
+                                    fixed_choices.push(fixed_choice);
+                                }
+                            }
+                            
+                            if !fixed_choices.is_empty() {
+                                fixed_choices
+                            } else {
+                                // If we couldn't fix any choices, fall back to empty vector
+                                Vec::new()
+                            }
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                };
+                
                 let usage = value
                     .get("usage")
                     .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok());
