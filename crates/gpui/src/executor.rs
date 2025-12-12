@@ -258,7 +258,13 @@ impl BackgroundExecutor {
                         let _notify_guard = NotifyOnDrop(pair);
                         future.await
                     },
-                    move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), None),
+                    move |runnable| {
+                        dispatcher.dispatch(
+                            RunnableVariant::Meta(runnable),
+                            None,
+                            Priority::default(),
+                        )
+                    },
                 )
         };
         runnable.schedule();
