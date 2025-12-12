@@ -179,7 +179,7 @@ impl TableSelection {
 }
 
 /// Selection-related UI rendering functions
-impl TableSelection {
+impl CsvPreviewView {
     /// Create a selectable table cell element with proper event handlers.
     ///
     /// This function creates the interactive cell div with mouse event handlers
@@ -195,77 +195,100 @@ impl TableSelection {
         font_type: FontType,
         cx: &Context<CsvPreviewView>,
     ) -> AnyElement {
-        div()
-            .id(ElementId::NamedInteger(
-                format!("csv-display-cell-{}-{}", display_row, col).into(),
-                0,
-            ))
-            .cursor_pointer()
-            .flex()
-            .h_full()
-            .map(|div| match vertical_alignment {
-                VerticalAlignment::Top => div.items_start(),
-                VerticalAlignment::Center => div.items_center(),
-            })
-            .map(|div| match vertical_alignment {
-                VerticalAlignment::Top => div.content_start(),
-                VerticalAlignment::Center => div.content_center(),
-            })
-            .when(is_selected, |div| div.bg(selected_bg_color))
-            .map(|div| match font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
-            .child(cell_content)
-            // Called when user presses mouse button down on a cell
-            .on_mouse_down(MouseButton::Left, {
-                let view = view_entity.clone();
-                move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        let ordered_indices =
-                            generate_ordered_indices(this.ordering, &this.contents);
-                        let display_to_data_converter =
-                            move |dr: usize| ordered_indices.get(dr).copied();
+        create_table_cell(
+            display_row,
+            col,
+            cell_content,
+            selected_bg_color,
+            is_selected,
+            vertical_alignment,
+            font_type,
+            cx,
+        )
+        // Called when user presses mouse button down on a cell
+        .on_mouse_down(MouseButton::Left, {
+            let view = view_entity.clone();
+            move |_event, _window, cx| {
+                view.update(cx, |this, cx| {
+                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+                    let display_to_data_converter =
+                        move |dr: usize| ordered_indices.get(dr).copied();
 
-                        this.selection
-                            .start_selection(display_row, col, display_to_data_converter);
-                        cx.notify();
-                    });
-                }
-            })
-            // Called when user moves mouse over a cell (for drag selection)
-            .on_mouse_move({
-                let view = view_entity.clone();
-                move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        if !this.selection.is_selecting() {
-                            return;
-                        }
-                        // Create converter function without borrowing self
-                        let ordered_indices =
-                            generate_ordered_indices(this.ordering, &this.contents);
-                        let display_to_data_converter =
-                            move |dr: usize| ordered_indices.get(dr).copied();
+                    this.selection
+                        .start_selection(display_row, col, display_to_data_converter);
+                    cx.notify();
+                });
+            }
+        })
+        // Called when user moves mouse over a cell (for drag selection)
+        .on_mouse_move({
+            let view = view_entity.clone();
+            move |_event, _window, cx| {
+                view.update(cx, |this, cx| {
+                    if !this.selection.is_selecting() {
+                        return;
+                    }
+                    // Create converter function without borrowing self
+                    let ordered_indices = generate_ordered_indices(this.ordering, &this.contents);
+                    let display_to_data_converter =
+                        move |dr: usize| ordered_indices.get(dr).copied();
 
-                        this.selection.extend_selection_to(
-                            display_row,
-                            col,
-                            display_to_data_converter,
-                        );
-                        cx.notify();
-                    });
-                }
-            })
-            // Called when user releases mouse button
-            .on_mouse_up(MouseButton::Left, {
-                let view = view_entity;
-                move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.selection.end_selection();
-                        cx.notify();
-                    });
-                }
-            })
-            .into_any_element()
+                    this.selection
+                        .extend_selection_to(display_row, col, display_to_data_converter);
+                    cx.notify();
+                });
+            }
+        })
+        // Called when user releases mouse button
+        .on_mouse_up(MouseButton::Left, {
+            let view = view_entity;
+            move |_event, _window, cx| {
+                view.update(cx, |this, cx| {
+                    this.selection.end_selection();
+                    cx.notify();
+                });
+            }
+        })
+        .into_any_element()
     }
+}
+
+//TODO: start using it and add docs
+pub struct DisplayCellId {
+    row: usize,
+    col: usize,
+}
+
+fn create_table_cell(
+    display_row: usize,
+    col: usize,
+    cell_content: impl IntoElement,
+    selected_bg_color: gpui::Hsla,
+    is_selected: bool,
+    vertical_alignment: VerticalAlignment,
+    font_type: FontType,
+    cx: &Context<'_, CsvPreviewView>,
+) -> gpui::Stateful<Div> {
+    div()
+        .id(ElementId::NamedInteger(
+            format!("csv-display-cell-{}-{}", display_row, col).into(),
+            0,
+        ))
+        .cursor_pointer()
+        .flex()
+        .h_full()
+        .map(|div| match vertical_alignment {
+            VerticalAlignment::Top => div.items_start(),
+            VerticalAlignment::Center => div.items_center(),
+        })
+        .map(|div| match vertical_alignment {
+            VerticalAlignment::Top => div.content_start(),
+            VerticalAlignment::Center => div.content_center(),
+        })
+        .when(is_selected, |div| div.bg(selected_bg_color))
+        .map(|div| match font_type {
+            FontType::Ui => div.font_ui(cx),
+            FontType::Monospace => div.font_buffer(cx),
+        })
+        .child(cell_content)
 }
