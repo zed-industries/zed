@@ -173,6 +173,11 @@ impl TableSelection {
     pub fn is_selecting(&self) -> bool {
         self.is_selecting
     }
+
+    /// Get the selected cells for copying
+    pub fn get_selected_cells(&self) -> &SelectedCells {
+        &self.selected_cells
+    }
 }
 
 /// Selection-related UI rendering functions
