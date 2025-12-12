@@ -1083,7 +1083,7 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let stdout = self
+        let result = self
             .git_config(
                 abs_work_directory_path,
                 vec![
@@ -1092,12 +1092,11 @@ impl Fs for RealFs {
                     String::from("init.defaultBranch"),
                 ],
             )
-            .await?;
+            .await;
 
-        let branch_name = if !stdout.is_empty() {
-            stdout
-        } else {
-            fallback_branch_name
+        let branch_name = match result {
+            Ok(stdout) if !stdout.is_empty() => stdout,
+            _ => fallback_branch_name,
         };
 
         new_smol_command("git")
@@ -1136,6 +1135,9 @@ impl Fs for RealFs {
         Ok(())
     }
 
+    /// Runs `git config` with the given arguments.
+    /// Will return `Ok` if the commands exit status is `0`, with the stdout
+    /// contents. Otherwise returns `Err` with the stderr contents.
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String> {
         let output = new_smol_command("git")
             .current_dir(abs_work_directory)
