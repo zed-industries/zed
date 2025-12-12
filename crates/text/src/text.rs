@@ -3387,6 +3387,25 @@ impl LineEnding {
     }
 }
 
+pub fn chunks_with_line_ending(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
+    rope.chunks().flat_map(move |chunk| {
+        let mut newline = false;
+        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
+        chunk
+            .lines()
+            .flat_map(move |line| {
+                let ending = if newline {
+                    Some(line_ending.as_str())
+                } else {
+                    None
+                };
+                newline = true;
+                ending.into_iter().chain([line])
+            })
+            .chain(end_with_newline)
+    })
+}
+
 #[cfg(debug_assertions)]
 pub mod debug {
     use super::*;
