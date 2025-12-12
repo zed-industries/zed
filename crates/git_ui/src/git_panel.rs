@@ -1935,7 +1935,7 @@ impl GitPanel {
     }
 
     fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.commit(window, cx) {
+        if self.commit(&self.commit_editor.focus_handle(cx), window, cx) {
             telemetry::event!("Git Committed", source = "Git Panel");
         }
     }
@@ -1943,16 +1943,17 @@ impl GitPanel {
     /// Commits staged changes with the current commit message.
     ///
     /// Returns `true` if the commit was executed, `false` otherwise.
-    pub(crate) fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn commit(
+        &mut self,
+        commit_editor_focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.amend_pending {
             return false;
         }
 
-        if self
-            .commit_editor
-            .focus_handle(cx)
-            .contains_focused(window, cx)
-        {
+        if commit_editor_focus_handle.contains_focused(window, cx) {
             self.commit_changes(
                 CommitOptions {
                     amend: false,
@@ -1969,7 +1970,7 @@ impl GitPanel {
     }
 
     fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self.amend(window, cx) {
+        if self.amend(&self.commit_editor.focus_handle(cx), window, cx) {
             telemetry::event!("Git Amended", source = "Git Panel");
         }
     }
@@ -1979,12 +1980,13 @@ impl GitPanel {
     /// Uses a two-stage workflow where the first invocation loads the commit
     /// message for editing, second invocation performs the amend. Returns
     /// `true` if the amend was executed, `false` otherwise.
-    pub(crate) fn amend(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self
-            .commit_editor
-            .focus_handle(cx)
-            .contains_focused(window, cx)
-        {
+    pub(crate) fn amend(
+        &mut self,
+        commit_editor_focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if commit_editor_focus_handle.contains_focused(window, cx) {
             if self.head_commit(cx).is_some() {
                 if !self.amend_pending {
                     self.set_amend_pending(true, cx);
