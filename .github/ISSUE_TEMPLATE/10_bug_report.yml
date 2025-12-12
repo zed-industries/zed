@@ -77,6 +77,22 @@ body:
       required: false
   - type: textarea
     attributes:
+      label: Relevant Keymap
+      description: |
+        Open the command palette in Zed, then type “zed: open keymap file” and copy/paste the file's contents.
+      value: |
+        <details><summary>keymap.json</summary>
+
+        <!-- Paste your keymap file inside the code block. -->
+        ```json
+
+        ```
+
+        </details>
+    validations:
+      required: false
+  - type: textarea
+    attributes:
       label: (for AI issues) Model provider details
       placeholder: |
         - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc.)
