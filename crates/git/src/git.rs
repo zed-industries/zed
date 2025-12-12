@@ -232,14 +232,12 @@ impl From<Oid> for usize {
 #[derive(Copy, Clone, Debug)]
 pub enum RunHook {
     PreCommit,
-    PrePush,
 }
 
 impl RunHook {
     pub fn as_str(&self) -> &str {
         match self {
             Self::PreCommit => "pre-commit",
-            Self::PrePush => "pre-push",
         }
     }
 
@@ -250,7 +248,6 @@ impl RunHook {
     pub fn from_proto(value: i32) -> Option<Self> {
         match value {
             0 => Some(Self::PreCommit),
-            1 => Some(Self::PrePush),
             _ => None,
         }
     }

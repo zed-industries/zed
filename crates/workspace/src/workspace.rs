@@ -2452,6 +2452,12 @@ impl Workspace {
             .0
             .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
+            .map(|k| {
+                cx.keyboard_mapper()
+                    .map_key_equivalent(k, true)
+                    .inner()
+                    .clone()
+            })
             .collect();
         let _ = self.send_keystrokes_impl(keystrokes, window, cx);
     }
@@ -7780,7 +7786,7 @@ pub fn open_remote_project_with_new_connection(
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
+            deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
                 .await?;
 
         let session = match cx
@@ -7834,7 +7840,7 @@ pub fn open_remote_project_with_existing_connection(
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+            deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
 
         open_remote_project_inner(
             project,
@@ -7936,7 +7942,7 @@ async fn open_remote_project_inner(
     Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
 
-fn serialize_remote_project(
+fn deserialize_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     cx: &AsyncApp,
