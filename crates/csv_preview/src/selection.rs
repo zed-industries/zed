@@ -24,6 +24,8 @@ pub struct TableSelection {
     selection_start_display: Option<(usize, usize)>,
     /// Whether user is currently dragging to select
     is_selecting: bool,
+    /// Currently focused cell in data coordinates
+    focused_cell: Option<DataCellId>,
 }
 
 impl Default for TableSelection {
@@ -39,6 +41,7 @@ impl TableSelection {
             selected_cells: HashSet::new(),
             selection_start_display: None,
             is_selecting: false,
+            focused_cell: None,
         }
     }
 
@@ -54,6 +57,8 @@ impl TableSelection {
         // Convert display coordinates to data coordinates for storage
         if let Some(data_row) = ordered_indices.get_data_row(display_row) {
             self.selected_cells.insert(DataCellId::new(data_row, col));
+            // Set focus to the clicked cell
+            self.focused_cell = Some(DataCellId::new(data_row, col));
         }
 
         // Remember display coordinates for extend_selection_to
@@ -117,5 +122,96 @@ impl TableSelection {
     /// Get the selected cells for copying
     pub fn get_selected_cells(&self) -> &SelectedCells {
         &self.selected_cells
+    }
+
+    /// Set focused cell using display coordinates.
+    pub fn set_focused_cell(
+        &mut self,
+        display_row: DisplayRow,
+        col: usize,
+        ordered_indices: &OrderedIndices,
+    ) {
+        if let Some(data_row) = ordered_indices.get_data_row(display_row) {
+            self.focused_cell = Some(DataCellId::new(data_row, col));
+        }
+    }
+
+    /// Check if cell at display coordinates is focused.
+    pub fn is_cell_focused(
+        &self,
+        display_row: DisplayRow,
+        col: usize,
+        ordered_indices: &OrderedIndices,
+    ) -> bool {
+        if let (Some(focused), Some(data_row)) = (
+            &self.focused_cell,
+            ordered_indices.get_data_row(display_row),
+        ) {
+            focused.row == data_row && focused.col == col
+        } else {
+            false
+        }
+    }
+
+    /// Move focus up by one row.
+    pub fn move_focus_up(&mut self, ordered_indices: &OrderedIndices) {
+        if let Some(focused) = &self.focused_cell {
+            if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
+                if display_row.get() > 0 {
+                    let new_display_row = DisplayRow::new(display_row.get() - 1);
+                    if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
+                        self.focused_cell = Some(DataCellId::new(new_data_row, focused.col));
+                    }
+                }
+            }
+        } else {
+            // Set initial focus to top-left cell if no focus exists
+            if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+                self.focused_cell = Some(DataCellId::new(data_row, 0));
+            }
+        }
+    }
+
+    /// Move focus down by one row.
+    pub fn move_focus_down(&mut self, ordered_indices: &OrderedIndices, max_rows: usize) {
+        if let Some(focused) = &self.focused_cell {
+            if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
+                if display_row.get() < max_rows.saturating_sub(1) {
+                    let new_display_row = DisplayRow::new(display_row.get() + 1);
+                    if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
+                        self.focused_cell = Some(DataCellId::new(new_data_row, focused.col));
+                    }
+                }
+            }
+        } else {
+            // Set initial focus to top-left cell if no focus exists
+            if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+                self.focused_cell = Some(DataCellId::new(data_row, 0));
+            }
+        }
+    }
+
+    /// Move focus left by one column.
+    pub fn move_focus_left(&mut self) {
+        if let Some(focused) = &mut self.focused_cell {
+            if focused.col > 0 {
+                focused.col -= 1;
+            }
+        } else {
+            // Set initial focus to top-left cell if no focus exists
+            self.focused_cell = Some(DataCellId::new(DataRow::new(0), 0));
+        }
+    }
+
+    /// Move focus right by one column.
+    pub fn move_focus_right(&mut self, max_cols: usize) {
+        if let Some(focused) = &mut self.focused_cell {
+            if focused.col < max_cols.saturating_sub(1) {
+                focused.col += 1;
+            }
+        } else {
+            // Set initial focus to top-left cell if no focus exists
+            self.focused_cell = Some(DataCellId::new(DataRow::new(0), 0));
+        }
     }
 }
