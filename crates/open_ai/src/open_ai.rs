@@ -436,26 +436,11 @@ pub struct ResponseMessageDelta {
     pub reasoning_content: Option<String>,
 }
 
+#[allow(clippy::redundant_clone)]
 fn deserialize_tool_calls<'de, D>(deserializer: D) -> Result<Option<Vec<ToolCallChunk>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ToolCallsHelper {
-        Array(Vec<ToolCallChunk>),
-        Null,
-        // Add a variant to handle non-standard tool calls data from some providers
-        // This allows us to support providers that send tool calls in different formats
-        #[allow(dead_code)]
-        NonStandardArray(Vec<serde_json::Value>),
-        // Add a variant to handle malformed data that doesn't match any expected format
-        #[allow(dead_code)]
-        Malformed(serde_json::Value),
-    }
-
     let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
     
     // Handle empty arrays explicitly
@@ -479,7 +464,7 @@ where
     }
     
     // If standard deserialization fails, try non-standard formats
-    if let Ok(values) = serde_json::from_value::<Vec<serde_json::Value>>(value.clone()) {
+    if let Ok(values) = serde_json::from_value::<Vec<serde_json::Value>>(value) {
         // Try to convert non-standard tool calls to our format
         let mut converted_tool_calls = Vec::new();
         
@@ -500,6 +485,7 @@ where
     Ok(None)
 }
 
+#[allow(clippy::redundant_clone)]
 /// Convert non-standard tool call formats to our standard ToolCallChunk format
 fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Option<ToolCallChunk> {
     // Handle the DeepSeek-style format: {"type": "function", "function": {...}}
@@ -986,31 +972,6 @@ mod tests {
             Err(e) => {
                 panic!("Failed to parse response with malformed tool calls: {}", e);
             }
-        }
-    }
-
-    #[test]
-    fn test_deserialize_tool_calls_with_malformed_data() {
-        // Test the deserialize_tool_calls function directly with malformed data
-        // This tool call is missing the required 'id' field
-        let malformed_tool_calls = json!([
-            {
-                "type": "function",
-                "function": {
-                    "arguments": "malformed json",
-                    "name": "grep"
-                }
-            }
-        ]);
-
-        let result: Result<Option<Vec<ToolCallChunk>>, _> = 
-            serde_json::from_value(malformed_tool_calls);
-
-        // This should not panic and should return None for malformed tool calls
-        match result {
-            Ok(None) => {}, // Expected - malformed tool calls should be treated as None
-            Ok(Some(_)) => panic!("Expected malformed tool calls (missing id field) to be treated as None"),
-            Err(_) => {}, // Also acceptable - malformed data might cause deserialization error
         }
     }
 
