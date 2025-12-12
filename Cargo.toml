@@ -271,8 +271,6 @@ features = [
 ]
 
 [patch.crates-io]
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "b4588b2e5aee68f4c0e100f140e808cbce7b1419" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]

@@ -7735,13 +7735,3 @@ dependencies = [
  "syn 2.0.106",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "notify"
-version = "8.2.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
-
-[[patch.unused]]
-name = "notify-types"
-version = "2.0.0"
-source = "git+https://github.com/zed-industries/notify.git?rev=b4588b2e5aee68f4c0e100f140e808cbce7b1419#b4588b2e5aee68f4c0e100f140e808cbce7b1419"
