@@ -1,6 +1,6 @@
 use ui::SharedString;
 
-use crate::line_numbers::LineNumber;
+use crate::row_identifiers::LineNumber;
 
 /// Generic container struct of table-like data (CSV, TSV, etc)
 #[derive(Default)]
