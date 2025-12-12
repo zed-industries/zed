@@ -1312,13 +1312,15 @@ impl llm_provider::Host for WasmState {
                     let callback_url = if let Some(path_start) = request_line.find(' ') {
                         if let Some(path_end) = request_line[path_start + 1..].find(' ') {
                             let path = &request_line[path_start + 1..path_start + 1 + path_end];
-                            if path.starts_with(&callback_path) || path.starts_with(&format!("/{}", callback_path.trim_start_matches('/'))) {
+                            if path.starts_with(&callback_path)
+                                || path.starts_with(&format!(
+                                    "/{}",
+                                    callback_path.trim_start_matches('/')
+                                ))
+                            {
                                 format!("http://localhost:{}{}", port, path)
                             } else {
-                                return Err(anyhow::anyhow!(
-                                    "Unexpected callback path: {}",
-                                    path
-                                ));
+                                return Err(anyhow::anyhow!("Unexpected callback path: {}", path));
                             }
                         } else {
                             return Err(anyhow::anyhow!("Malformed HTTP request"));
@@ -1327,17 +1329,10 @@ impl llm_provider::Host for WasmState {
                         return Err(anyhow::anyhow!("Malformed HTTP request"));
                     };
 
-                    let response = "HTTP/1.1 200 OK\r\n\
-                        Content-Type: text/html\r\n\
-                        Connection: close\r\n\
-                        \r\n\
-                        <!DOCTYPE html>\
-                        <html><head><title>Authentication Complete</title></head>\
-                        <body style=\"font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;\">\
-                        <div style=\"text-align: center;\">\
-                        <h1>Authentication Complete</h1>\
-                        <p>You can close this window and return to Zed.</p>\
-                        </div></body></html>";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        include_str!("../oauth_callback_response.html")
+                    );
 
                     smol::io::AsyncWriteExt::write_all(&mut stream, response.as_bytes())
                         .await
@@ -1348,16 +1343,13 @@ impl llm_provider::Host for WasmState {
                 };
 
                 let timeout_duration = Duration::from_secs(timeout_secs as u64);
-                let callback_url = smol::future::or(
-                    accept_future,
-                    async {
-                        smol::Timer::after(timeout_duration).await;
-                        Err(anyhow::anyhow!(
-                            "OAuth callback timed out after {} seconds",
-                            timeout_secs
-                        ))
-                    },
-                )
+                let callback_url = smol::future::or(accept_future, async {
+                    smol::Timer::after(timeout_duration).await;
+                    Err(anyhow::anyhow!(
+                        "OAuth callback timed out after {} seconds",
+                        timeout_secs
+                    ))
+                })
                 .await?;
 
                 Ok(llm_provider::OauthWebAuthResult {
