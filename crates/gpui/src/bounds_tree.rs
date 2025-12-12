@@ -64,6 +64,7 @@ enum NodeKind {
 /// Fixed-size array for child indices, avoiding heap allocation.
 #[derive(Debug, Clone)]
 struct NodeChildren {
+    // Keeps an invariant where the max order child is always at the end
     indices: [usize; MAX_CHILDREN],
     len: u8,
 }
@@ -171,21 +172,11 @@ where
                     max_found = cmp::max(max_found, *order);
                 }
                 NodeKind::Internal { children } => {
-                    // Add children to search stack, sorted by max_order ascending
-                    // so highest max_order is processed first (LIFO)
-                    let mut child_orders: [(u32, usize); MAX_CHILDREN] = [(0, 0); MAX_CHILDREN];
-                    let num_children = children.len();
-
-                    for (i, &child_idx) in children.as_slice().iter().enumerate() {
-                        child_orders[i] = (self.nodes[child_idx].max_order, child_idx);
-                    }
-
-                    // Sort by max_order (ascending, so highest is pushed last = popped first)
-                    child_orders[..num_children].sort_unstable_by_key(|(max_order, _)| *max_order);
-
-                    for (child_max, child_idx) in &child_orders[..num_children] {
-                        if *child_max > max_found {
-                            self.search_stack.push(*child_idx);
+                    // Children are maintained with heighest max_order at the end.
+                    // Push in forward order to highest (last) is popped first.
+                    for &child_idx in children.as_slice() {
+                        if self.nodes[child_idx].max_order > max_found {
+                            self.search_stack.push(child_idx);
                         }
                     }
                 }
@@ -217,8 +208,14 @@ where
             let root_order = self.nodes[root_idx].max_order;
 
             let mut children = NodeChildren::new();
-            children.push(root_idx);
-            children.push(new_leaf_idx);
+            // Max end invariant
+            if order > root_order {
+                children.push(root_idx);
+                children.push(new_leaf_idx);
+            } else {
+                children.push(new_leaf_idx);
+                children.push(root_idx);
+            }
 
             let new_root_idx = self.nodes.len();
             self.nodes.push(Node {
@@ -264,8 +261,14 @@ where
                 if children.len() < MAX_CHILDREN {
                     // Add new leaf directly to this node
                     let node = &mut self.nodes[current_idx];
+
                     if let NodeKind::Internal { children } = &mut node.kind {
                         children.push(new_leaf_idx);
+                        // Swap new leaf only if it has the highest max_order
+                        if order <= node.max_order {
+                            let last = children.len() - 1;
+                            children.indices.swap(last - 1, last);
+                        }
                     }
 
                     node.bounds = node.bounds.union(&bounds);
@@ -277,13 +280,20 @@ where
                     let sibling_order = self.nodes[best_child_idx].max_order;
 
                     let mut new_children = NodeChildren::new();
-                    new_children.push(best_child_idx);
-                    new_children.push(new_leaf_idx);
+                    // Max end invariant
+                    if order > sibling_order {
+                        new_children.push(best_child_idx);
+                        new_children.push(new_leaf_idx);
+                    } else {
+                        new_children.push(new_leaf_idx);
+                        new_children.push(best_child_idx);
+                    }
 
                     let new_internal_idx = self.nodes.len();
+                    let new_internal_max = cmp::max(sibling_order, order);
                     self.nodes.push(Node {
                         bounds: sibling_bounds.union(&bounds),
-                        max_order: cmp::max(sibling_order, order),
+                        max_order: new_internal_max,
                         kind: NodeKind::Internal {
                             children: new_children,
                         },
@@ -292,7 +302,15 @@ where
                     // Replace the leaf with the new internal in parent
                     let parent = &mut self.nodes[current_idx];
                     if let NodeKind::Internal { children } = &mut parent.kind {
+                        let children_len = children.len();
+
                         children.indices[best_child_pos] = new_internal_idx;
+
+                        // If new internal has highest max_order, swap it to the end
+                        // to mantain sorting invariant
+                        if new_internal_max > parent.max_order {
+                            children.indices.swap(best_child_pos, children_len - 1);
+                        }
                     }
                     break;
                 }
@@ -303,12 +321,29 @@ where
         }
 
         // Propagate bounds and max_order updates up the tree
+        let mut updated_child_idx = None;
         for &node_idx in self.insert_path.iter().rev() {
             let node = &mut self.nodes[node_idx];
             node.bounds = node.bounds.union(&bounds);
+
             if node.max_order < order {
                 node.max_order = order;
+
+                // Swap updated child to end (skip first iteration since the invariant is already handled by previous cases)
+                if let Some(child_idx) = updated_child_idx {
+                    if let NodeKind::Internal { children } = &mut node.kind {
+                        if let Some(pos) = children.as_slice().iter().position(|&c| c == child_idx)
+                        {
+                            let last = children.len() - 1;
+                            if pos != last {
+                                children.indices.swap(pos, last);
+                            }
+                        }
+                    }
+                }
             }
+
+            updated_child_idx = Some(node_idx);
         }
 
         new_leaf_idx
