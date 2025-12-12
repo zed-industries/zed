@@ -6,6 +6,7 @@ use crate::{
     progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
+use anyhow::{Context as _, Result, ensure};
 use edit_prediction::{
     EditPredictionStore,
     zeta2::{zeta2_output_for_patch, zeta2_prompt_input},
@@ -19,8 +20,8 @@ pub async fn run_format_prompt(
     prompt_format: PromptFormat,
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
-) {
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
+) -> Result<()> {
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
     let _step_progress = Progress::global().start(Step::FormatPrompt, &example.name);
 
@@ -34,29 +35,33 @@ pub async fn run_format_prompt(
             });
         }
         PromptFormat::Zeta2 => {
-            run_load_project(example, app_state, cx.clone()).await;
+            run_load_project(example, app_state, cx.clone()).await?;
 
-            let ep_store = cx
-                .update(|cx| EditPredictionStore::try_global(cx).unwrap())
-                .unwrap();
+            let ep_store = cx.update(|cx| {
+                EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
+            })??;
 
-            let state = example.state.as_ref().unwrap();
-            let snapshot = state
-                .buffer
-                .read_with(&cx, |buffer, _| buffer.snapshot())
-                .unwrap();
+            let state = example.state.as_ref().context("state must be set")?;
+            let snapshot = state.buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
             let project = state.project.clone();
-            let (_, input) = ep_store
-                .update(&mut cx, |ep_store, _cx| {
-                    zeta2_prompt_input(
-                        &snapshot,
-                        example.context.as_ref().unwrap().files.clone(),
-                        ep_store.edit_history_for_project(&project),
-                        example.cursor_path.clone(),
-                        example.buffer.as_ref().unwrap().cursor_offset,
-                    )
-                })
-                .unwrap();
+            let (_, input) = ep_store.update(&mut cx, |ep_store, _cx| {
+                anyhow::Ok(zeta2_prompt_input(
+                    &snapshot,
+                    example
+                        .context
+                        .as_ref()
+                        .context("context must be set")?
+                        .files
+                        .clone(),
+                    ep_store.edit_history_for_project(&project),
+                    example.cursor_path.clone(),
+                    example
+                        .buffer
+                        .as_ref()
+                        .context("buffer must be set")?
+                        .cursor_offset,
+                ))
+            })??;
             let prompt = format_zeta_prompt(&input);
             let expected_output = zeta2_output_for_patch(&input, &example.expected_patch.clone());
             example.prompt = Some(ExamplePrompt {
@@ -66,6 +71,7 @@ pub async fn run_format_prompt(
             });
         }
     };
+    Ok(())
 }
 
 pub struct TeacherPrompt;
@@ -91,7 +97,7 @@ impl TeacherPrompt {
         prompt
     }
 
-    pub fn parse(example: &Example, response: &str) -> String {
+    pub fn parse(example: &Example, response: &str) -> Result<String> {
         // Ideally, we should always be able to find cursor position in the retrieved context.
         // In reality, sometimes we don't find it for these reasons:
         // 1. `example.cursor_position` contains _more_ context than included in the retrieved context
@@ -102,7 +108,7 @@ impl TeacherPrompt {
         let cursor_file = &example
             .buffer
             .as_ref()
-            .expect("`buffer` should be filled in in the context collection step")
+            .context("`buffer` should be filled in in the context collection step")?
             .content;
 
         // Extract updated (new) editable region from the model response
@@ -111,9 +117,10 @@ impl TeacherPrompt {
         // Reconstruct old editable region we sent to the model
         let old_editable_region = Self::format_editable_region(example);
         let old_editable_region = Self::extract_editable_region(&old_editable_region);
-        if !cursor_file.contains(&old_editable_region) {
-            panic!("Something's wrong: editable_region is not found in the cursor file")
-        }
+        ensure!(
+            cursor_file.contains(&old_editable_region),
+            "Something's wrong: editable_region is not found in the cursor file"
+        );
 
         // Apply editable region to a larger context and compute diff.
         // This is needed to get a better context lines around the editable region
@@ -128,7 +135,7 @@ impl TeacherPrompt {
             diff = diff,
         };
 
-        diff
+        Ok(diff)
     }
 
     fn format_edit_history(edit_history: &str) -> String {
@@ -152,9 +159,7 @@ impl TeacherPrompt {
     }
 
     fn format_context(example: &Example) -> String {
-        if example.context.is_none() {
-            panic!("Missing context retriever step");
-        }
+        assert!(example.context.is_some(), "Missing context retriever step");
 
         let mut prompt = String::new();
         zeta_prompt::write_related_files(&mut prompt, &example.context.as_ref().unwrap().files);
