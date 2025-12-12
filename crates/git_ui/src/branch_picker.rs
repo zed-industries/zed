@@ -403,7 +403,6 @@ impl BranchListDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        dbg!("here");
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -424,18 +423,14 @@ impl BranchListDelegate {
             repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
-                    dbg!("here");
                 })?
                 .await
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
-                    dbg!("here");
                 })?
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
-                    dbg!("here");
                 })?;
-            dbg!("here");
             stop_loader(&this, cx);
             Ok(())
         })
