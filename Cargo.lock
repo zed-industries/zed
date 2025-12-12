@@ -5179,6 +5179,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "libc",
  "log",
  "node_runtime",
  "paths",
@@ -5200,7 +5201,6 @@ dependencies = [
  "wasmtime",
  "watch",
  "zeta_prompt",
- "zlog",
 ]
 
 [[package]]
@@ -14445,12 +14445,14 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "tracing",
  "ui",
  "unindent",
  "util",
  "util_macros",
  "workspace",
  "zed_actions",
+ "ztracing",
 ]
 
 [[package]]
@@ -16363,13 +16365,13 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "fancy-regex",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
  "libc",
  "log",
  "rand 0.9.2",
+ "regex",
  "release_channel",
  "schemars",
  "serde",
@@ -18097,6 +18099,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "markdown_preview",
  "menu",
  "multi_buffer",
  "nvim-rs",
@@ -21021,6 +21024,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "zlog",
  "ztracing_macro",
 ]
 

@@ -8,8 +8,8 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
     },
 };
-use fancy_regex::Regex;
 use log::{info, warn};
+use regex::Regex;
 use std::{
     iter::{once, once_with},
     ops::{Index, Range},
@@ -339,17 +339,6 @@ fn path_match<T>(
         }))
         .flatten()
         {
-            let captures = match captures {
-                Ok(captures) => captures,
-                Err(error) => {
-                    warn!("Error '{error}' searching for path hyperlinks in line: {line}");
-                    info!(
-                        "Skipping match from path hyperlinks with regex: {}",
-                        regex.as_str()
-                    );
-                    continue;
-                }
-            };
             path_found = true;
             let match_range = captures.get(0).unwrap().range();
             let (mut path_range, line_column) = if let Some(path) = captures.name("path") {
@@ -412,7 +401,7 @@ mod tests {
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
-    use fancy_regex::Regex;
+    use regex::Regex;
     use settings::{self, Settings, SettingsContent};
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
@@ -422,7 +411,7 @@ mod tests {
         let results: Vec<_> = Regex::new(re)
             .unwrap()
             .find_iter(hay)
-            .map(|m| m.unwrap().as_str())
+            .map(|m| m.as_str())
             .collect();
         assert_eq!(results, expected);
     }
@@ -614,8 +603,6 @@ mod tests {
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("/test/cool.rs:4:2👉:Error!");
-            test_path!("/test/cool.rs:4:2:👉Error!");
             test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
@@ -626,6 +613,7 @@ mod tests {
 
             // Python
             test_path!("‹«awe👉some.py»›");
+            test_path!("‹«👉a»› ");
 
             test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awe👉some.py»\", line «42»›");
@@ -638,18 +626,14 @@ mod tests {
             // path, line, column and description
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
-            test_path!("/test/cool.rs:4:2:例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
-            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
 
             // path, line, column and description w/extra colons
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›::例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›::例Desc例例例");
-            test_path!("/test/cool.rs:4:2::例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›::例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›::例Desc例例例");
-            test_path!("/test/cool.rs(4,2)::例Desc例👉例例");
         }
 
         #[test]
@@ -691,8 +675,6 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»::«42»›");
             test_path!("‹«/test/co👉ol.rs»::«42»›:");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
         }
 
@@ -708,7 +690,7 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
 
             test_path!("\"‹«/test/co👉ol.rs»:«4»:«2»›\"");
             test_path!("'‹«/test/co👉ol.rs»:«4»:«2»›'");
@@ -757,7 +739,7 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
-            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›),,'...");
             test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
@@ -881,9 +863,6 @@ mod tests {
             fn issue_28194() {
                 test_path!(
                     "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
-                );
-                test_path!(
-                    "test/controllers/template_items_controller_test.rb:19:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
             }
 
