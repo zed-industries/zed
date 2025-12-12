@@ -3,7 +3,7 @@ use edit_prediction::{
     sweep_ai::SWEEP_CREDENTIALS_URL,
 };
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Entity, ScrollHandle, WindowBounds, WindowOptions, prelude::*};
+use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::CODESTRAL_API_URL;
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, WithScrollbar, prelude::*};
 

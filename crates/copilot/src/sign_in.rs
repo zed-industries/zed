@@ -1,10 +1,10 @@
 use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Point,
-    Render, Styled, Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
+    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Point, Render,
+    Styled, Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
 };
-use ui::{Button, CommonAnimationExt, ConfiguredApiCard, Label, Vector, VectorName, prelude::*};
+use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
@@ -52,10 +52,11 @@ fn open_copilot_code_verification_window(
     copilot: &Entity<Copilot>,
     cx: &mut App,
 ) {
-    let window_size = px(400.);
+    let height = px(450.);
+    let width = px(350.);
     let window_bounds = WindowBounds::Windowed(gpui::bounds(
-        current_window_center - point(window_size / 2.0, window_size / 2.0),
-        gpui::size(window_size, window_size),
+        current_window_center - point(height / 2.0, width / 2.0),
+        gpui::size(height, width),
     ));
     cx.open_window(
         WindowOptions {
@@ -232,17 +233,19 @@ impl CopilotCodeVerification {
             .map(|item| item.text().as_ref() == Some(&data.user_code))
             .unwrap_or(false);
 
-        h_flex()
-            .cursor_pointer()
-            .w_full()
-            .p_1p5()
-            .border_1()
-            .border_muted(cx)
-            .rounded_sm()
-            .justify_between()
-            .child(Label::new(data.user_code.clone()))
-            .child(Label::new(if copied { "Copied!" } else { "Copy" }))
-            .on_mouse_down(MouseButton::Left, {
+        ButtonLike::new("copy-button")
+            .full_width()
+            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .size(ButtonSize::Medium)
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_1()
+                    .justify_between()
+                    .child(Label::new(data.user_code.clone()))
+                    .child(Label::new(if copied { "Copied!" } else { "Copy" })),
+            )
+            .on_click({
                 let user_code = data.user_code.clone();
                 move |_, window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(user_code.clone()));
@@ -264,7 +267,7 @@ impl CopilotCodeVerification {
         };
         v_flex()
             .flex_1()
-            .gap_2()
+            .gap_2p5()
             .items_center()
             .text_center()
             .child(Headline::new("Use GitHub Copilot in Zed").size(HeadlineSize::Large))
@@ -275,57 +278,75 @@ impl CopilotCodeVerification {
             .child(Self::render_device_code(data, cx))
             .child(
                 Label::new("Paste this code into GitHub after clicking the button below.")
-                    .size(ui::LabelSize::Small),
+                    .color(Color::Muted),
             )
             .child(
-                Button::new("connect-button", connect_button_label)
-                    .full_width()
-                    .style(ButtonStyle::Filled)
-                    .on_click({
-                        let verification_uri = data.verification_uri.clone();
-                        cx.listener(move |this, _, _window, cx| {
-                            cx.open_url(&verification_uri);
-                            this.connect_clicked = true;
-                        })
-                    }),
-            )
-            .child(
-                Button::new("copilot-enable-cancel-button", "Cancel")
-                    .full_width()
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(DismissEvent);
-                    })),
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Button::new("connect-button", connect_button_label)
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .on_click({
+                                let verification_uri = data.verification_uri.clone();
+                                cx.listener(move |this, _, _window, cx| {
+                                    cx.open_url(&verification_uri);
+                                    this.connect_clicked = true;
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new("copilot-enable-cancel-button", "Cancel")
+                            .full_width()
+                            .size(ButtonSize::Medium)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    ),
             )
     }
 
     fn render_enabled_modal(cx: &mut Context<Self>) -> impl Element {
         v_flex()
             .gap_2()
+            .text_center()
+            .justify_center()
             .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
-            .child(Label::new(
-                "You can update your settings or sign out from the Copilot menu in the status bar.",
-            ))
+            .child(Label::new("You're all set to use GitHub Copilot.").color(Color::Muted))
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
     }
 
     fn render_unauthorized_modal(cx: &mut Context<Self>) -> impl Element {
+        let description = "Enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.";
+
         v_flex()
-            .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
-            .child(Label::new(
-                "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
-            ).color(Color::Warning))
+            .gap_2()
+            .text_center()
+            .justify_center()
+            .child(
+                Headline::new("You must have an active GitHub Copilot subscription.")
+                    .size(HeadlineSize::Large),
+            )
+            .child(Label::new(description).color(Color::Warning))
             .child(
                 Button::new("copilot-subscribe-button", "Subscribe on GitHub")
                     .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
                     .on_click(|_, _, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
             .child(
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
                     .full_width()
+                    .size(ButtonSize::Medium)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
     }
@@ -368,11 +389,12 @@ impl Render for CopilotCodeVerification {
             .size_full()
             .id("copilot code verification")
             .track_focus(&self.focus_handle(cx))
-            .elevation_3(cx)
-            // .w_96()
-            .items_center()
-            .p_4()
+            .px_4()
+            .py_8()
             .gap_2()
+            .items_center()
+            .justify_center()
+            .elevation_3(cx)
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
@@ -444,23 +466,32 @@ impl Render for ConfigurationView {
                 )
             };
 
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(4);
+            let loading_button = |label: SharedString| {
+                ButtonLike::new("loading_button")
+                    .disabled(true)
+                    .style(ButtonStyle::Outlined)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(4),
+                            )
+                            .child(Label::new(label)),
+                    )
+            };
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Starting { task: _ } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Starting Copilot…"))
-                        .into_any_element(),
+                    Status::Starting { task: _ } => loading_button("Starting Copilot…".into()).into_any_element(),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
-                    } => h_flex()
-                        .gap_2()
-                        .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…"))
-                        .into_any_element(),
+                    } => loading_button("Signing into Copilot…".into()).into_any_element(),
                     Status::Error(_) => {
                         v_flex()
                             .gap_6()
