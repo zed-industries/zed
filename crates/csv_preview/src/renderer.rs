@@ -26,6 +26,14 @@ impl Render for CsvPreviewView {
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::jump_to_top_edge))
+            .on_action(cx.listener(Self::jump_to_bottom_edge))
+            .on_action(cx.listener(Self::jump_to_left_edge))
+            .on_action(cx.listener(Self::jump_to_right_edge))
+            .on_action(cx.listener(Self::extend_selection_to_top_edge))
+            .on_action(cx.listener(Self::extend_selection_to_bottom_edge))
+            .on_action(cx.listener(Self::extend_selection_to_left_edge))
+            .on_action(cx.listener(Self::extend_selection_to_right_edge))
             .child(self.render_settings_panel(window, cx))
             .child({
                 if self.contents.headers.is_empty() {

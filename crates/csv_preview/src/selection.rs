@@ -501,4 +501,158 @@ impl TableSelection {
             }
         }
     }
+
+    /// Jump focus to the top row (first row in display order)
+    pub fn jump_to_top_edge(&mut self, ordered_indices: &OrderedIndices) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+            let new_cell = DataCellId::new(first_data_row, focused.col);
+            self.focused_cell = Some(new_cell);
+            self.selection_anchor = Some(new_cell);
+            self.selected_cells.clear();
+            self.selected_cells.insert(new_cell);
+        }
+    }
+
+    /// Jump focus to the bottom row (last row in display order)
+    pub fn jump_to_bottom_edge(&mut self, ordered_indices: &OrderedIndices, max_rows: usize) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if max_rows > 0 {
+            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
+            {
+                let new_cell = DataCellId::new(last_data_row, focused.col);
+                self.focused_cell = Some(new_cell);
+                self.selection_anchor = Some(new_cell);
+                self.selected_cells.clear();
+                self.selected_cells.insert(new_cell);
+            }
+        }
+    }
+
+    /// Jump focus to the leftmost column (column 0)
+    pub fn jump_to_left_edge(&mut self, ordered_indices: &OrderedIndices) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        let new_cell = DataCellId::new(focused.row, 0);
+        self.focused_cell = Some(new_cell);
+        self.selection_anchor = Some(new_cell);
+        self.selected_cells.clear();
+        self.selected_cells.insert(new_cell);
+    }
+
+    /// Jump focus to the rightmost column (last column)
+    pub fn jump_to_right_edge(&mut self, ordered_indices: &OrderedIndices, max_cols: usize) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if max_cols > 0 {
+            let new_cell = DataCellId::new(focused.row, max_cols - 1);
+            self.focused_cell = Some(new_cell);
+            self.selection_anchor = Some(new_cell);
+            self.selected_cells.clear();
+            self.selected_cells.insert(new_cell);
+        }
+    }
+
+    /// Extend selection to the top row while keeping anchor
+    pub fn extend_selection_to_top_edge(&mut self, ordered_indices: &OrderedIndices) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+            let new_cell = DataCellId::new(first_data_row, focused.col);
+            self.focused_cell = Some(new_cell);
+
+            // Set anchor if not already set
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(focused);
+            }
+
+            self.update_range_selection(ordered_indices);
+        }
+    }
+
+    /// Extend selection to the bottom row while keeping anchor
+    pub fn extend_selection_to_bottom_edge(
+        &mut self,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+    ) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if max_rows > 0 {
+            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
+            {
+                let new_cell = DataCellId::new(last_data_row, focused.col);
+                self.focused_cell = Some(new_cell);
+
+                // Set anchor if not already set
+                if self.selection_anchor.is_none() {
+                    self.selection_anchor = Some(focused);
+                }
+
+                self.update_range_selection(ordered_indices);
+            }
+        }
+    }
+
+    /// Extend selection to the leftmost column while keeping anchor
+    pub fn extend_selection_to_left_edge(&mut self, ordered_indices: &OrderedIndices) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        let new_cell = DataCellId::new(focused.row, 0);
+        self.focused_cell = Some(new_cell);
+
+        // Set anchor if not already set
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(focused);
+        }
+
+        self.update_range_selection(ordered_indices);
+    }
+
+    /// Extend selection to the rightmost column while keeping anchor
+    pub fn extend_selection_to_right_edge(
+        &mut self,
+        ordered_indices: &OrderedIndices,
+        max_cols: usize,
+    ) {
+        let Some(focused) = self.focused_cell else {
+            self.ensure_focus_initialized(ordered_indices);
+            return;
+        };
+
+        if max_cols > 0 {
+            let new_cell = DataCellId::new(focused.row, max_cols - 1);
+            self.focused_cell = Some(new_cell);
+
+            // Set anchor if not already set
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(focused);
+            }
+
+            self.update_range_selection(ordered_indices);
+        }
+    }
 }

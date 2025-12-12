@@ -40,7 +40,15 @@ actions!(
         SelectDown,
         SelectLeft,
         SelectRight,
-        SelectAll
+        SelectAll,
+        JumpToTopEdge,
+        JumpToBottomEdge,
+        JumpToLeftEdge,
+        JumpToRightEdge,
+        SelectionToTopEdge,
+        SelectionToBottomEdge,
+        SelectionToLeftEdge,
+        SelectionToRightEdge
     ]
 );
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
@@ -154,6 +162,96 @@ impl CsvPreviewView {
         let max_cols = self.contents.headers.len();
         self.selection
             .select_all(&self.ordered_indices, max_rows, max_cols);
+        cx.notify();
+    }
+
+    fn jump_to_top_edge(
+        &mut self,
+        _: &JumpToTopEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection.jump_to_top_edge(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn jump_to_bottom_edge(
+        &mut self,
+        _: &JumpToBottomEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_rows = self.contents.rows.len();
+        self.selection
+            .jump_to_bottom_edge(&self.ordered_indices, max_rows);
+        cx.notify();
+    }
+
+    fn jump_to_left_edge(
+        &mut self,
+        _: &JumpToLeftEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection.jump_to_left_edge(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn jump_to_right_edge(
+        &mut self,
+        _: &JumpToRightEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_cols = self.contents.headers.len();
+        self.selection
+            .jump_to_right_edge(&self.ordered_indices, max_cols);
+        cx.notify();
+    }
+
+    fn extend_selection_to_top_edge(
+        &mut self,
+        _: &SelectionToTopEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection
+            .extend_selection_to_top_edge(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn extend_selection_to_bottom_edge(
+        &mut self,
+        _: &SelectionToBottomEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_rows = self.contents.rows.len();
+        self.selection
+            .extend_selection_to_bottom_edge(&self.ordered_indices, max_rows);
+        cx.notify();
+    }
+
+    fn extend_selection_to_left_edge(
+        &mut self,
+        _: &SelectionToLeftEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection
+            .extend_selection_to_left_edge(&self.ordered_indices);
+        cx.notify();
+    }
+
+    fn extend_selection_to_right_edge(
+        &mut self,
+        _: &SelectionToRightEdge,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_cols = self.contents.headers.len();
+        self.selection
+            .extend_selection_to_right_edge(&self.ordered_indices, max_cols);
         cx.notify();
     }
 
