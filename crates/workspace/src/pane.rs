@@ -3140,9 +3140,10 @@ impl Pane {
         let render_aside_toggle_left = self
             .is_upper_left
             .then(|| {
-                self.workspace
-                    .upgrade()
-                    .map(|entity| !entity.read(cx).utility_pane_state.left_slot_open)
+                self.workspace.upgrade().and_then(|entity| {
+                    let state = &entity.read(cx).utility_pane_state;
+                    state.left_slot.as_ref().map(|slot| !slot.expanded)
+                })
             })
             .flatten()
             .unwrap_or(false);
@@ -3150,9 +3151,10 @@ impl Pane {
         let render_aside_toggle_right = self
             .is_upper_right
             .then(|| {
-                self.workspace
-                    .upgrade()
-                    .map(|entity| !entity.read(cx).utility_pane_state.right_slot_open)
+                self.workspace.upgrade().and_then(|entity| {
+                    let state = &entity.read(cx).utility_pane_state;
+                    state.right_slot.as_ref().map(|slot| !slot.expanded)
+                })
             })
             .flatten()
             .unwrap_or(false);

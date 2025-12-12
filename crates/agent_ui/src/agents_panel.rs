@@ -1,9 +1,13 @@
-use gpui::{EventEmitter, Focusable, actions};
+use gpui::{AnyView, AppContext, BorrowAppContext, Entity, EventEmitter, Focusable, actions};
+use settings::SettingsStore;
 use ui::{
     App, Context, IconName, IntoElement, Label, LabelCommon as _, LabelSize, ListItem,
     ListItemSpacing, ParentElement, Render, RenderOnce, Styled, Window, div, h_flex, px,
 };
-use workspace::{Panel, Workspace, dock::PanelEvent};
+use workspace::{
+    Panel, Workspace,
+    dock::{DockPosition, PanelEvent},
+};
 
 actions!(
     agents,
@@ -26,12 +30,19 @@ pub fn init(cx: &mut App) {
 
 pub struct AgentsPanel {
     focus_handle: gpui::FocusHandle,
+    utility_pane_view: Entity<AgentsUtilityPane>,
+    position: DockPosition,
 }
 
 impl AgentsPanel {
     pub fn new(cx: &mut ui::Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        Self { focus_handle }
+        let utility_pane_view = cx.new(|cx| AgentsUtilityPane::new(cx)).into();
+        Self {
+            focus_handle,
+            utility_pane_view,
+            position: DockPosition::Left,
+        }
     }
 }
 
@@ -44,24 +55,26 @@ impl Panel for AgentsPanel {
         "AgentsPanel"
     }
 
-    fn position(&self, _window: &ui::Window, _cx: &ui::App) -> workspace::dock::DockPosition {
-        workspace::dock::DockPosition::Left
+    fn position(&self, _window: &ui::Window, _cx: &ui::App) -> DockPosition {
+        self.position
     }
 
-    fn position_is_valid(&self, position: workspace::dock::DockPosition) -> bool {
+    fn position_is_valid(&self, position: DockPosition) -> bool {
         match position {
-            workspace::dock::DockPosition::Left | workspace::dock::DockPosition::Right => true,
-            workspace::dock::DockPosition::Bottom => false,
+            DockPosition::Left | DockPosition::Right => true,
+            DockPosition::Bottom => false,
         }
     }
 
     fn set_position(
         &mut self,
-        _position: workspace::dock::DockPosition,
+        position: DockPosition,
         _window: &mut ui::Window,
-        _cx: &mut ui::Context<Self>,
+        cx: &mut ui::Context<Self>,
     ) {
-        // TODO!
+        self.position = position;
+        // Trigger SettingsStore observer in Dock to move the panel
+        cx.update_global::<SettingsStore, _>(|_, _| {});
     }
 
     fn size(&self, _window: &ui::Window, _cx: &ui::App) -> ui::Pixels {
@@ -101,6 +114,10 @@ impl Panel for AgentsPanel {
     }
     fn enabled(&self, _cx: &App) -> bool {
         true
+    }
+
+    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
+        Some(self.utility_pane_view.clone().into())
     }
 }
 
@@ -176,5 +193,30 @@ impl RenderOnce for AgentThreadSummary {
 impl RenderOnce for AgentThreadDiff {
     fn render(self, _window: &mut Window, _cx: &mut ui::App) -> impl IntoElement {
         Label::new(format!("{}:{}:{}", self.added, self.modified, self.removed))
+    }
+}
+
+pub struct AgentsUtilityPane {
+    focus_handle: gpui::FocusHandle,
+}
+
+impl AgentsUtilityPane {
+    pub fn new(cx: &mut ui::Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        Self { focus_handle }
+    }
+}
+
+impl Focusable for AgentsUtilityPane {
+    fn focus_handle(&self, _cx: &ui::App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for AgentsUtilityPane {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .child(Label::new("Thread Details (Placeholder)").size(LabelSize::Default))
     }
 }

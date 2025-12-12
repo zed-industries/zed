@@ -6839,10 +6839,12 @@ impl Render for Workspace {
                                                         window,
                                                         cx,
                                                     ))
-                                                    .when(self.utility_pane_state.left_slot_open, |this| {
-                                                        this.child(
-                                                            UtilityPane::new(UtilityPaneSlot::Left, cx)
-                                                        )
+                                                    .when_some(self.utility_pane_state.left_slot.as_ref(), |this, slot_state| {
+                                                        this.when(slot_state.expanded, |this| {
+                                                            this.child(
+                                                                UtilityPane::new(UtilityPaneSlot::Left, slot_state.view.clone(), cx)
+                                                            )
+                                                        })
                                                     })
                                                     .child(
                                                         div()
@@ -6885,10 +6887,12 @@ impl Render for Workspace {
                                                                     ),
                                                             ),
                                                     )
-                                                    .when(self.utility_pane_state.right_slot_open, |this| {
-                                                        this.child(
-                                                            UtilityPane::new(UtilityPaneSlot::Right, cx)
-                                                        )
+                                                    .when_some(self.utility_pane_state.right_slot.as_ref(), |this, slot_state| {
+                                                        this.when(slot_state.expanded, |this| {
+                                                            this.child(
+                                                                UtilityPane::new(UtilityPaneSlot::Right, slot_state.view.clone(), cx)
+                                                            )
+                                                        })
                                                     })
                                                     .children(self.render_dock(
                                                         DockPosition::Right,
@@ -6920,10 +6924,12 @@ impl Render for Workspace {
                                                             .flex_row()
                                                             .flex_1()
                                                             .children(self.render_dock(DockPosition::Left, &self.left_dock, window, cx))
-                                                            .when(self.utility_pane_state.left_slot_open, |this| {
-                                                                this.child(
-                                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
-                                                                )
+                                                            .when_some(self.utility_pane_state.left_slot.as_ref(), |this, slot_state| {
+                                                                this.when(slot_state.expanded, |this| {
+                                                                    this.child(
+                                                                        UtilityPane::new(UtilityPaneSlot::Left, slot_state.view.clone(), cx)
+                                                                    )
+                                                                })
                                                             })
                                                             .child(
                                                                 div()
@@ -6952,10 +6958,12 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
-                                                            .when(self.utility_pane_state.right_slot_open, |this| {
-                                                                this.child(
-                                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
-                                                                )
+                                                            .when_some(self.utility_pane_state.right_slot.as_ref(), |this, slot_state| {
+                                                                this.when(slot_state.expanded, |this| {
+                                                                    this.child(
+                                                                        UtilityPane::new(UtilityPaneSlot::Right, slot_state.view.clone(), cx)
+                                                                    )
+                                                                })
                                                             })
                                                     )
                                                     .child(
@@ -6981,10 +6989,12 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
-                                            .when(self.utility_pane_state.left_slot_open, |this| {
-                                                this.child(
-                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
-                                                )
+                                            .when_some(self.utility_pane_state.left_slot.as_ref(), |this, slot_state| {
+                                                this.when(slot_state.expanded, |this| {
+                                                    this.child(
+                                                        UtilityPane::new(UtilityPaneSlot::Left, slot_state.view.clone(), cx)
+                                                    )
+                                                })
                                             })
                                             .child(
                                                 div()
@@ -7024,10 +7034,12 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
-                                                            .when(self.utility_pane_state.right_slot_open, |this| {
-                                                                this.child(
-                                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
-                                                                )
+                                                            .when_some(self.utility_pane_state.right_slot.as_ref(), |this, slot_state| {
+                                                                this.when(slot_state.expanded, |this| {
+                                                                    this.child(
+                                                                        UtilityPane::new(UtilityPaneSlot::Right, slot_state.view.clone(), cx)
+                                                                    )
+                                                                })
                                                             })
                                                             .children(self.render_dock(DockPosition::Right, &self.right_dock, window, cx))
                                                     )
@@ -7048,10 +7060,12 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
-                                            .when(self.utility_pane_state.left_slot_open, |this| {
-                                                this.child(
-                                                    UtilityPane::new(UtilityPaneSlot::Left, cx)
-                                                )
+                                            .when_some(self.utility_pane_state.left_slot.as_ref(), |this, slot_state| {
+                                                this.when(slot_state.expanded, |this| {
+                                                    this.child(
+                                                        UtilityPane::new(UtilityPaneSlot::Left, slot_state.view.clone(), cx)
+                                                    )
+                                                })
                                             })
                                             .child(
                                                 div()
@@ -7090,10 +7104,12 @@ impl Render for Workspace {
                                                         cx,
                                                     )),
                                             )
-                                            .when(self.utility_pane_state.right_slot_open, |this| {
-                                                this.child(
-                                                    UtilityPane::new(UtilityPaneSlot::Right, cx)
-                                                )
+                                            .when_some(self.utility_pane_state.right_slot.as_ref(), |this, slot_state| {
+                                                this.when(slot_state.expanded, |this| {
+                                                    this.child(
+                                                        UtilityPane::new(UtilityPaneSlot::Right, slot_state.view.clone(), cx)
+                                                    )
+                                                })
                                             })
                                             .children(self.render_dock(
                                                 DockPosition::Right,
