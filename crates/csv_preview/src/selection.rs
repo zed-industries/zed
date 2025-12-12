@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use crate::{
     data_ordering::OrderedIndices,
-    types::{DataCellId, DisplayRow},
+    types::{DataCellId, DataRow, DisplayRow},
 };
 
 /// Selected cells stored in data coordinates (not display coordinates).

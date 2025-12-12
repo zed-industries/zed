@@ -7,7 +7,6 @@ use ui::{div, prelude::*};
 
 use crate::{
     CsvPreviewView,
-    data_ordering::generate_ordered_indices,
     settings::{FontType, VerticalAlignment},
     types::DisplayCellId,
 };
@@ -40,10 +39,11 @@ impl CsvPreviewView {
             let view = view_entity.clone();
             move |_event, _window, cx| {
                 view.update(cx, |this, cx| {
+                    let ordered_indices = this.get_ordered_indices().clone();
                     this.selection.start_selection(
                         display_cell_id.row,
                         display_cell_id.col,
-                        &generate_ordered_indices(this.ordering, &this.contents),
+                        &ordered_indices,
                     );
                     cx.notify();
                 });
@@ -57,10 +57,11 @@ impl CsvPreviewView {
                     if !this.selection.is_selecting() {
                         return;
                     }
+                    let ordered_indices = this.get_ordered_indices().clone();
                     this.selection.extend_selection_to(
                         display_cell_id.row,
                         display_cell_id.col,
-                        &generate_ordered_indices(this.ordering, &this.contents),
+                        &ordered_indices,
                     );
                     cx.notify();
                 });

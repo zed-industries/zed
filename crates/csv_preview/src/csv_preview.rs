@@ -5,8 +5,12 @@ use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    data_ordering::Ordering, nasty_code_duplication::ColumnWidths, parser::EditorState,
-    selection::TableSelection, settings::CsvPreviewSettings, table_like_content::TableLikeContent,
+    data_ordering::{OrderedIndices, Ordering},
+    nasty_code_duplication::ColumnWidths,
+    parser::EditorState,
+    selection::TableSelection,
+    settings::CsvPreviewSettings,
+    table_like_content::TableLikeContent,
 };
 
 mod copy_selected;
@@ -44,6 +48,7 @@ pub struct CsvPreviewView {
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) ordering: Option<Ordering>,
+    pub(crate) ordered_indices: OrderedIndices,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
 }
@@ -87,17 +92,14 @@ impl CsvPreviewView {
     }
 
     fn move_focus_up(&mut self, _: &MoveFocusUp, _window: &mut Window, cx: &mut Context<Self>) {
-        let ordered_indices =
-            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
-        self.selection.move_focus_up(&ordered_indices);
+        self.selection.move_focus_up(&self.ordered_indices);
         cx.notify();
     }
 
     fn move_focus_down(&mut self, _: &MoveFocusDown, _window: &mut Window, cx: &mut Context<Self>) {
-        let ordered_indices =
-            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
         let max_rows = self.contents.rows.len();
-        self.selection.move_focus_down(&ordered_indices, max_rows);
+        self.selection
+            .move_focus_down(&self.ordered_indices, max_rows);
         cx.notify();
     }
 
@@ -115,6 +117,17 @@ impl CsvPreviewView {
         let max_cols = self.contents.headers.len();
         self.selection.move_focus_right(max_cols);
         cx.notify();
+    }
+
+    /// Update ordered indices when ordering or content changes
+    pub(crate) fn update_ordered_indices(&mut self) {
+        self.ordered_indices =
+            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
+    }
+
+    /// Get reference to current ordered indices
+    pub(crate) fn get_ordered_indices(&self) -> &OrderedIndices {
+        &self.ordered_indices
     }
 
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
@@ -141,11 +154,12 @@ impl CsvPreviewView {
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
                 active_editor: None,
-                contents,
+                contents: contents.clone(),
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
                 ordering: None,
+                ordered_indices: crate::data_ordering::generate_ordered_indices(None, &contents),
                 selection: TableSelection::new(),
                 settings: CsvPreviewSettings::default(),
             };
