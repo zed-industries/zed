@@ -1313,15 +1313,15 @@ mod tests {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
         let soft_wrapping = Some(font_size * 3);
-        let (wrap_map, wrap_snapshot) =
+        let (_wrap_map, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
 
         assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));

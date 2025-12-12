@@ -27,7 +27,6 @@ use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
-
 /// Decides where the [`Inlay`]s should be displayed.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
