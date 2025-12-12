@@ -10,7 +10,7 @@ use crate::{
     data_ordering::{OrderingDirection, generate_ordered_indices},
     settings::FontType,
     settings::RowRenderMechanism,
-    table_cell::{DisplayCellId, DisplayRow},
+    types::{DisplayCellId, DisplayRow},
 };
 
 impl CsvPreviewView {
