@@ -320,6 +320,7 @@ impl Prettier {
             Default::default(),
             &mut cx,
         )
+        .await
         .context("prettier server creation")?;
 
         let server = cx
