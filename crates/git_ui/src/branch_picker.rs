@@ -403,6 +403,7 @@ impl BranchListDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
+        dbg!("here");
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -423,14 +424,18 @@ impl BranchListDelegate {
             repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
+                    dbg!("here");
                 })?
                 .await
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
+                    dbg!("here");
                 })?
                 .inspect_err(|_err| {
                     stop_loader(&this, cx);
+                    dbg!("here");
                 })?;
+            dbg!("here");
             stop_loader(&this, cx);
             Ok(())
         })
@@ -636,7 +641,6 @@ impl PickerDelegate for BranchListDelegate {
             return Task::ready(());
         };
 
-        const RECENT_BRANCHES_COUNT: usize = 10;
         let display_remotes = self.display_remotes;
         cx.spawn_in(window, async move |picker, cx| {
             let mut matches: Vec<Entry> = if query.is_empty() {
@@ -649,7 +653,6 @@ impl PickerDelegate for BranchListDelegate {
                             !branch.is_remote()
                         }
                     })
-                    .take(RECENT_BRANCHES_COUNT)
                     .map(|branch| Entry::Branch {
                         branch,
                         positions: Vec::new(),
