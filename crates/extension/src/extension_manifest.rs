@@ -328,7 +328,7 @@ pub struct LanguageModelManifestEntry {
 /// Authentication configuration for a language model provider.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageModelAuthConfig {
-    /// Human-readable name for the credential shown in the UI input field (e.g., "API Key", "Access Token").
+    /// Human-readable name for the credential shown in the UI input field (e.g. "API Key", "Access Token").
     pub credential_label: Option<String>,
     /// Environment variable name for the API key (if env var auth supported).
     #[serde(default)]
@@ -341,9 +341,9 @@ pub struct LanguageModelAuthConfig {
 /// OAuth configuration for web-based authentication.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct OAuthConfig {
-    /// The text to display on the sign-in button (e.g., "Sign in with GitHub").
+    /// The text to display on the sign-in button (e.g. "Sign in with GitHub").
     pub sign_in_button_label: Option<String>,
-    /// The icon to display on the sign-in button (e.g., "github").
+    /// The Zed icon path to display on the sign-in button (e.g. "github").
     #[serde(default)]
     pub sign_in_button_icon: Option<String>,
 }
