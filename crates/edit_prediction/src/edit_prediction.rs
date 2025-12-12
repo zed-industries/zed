@@ -586,10 +586,11 @@ impl EditPredictionStore {
     pub fn edit_history_for_project(
         &self,
         project: &Entity<Project>,
+        cx: &App,
     ) -> Vec<Arc<zeta_prompt::Event>> {
         self.projects
             .get(&project.entity_id())
-            .map(|project_state| project_state.events.iter().cloned().collect())
+            .map(|project_state| project_state.events(cx))
             .unwrap_or_default()
     }
 
