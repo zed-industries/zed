@@ -41,7 +41,7 @@ pub enum RowIdentifiers {
     RowNum,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq)]
 pub(crate) enum CopyFormat {
     /// Copy as Tab-Separated Values (TSV)
     #[default]
@@ -50,6 +50,8 @@ pub(crate) enum CopyFormat {
     Csv,
     /// Copy as Semicolon-Separated Values
     Semicolon,
+    /// Copy as Markdown table
+    Markdown,
 }
 
 #[derive(Default)]
@@ -88,6 +90,7 @@ impl CsvPreviewView {
             CopyFormat::Tsv => "TSV (Tab)",
             CopyFormat::Csv => "CSV (Comma)",
             CopyFormat::Semicolon => "Semicolon",
+            CopyFormat::Markdown => "Markdown",
         };
 
         let view = cx.entity();
@@ -182,6 +185,15 @@ impl CsvPreviewView {
                     });
                 }
             })
+            .entry("Markdown", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.copy_format = CopyFormat::Markdown;
+                        cx.notify();
+                    });
+                }
+            })
         });
 
         h_flex()
@@ -267,7 +279,7 @@ impl CsvPreviewView {
                                 copy_format_dropdown_menu,
                             )
                             .trigger_size(ButtonSize::Compact)
-                            .trigger_tooltip(Tooltip::text("Choose format for copying selected cells"))
+                            .trigger_tooltip(Tooltip::text("Choose format for copying selected cells (CSV, TSV, Semicolon, or Markdown table)"))
                         ),
                 )
                 .into_any_element()
