@@ -843,7 +843,9 @@ actions!(
         /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
-        WrapSelectionsInTag
+        WrapSelectionsInTag,
+        /// Aligns carets from different rows into the same column
+        AlignCursors
     ]
 );
 

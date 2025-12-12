@@ -11401,6 +11401,45 @@ impl Editor {
         }
     }
 
+    pub fn align_cursors(
+        &mut self,
+        _: &crate::actions::AlignCursors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        let display_snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all_adjusted(&display_snapshot);
+        let cursor_positions: Vec<Point> = selections
+            .iter()
+            .map(|selection| {
+                if selection.reversed {
+                    selection.head()
+                } else {
+                    selection.tail()
+                }
+            })
+            .collect();
+
+        let target_column = cursor_positions.iter().map(|p| p.column).max().unwrap_or(0);
+
+        let mut edits = Vec::new();
+        for cursor in cursor_positions {
+            let size_of_align = target_column - cursor.column;
+            if size_of_align <= 0 {
+                continue;
+            }
+            edits.push((cursor..cursor, " ".repeat(size_of_align as usize)))
+        }
+
+        if !edits.is_empty() {
+            self.transact(window, cx, |editor, _window, cx| {
+                editor.edit(edits, cx);
+            });
+        }
+    }
+
     pub fn disable_breakpoint(
         &mut self,
         _: &crate::actions::DisableBreakpoint,
