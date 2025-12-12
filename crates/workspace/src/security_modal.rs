@@ -18,16 +18,16 @@ use ui::{
     AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, prelude::*,
 };
 
-use crate::{ModalView, ToggleWorktreeSecurity};
+use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<Option<WorktreeId>, RestrictedPath>,
     home_dir: Option<PathBuf>,
-    dismissed: bool,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
+    trusted: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,13 +50,16 @@ impl ModalView for SecurityModal {
         true
     }
 
-    fn undismissable(&self) -> bool {
-        true
+    fn on_before_dismiss(&mut self, _: &mut Window, _: &mut Context<Self>) -> DismissDecision {
+        match self.trusted {
+            Some(false) => telemetry::event!("Open in Restricted", source = "Worktree Trust Modal"),
+            Some(true) => telemetry::event!("Trust and Continue", source = "Worktree Trust Modal"),
+            None => telemetry::event!("Dismissed", source = "Worktree Trust Modal"),
+        }
+        DismissDecision::Dismiss(true)
     }
 }
 
-// TODO kb captures events from other windows, bad
-// TODO dl hover and other regular keybindings still trigger elements underneath the alert modal
 impl Render for SecurityModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
@@ -79,10 +82,8 @@ impl Render for SecurityModal {
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
                 this.trust_and_dismiss(cx);
             }))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| {
-                this.dismiss(cx);
-            }))
             .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _window, cx| {
+                self.trusted = Some(false);
                 this.dismiss(cx);
             }))
             .header(
@@ -199,6 +200,7 @@ impl Render for SecurityModal {
                                 .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
+                                self.trusted = Some(false);
                                 security_modal.dismiss(cx);
                                 cx.stop_propagation();
                             })),
@@ -232,9 +234,9 @@ impl SecurityModal {
             remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
-            dismissed: false,
             trust_parents: false,
             home_dir: std::env::home_dir(),
+            trusted: None,
         };
         this.refresh_restricted_paths(cx);
 
@@ -307,11 +309,11 @@ impl SecurityModal {
             });
         }
 
+        self.trusted = Some(true);
         self.dismiss(cx);
     }
 
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
-        self.dismissed = true;
         cx.emit(DismissEvent);
     }
 

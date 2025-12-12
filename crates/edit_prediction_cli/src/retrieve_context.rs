@@ -2,6 +2,7 @@ use crate::{
     example::{Example, ExampleContext},
     headless::EpAppState,
     load_project::run_load_project,
+    progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use collections::HashSet;
 use edit_prediction::{DebugEvent, EditPredictionStore};
@@ -9,7 +10,8 @@ use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity};
 use language::Buffer;
 use project::Project;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub async fn run_context_retrieval(
     example: &mut Example,
@@ -22,6 +24,10 @@ pub async fn run_context_retrieval(
 
     run_load_project(example, app_state.clone(), cx.clone()).await;
 
+    let step_progress: Arc<StepProgress> = Progress::global()
+        .start(Step::Context, &example.name)
+        .into();
+
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();
 
@@ -30,7 +36,7 @@ pub async fn run_context_retrieval(
             project.register_buffer_with_language_servers(&state.buffer, cx)
         })
         .unwrap();
-    wait_for_language_servers_to_start(example, &project, &state.buffer, &mut cx).await;
+    wait_for_language_servers_to_start(&project, &state.buffer, &step_progress, &mut cx).await;
 
     let ep_store = cx
         .update(|cx| EditPredictionStore::try_global(cx).unwrap())
@@ -58,19 +64,20 @@ pub async fn run_context_retrieval(
         .update(&mut cx, |store, cx| store.context_for_project(&project, cx))
         .unwrap();
 
+    let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
+    step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
+
     example.context = Some(ExampleContext {
         files: context_files,
     });
 }
 
 async fn wait_for_language_servers_to_start(
-    example: &Example,
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
+    step_progress: &Arc<StepProgress>,
     cx: &mut AsyncApp,
 ) {
-    let log_prefix = format!("{} | ", example.name);
-
     let lsp_store = project
         .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
@@ -89,11 +96,7 @@ async fn wait_for_language_servers_to_start(
         })
         .unwrap_or_default();
 
-    eprintln!(
-        "{}⏵ Waiting for {} language servers",
-        log_prefix,
-        language_server_ids.len()
-    );
+    step_progress.set_substatus(format!("waiting for {} LSPs", language_server_ids.len()));
 
     let timeout = cx
         .background_executor()
@@ -102,10 +105,10 @@ async fn wait_for_language_servers_to_start(
 
     let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let added_subscription = cx.subscribe(project, {
-        let log_prefix = log_prefix.clone();
+        let step_progress = step_progress.clone();
         move |_, event, _| match event {
             project::Event::LanguageServerAdded(language_server_id, name, _) => {
-                eprintln!("{}+ Language server started: {}", log_prefix, name);
+                step_progress.set_substatus(format!("LSP started: {}", name));
                 tx.try_send(*language_server_id).ok();
             }
             _ => {}
@@ -137,7 +140,7 @@ async fn wait_for_language_servers_to_start(
     let (mut tx, mut rx) = mpsc::channel(language_server_ids.len());
     let subscriptions = [
         cx.subscribe(&lsp_store, {
-            let log_prefix = log_prefix.clone();
+            let step_progress = step_progress.clone();
             move |_, event, _| {
                 if let project::LspStoreEvent::LanguageServerUpdate {
                     message:
@@ -150,12 +153,12 @@ async fn wait_for_language_servers_to_start(
                     ..
                 } = event
                 {
-                    eprintln!("{}⟲ {message}", log_prefix)
+                    step_progress.set_substatus(message.clone());
                 }
             }
         }),
         cx.subscribe(project, {
-            let log_prefix = log_prefix.clone();
+            let step_progress = step_progress.clone();
             move |_, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     let lsp_store = lsp_store.read(cx);
@@ -163,7 +166,7 @@ async fn wait_for_language_servers_to_start(
                         .language_server_adapter_for_id(*language_server_id)
                         .unwrap()
                         .name();
-                    eprintln!("{}⚑ Language server idle: {}", log_prefix, name);
+                    step_progress.set_substatus(format!("LSP idle: {}", name));
                     tx.try_send(*language_server_id).ok();
                 }
                 _ => {}
@@ -192,4 +195,5 @@ async fn wait_for_language_servers_to_start(
     }
 
     drop(subscriptions);
+    step_progress.clear_substatus();
 }

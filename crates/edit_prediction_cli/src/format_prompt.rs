@@ -3,6 +3,7 @@ use crate::{
     example::{Example, ExamplePrompt},
     headless::EpAppState,
     load_project::run_load_project,
+    progress::{Progress, Step},
     retrieve_context::run_context_retrieval,
 };
 use edit_prediction::{
@@ -20,6 +21,8 @@ pub async fn run_format_prompt(
     mut cx: AsyncApp,
 ) {
     run_context_retrieval(example, app_state.clone(), cx.clone()).await;
+
+    let _step_progress = Progress::global().start(Step::FormatPrompt, &example.name);
 
     match prompt_format {
         PromptFormat::Teacher => {

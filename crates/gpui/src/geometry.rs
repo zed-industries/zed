@@ -1416,9 +1416,9 @@ where
     /// ```
     pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
-            && point.x <= self.origin.x.clone() + self.size.width.clone()
+            && point.x < self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
-            && point.y <= self.origin.y.clone() + self.size.height.clone()
+            && point.y < self.origin.y.clone() + self.size.height.clone()
     }
 
     /// Checks if this bounds is completely contained within another bounds.
