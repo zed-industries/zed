@@ -13,6 +13,8 @@ impl Render for CsvPreviewView {
             .p_4()
             .bg(theme.colors().editor_background)
             .key_context(KEY_CONTEXT_NAME)
+            // Apparently, this should make newly created CSV preview to get focus automatically
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::copy_selected))
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::move_focus_up))
