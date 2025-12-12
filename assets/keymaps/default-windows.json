@@ -1217,7 +1217,8 @@
   {
     "context": "CsvPreview",
     "bindings": {
-      "ctrl-c": "csv::CopySelected"
+      "ctrl-c": "csv::CopySelected",
+      "escape": "csv::ClearSelection"
     }
   },
   {

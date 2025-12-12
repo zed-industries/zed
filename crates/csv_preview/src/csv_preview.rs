@@ -22,7 +22,7 @@ mod table_cell;
 mod table_like_content;
 mod types;
 
-actions!(csv, [OpenPreview, CopySelected]);
+actions!(csv, [OpenPreview, CopySelected, ClearSelection]);
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
 
 pub struct CsvPreviewView {
@@ -63,6 +63,16 @@ impl CsvPreviewView {
                 workspace.add_item_to_active_pane(Box::new(csv_preview), None, true, window, cx);
             }
         });
+    }
+
+    fn clear_selection(
+        &mut self,
+        _: &ClearSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection = TableSelection::new();
+        cx.notify();
     }
 
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
