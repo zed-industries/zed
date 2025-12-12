@@ -45,10 +45,9 @@ pub use wit::{
         ToolUseJsonParseError as LlmToolUseJsonParseError,
         delete_credential as llm_delete_credential, get_credential as llm_get_credential,
         get_env_var as llm_get_env_var, oauth_open_browser as llm_oauth_open_browser,
+        oauth_send_http_request as llm_oauth_send_http_request,
         oauth_start_web_auth as llm_oauth_start_web_auth,
-        request_credential as llm_request_credential,
-        send_oauth_http_request as llm_oauth_http_request,
-        store_credential as llm_store_credential,
+        request_credential as llm_request_credential, store_credential as llm_store_credential,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,

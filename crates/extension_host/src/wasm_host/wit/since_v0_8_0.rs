@@ -1383,7 +1383,7 @@ impl llm_provider::Host for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn send_oauth_http_request(
+    async fn oauth_send_http_request(
         &mut self,
         request: llm_provider::OauthHttpRequest,
     ) -> wasmtime::Result<Result<llm_provider::OauthHttpResponse, String>> {

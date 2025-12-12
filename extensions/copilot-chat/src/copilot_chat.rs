@@ -456,7 +456,7 @@ impl zed::Extension for CopilotChatProvider {
         _provider_id: &str,
     ) -> Result<String, String> {
         // Step 1: Request device and user verification codes
-        let device_code_response = llm_oauth_http_request(&LlmOauthHttpRequest {
+        let device_code_response = llm_oauth_send_http_request(&LlmOauthHttpRequest {
             url: GITHUB_DEVICE_CODE_URL.to_string(),
             method: "POST".to_string(),
             headers: vec![
@@ -525,7 +525,7 @@ impl zed::Extension for CopilotChatProvider {
         for _ in 0..max_attempts {
             thread::sleep(poll_interval);
 
-            let token_response = llm_oauth_http_request(&LlmOauthHttpRequest {
+            let token_response = llm_oauth_send_http_request(&LlmOauthHttpRequest {
                 url: GITHUB_ACCESS_TOKEN_URL.to_string(),
                 method: "POST".to_string(),
                 headers: vec![
