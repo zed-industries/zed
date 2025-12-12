@@ -51,14 +51,6 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-#[derive(Clone)]
-pub enum InputModalKind {
-    CreateBranch { sha: String },
-    CreateTag { sha: String },
-    RenameBranch { old_name: String },
-    CheckoutRemoteBranch { remote_branch: String },
-}
-
 pub struct GitGraph {
     focus_handle: FocusHandle,
     graph: crate::graph::GitGraph,
@@ -76,22 +68,6 @@ pub struct GitGraph {
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Clone, Debug)]
-pub struct ChangedFile {
-    pub path: String,
-    pub status: FileStatus,
-}
-
-#[derive(Clone, Debug)]
-pub enum FileStatus {
-    Added,
-    Modified,
-    Deleted,
-    Renamed,
-    Copied,
-    Unknown,
-}
-
 impl GitGraph {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
@@ -103,6 +79,7 @@ impl GitGraph {
             GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::BranchChanged, true)
             | GitStoreEvent::ActiveRepositoryChanged(_) => {
                 // todo! only call load data from render, we should set a bool here
+                // todo! We should check that the repo actually has a change that would affect the graph
                 this.load_data(false, cx);
             }
             _ => {}
