@@ -68,9 +68,11 @@ impl TableSelection {
 
         // Convert display coordinates to data coordinates for storage
         if let Some(data_row) = ordered_indices.get_data_row(display_row) {
-            self.selected_cells.insert(DataCellId::new(data_row, col));
-            // Set focus to the clicked cell
-            self.focused_cell = Some(DataCellId::new(data_row, col));
+            let cell_id = DataCellId::new(data_row, col);
+            self.selected_cells.insert(cell_id);
+            // Set focus and anchor to the clicked cell
+            self.focused_cell = Some(cell_id);
+            self.selection_anchor = Some(cell_id);
         }
 
         // Remember display coordinates for extend_selection_to
@@ -107,6 +109,13 @@ impl TableSelection {
             // Update focused cell to follow the current mouse position (selection frontier)
             if let Some(data_row) = ordered_indices.get_data_row(display_row) {
                 self.focused_cell = Some(DataCellId::new(data_row, col));
+            }
+
+            // Ensure anchor remains at the start position during drag
+            if let Some(start_data_row) =
+                ordered_indices.get_data_row(DisplayRow::new(start_display_row))
+            {
+                self.selection_anchor = Some(DataCellId::new(start_data_row, start_col));
             }
         }
     }
@@ -158,11 +167,30 @@ impl TableSelection {
         }
     }
 
+    /// Check if cell at display coordinates is the selection anchor.
+    pub fn is_cell_anchor(
+        &self,
+        display_row: DisplayRow,
+        col: usize,
+        ordered_indices: &OrderedIndices,
+    ) -> bool {
+        if let (Some(anchor), Some(data_row)) = (
+            &self.selection_anchor,
+            ordered_indices.get_data_row(display_row),
+        ) {
+            anchor.row == data_row && anchor.col == col
+        } else {
+            false
+        }
+    }
+
     /// Initialize focus and selection to top-left cell if not already set
     fn ensure_focus_initialized(&mut self, ordered_indices: &OrderedIndices) {
         if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
             let new_cell = DataCellId::new(data_row, 0);
             self.focused_cell = Some(new_cell);
+            // Set anchor to the same cell for consistent visual feedback
+            self.selection_anchor = Some(new_cell);
             // Update selection to follow focus
             self.selected_cells.clear();
             self.selected_cells.insert(new_cell);
@@ -234,8 +262,8 @@ impl TableSelection {
         // Update focus and selection if movement was valid
         if let Some(new_cell) = new_cell {
             self.focused_cell = Some(new_cell);
-            // Clear selection anchor when moving without extending
-            self.selection_anchor = None;
+            // Set anchor to the same cell for consistent visual feedback
+            self.selection_anchor = Some(new_cell);
             self.selected_cells.clear();
             self.selected_cells.insert(new_cell);
         }
