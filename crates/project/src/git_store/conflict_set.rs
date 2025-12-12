@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity, EventEmitter};
+use gpui::{App, Context, Entity, EventEmitter, SharedString};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId, OffsetRangeExt as _};
 
@@ -92,6 +92,8 @@ impl ConflictSetSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictRegion {
+    pub ours_branch_name: SharedString,
+    pub theirs_branch_name: SharedString,
     pub range: Range<Anchor>,
     pub ours: Range<Anchor>,
     pub theirs: Range<Anchor>,
@@ -179,18 +181,25 @@ impl ConflictSet {
         let mut conflict_start: Option<usize> = None;
         let mut ours_start: Option<usize> = None;
         let mut ours_end: Option<usize> = None;
+        let mut ours_branch_name: Option<SharedString> = None;
         let mut base_start: Option<usize> = None;
         let mut base_end: Option<usize> = None;
         let mut theirs_start: Option<usize> = None;
+        let mut theirs_branch_name: Option<SharedString> = None;
 
         while let Some(line) = lines.next() {
             let line_end = line_pos + line.len();
 
-            if line.starts_with("<<<<<<< ") {
+            if let Some(branch_name) = line.strip_prefix("<<<<<<< ") {
                 // If we see a new conflict marker while already parsing one,
                 // abandon the previous one and start a new one
                 conflict_start = Some(line_pos);
                 ours_start = Some(line_end + 1);
+
+                let branch_name = branch_name.trim();
+                if !branch_name.is_empty() {
+                    ours_branch_name = Some(SharedString::new(branch_name));
+                }
             } else if line.starts_with("||||||| ")
                 && conflict_start.is_some()
                 && ours_start.is_some()
@@ -208,12 +217,17 @@ impl ConflictSet {
                     base_end = Some(line_pos);
                 }
                 theirs_start = Some(line_end + 1);
-            } else if line.starts_with(">>>>>>> ")
+            } else if let Some(branch_name) = line.strip_prefix(">>>>>>> ")
                 && conflict_start.is_some()
                 && ours_start.is_some()
                 && ours_end.is_some()
                 && theirs_start.is_some()
             {
+                let branch_name = branch_name.trim();
+                if !branch_name.is_empty() {
+                    theirs_branch_name = Some(SharedString::new(branch_name));
+                }
+
                 let theirs_end = line_pos;
                 let conflict_end = (line_end + 1).min(buffer_len);
 
@@ -229,6 +243,12 @@ impl ConflictSet {
                     .map(|(start, end)| buffer.anchor_after(start)..buffer.anchor_before(end));
 
                 conflicts.push(ConflictRegion {
+                    ours_branch_name: ours_branch_name
+                        .take()
+                        .unwrap_or_else(|| SharedString::new_static("HEAD")),
+                    theirs_branch_name: theirs_branch_name
+                        .take()
+                        .unwrap_or_else(|| SharedString::new_static("Origin")),
                     range,
                     ours,
                     theirs,
@@ -304,6 +324,8 @@ mod tests {
 
         let first = &conflict_snapshot.conflicts[0];
         assert!(first.base.is_none());
+        assert_eq!(first.ours_branch_name.as_ref(), "HEAD");
+        assert_eq!(first.theirs_branch_name.as_ref(), "branch-name");
         let our_text = snapshot
             .text_for_range(first.ours.clone())
             .collect::<String>();
@@ -315,6 +337,8 @@ mod tests {
 
         let second = &conflict_snapshot.conflicts[1];
         assert!(second.base.is_some());
+        assert_eq!(second.ours_branch_name.as_ref(), "HEAD");
+        assert_eq!(second.theirs_branch_name.as_ref(), "branch-name");
         let our_text = snapshot
             .text_for_range(second.ours.clone())
             .collect::<String>();
@@ -381,6 +405,8 @@ mod tests {
         // The conflict should have our version, their version, but no base
         let conflict = &conflict_snapshot.conflicts[0];
         assert!(conflict.base.is_none());
+        assert_eq!(conflict.ours_branch_name.as_ref(), "HEAD");
+        assert_eq!(conflict.theirs_branch_name.as_ref(), "branch-nested");
 
         // Check that the nested conflict was detected correctly
         let our_text = snapshot
@@ -407,6 +433,14 @@ mod tests {
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours_branch_name.as_ref(),
+            "ours"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[0].theirs_branch_name.as_ref(),
+            "Origin" // default branch name if there is none
+        );
     }
 
     #[test]
@@ -449,6 +483,38 @@ mod tests {
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 4);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours_branch_name.as_ref(),
+            "HEAD1"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[0].theirs_branch_name.as_ref(),
+            "branch1"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].ours_branch_name.as_ref(),
+            "HEAD2"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs_branch_name.as_ref(),
+            "branch2"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[2].ours_branch_name.as_ref(),
+            "HEAD3"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[2].theirs_branch_name.as_ref(),
+            "branch3"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[3].ours_branch_name.as_ref(),
+            "HEAD4"
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[3].theirs_branch_name.as_ref(),
+            "branch4"
+        );
 
         let range = test_content.find("seven").unwrap()..test_content.find("eleven").unwrap();
         let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);

@@ -117,23 +117,13 @@ pub struct GlobalLspSettings {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettings {
-    Custom {
+    Stdio {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
 
         #[serde(flatten)]
         command: ContextServerCommand,
-    },
-    Extension {
-        /// Whether the context server is enabled.
-        #[serde(default = "default_true")]
-        enabled: bool,
-        /// The settings for this context server specified by the extension.
-        ///
-        /// Consult the documentation for the context server to see what settings
-        /// are supported.
-        settings: serde_json::Value,
     },
     Http {
         /// Whether the context server is enabled.
@@ -145,13 +135,23 @@ pub enum ContextServerSettings {
         #[serde(skip_serializing_if = "HashMap::is_empty", default)]
         headers: HashMap<String, String>,
     },
+    Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The settings for this context server specified by the extension.
+        ///
+        /// Consult the documentation for the context server to see what settings
+        /// are supported.
+        settings: serde_json::Value,
+    },
 }
 
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn from(value: settings::ContextServerSettingsContent) -> Self {
         match value {
-            settings::ContextServerSettingsContent::Custom { enabled, command } => {
-                ContextServerSettings::Custom { enabled, command }
+            settings::ContextServerSettingsContent::Stdio { enabled, command } => {
+                ContextServerSettings::Stdio { enabled, command }
             }
             settings::ContextServerSettingsContent::Extension { enabled, settings } => {
                 ContextServerSettings::Extension { enabled, settings }
@@ -171,8 +171,8 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
 impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
     fn into(self) -> settings::ContextServerSettingsContent {
         match self {
-            ContextServerSettings::Custom { enabled, command } => {
-                settings::ContextServerSettingsContent::Custom { enabled, command }
+            ContextServerSettings::Stdio { enabled, command } => {
+                settings::ContextServerSettingsContent::Stdio { enabled, command }
             }
             ContextServerSettings::Extension { enabled, settings } => {
                 settings::ContextServerSettingsContent::Extension { enabled, settings }
@@ -200,17 +200,17 @@ impl ContextServerSettings {
 
     pub fn enabled(&self) -> bool {
         match self {
-            ContextServerSettings::Custom { enabled, .. } => *enabled,
-            ContextServerSettings::Extension { enabled, .. } => *enabled,
+            ContextServerSettings::Stdio { enabled, .. } => *enabled,
             ContextServerSettings::Http { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
         }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
-            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
-            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Stdio { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Http { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
         }
     }
 }
@@ -348,6 +348,26 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: settings::GitHunkStyleSetting,
+    /// How file paths are displayed in the git gutter.
+    ///
+    /// Default: file_name_first
+    pub path_style: GitPathStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum GitPathStyle {
+    #[default]
+    FileNameFirst,
+    FilePathFirst,
+}
+
+impl From<settings::GitPathStyle> for GitPathStyle {
+    fn from(style: settings::GitPathStyle) -> Self {
+        match style {
+            settings::GitPathStyle::FileNameFirst => GitPathStyle::FileNameFirst,
+            settings::GitPathStyle::FilePathFirst => GitPathStyle::FilePathFirst,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -501,6 +521,7 @@ impl Settings for ProjectSettings {
                 }
             },
             hunk_style: git.hunk_style.unwrap(),
+            path_style: git.path_style.unwrap().into(),
         };
         Self {
             context_servers: project

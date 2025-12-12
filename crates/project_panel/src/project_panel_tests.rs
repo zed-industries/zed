@@ -1,5 +1,6 @@
 use super::*;
 use collections::HashSet;
+use editor::MultiBufferOffset;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -658,7 +659,9 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
+            let file_name_selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -666,12 +669,13 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             );
             let file_name_selection = &file_name_selections[0];
             assert_eq!(
-                file_name_selection.start, 0,
+                file_name_selection.start,
+                MultiBufferOffset(0),
                 "Should select the file name from the start"
             );
             assert_eq!(
                 file_name_selection.end,
-                "another-filename".len(),
+                MultiBufferOffset("another-filename".len()),
                 "Should not select file extension"
             );
 
@@ -732,11 +736,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
+                let file_name_selections = editor.selections.all::<MultiBufferOffset>(&editor.display_snapshot(cx));
                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
                 let file_name_selection = &file_name_selections[0];
-                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
-                assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot..");
+                assert_eq!(file_name_selection.start, MultiBufferOffset(0), "Should select the file name from the start");
+                assert_eq!(file_name_selection.end, MultiBufferOffset("a-different-filename.tar".len()), "Should not select file extension, but still may select anything up to the last dot..");
 
             });
             panel.cancel(&menu::Cancel, window, cx)
@@ -1218,7 +1222,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
+            let file_name_selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -1227,12 +1233,12 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
             let file_name_selection = &file_name_selections[0];
             assert_eq!(
                 file_name_selection.start,
-                "one".len(),
+                MultiBufferOffset("one".len()),
                 "Should select the file name disambiguation after the original file name"
             );
             assert_eq!(
                 file_name_selection.end,
-                "one copy".len(),
+                MultiBufferOffset("one copy".len()),
                 "Should select the file name disambiguation until the extension"
             );
         });
@@ -6603,6 +6609,74 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     assert!(
         fs.is_dir(Path::new("/root/new_dir_at_root")).await,
         "Directory should be created in the actual root directory"
+    );
+}
+
+#[cfg(windows)]
+#[gpui::test]
+async fn test_create_entry_with_trailing_dot_windows(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > dir1",
+        ],
+        "Initial state with nothing selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("foo.", window, cx));
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    > dir1",
+            "      foo  <== selected  <== marked",
+        ],
+        "A new file is created under the root directory without the trailing dot"
     );
 }
 

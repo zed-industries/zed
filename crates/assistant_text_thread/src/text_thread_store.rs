@@ -51,7 +51,7 @@ pub struct TextThreadStore {
     telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     project_is_shared: bool,
     client_subscription: Option<client::Subscription>,
     _project_subscriptions: Vec<gpui::Subscription>,
@@ -119,10 +119,10 @@ impl TextThreadStore {
                     ],
                     project_is_shared: false,
                     client: project.read(cx).client(),
-                    project: project.clone(),
+                    project: project.downgrade(),
                     prompt_builder,
                 };
-                this.handle_project_shared(project.clone(), cx);
+                this.handle_project_shared(cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
                 this.reload(cx).detach_and_log_err(cx);
@@ -146,7 +146,7 @@ impl TextThreadStore {
             telemetry: project.read(cx).client().telemetry().clone(),
             _watch_updates: Task::ready(None),
             client: project.read(cx).client(),
-            project,
+            project: project.downgrade(),
             project_is_shared: false,
             client_subscription: None,
             _project_subscriptions: Default::default(),
@@ -180,8 +180,10 @@ impl TextThreadStore {
     ) -> Result<proto::OpenContextResponse> {
         let context_id = TextThreadId::from_proto(envelope.payload.context_id);
         let operations = this.update(&mut cx, |this, cx| {
+            let project = this.project.upgrade().context("project not found")?;
+
             anyhow::ensure!(
-                !this.project.read(cx).is_via_collab(),
+                !project.read(cx).is_via_collab(),
                 "only the host contexts can be opened"
             );
 
@@ -211,8 +213,9 @@ impl TextThreadStore {
         mut cx: AsyncApp,
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
+            let project = this.project.upgrade().context("project not found")?;
             anyhow::ensure!(
-                !this.project.read(cx).is_via_collab(),
+                !project.read(cx).is_via_collab(),
                 "can only create contexts as the host"
             );
 
@@ -255,8 +258,9 @@ impl TextThreadStore {
         mut cx: AsyncApp,
     ) -> Result<proto::SynchronizeContextsResponse> {
         this.update(&mut cx, |this, cx| {
+            let project = this.project.upgrade().context("project not found")?;
             anyhow::ensure!(
-                !this.project.read(cx).is_via_collab(),
+                !project.read(cx).is_via_collab(),
                 "only the host can synchronize contexts"
             );
 
@@ -293,8 +297,12 @@ impl TextThreadStore {
         })?
     }
 
-    fn handle_project_shared(&mut self, _: Entity<Project>, cx: &mut Context<Self>) {
-        let is_shared = self.project.read(cx).is_shared();
+    fn handle_project_shared(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+
+        let is_shared = project.read(cx).is_shared();
         let was_shared = mem::replace(&mut self.project_is_shared, is_shared);
         if is_shared == was_shared {
             return;
@@ -309,7 +317,7 @@ impl TextThreadStore {
                     false
                 }
             });
-            let remote_id = self.project.read(cx).remote_id().unwrap();
+            let remote_id = project.read(cx).remote_id().unwrap();
             self.client_subscription = self
                 .client
                 .subscribe_to_entity(remote_id)
@@ -323,13 +331,13 @@ impl TextThreadStore {
 
     fn handle_project_event(
         &mut self,
-        project: Entity<Project>,
+        _project: Entity<Project>,
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::RemoteIdChanged(_) => {
-                self.handle_project_shared(project, cx);
+                self.handle_project_shared(cx);
             }
             project::Event::Reshared => {
                 self.advertise_contexts(cx);
@@ -382,7 +390,10 @@ impl TextThreadStore {
     }
 
     pub fn create_remote(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<TextThread>>> {
-        let project = self.project.read(cx);
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("project was dropped")));
+        };
+        let project = project.read(cx);
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow::anyhow!("project was not remote")));
         };
@@ -541,7 +552,10 @@ impl TextThreadStore {
         text_thread_id: TextThreadId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<TextThread>>> {
-        let project = self.project.read(cx);
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("project was dropped")));
+        };
+        let project = project.read(cx);
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow::anyhow!("project was not remote")));
         };
@@ -618,7 +632,10 @@ impl TextThreadStore {
         event: &TextThreadEvent,
         cx: &mut Context<Self>,
     ) {
-        let Some(project_id) = self.project.read(cx).remote_id() else {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(project_id) = project.read(cx).remote_id() else {
             return;
         };
 
@@ -652,12 +669,14 @@ impl TextThreadStore {
     }
 
     fn advertise_contexts(&self, cx: &App) {
-        let Some(project_id) = self.project.read(cx).remote_id() else {
+        let Some(project) = self.project.upgrade() else {
             return;
         };
-
+        let Some(project_id) = project.read(cx).remote_id() else {
+            return;
+        };
         // For now, only the host can advertise their open contexts.
-        if self.project.read(cx).is_via_collab() {
+        if project.read(cx).is_via_collab() {
             return;
         }
 
@@ -689,7 +708,10 @@ impl TextThreadStore {
     }
 
     fn synchronize_contexts(&mut self, cx: &mut Context<Self>) {
-        let Some(project_id) = self.project.read(cx).remote_id() else {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let Some(project_id) = project.read(cx).remote_id() else {
             return;
         };
 
@@ -828,7 +850,10 @@ impl TextThreadStore {
     }
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
-        let context_server_store = self.project.read(cx).context_server_store();
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let context_server_store = project.read(cx).context_server_store();
         cx.subscribe(&context_server_store, Self::handle_context_server_event)
             .detach();
 

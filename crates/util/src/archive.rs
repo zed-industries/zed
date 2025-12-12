@@ -169,6 +169,7 @@ mod tests {
 
         writer.close().await?;
         out.flush().await?;
+        out.sync_all().await?;
 
         Ok(())
     }

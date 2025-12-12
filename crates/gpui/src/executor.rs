@@ -1,6 +1,7 @@
 use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
 use async_task::Runnable;
 use futures::channel::mpsc;
+use parking_lot::{Condvar, Mutex};
 use smol::prelude::*;
 use std::{
     fmt::Debug,
@@ -152,6 +153,57 @@ impl BackgroundExecutor {
         R: Send + 'static,
     {
         self.spawn_internal::<R>(Box::pin(future), None)
+    }
+
+    /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
+    ///
+    /// This allows to spawn background work that borrows from its scope. Note that the supplied future will run to
+    /// completion before the current task is resumed, even if the current task is slated for cancellation.
+    pub async fn await_on_background<R>(&self, future: impl Future<Output = R> + Send) -> R
+    where
+        R: Send,
+    {
+        // We need to ensure that cancellation of the parent task does not drop the environment
+        // before the our own task has completed or got cancelled.
+        struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
+
+        impl Drop for NotifyOnDrop<'_> {
+            fn drop(&mut self) {
+                *self.0.1.lock() = true;
+                self.0.0.notify_all();
+            }
+        }
+
+        struct WaitOnDrop<'a>(&'a (Condvar, Mutex<bool>));
+
+        impl Drop for WaitOnDrop<'_> {
+            fn drop(&mut self) {
+                let mut done = self.0.1.lock();
+                if !*done {
+                    self.0.0.wait(&mut done);
+                }
+            }
+        }
+
+        let dispatcher = self.dispatcher.clone();
+        let location = core::panic::Location::caller();
+
+        let pair = &(Condvar::new(), Mutex::new(false));
+        let _wait_guard = WaitOnDrop(pair);
+
+        let (runnable, task) = unsafe {
+            async_task::Builder::new()
+                .metadata(RunnableMeta { location })
+                .spawn_unchecked(
+                    move |_| async {
+                        let _notify_guard = NotifyOnDrop(pair);
+                        future.await
+                    },
+                    move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), None),
+                )
+        };
+        runnable.schedule();
+        task.await
     }
 
     /// Enqueues the given future to be run to completion on a background thread.

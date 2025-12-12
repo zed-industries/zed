@@ -180,7 +180,6 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "ctrl-6": "pane::AlternateFile",
       "ctrl-^": "pane::AlternateFile",
       ".": "vim::Repeat"
     }
@@ -414,11 +413,18 @@
     }
   },
   {
-    "context": "vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu",
     "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
       "ctrl-[": "editor::Cancel"
+    }
+  },
+  {
+    "context": "vim_mode == helix_select && !menu",
+    "bindings": {
+      "escape": "vim::SwitchToHelixNormalMode"
     }
   },
   {
@@ -469,6 +475,9 @@
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
+
+      "n": "vim::HelixSelectNext",
+      "shift-n": "vim::HelixSelectPrevious",
 
       // Goto mode
       "g e": "vim::EndOfDocument",
@@ -847,6 +856,8 @@
       "ctrl-w shift-right": "workspace::SwapPaneRight",
       "ctrl-w shift-up": "workspace::SwapPaneUp",
       "ctrl-w shift-down": "workspace::SwapPaneDown",
+      "ctrl-w x": "workspace::SwapPaneAdjacent",
+      "ctrl-w ctrl-x": "workspace::SwapPaneAdjacent",
       "ctrl-w shift-h": "workspace::MovePaneLeft",
       "ctrl-w shift-l": "workspace::MovePaneRight",
       "ctrl-w shift-k": "workspace::MovePaneUp",
@@ -890,7 +901,11 @@
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
-      "g /": "pane::DeploySearch"
+      "g /": "pane::DeploySearch",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0]
     }
   },
   {
@@ -1030,6 +1045,15 @@
       "j": "settings_editor::FocusNextNavEntry",
       "g g": "settings_editor::FocusFirstNavEntry",
       "shift-g": "settings_editor::FocusLastNavEntry"
+    }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "ctrl-u": "markdown::ScrollPageUp",
+      "ctrl-d": "markdown::ScrollPageDown",
+      "ctrl-y": "markdown::ScrollUp",
+      "ctrl-e": "markdown::ScrollDown"
     }
   }
 ]

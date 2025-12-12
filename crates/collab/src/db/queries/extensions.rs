@@ -69,7 +69,7 @@ impl Database {
         extensions: &[extension::Model],
         constraints: Option<&ExtensionVersionConstraints>,
         tx: &DatabaseTransaction,
-    ) -> Result<HashMap<ExtensionId, (extension_version::Model, SemanticVersion)>> {
+    ) -> Result<HashMap<ExtensionId, (extension_version::Model, Version)>> {
         let mut versions = extension_version::Entity::find()
             .filter(
                 extension_version::Column::ExtensionId
@@ -79,11 +79,10 @@ impl Database {
             .await?;
 
         let mut max_versions =
-            HashMap::<ExtensionId, (extension_version::Model, SemanticVersion)>::default();
+            HashMap::<ExtensionId, (extension_version::Model, Version)>::default();
         while let Some(version) = versions.next().await {
             let version = version?;
-            let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
-            else {
+            let Some(extension_version) = Version::from_str(&version.version).log_err() else {
                 continue;
             };
 
@@ -102,7 +101,7 @@ impl Database {
                 }
 
                 if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
-                    if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err() {
+                    if let Some(version) = Version::from_str(wasm_api_version).log_err() {
                         if !constraints.wasm_api_versions.contains(&version) {
                             continue;
                         }
