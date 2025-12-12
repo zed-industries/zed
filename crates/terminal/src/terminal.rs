@@ -1711,38 +1711,39 @@ impl Terminal {
             {
                 self.write_to_pty(bytes);
             }
-        } else if e.modifiers.secondary() {
-            self.word_from_position(e.position);
+        } else {
+            self.schedule_find_hyperlink(e.modifiers, e.position);
         }
         cx.notify();
     }
 
-    fn word_from_position(&mut self, position: Point<Pixels>) {
-        if self.selection_phase == SelectionPhase::Selecting {
+    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) {
+        if self.selection_phase == SelectionPhase::Selecting
+            || !modifiers.secondary()
+            || !self.last_content.terminal_bounds.bounds.contains(&position)
+        {
             self.last_content.last_hovered_word = None;
-        } else if self.last_content.terminal_bounds.bounds.contains(&position) {
-            // Throttle hyperlink searches to avoid excessive processing
-            let now = Instant::now();
-            let should_search = if let Some(last_pos) = self.last_hyperlink_search_position {
+            return;
+        }
+
+        // Throttle hyperlink searches to avoid excessive processing
+        let now = Instant::now();
+        if self
+            .last_hyperlink_search_position
+            .map_or(true, |last_pos| {
                 // Only search if mouse moved significantly or enough time passed
                 let distance_moved =
                     ((position.x - last_pos.x).abs() + (position.y - last_pos.y).abs()) > px(5.0);
                 let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
                 distance_moved || time_elapsed
-            } else {
-                true
-            };
-
-            if should_search {
-                self.last_mouse_move_time = now;
-                self.last_hyperlink_search_position = Some(position);
-                self.events.push_back(InternalEvent::FindHyperlink(
-                    position - self.last_content.terminal_bounds.bounds.origin,
-                    false,
-                ));
-            }
-        } else {
-            self.last_content.last_hovered_word = None;
+            })
+        {
+            self.last_mouse_move_time = now;
+            self.last_hyperlink_search_position = Some(position);
+            self.events.push_back(InternalEvent::FindHyperlink(
+                position - self.last_content.terminal_bounds.bounds.origin,
+                false,
+            ));
         }
     }
 
@@ -1934,7 +1935,7 @@ impl Terminal {
     }
 
     fn refresh_hovered_word(&mut self, window: &Window) {
-        self.word_from_position(window.mouse_position());
+        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position());
     }
 
     fn determine_scroll_lines(
