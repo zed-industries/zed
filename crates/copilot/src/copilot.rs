@@ -308,6 +308,7 @@ pub struct Copilot {
     buffers: HashSet<WeakEntity<Buffer>>,
     server_id: LanguageServerId,
     _subscription: gpui::Subscription,
+    usage_task: Option<gpui::Task<()>>,
 }
 
 pub enum Event {
@@ -345,6 +346,7 @@ impl Copilot {
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
+            usage_task: None,
         };
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
@@ -471,6 +473,7 @@ impl Copilot {
             }),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
             buffers: Default::default(),
+            usage_task: None,
         });
         (this, fake_server)
     }
@@ -1033,6 +1036,37 @@ impl Copilot {
                 }
             }
         }
+    }
+
+    pub fn usage(&self, cx: &App) -> Option<copilot_chat::QuotaSnapshots> {
+        copilot_chat::CopilotChat::global(cx).and_then(|chat| chat.read(cx).usage().cloned())
+    }
+
+    pub fn update_usage(&mut self, cx: &mut Context<Self>) {
+        let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) else {
+            return;
+        };
+
+        if self.usage_task.is_some() {
+            return;
+        }
+
+        let copilot_chat_weak = copilot_chat.downgrade();
+
+        self.usage_task = Some(cx.spawn(async move |this, mut cx| {
+            if let Ok(()) =
+                copilot_chat::CopilotChat::update_usage(&copilot_chat_weak, &mut cx).await
+            {
+                _ = this.update(cx, |this, cx| {
+                    this.usage_task = None;
+                    cx.notify();
+                });
+            } else {
+                _ = this.update(cx, |this, _cx| {
+                    this.usage_task = None;
+                });
+            }
+        }));
     }
 
     fn update_sign_in_status(&mut self, lsp_status: request::SignInStatus, cx: &mut Context<Self>) {
