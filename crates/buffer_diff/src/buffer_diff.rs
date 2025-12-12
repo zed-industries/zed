@@ -92,6 +92,15 @@ impl DiffFilterMode {
             DiffFilterMode::UnstagedOnly => hunk.is_visible_when_unstaged_only(),
         }
     }
+
+    /// Returns whether the given hunk should be shown, combining the created-file check
+    /// with the filter mode check. This is the main filtering logic used across the codebase.
+    pub fn should_show_hunk(&self, hunk: &DiffHunk, all_diff_hunks_expanded: bool) -> bool {
+        if hunk.is_created_file() && !all_diff_hunks_expanded {
+            return false;
+        }
+        self.should_include_hunk(hunk)
+    }
 }
 
 /// A diff hunk resolved to rows in the buffer.

@@ -5,7 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffFilterMode, DiffHunk, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffFilterMode, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
@@ -353,10 +353,6 @@ impl ProjectDiff {
         self.rebuild_for_filter_change(window, cx);
     }
 
-    fn should_include_hunk(&self, hunk: &DiffHunk) -> bool {
-        self.filter_mode.should_include_hunk(hunk)
-    }
-
     fn should_include_file(&self, status: &FileStatus) -> bool {
         match self.filter_mode {
             DiffFilterMode::All => true,
@@ -563,7 +559,7 @@ impl ProjectDiff {
                     &snapshot,
                     cx,
                 )
-                .filter(|diff_hunk| self.should_include_hunk(diff_hunk))
+                .filter(|diff_hunk| self.filter_mode.should_include_hunk(diff_hunk))
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
                 .conflict_set(snapshot.remote_id())

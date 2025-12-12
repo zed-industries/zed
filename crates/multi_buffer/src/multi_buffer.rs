@@ -3313,10 +3313,10 @@ impl MultiBuffer {
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
-                    if hunk.is_created_file() && !all_diff_hunks_expanded {
-                        continue;
-                    }
-                    if !snapshot.diff_filter_mode.should_include_hunk(&hunk) {
+                    if !snapshot
+                        .diff_filter_mode
+                        .should_show_hunk(&hunk, all_diff_hunks_expanded)
+                    {
                         continue;
                     }
 
@@ -3874,6 +3874,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         let filter_mode = self.diff_filter_mode;
+        let all_diff_hunks_expanded = self.all_diff_hunks_expanded;
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let diff = self.diffs.get(&buffer.remote_id())?;
             let buffer_start = buffer.anchor_before(buffer_range.start);
@@ -3881,10 +3882,7 @@ impl MultiBufferSnapshot {
             Some(
                 diff.hunks_intersecting_range(buffer_start..buffer_end, buffer)
                     .filter_map(move |hunk| {
-                        if hunk.is_created_file() && !self.all_diff_hunks_expanded {
-                            return None;
-                        }
-                        if !filter_mode.should_include_hunk(&hunk) {
+                        if !filter_mode.should_show_hunk(&hunk, all_diff_hunks_expanded) {
                             return None;
                         }
                         Some((hunk.range.clone(), hunk))
