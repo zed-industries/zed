@@ -1098,7 +1098,7 @@ impl BufferDiff {
                 base_text,
                 hunks: SumTree::new(buffer),
                 pending_hunks: SumTree::new(buffer),
-                base_text_exists: false,
+                base_text_exists: true,
             },
             secondary_diff: None,
         }
