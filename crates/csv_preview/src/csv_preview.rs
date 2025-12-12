@@ -5,12 +5,14 @@ use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    data_ordering::Ordering, parser::EditorState, renderer::nasty_code_duplication::ColumnWidths,
+    data_ordering::Ordering, nasty_code_duplication::ColumnWidths, parser::EditorState,
     settings::CsvPreviewSettings, table_cell::TableSelection, table_like_content::TableLikeContent,
 };
 
 mod data_ordering;
+mod nasty_code_duplication;
 mod parser;
+mod render_table;
 mod renderer;
 mod row_identifiers;
 mod settings;
