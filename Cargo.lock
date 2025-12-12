@@ -5179,6 +5179,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "libc",
  "log",
  "node_runtime",
  "paths",
