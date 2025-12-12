@@ -32,7 +32,6 @@ impl Render for EditPredictionSetupPage {
         // todo! skip ep_store for loading keys
         let ep_store = EditPredictionStore::try_global(cx);
 
-        // todo! github copilot
         let providers = [
             Some(render_github_copilot_provider(window, cx).into_any_element()),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
@@ -142,7 +141,6 @@ fn render_api_key_provider<Ent: 'static>(
 ) -> impl IntoElement {
     let (has_key, env_var_name) = entity
         .as_ref()
-        // todo! expand key_configured to also tell whether key is from env, and what env var name is used, disable reset if from env
         .map(|entity| {
             entity.update(cx, |entity, _| {
                 let state = api_key_state(entity);
@@ -181,7 +179,8 @@ fn render_api_key_provider<Ent: 'static>(
                 .button_label("Reset Key")
                 .button_tab_index(0)
                 // .disabled()
-                // todo! disabled if from env, should have env var on ApiKeyState to get the env var name
+                // todo! should be disabled if from env
+                // with message for why
                 .on_click(move |_, _, cx| {
                     write_key(entity.clone(), None, cx);
                 }),

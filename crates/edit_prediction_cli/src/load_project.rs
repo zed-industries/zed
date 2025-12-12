@@ -1,6 +1,8 @@
 use crate::{
     example::{Example, ExampleBuffer, ExampleState},
     headless::EpAppState,
+    paths::{REPOS_DIR, WORKTREES_DIR},
+    progress::{InfoStyle, Progress, Step, StepProgress},
 };
 use anyhow::{Result, anyhow};
 use collections::HashMap;
@@ -11,7 +13,7 @@ use futures::{
     lock::{Mutex, OwnedMutexGuard},
 };
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
 use project::buffer_store::BufferStoreEvent;
 use project::{Project, ProjectPath};
 use std::{
@@ -28,42 +30,37 @@ pub async fn run_load_project(example: &mut Example, app_state: Arc<EpAppState>,
         return;
     }
 
-    let project = setup_project(example, &app_state, &mut cx).await;
-    let buffer_store = project
-        .read_with(&cx, |project, _| project.buffer_store().clone())
-        .unwrap();
+    let progress = Progress::global().start(Step::LoadProject, &example.name);
 
-    let ep_store = cx
-        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
-        .unwrap();
-
-    cx.subscribe(&buffer_store, {
-        let project = project.clone();
-        move |_, event, cx| match event {
-            BufferStoreEvent::BufferAdded(buffer) => {
-                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
-            }
-            _ => {}
-        }
-    })
-    .unwrap()
-    .detach();
+    let project = setup_project(example, &app_state, &progress, &mut cx).await;
 
     let _open_buffers = apply_edit_history(example, &project, &mut cx)
         .await
         .unwrap();
+
     let (buffer, cursor_position) = cursor_position(example, &project, &mut cx).await;
-    example.buffer = buffer
+    let (example_buffer, language_name) = buffer
         .read_with(&cx, |buffer, _cx| {
             let cursor_point = cursor_position.to_point(&buffer);
-            Some(ExampleBuffer {
-                content: buffer.text(),
-                cursor_row: cursor_point.row,
-                cursor_column: cursor_point.column,
-                cursor_offset: cursor_position.to_offset(&buffer),
-            })
+            let language_name = buffer
+                .language()
+                .map(|l| l.name().to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+            (
+                ExampleBuffer {
+                    content: buffer.text(),
+                    cursor_row: cursor_point.row,
+                    cursor_column: cursor_point.column,
+                    cursor_offset: cursor_position.to_offset(&buffer),
+                },
+                language_name,
+            )
         })
         .unwrap();
+
+    progress.set_info(language_name, InfoStyle::Normal);
+
+    example.buffer = Some(example_buffer);
     example.state = Some(ExampleState {
         buffer,
         project,
@@ -77,6 +74,19 @@ async fn cursor_position(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> (Entity<Buffer>, Anchor) {
+    let language_registry = project
+        .read_with(cx, |project, _| project.languages().clone())
+        .unwrap();
+    let result = language_registry
+        .load_language_for_file_path(&example.cursor_path)
+        .await;
+
+    if let Err(error) = result
+        && !error.is::<LanguageNotFound>()
+    {
+        panic!("Failed to load language for file path: {}", error);
+    }
+
     let worktree = project
         .read_with(cx, |project, cx| {
             project.visible_worktrees(cx).next().unwrap()
@@ -115,7 +125,8 @@ async fn cursor_position(
         let mut matches = text.match_indices(&cursor_excerpt);
         let (excerpt_offset, _) = matches.next().unwrap_or_else(|| {
             panic!(
-                "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Cursor excerpt did not exist in buffer."
+                "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Example: {}\nCursor excerpt did not exist in buffer.",
+                example.name
             );
         });
         assert!(matches.next().is_none(), "More than one cursor position match found for {}", &example.name);
@@ -133,9 +144,38 @@ async fn cursor_position(
 async fn setup_project(
     example: &mut Example,
     app_state: &Arc<EpAppState>,
+    step_progress: &StepProgress,
     cx: &mut AsyncApp,
 ) -> Entity<Project> {
-    setup_worktree(example).await;
+    let ep_store = cx
+        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
+        .unwrap();
+
+    let worktree_path = setup_worktree(example, step_progress).await;
+
+    if let Some(project) = app_state.project_cache.get(&example.repository_url) {
+        ep_store
+            .update(cx, |ep_store, _| {
+                ep_store.clear_history_for_project(&project);
+            })
+            .unwrap();
+        let buffer_store = project
+            .read_with(cx, |project, _| project.buffer_store().clone())
+            .unwrap();
+        let buffers = buffer_store
+            .read_with(cx, |buffer_store, _| {
+                buffer_store.buffers().collect::<Vec<_>>()
+            })
+            .unwrap();
+        for buffer in buffers {
+            buffer
+                .update(cx, |buffer, cx| buffer.reload(cx))
+                .unwrap()
+                .await
+                .ok();
+        }
+        return project;
+    }
 
     let project = cx
         .update(|cx| {
@@ -151,27 +191,47 @@ async fn setup_project(
         })
         .unwrap();
 
-    let worktree = project
+    project
         .update(cx, |project, cx| {
-            project.create_worktree(&example.worktree_path(), true, cx)
+            project.disable_worktree_scanner(cx);
+            project.create_worktree(&worktree_path, true, cx)
         })
         .unwrap()
         .await
         .unwrap();
-    worktree
-        .read_with(cx, |worktree, _cx| {
-            worktree.as_local().unwrap().scan_complete()
-        })
-        .unwrap()
-        .await;
+
+    app_state
+        .project_cache
+        .insert(example.repository_url.clone(), project.clone());
+
+    let buffer_store = project
+        .read_with(cx, |project, _| project.buffer_store().clone())
+        .unwrap();
+    cx.subscribe(&buffer_store, {
+        let project = project.clone();
+        move |_, event, cx| match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
+            }
+            _ => {}
+        }
+    })
+    .unwrap()
+    .detach();
+
     project
 }
 
-pub async fn setup_worktree(example: &Example) {
-    let repo_dir = example.repo_path();
+async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> PathBuf {
+    let (repo_owner, repo_name) = example.repo_name().expect("failed to get repo name");
+    let repo_dir = REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref());
+    let worktree_path = WORKTREES_DIR
+        .join(repo_owner.as_ref())
+        .join(repo_name.as_ref());
     let repo_lock = lock_repo(&repo_dir).await;
 
     if !repo_dir.is_dir() {
+        step_progress.set_substatus(format!("cloning {}", repo_name));
         fs::create_dir_all(&repo_dir).unwrap();
         run_git(&repo_dir, &["init"]).await.unwrap();
         run_git(
@@ -191,6 +251,7 @@ pub async fn setup_worktree(example: &Example) {
     let revision = if let Ok(revision) = revision {
         revision
     } else {
+        step_progress.set_substatus("fetching");
         if run_git(
             &repo_dir,
             &["fetch", "--depth", "1", "origin", &example.revision],
@@ -203,16 +264,11 @@ pub async fn setup_worktree(example: &Example) {
         let revision = run_git(&repo_dir, &["rev-parse", "FETCH_HEAD"])
             .await
             .unwrap();
-        if revision != example.revision {
-            run_git(&repo_dir, &["tag", &example.revision, &revision])
-                .await
-                .unwrap();
-        }
         revision
     };
 
     // Create the worktree for this example if needed.
-    let worktree_path = example.worktree_path();
+    step_progress.set_substatus("preparing worktree");
     if worktree_path.is_dir() {
         run_git(&worktree_path, &["clean", "--force", "-d"])
             .await
@@ -248,6 +304,7 @@ pub async fn setup_worktree(example: &Example) {
 
     // Apply the uncommitted diff for this example.
     if !example.uncommitted_diff.is_empty() {
+        step_progress.set_substatus("applying diff");
         let mut apply_process = smol::process::Command::new("git")
             .current_dir(&worktree_path)
             .args(&["apply", "-"])
@@ -273,6 +330,9 @@ pub async fn setup_worktree(example: &Example) {
             );
         }
     }
+
+    step_progress.clear_substatus();
+    worktree_path
 }
 
 async fn apply_edit_history(

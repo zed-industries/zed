@@ -300,7 +300,6 @@ pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCUR
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
     let mut key = ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone());
-    // todo! see todo on sweep load
     _ = key.load_if_needed(
         MERCURY_CREDENTIALS_URL,
         |ep_store| &mut ep_store.sweep_ai.api_token,

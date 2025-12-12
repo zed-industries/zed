@@ -623,7 +623,10 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     });
     MarkdownStyle {
         base_text_style,
-        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        code_block: StyleRefinement::default()
+            .my(rems(1.))
+            .font_buffer(cx)
+            .font_features(buffer_font_features.clone()),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),

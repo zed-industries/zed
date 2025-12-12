@@ -4,6 +4,7 @@ use crate::{
     headless::EpAppState,
     metrics::{self, ClassificationMetrics},
     predict::run_prediction,
+    progress::{Progress, Step},
 };
 use edit_prediction::udiff::DiffLine;
 use gpui::AsyncApp;
@@ -23,6 +24,8 @@ pub async fn run_scoring(
         cx,
     )
     .await;
+
+    let _progress = Progress::global().start(Step::Score, &example.name);
 
     let expected_patch = parse_patch(&example.expected_patch);
 

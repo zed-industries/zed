@@ -275,7 +275,6 @@ pub static SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP
 
 pub fn load_api_token(cx: &mut Context<EditPredictionStore>) -> ApiKeyState {
     let mut key = ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone());
-    // todo! load in call to provider, update API to have nicer key behavior
     _ = key.load_if_needed(
         SWEEP_CREDENTIALS_URL,
         |ep_store| &mut ep_store.sweep_ai.api_token,

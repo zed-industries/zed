@@ -12,7 +12,7 @@ workspace = true
 path = "src/edit_prediction.rs"
 
 [features]
-eval-support = []
+cli-support = []
 
 [dependencies]
 ai_onboarding.workspace = true

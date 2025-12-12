@@ -1,8 +1,9 @@
 use crate::{Copilot, Status, request::PromptUserDeviceFlow};
+use anyhow::Context as _;
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Point, Render,
-    Styled, Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
+    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
+    Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
@@ -13,45 +14,47 @@ const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 struct CopilotStatusToast;
 
 pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
-
     let is_reinstall = false;
-    initiate_sign_in_within_workspace(copilot, is_reinstall, window, cx)
+    initiate_sign_in_impl(is_reinstall, window, cx)
 }
 
 pub fn initiate_sign_out(window: &mut Window, cx: &mut App) {
     let Some(copilot) = Copilot::global(cx) else {
-        // todo! error?
         return;
     };
-    sign_out_within_workspace(copilot, window, cx);
+
+    copilot_toast(Some("Signing out of Copilot…"), window, cx);
+
+    let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
+    window
+        .spawn(cx, async move |cx| match sign_out_task.await {
+            Ok(()) => {
+                cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
+            }
+            Err(err) => cx.update(|window, cx| {
+                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })
+                } else {
+                    log::error!("{:?}", err);
+                }
+            }),
+        })
+        .detach();
 }
 
 pub fn reinstall_and_sign_in(window: &mut Window, cx: &mut App) {
     let Some(copilot) = Copilot::global(cx) else {
         return;
     };
-    reinstall_and_sign_in_within_workspace(copilot, window, cx);
-}
-
-pub fn reinstall_and_sign_in_within_workspace(
-    copilot: Entity<Copilot>,
-    window: &mut Window,
-    cx: &mut App,
-) {
     let _ = copilot.update(cx, |copilot, cx| copilot.reinstall(cx));
     let is_reinstall = true;
-    initiate_sign_in_within_workspace(copilot, is_reinstall, window, cx);
+    initiate_sign_in_impl(is_reinstall, window, cx);
 }
 
-fn open_copilot_code_verification_window(
-    // todo! just take window param
-    current_window_center: Point<Pixels>,
-    copilot: &Entity<Copilot>,
-    cx: &mut App,
-) {
+fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Window, cx: &mut App) {
+    let current_window_center = window.bounds().center();
     let height = px(450.);
     let width = px(350.);
     let window_bounds = WindowBounds::Windowed(gpui::bounds(
@@ -72,7 +75,8 @@ fn open_copilot_code_verification_window(
         },
         |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
     )
-    .expect("todo!");
+    .context("Failed to open Copilot code verification window")
+    .log_err();
 }
 
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
@@ -88,12 +92,10 @@ fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
     });
 }
 
-pub fn initiate_sign_in_within_workspace(
-    copilot: Entity<Copilot>,
-    is_reinstall: bool,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub fn initiate_sign_in_impl(is_reinstall: bool, window: &mut Window, cx: &mut App) {
+    let Some(copilot) = Copilot::global(cx) else {
+        return;
+    };
     if matches!(copilot.read(cx).status(), Status::Disabled) {
         copilot.update(cx, |copilot, cx| copilot.start_copilot(false, true, cx));
     }
@@ -125,11 +127,7 @@ pub fn initiate_sign_in_within_workspace(
                                 copilot
                                     .update(cx, |copilot, cx| copilot.sign_in(cx))
                                     .detach_and_log_err(cx);
-                                open_copilot_code_verification_window(
-                                    window.bounds().center(),
-                                    &copilot,
-                                    cx,
-                                );
+                                open_copilot_code_verification_window(&copilot, window, cx);
                             }
                         }
                     })
@@ -141,31 +139,9 @@ pub fn initiate_sign_in_within_workspace(
             copilot
                 .update(cx, |copilot, cx| copilot.sign_in(cx))
                 .detach();
-            open_copilot_code_verification_window(window.bounds().center(), &copilot, cx);
+            open_copilot_code_verification_window(&copilot, window, cx);
         }
     }
-}
-
-pub fn sign_out_within_workspace(copilot: Entity<Copilot>, window: &mut Window, cx: &mut App) {
-    copilot_toast(Some("Signing out of Copilot…"), window, cx);
-
-    let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
-    window
-        .spawn(cx, async move |cx| match sign_out_task.await {
-            Ok(()) => {
-                cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
-            }
-            Err(err) => cx.update(|window, cx| {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })
-                } else {
-                    log::error!("{:?}", err);
-                }
-            }),
-        })
-        .detach();
 }
 
 pub struct CopilotCodeVerification {
