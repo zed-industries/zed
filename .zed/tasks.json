@@ -4,13 +4,20 @@
     "command": "./script/clippy",
     "args": [],
     "allow_concurrent_runs": true,
-    "use_new_terminal": false
+    "use_new_terminal": false,
   },
   {
-    "label": "cargo run --profile release-fast",
+    "label": "cargo check gpui",
     "command": "cargo",
-    "args": ["run", "--profile", "release-fast"],
+    "args": ["check", "--package", "gpui"],
     "allow_concurrent_runs": true,
-    "use_new_terminal": false
-  }
+    "use_new_terminal": false,
+  },
+  {
+    "label": "cargo test gpui",
+    "command": "cargo",
+    "args": ["test", "--package", "gpui"],
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+  },
 ]
