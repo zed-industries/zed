@@ -93,6 +93,7 @@ pub enum BedrockAuthMethodContent {
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
+    pub context_window: Option<u64>,
 }
 
 #[with_fallible_options]
