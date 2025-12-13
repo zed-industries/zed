@@ -5,6 +5,7 @@ use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
+use semver::Version;
 use serde_json::json;
 use std::{
     ffi::OsString,
@@ -32,14 +33,14 @@ impl CssLspAdapter {
 }
 
 impl LspInstaller for CssLspAdapter {
-    type BinaryVersion = String;
+    type BinaryVersion = Version;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
         _: bool,
         _: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<Self::BinaryVersion> {
         self.node
             .npm_package_latest_version("vscode-langservers-extracted")
             .await
@@ -65,11 +66,12 @@ impl LspInstaller for CssLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: String,
+        latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let server_path = container_dir.join(SERVER_PATH);
+        let latest_version = latest_version.to_string();
 
         self.node
             .npm_install_packages(
@@ -87,7 +89,7 @@ impl LspInstaller for CssLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &String,
+        version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
