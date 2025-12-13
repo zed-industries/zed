@@ -6,8 +6,8 @@ mod select;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects, ToOffset, ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SelectionEffects, ToOffset, ToPoint,
+    movement,
 };
 use gpui::actions;
 use gpui::{Context, Window};
@@ -672,7 +672,6 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.update_editor(cx, |_, editor, cx| {
-            editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(&display_map);
             let max_point = display_map.buffer_snapshot().max_point();
