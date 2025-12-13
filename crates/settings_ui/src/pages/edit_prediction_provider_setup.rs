@@ -168,7 +168,7 @@ fn render_api_key_provider(
                 .color(Color::Muted),
         );
     let configured_card_label = if is_from_env_var {
-        "API key set in environment variable"
+        "API Key Set in Environment Variable"
     } else {
         "API Key Configured"
     };
