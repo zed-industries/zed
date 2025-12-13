@@ -22,7 +22,6 @@ feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
-globset.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
