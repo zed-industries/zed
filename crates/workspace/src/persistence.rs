@@ -11,12 +11,14 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, IndexSet};
 use db::{
+    kvp::KEY_VALUE_STORE,
     query,
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
+use serde::{Deserialize, Serialize};
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
@@ -81,8 +83,28 @@ impl sqlez::bindable::Column for SerializedAxis {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
 pub(crate) struct SerializedWindowBounds(pub(crate) WindowBounds);
+
+const NO_PROJECT_WINDOW_BOUNDS_KEY: &str = "no_project_window_bounds";
+
+pub fn read_no_project_window_bounds() -> Option<(Uuid, SerializedWindowBounds)> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY)
+        .log_err()
+        .flatten()?;
+    serde_json::from_str(&json_str).log_err()
+}
+
+pub async fn write_no_project_window_bounds(
+    bounds: SerializedWindowBounds,
+    display_uuid: Uuid,
+) -> anyhow::Result<()> {
+    let json_str = serde_json::to_string(&(display_uuid, bounds))?;
+    KEY_VALUE_STORE
+        .write_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+        .await
+}
 
 impl StaticColumnCount for SerializedWindowBounds {
     fn column_count() -> usize {
