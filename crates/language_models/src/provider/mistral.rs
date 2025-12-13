@@ -17,7 +17,7 @@ use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -31,6 +31,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 const CODESTRAL_API_KEY_ENV_VAR_NAME: &str = "CODESTRAL_API_KEY";
 static CODESTRAL_API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(CODESTRAL_API_KEY_ENV_VAR_NAME);
+static CODESTRAL_API_KEY: OnceLock<Entity<ApiKeyState>> = OnceLock::new();
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
@@ -45,7 +46,17 @@ pub struct MistralLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
-    pub codestral_api_key_state: ApiKeyState,
+    codestral_api_key_state: Entity<ApiKeyState>,
+}
+
+pub fn codestral_api_key(cx: &mut App) -> Entity<ApiKeyState> {
+    return CODESTRAL_API_KEY
+        .get_or_init(|| {
+            cx.new(|_| {
+                ApiKeyState::new(CODESTRAL_API_URL.into(), CODESTRAL_API_KEY_ENV_VAR.clone())
+            })
+        })
+        .clone();
 }
 
 impl State {
@@ -69,11 +80,9 @@ impl State {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
-        self.codestral_api_key_state.load_if_needed(
-            CODESTRAL_API_URL.into(),
-            |this| &mut this.codestral_api_key_state,
-            cx,
-        )
+        self.codestral_api_key_state.update(cx, |state, cx| {
+            state.load_if_needed(CODESTRAL_API_URL.into(), |state| state, cx)
+        })
     }
 }
 
@@ -101,10 +110,7 @@ impl MistralLanguageModelProvider {
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
-                codestral_api_key_state: ApiKeyState::new(
-                    CODESTRAL_API_URL.into(),
-                    (*CODESTRAL_API_KEY_ENV_VAR).clone(),
-                ),
+                codestral_api_key_state: codestral_api_key(cx),
             }
         });
 
@@ -119,7 +125,11 @@ impl MistralLanguageModelProvider {
     }
 
     pub fn codestral_api_key(&self, url: &str, cx: &App) -> Option<Arc<str>> {
-        self.state.read(cx).codestral_api_key_state.key(url)
+        self.state
+            .read(cx)
+            .codestral_api_key_state
+            .read(cx)
+            .key(url)
     }
 
     fn create_language_model(&self, model: mistral::Model) -> Arc<dyn LanguageModel> {

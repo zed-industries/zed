@@ -5,7 +5,7 @@ use edit_prediction::{
 };
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
-use language_models::provider::mistral::CODESTRAL_API_URL;
+use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
 use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
 
 use crate::{
@@ -30,8 +30,6 @@ impl EditPredictionSetupPage {
 impl Render for EditPredictionSetupPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings_window = self.settings_window.clone();
-        // todo! skip ep_store for loading keys
-        let ep_store = EditPredictionStore::try_global(cx);
 
         let providers = [
             Some(render_github_copilot_provider(window, cx).into_any_element()),
@@ -62,14 +60,12 @@ impl Render for EditPredictionSetupPage {
                 .into_any_element()
             }),
             Some(
-                render_api_key_provider(
+                render_api_key_provider_state(
                     IconName::AiMistral,
                     "Codestral",
                     "https://console.mistral.ai/codestral".into(),
-                    |state| &mut state.codestral_api_key_state,
+                    codestral_api_key(cx),
                     |cx| language_models::MistralLanguageModelProvider::api_url(cx),
-                    language_models::MistralLanguageModelProvider::try_global(cx)
-                        .map(|provider| provider.state.clone()),
                     Some(settings_window.update(cx, |settings_window, cx| {
                         let codestral_settings = codestral_settings();
                         settings_window
