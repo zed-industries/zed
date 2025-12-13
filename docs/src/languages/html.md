@@ -39,6 +39,7 @@ To use the `vscode-html-language-server` language server auto-formatting instead
   "languages": {
     "HTML": {
       "formatter": "language_server",
+      "language_servers": ["vscode-html-language-server"],
     }
   }
 ```
@@ -57,6 +58,12 @@ You can customize various [formatting options](https://code.visualstudio.com/doc
             "contentUnformatted": "svg,script",
             // Add an extra newline before <div> and <p>
             "extraLiners": "div,p"
+          }
+        },
+        // workaround to prevent html lsp error about validproperties
+        "css": {
+          "lint": {
+            "validProperties": {}
           }
         }
       }
