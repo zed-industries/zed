@@ -1,10 +1,9 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let protoc_path = which::which("protoc").map_err(|e| {
+    let protoc_path = which::which("protoc").inspect_err(|e| {
         eprintln!(
             "Protoc not found: {}. Please install protoc or ensure it's in your PATH.",
             e
         );
-        e
     })?;
 
     prost_build::Config::new()

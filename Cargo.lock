@@ -9308,6 +9308,7 @@ dependencies = [
  "prost-build 0.9.0",
  "prost-types 0.9.0",
  "serde",
+ "which 6.0.3",
  "zed-reqwest",
 ]
 
