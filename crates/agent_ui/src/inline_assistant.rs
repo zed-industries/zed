@@ -2226,7 +2226,7 @@ pub mod evals {
     #[cfg_attr(not(feature = "unit-eval"), ignore)]
     fn eval_single_cursor_edit() {
         run_eval(
-            10,
+            20,
             1.0,
             "Rename this variable to buffer_text".to_string(),
             indoc::indoc! {"
@@ -2249,7 +2249,7 @@ pub mod evals {
     #[cfg_attr(not(feature = "unit-eval"), ignore)]
     fn eval_cant_do() {
         run_eval(
-            10,
+            20,
             1.0,
             "Rename the struct to EvalExampleStructNope",
             indoc::indoc! {"
@@ -2266,7 +2266,7 @@ pub mod evals {
     #[cfg_attr(not(feature = "unit-eval"), ignore)]
     fn eval_unclear() {
         run_eval(
-            10,
+            20,
             1.0,
             "Make exactly the change I want you to make",
             indoc::indoc! {"
@@ -2282,8 +2282,8 @@ pub mod evals {
     fn run_eval(
         iterations: usize,
         expected_pass_ratio: f32,
-        buffer: impl Into<String>,
         prompt: impl Into<String>,
+        buffer: impl Into<String>,
         judge: impl Fn(InlineAssistantOutput) -> eval_utils::EvalOutput<()> + Send + Sync + 'static,
     ) {
         let buffer = buffer.into();
