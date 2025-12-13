@@ -42,21 +42,29 @@ impl CsvPreviewView {
         let content = if self.settings.copy_format == CopyFormat::Markdown {
             self.format_as_markdown_table(&rows_data)
         } else {
-            // Build CSV/TSV format: determine column range for each row
+            // Build CSV/TSV format: determine global column range for entire selection
             let mut lines = Vec::new();
+
+            // Find the global min and max columns across all rows
+            let mut global_min_col = usize::MAX;
+            let mut global_max_col = 0;
+            for columns in rows_data.values() {
+                if !columns.is_empty() {
+                    let row_min = *columns.keys().next().unwrap();
+                    let row_max = *columns.keys().last().unwrap();
+                    global_min_col = global_min_col.min(row_min);
+                    global_max_col = global_max_col.max(row_max);
+                }
+            }
 
             for (_row_idx, columns) in rows_data {
                 if columns.is_empty() {
                     continue;
                 }
 
-                // Get the range of columns for this row
-                let min_col = *columns.keys().next().unwrap();
-                let max_col = *columns.keys().last().unwrap();
-
-                // Build the row with separators between columns, filling empty cells
+                // Build the row using global column range, filling empty cells
                 let mut row_cells = Vec::new();
-                for col in min_col..=max_col {
+                for col in global_min_col..=global_max_col {
                     let cell_value = columns.get(&col).cloned().unwrap_or_default();
                     row_cells.push(cell_value);
                 }
