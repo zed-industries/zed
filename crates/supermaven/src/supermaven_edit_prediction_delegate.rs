@@ -1,6 +1,6 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};
@@ -187,15 +187,6 @@ impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
             }
             Ok(())
         }));
-    }
-
-    fn cycle(
-        &mut self,
-        _buffer: Entity<Buffer>,
-        _cursor_position: Anchor,
-        _direction: Direction,
-        _cx: &mut Context<Self>,
-    ) {
     }
 
     fn accept(&mut self, _cx: &mut Context<Self>) {

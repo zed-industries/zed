@@ -1,3 +1,4 @@
+use lsp::VersionedTextDocumentIdentifier;
 use serde::{Deserialize, Serialize};
 
 pub enum CheckStatus {}
@@ -88,72 +89,6 @@ impl lsp::request::Request for SignOut {
     const METHOD: &'static str = "signOut";
 }
 
-pub enum GetCompletions {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsParams {
-    pub doc: GetCompletionsDocument,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsDocument {
-    pub tab_size: u32,
-    pub indent_size: u32,
-    pub insert_spaces: bool,
-    pub uri: lsp::Uri,
-    pub relative_path: String,
-    pub position: lsp::Position,
-    pub version: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsResult {
-    pub completions: Vec<Completion>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Completion {
-    pub text: String,
-    pub position: lsp::Position,
-    pub uuid: String,
-    pub range: lsp::Range,
-    pub display_text: String,
-}
-
-impl lsp::request::Request for GetCompletions {
-    type Params = GetCompletionsParams;
-    type Result = GetCompletionsResult;
-    const METHOD: &'static str = "getCompletions";
-}
-
-pub enum GetCompletionsCycling {}
-
-impl lsp::request::Request for GetCompletionsCycling {
-    type Params = GetCompletionsParams;
-    type Result = GetCompletionsResult;
-    const METHOD: &'static str = "getCompletionsCycling";
-}
-
-pub enum LogMessage {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogMessageParams {
-    pub level: u8,
-    pub message: String,
-    pub metadata_str: String,
-    pub extra: Vec<String>,
-}
-
-impl lsp::notification::Notification for LogMessage {
-    type Params = LogMessageParams;
-    const METHOD: &'static str = "LogMessage";
-}
-
 pub enum StatusNotification {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -222,4 +157,37 @@ impl lsp::request::Request for NotifyRejected {
     type Params = NotifyRejectedParams;
     type Result = String;
     const METHOD: &'static str = "notifyRejected";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestions;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestionsParams {
+    pub(crate) text_document: VersionedTextDocumentIdentifier,
+    pub(crate) position: lsp::Position,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestion {
+    pub text: String,
+    pub text_document: VersionedTextDocumentIdentifier,
+    pub range: lsp::Range,
+    pub command: Option<lsp::Command>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NextEditSuggestionsResult {
+    pub edits: Vec<NextEditSuggestion>,
+}
+
+impl lsp::request::Request for NextEditSuggestions {
+    type Params = NextEditSuggestionsParams;
+    type Result = NextEditSuggestionsResult;
+
+    const METHOD: &'static str = "textDocument/copilotInlineEdit";
 }

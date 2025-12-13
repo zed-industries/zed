@@ -2,7 +2,7 @@ use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{DataCollectionState, Direction, EditPredictionDelegate};
+use edit_prediction_types::{DataCollectionState, EditPredictionDelegate};
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
@@ -137,15 +137,6 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             store.refresh_context(&self.project, &buffer, cursor_position, cx);
             store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
         });
-    }
-
-    fn cycle(
-        &mut self,
-        _buffer: Entity<language::Buffer>,
-        _cursor_position: language::Anchor,
-        _direction: Direction,
-        _cx: &mut Context<Self>,
-    ) {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
