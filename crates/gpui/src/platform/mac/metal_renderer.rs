@@ -82,13 +82,15 @@ impl InstanceBufferPool {
         unified_memory: bool,
     ) -> InstanceBuffer {
         let buffer = self.buffers.pop().unwrap_or_else(|| {
-            let storage_mode = if unified_memory {
+            let options = if unified_memory {
                 MTLResourceOptions::StorageModeShared
+                    // Buffers are write only which can benefit from the combined cache
+                    | MTLResourceOptions::CPUCacheModeWriteCombined
             } else {
                 MTLResourceOptions::StorageModeManaged
             };
 
-            device.new_buffer(self.buffer_size as u64, storage_mode)
+            device.new_buffer(self.buffer_size as u64, options)
         });
         InstanceBuffer {
             metal_buffer: buffer,
