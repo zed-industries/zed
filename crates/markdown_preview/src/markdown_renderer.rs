@@ -678,35 +678,111 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
                 let element_id = cx.next_id(&parsed.source_range);
+                let has_inline_code = parsed.regions.iter().any(|(_, region)| region.code);
 
-                let highlights = gpui::combine_highlights(
-                    parsed.highlights.iter().filter_map(|(range, highlight)| {
-                        highlight
-                            .to_highlight_style(&syntax_theme)
-                            .map(|style| (range.clone(), style))
-                    }),
-                    parsed.regions.iter().filter_map(|(range, region)| {
+                let styled_text = if has_inline_code {
+                    let mut boundaries = Vec::new();
+                    boundaries.push(0);
+                    boundaries.push(parsed.contents.len());
+
+                    for (range, region) in &parsed.regions {
                         if region.code {
-                            Some((
-                                range.clone(),
-                                HighlightStyle {
-                                    background_color: Some(code_span_bg_color),
-                                    ..Default::default()
-                                },
-                            ))
-                        } else if region.link.is_some() {
-                            Some((
-                                range.clone(),
-                                HighlightStyle {
-                                    color: Some(link_color),
-                                    ..Default::default()
-                                },
-                            ))
-                        } else {
-                            None
+                            boundaries.push(range.start);
+                            boundaries.push(range.end);
                         }
-                    }),
-                );
+                    }
+
+                    for (range, _) in &parsed.highlights {
+                        boundaries.push(range.start);
+                        boundaries.push(range.end);
+                    }
+
+                    for (range, region) in &parsed.regions {
+                        if region.link.is_some() {
+                            boundaries.push(range.start);
+                            boundaries.push(range.end);
+                        }
+                    }
+
+                    boundaries.sort_unstable();
+                    boundaries.dedup();
+
+                    let mut runs = Vec::new();
+
+                    for boundary in boundaries.windows(2) {
+                        let segment_start = boundary[0];
+                        let segment_end = boundary[1];
+                        let segment_range = segment_start..segment_end;
+
+                        if segment_range.is_empty() {
+                            continue;
+                        }
+
+                        let is_code = parsed.regions.iter().any(|(range, region)| {
+                            region.code && range.start <= segment_start && segment_end <= range.end
+                        });
+
+                        let mut text_run_style = if is_code {
+                            let mut style = cx.buffer_text_style.clone();
+                            style.background_color = Some(code_span_bg_color);
+                            style
+                        } else {
+                            text_style.clone()
+                        };
+
+                        if !is_code {
+                            for (highlight_range, highlight) in &parsed.highlights {
+                                if highlight_range.start <= segment_start
+                                    && segment_end <= highlight_range.end
+                                {
+                                    if let Some(hl_style) =
+                                        highlight.to_highlight_style(&syntax_theme)
+                                    {
+                                        text_run_style = text_run_style.highlight(hl_style);
+                                    }
+                                }
+                            }
+
+                            for (link_range, region) in &parsed.regions {
+                                if region.link.is_some()
+                                    && link_range.start <= segment_start
+                                    && segment_end <= link_range.end
+                                {
+                                    text_run_style = text_run_style.highlight(HighlightStyle {
+                                        color: Some(link_color),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        }
+
+                        runs.push(text_run_style.to_run(segment_end - segment_start));
+                    }
+
+                    StyledText::new(parsed.contents.clone()).with_runs(runs)
+                } else {
+                    let highlights = gpui::combine_highlights(
+                        parsed.highlights.iter().filter_map(|(range, highlight)| {
+                            highlight
+                                .to_highlight_style(&syntax_theme)
+                                .map(|style| (range.clone(), style))
+                        }),
+                        parsed.regions.iter().filter_map(|(range, region)| {
+                            region.link.is_some().then(|| {
+                                (
+                                    range.clone(),
+                                    HighlightStyle {
+                                        color: Some(link_color),
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                        }),
+                    );
+                    StyledText::new(parsed.contents.clone())
+                        .with_default_highlights(&text_style, highlights)
+                };
+
                 let mut links = Vec::new();
                 let mut link_ranges = Vec::new();
                 for (range, region) in parsed.regions.iter() {
@@ -718,46 +794,45 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let workspace = workspace_clone.clone();
                 let element = div()
                     .child(
-                        InteractiveText::new(
-                            element_id,
-                            StyledText::new(parsed.contents.clone())
-                                .with_default_highlights(&text_style, highlights),
-                        )
-                        .tooltip({
-                            let links = links.clone();
-                            let link_ranges = link_ranges.clone();
-                            move |idx, _, cx| {
-                                for (ix, range) in link_ranges.iter().enumerate() {
-                                    if range.contains(&idx) {
-                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                        InteractiveText::new(element_id, styled_text)
+                            .tooltip({
+                                let links = links.clone();
+                                let link_ranges = link_ranges.clone();
+                                move |idx, _, cx| {
+                                    for (ix, range) in link_ranges.iter().enumerate() {
+                                        if range.contains(&idx) {
+                                            return Some(LinkPreview::new(
+                                                &links[ix].to_string(),
+                                                cx,
+                                            ));
+                                        }
                                     }
+                                    None
                                 }
-                                None
-                            }
-                        })
-                        .on_click(
-                            link_ranges,
-                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
-                                    if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    normalize_path(path.clone().as_path()),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
-                                        });
+                            })
+                            .on_click(
+                                link_ranges,
+                                move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                    Link::Web { url } => cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(
+                                                        normalize_path(path.clone().as_path()),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .detach();
+                                            });
+                                        }
                                     }
-                                }
-                            },
-                        ),
+                                },
+                            ),
                     )
                     .into_any();
                 any_element.push(element);
