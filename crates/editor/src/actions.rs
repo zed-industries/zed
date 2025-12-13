@@ -139,6 +139,14 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
 }
 
+/// Updates the filter query for the code actions menu.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCodeActionsFilter {
+    pub text: String,
+}
+
 /// Toggles comment markers for the selected lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
