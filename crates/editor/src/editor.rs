@@ -1107,6 +1107,9 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    /// Whether the cursor is offset one character to the left when something is
+    /// selected (needed for vim visual mode)
+    cursor_offset_on_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     pub collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
@@ -2281,6 +2284,7 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
+            cursor_offset_on_selection: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3093,6 +3097,10 @@ impl Editor {
 
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
+    }
+
+    pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
+        self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
     pub fn set_current_line_highlight(

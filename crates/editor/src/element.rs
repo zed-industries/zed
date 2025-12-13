@@ -132,6 +132,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
+        cursor_offset: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -152,12 +153,9 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if (cursor_shape == CursorShape::Block || cursor_shape == CursorShape::Hollow)
-            && !range.is_empty()
-            && !selection.reversed
-        {
+        if cursor_offset && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
-                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left)
+                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 && head != map.max_point() {
                 head = map.clip_point(
                     DisplayPoint::new(
@@ -1435,6 +1433,7 @@ impl EditorElement {
                     let layout = SelectionLayout::new(
                         selection,
                         editor.selections.line_mode(),
+                        editor.cursor_offset_on_selection,
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -1481,6 +1480,7 @@ impl EditorElement {
                     let drag_cursor_layout = SelectionLayout::new(
                         drop_cursor.clone(),
                         false,
+                        editor.cursor_offset_on_selection,
                         CursorShape::Bar,
                         &snapshot.display_snapshot,
                         false,
@@ -1544,6 +1544,7 @@ impl EditorElement {
                         .push(SelectionLayout::new(
                             selection.selection,
                             selection.line_mode,
+                            editor.cursor_offset_on_selection,
                             selection.cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1554,6 +1555,8 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+                let cursor_offset_on_selection = editor.cursor_offset_on_selection;
+
                 let layouts = snapshot
                     .buffer_snapshot()
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1561,6 +1564,7 @@ impl EditorElement {
                         SelectionLayout::new(
                             selection,
                             line_mode,
+                            cursor_offset_on_selection,
                             cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -3284,6 +3288,7 @@ impl EditorElement {
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode(),
+                    editor.cursor_offset_on_selection,
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,
@@ -11852,7 +11857,7 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_shape = CursorShape::Block;
+                editor.cursor_offset_on_selection = true;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),
