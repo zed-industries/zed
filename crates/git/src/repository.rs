@@ -498,7 +498,7 @@ pub trait GitRepository: Send + Sync {
     fn file_history_paginated(
         &self,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>>;
 
@@ -1543,13 +1543,13 @@ impl GitRepository for RealGitRepository {
     }
 
     fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
-        self.file_history_paginated(path, 0, None)
+        self.file_history_paginated(path, None, None)
     }
 
     fn file_history_paginated(
         &self,
         path: RepoPath,
-        skip: usize,
+        last_commit_hash: Option<SharedString>,
         limit: Option<usize>,
     ) -> BoxFuture<'_, Result<FileHistory>> {
         let working_directory = self.working_directory();
@@ -1569,17 +1569,17 @@ impl GitRepository for RealGitRepository {
 
                 let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
 
-                let skip_str;
                 let limit_str;
-                if skip > 0 {
-                    skip_str = skip.to_string();
-                    args.push("--skip");
-                    args.push(&skip_str);
-                }
                 if let Some(n) = limit {
                     limit_str = n.to_string();
                     args.push("-n");
                     args.push(&limit_str);
+                }
+
+                let cursor_str;
+                if let Some(last_commit_hash) = last_commit_hash {
+                    cursor_str = format!("{}^", last_commit_hash.as_ref());
+                    args.push(&cursor_str);
                 }
 
                 args.push("--");
