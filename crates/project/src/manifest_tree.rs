@@ -44,9 +44,21 @@ impl WorktreeRoots {
                 match event {
                     WorktreeEvent::UpdatedEntries(changes) => {
                         for (path, _, kind) in changes.iter() {
-                            if kind == &worktree::PathChange::Removed {
-                                let path = TriePath::from(path.as_ref());
-                                this.roots.remove(&path);
+                            match kind {
+                                worktree::PathChange::Removed => {
+                                    let path = TriePath::from(path.as_ref());
+                                    this.roots.remove(&path);
+                                }
+                                _ => {
+                                    if let Some(parent) = path.parent() {
+                                        if parent.is_empty() {
+                                            this.roots = RootPathTrie::new();
+                                        } else {
+                                            let parent = TriePath::from(parent);
+                                            this.roots.remove(&parent);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
