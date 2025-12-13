@@ -33,10 +33,10 @@ pub struct TableSelection {
     selection_start_display: Option<DisplayCellId>,
     /// Whether user is currently dragging to select
     is_selecting: bool,
-    /// Currently focused cell in data coordinates
-    focused_cell: Option<DataCellId>,
-    /// Anchor cell for keyboard range selection (shift+arrow keys) in data coordinates
-    selection_anchor: Option<DataCellId>,
+    /// Currently focused cell in display coordinates
+    focused_cell: Option<DisplayCellId>,
+    /// Anchor cell for keyboard range selection (shift+arrow keys) in display coordinates
+    selection_anchor: Option<DisplayCellId>,
 }
 
 impl Default for TableSelection {
@@ -73,9 +73,10 @@ impl TableSelection {
         if let Some(data_row) = ordered_indices.get_data_row(display_row) {
             let cell_id = DataCellId::new(data_row, col);
             self.selected_cells.insert(cell_id);
-            // Set focus and anchor to the clicked cell
-            self.focused_cell = Some(cell_id);
-            self.selection_anchor = Some(cell_id);
+            // Set focus and anchor to the clicked cell in display coordinates
+            let display_cell_id = DisplayCellId::new(display_row, col);
+            self.focused_cell = Some(display_cell_id);
+            self.selection_anchor = Some(display_cell_id);
         }
 
         // Remember display coordinates for extend_selection_to
@@ -113,15 +114,10 @@ impl TableSelection {
             }
 
             // Update focused cell to follow the current mouse position (selection frontier)
-            if let Some(data_row) = ordered_indices.get_data_row(display_row) {
-                self.focused_cell = Some(DataCellId::new(data_row, col));
-            }
+            self.focused_cell = Some(DisplayCellId::new(display_row, col));
 
             // Ensure anchor remains at the start position during drag
-            if let Some(start_data_row) = ordered_indices.get_data_row(start_display_cell.row) {
-                self.selection_anchor =
-                    Some(DataCellId::new(start_data_row, start_display_cell.col));
-            }
+            self.selection_anchor = Some(start_display_cell);
         }
     }
 
@@ -160,13 +156,10 @@ impl TableSelection {
         &self,
         display_row: DisplayRow,
         col: usize,
-        ordered_indices: &OrderedIndices,
+        _ordered_indices: &OrderedIndices,
     ) -> bool {
-        if let (Some(focused), Some(data_row)) = (
-            &self.focused_cell,
-            ordered_indices.get_data_row(display_row),
-        ) {
-            focused.row == data_row && focused.col == col
+        if let Some(focused) = &self.focused_cell {
+            focused.row == display_row && focused.col == col
         } else {
             false
         }
@@ -177,13 +170,10 @@ impl TableSelection {
         &self,
         display_row: DisplayRow,
         col: usize,
-        ordered_indices: &OrderedIndices,
+        _ordered_indices: &OrderedIndices,
     ) -> bool {
-        if let (Some(anchor), Some(data_row)) = (
-            &self.selection_anchor,
-            ordered_indices.get_data_row(display_row),
-        ) {
-            anchor.row == data_row && anchor.col == col
+        if let Some(anchor) = &self.selection_anchor {
+            anchor.row == display_row && anchor.col == col
         } else {
             false
         }
@@ -193,13 +183,10 @@ impl TableSelection {
     pub fn is_row_focused(
         &self,
         display_row: DisplayRow,
-        ordered_indices: &OrderedIndices,
+        _ordered_indices: &OrderedIndices,
     ) -> bool {
-        if let (Some(focused), Some(data_row)) = (
-            &self.focused_cell,
-            ordered_indices.get_data_row(display_row),
-        ) {
-            focused.row == data_row
+        if let Some(focused) = &self.focused_cell {
+            focused.row == display_row
         } else {
             false
         }
@@ -207,14 +194,14 @@ impl TableSelection {
 
     /// Initialize focus and selection to top-left cell if not already set
     fn ensure_focus_initialized(&mut self, ordered_indices: &OrderedIndices) {
+        let display_cell = DisplayCellId::new(DisplayRow::new(0), 0);
+        self.focused_cell = Some(display_cell);
+        // Set anchor to the same cell for consistent visual feedback
+        self.selection_anchor = Some(display_cell);
+        // Update selection to follow focus
+        self.selected_cells.clear();
         if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
-            let new_cell = DataCellId::new(data_row, 0);
-            self.focused_cell = Some(new_cell);
-            // Set anchor to the same cell for consistent visual feedback
-            self.selection_anchor = Some(new_cell);
-            // Update selection to follow focus
-            self.selected_cells.clear();
-            self.selected_cells.insert(new_cell);
+            self.selected_cells.insert(DataCellId::new(data_row, 0));
         }
     }
 
@@ -233,47 +220,35 @@ impl TableSelection {
         };
         let new_cell = match direction {
             NavigationDirection::Up => {
-                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
-                    if display_row.get() > 0 {
-                        let new_display_row = DisplayRow::new(display_row.get() - 1);
-                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
-                            Some(DataCellId::new(new_data_row, focused.col))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                if focused.row.get() > 0 {
+                    Some(DisplayCellId::new(
+                        DisplayRow::new(focused.row.get() - 1),
+                        focused.col,
+                    ))
                 } else {
                     None
                 }
             }
             NavigationDirection::Down => {
-                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
-                    if display_row.get() < max_rows.saturating_sub(1) {
-                        let new_display_row = DisplayRow::new(display_row.get() + 1);
-                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
-                            Some(DataCellId::new(new_data_row, focused.col))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                if focused.row.get() < max_rows.saturating_sub(1) {
+                    Some(DisplayCellId::new(
+                        DisplayRow::new(focused.row.get() + 1),
+                        focused.col,
+                    ))
                 } else {
                     None
                 }
             }
             NavigationDirection::Left => {
                 if focused.col > 0 {
-                    Some(DataCellId::new(focused.row, focused.col - 1))
+                    Some(DisplayCellId::new(focused.row, focused.col - 1))
                 } else {
                     None
                 }
             }
             NavigationDirection::Right => {
                 if focused.col < max_cols.saturating_sub(1) {
-                    Some(DataCellId::new(focused.row, focused.col + 1))
+                    Some(DisplayCellId::new(focused.row, focused.col + 1))
                 } else {
                     None
                 }
@@ -286,7 +261,11 @@ impl TableSelection {
             // Set anchor to the same cell for consistent visual feedback
             self.selection_anchor = Some(new_cell);
             self.selected_cells.clear();
-            self.selected_cells.insert(new_cell);
+            // Convert to data coordinates for storage
+            if let Some(data_row) = ordered_indices.get_data_row(new_cell.row) {
+                self.selected_cells
+                    .insert(DataCellId::new(data_row, new_cell.col));
+            }
         }
     }
 
@@ -342,25 +321,18 @@ impl TableSelection {
         if let (Some(anchor), Some(focused)) = (self.selection_anchor, self.focused_cell) {
             self.selected_cells.clear();
 
-            // Get display coordinates for both anchor and focus
-            if let (Some(anchor_display_row), Some(focused_display_row)) = (
-                ordered_indices.get_display_row(anchor.row),
-                ordered_indices.get_display_row(focused.row),
-            ) {
-                // Create rectangle in display coordinates
-                let min_display_row = anchor_display_row.get().min(focused_display_row.get());
-                let max_display_row = anchor_display_row.get().max(focused_display_row.get());
-                let min_col = anchor.col.min(focused.col);
-                let max_col = anchor.col.max(focused.col);
+            // Create rectangle in display coordinates (both anchor and focus are already in display coordinates)
+            let min_display_row = anchor.row.get().min(focused.row.get());
+            let max_display_row = anchor.row.get().max(focused.row.get());
+            let min_col = anchor.col.min(focused.col);
+            let max_col = anchor.col.max(focused.col);
 
-                // Convert each display cell to data coordinates for storage
-                for display_r in min_display_row..=max_display_row {
-                    for c in min_col..=max_col {
-                        if let Some(data_row) =
-                            ordered_indices.get_data_row(DisplayRow::new(display_r))
-                        {
-                            self.selected_cells.insert(DataCellId::new(data_row, c));
-                        }
+            // Convert each display cell to data coordinates for storage
+            for display_r in min_display_row..=max_display_row {
+                for c in min_col..=max_col {
+                    if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(display_r))
+                    {
+                        self.selected_cells.insert(DataCellId::new(data_row, c));
                     }
                 }
             }
@@ -386,61 +358,48 @@ impl TableSelection {
             self.set_selection_anchor();
         }
 
-        // Move focus in the specified direction
         let Some(focused) = self.focused_cell else {
             return;
         };
 
         let new_cell = match direction {
             NavigationDirection::Up => {
-                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
-                    if display_row.get() > 0 {
-                        let new_display_row = DisplayRow::new(display_row.get() - 1);
-                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
-                            Some(DataCellId::new(new_data_row, focused.col))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                if focused.row.get() > 0 {
+                    Some(DisplayCellId::new(
+                        DisplayRow::new(focused.row.get() - 1),
+                        focused.col,
+                    ))
                 } else {
                     None
                 }
             }
             NavigationDirection::Down => {
-                if let Some(display_row) = ordered_indices.get_display_row(focused.row) {
-                    if display_row.get() < max_rows.saturating_sub(1) {
-                        let new_display_row = DisplayRow::new(display_row.get() + 1);
-                        if let Some(new_data_row) = ordered_indices.get_data_row(new_display_row) {
-                            Some(DataCellId::new(new_data_row, focused.col))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                if focused.row.get() < max_rows.saturating_sub(1) {
+                    Some(DisplayCellId::new(
+                        DisplayRow::new(focused.row.get() + 1),
+                        focused.col,
+                    ))
                 } else {
                     None
                 }
             }
             NavigationDirection::Left => {
                 if focused.col > 0 {
-                    Some(DataCellId::new(focused.row, focused.col - 1))
+                    Some(DisplayCellId::new(focused.row, focused.col - 1))
                 } else {
                     None
                 }
             }
             NavigationDirection::Right => {
                 if focused.col < max_cols.saturating_sub(1) {
-                    Some(DataCellId::new(focused.row, focused.col + 1))
+                    Some(DisplayCellId::new(focused.row, focused.col + 1))
                 } else {
                     None
                 }
             }
         };
 
-        // Update focus and selection if movement was valid
+        // Update focus and rebuild selection rectangle
         if let Some(new_cell) = new_cell {
             self.focused_cell = Some(new_cell);
             self.update_range_selection(ordered_indices);
@@ -511,16 +470,12 @@ impl TableSelection {
             }
         }
 
-        // Set focus to the first cell and anchor to the last cell
-        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
-            self.focused_cell = Some(DataCellId::new(first_data_row, 0));
-
-            // Set anchor to the last cell for potential extending
-            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
-            {
-                self.selection_anchor = Some(DataCellId::new(last_data_row, max_cols - 1));
-            }
-        }
+        // Set focus to the first cell and anchor to the last cell in display coordinates
+        self.focused_cell = Some(DisplayCellId::new(DisplayRow::new(0), 0));
+        self.selection_anchor = Some(DisplayCellId::new(
+            DisplayRow::new(max_rows - 1),
+            max_cols - 1,
+        ));
     }
 
     /// Jump focus to the top row (first row in display order)
@@ -530,12 +485,14 @@ impl TableSelection {
             return;
         };
 
-        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
-            let new_cell = DataCellId::new(first_data_row, focused.col);
-            self.focused_cell = Some(new_cell);
-            self.selection_anchor = Some(new_cell);
-            self.selected_cells.clear();
-            self.selected_cells.insert(new_cell);
+        let new_cell = DisplayCellId::new(DisplayRow::new(0), focused.col);
+        self.focused_cell = Some(new_cell);
+        self.selection_anchor = Some(new_cell);
+        self.selected_cells.clear();
+        // Convert to data coordinates for storage
+        if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
+            self.selected_cells
+                .insert(DataCellId::new(data_row, focused.col));
         }
     }
 
@@ -547,13 +504,14 @@ impl TableSelection {
         };
 
         if max_rows > 0 {
-            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
-            {
-                let new_cell = DataCellId::new(last_data_row, focused.col);
-                self.focused_cell = Some(new_cell);
-                self.selection_anchor = Some(new_cell);
-                self.selected_cells.clear();
-                self.selected_cells.insert(new_cell);
+            let new_cell = DisplayCellId::new(DisplayRow::new(max_rows - 1), focused.col);
+            self.focused_cell = Some(new_cell);
+            self.selection_anchor = Some(new_cell);
+            self.selected_cells.clear();
+            // Convert to data coordinates for storage
+            if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1)) {
+                self.selected_cells
+                    .insert(DataCellId::new(data_row, focused.col));
             }
         }
     }
@@ -565,11 +523,14 @@ impl TableSelection {
             return;
         };
 
-        let new_cell = DataCellId::new(focused.row, 0);
+        let new_cell = DisplayCellId::new(focused.row, 0);
         self.focused_cell = Some(new_cell);
         self.selection_anchor = Some(new_cell);
         self.selected_cells.clear();
-        self.selected_cells.insert(new_cell);
+        // Convert to data coordinates for storage
+        if let Some(data_row) = ordered_indices.get_data_row(focused.row) {
+            self.selected_cells.insert(DataCellId::new(data_row, 0));
+        }
     }
 
     /// Jump focus to the rightmost column (last column)
@@ -580,11 +541,15 @@ impl TableSelection {
         };
 
         if max_cols > 0 {
-            let new_cell = DataCellId::new(focused.row, max_cols - 1);
+            let new_cell = DisplayCellId::new(focused.row, max_cols - 1);
             self.focused_cell = Some(new_cell);
             self.selection_anchor = Some(new_cell);
             self.selected_cells.clear();
-            self.selected_cells.insert(new_cell);
+            // Convert to data coordinates for storage
+            if let Some(data_row) = ordered_indices.get_data_row(focused.row) {
+                self.selected_cells
+                    .insert(DataCellId::new(data_row, max_cols - 1));
+            }
         }
     }
 
@@ -595,17 +560,15 @@ impl TableSelection {
             return;
         };
 
-        if let Some(first_data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {
-            let new_cell = DataCellId::new(first_data_row, focused.col);
-            self.focused_cell = Some(new_cell);
+        let new_cell = DisplayCellId::new(DisplayRow::new(0), focused.col);
+        self.focused_cell = Some(new_cell);
 
-            // Set anchor if not already set
-            if self.selection_anchor.is_none() {
-                self.selection_anchor = Some(focused);
-            }
-
-            self.update_range_selection(ordered_indices);
+        // Set anchor if not already set
+        if self.selection_anchor.is_none() {
+            self.selection_anchor = Some(focused);
         }
+
+        self.update_range_selection(ordered_indices);
     }
 
     /// Extend selection to the bottom row while keeping anchor
@@ -620,18 +583,15 @@ impl TableSelection {
         };
 
         if max_rows > 0 {
-            if let Some(last_data_row) = ordered_indices.get_data_row(DisplayRow::new(max_rows - 1))
-            {
-                let new_cell = DataCellId::new(last_data_row, focused.col);
-                self.focused_cell = Some(new_cell);
+            let new_cell = DisplayCellId::new(DisplayRow::new(max_rows - 1), focused.col);
+            self.focused_cell = Some(new_cell);
 
-                // Set anchor if not already set
-                if self.selection_anchor.is_none() {
-                    self.selection_anchor = Some(focused);
-                }
-
-                self.update_range_selection(ordered_indices);
+            // Set anchor if not already set
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(focused);
             }
+
+            self.update_range_selection(ordered_indices);
         }
     }
 
@@ -642,7 +602,7 @@ impl TableSelection {
             return;
         };
 
-        let new_cell = DataCellId::new(focused.row, 0);
+        let new_cell = DisplayCellId::new(focused.row, 0);
         self.focused_cell = Some(new_cell);
 
         // Set anchor if not already set
@@ -665,7 +625,7 @@ impl TableSelection {
         };
 
         if max_cols > 0 {
-            let new_cell = DataCellId::new(focused.row, max_cols - 1);
+            let new_cell = DisplayCellId::new(focused.row, max_cols - 1);
             self.focused_cell = Some(new_cell);
 
             // Set anchor if not already set
