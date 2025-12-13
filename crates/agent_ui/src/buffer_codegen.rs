@@ -38,7 +38,6 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
-use ui::SharedString;
 
 /// Use this tool to provide a message to the user when you're unable to complete a task.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -274,7 +273,8 @@ pub struct CodegenAlternative {
     completion: Option<String>,
     selected_text: Option<String>,
     pub message_id: Option<String>,
-    pub model_explanation: Option<SharedString>,
+    pub description: Option<String>,
+    pub failure: Option<String>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -333,7 +333,8 @@ impl CodegenAlternative {
             elapsed_time: None,
             completion: None,
             selected_text: None,
-            model_explanation: None,
+            description: None,
+            failure: None,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
@@ -884,6 +885,16 @@ impl CodegenAlternative {
         self.completion.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_description(&self) -> Option<String> {
+        self.description.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_failure(&self) -> Option<String> {
+        self.failure.clone()
+    }
+
     pub fn selected_text(&self) -> Option<&str> {
         self.selected_text.as_deref()
     }
@@ -1100,7 +1111,7 @@ impl CodegenAlternative {
                             // Apply the replacement text to the buffer and compute diff
                             let batch_diff_task = codegen
                                 .update(cx, |this, cx| {
-                                    this.model_explanation = description.map(Into::into);
+                                    this.description = description.map(Into::into);
                                     let range = this.range.clone();
                                     this.apply_edits(
                                         std::iter::once((range, input.replacement_text)),
@@ -1129,8 +1140,7 @@ impl CodegenAlternative {
                     match serde_json::from_value::<FailureMessageInput>(tool_use.input) {
                         Ok(input) => {
                             let _ = codegen.update(cx, |this, _cx| {
-                                // Store the failure message as the tool description
-                                this.model_explanation = Some(input.message.into());
+                                this.failure = Some(input.message);
                             });
                             finish_with_status(CodegenStatus::Done, cx);
                             return;
