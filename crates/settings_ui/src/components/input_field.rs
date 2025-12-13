@@ -13,7 +13,7 @@ pub struct SettingsInputField {
     tab_index: Option<isize>,
 }
 
-// todo! can we just update ui_input::InputField to use window.use_state and render_once and remove this?
+// TODO: Update the `ui_input::InputField` to use `window.use_state` and `RenceOnce` and remove this component
 impl SettingsInputField {
     pub fn new() -> Self {
         Self {

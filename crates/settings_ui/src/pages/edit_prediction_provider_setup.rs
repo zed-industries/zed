@@ -29,7 +29,8 @@ impl EditPredictionSetupPage {
 impl Render for EditPredictionSetupPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings_window = self.settings_window.clone();
-        // todo! skip ep_store for loading keys
+
+        // TODO: Skip ep_store for loading keys
         let ep_store = EditPredictionStore::try_global(cx);
 
         let providers = [
@@ -71,7 +72,6 @@ impl Render for EditPredictionSetupPage {
                     |cx| language_models::MistralLanguageModelProvider::api_url(cx),
                     language_models::MistralLanguageModelProvider::try_global(cx)
                         .map(|provider| provider.state.clone()),
-                    // todo! preview: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
                     Some(settings_window.update(cx, |settings_window, cx| {
                         let codestral_settings = codestral_settings();
                         settings_window
