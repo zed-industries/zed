@@ -3744,7 +3744,7 @@ async fn test_inverted_diff(cx: &mut TestAppContext) {
         .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
-    let base_text_buffer = diff.read_with(cx, |diff, cx| diff.base_text_buffer());
+    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
@@ -3820,6 +3820,43 @@ async fn test_inverted_diff(cx: &mut TestAppContext) {
             - four
             - five
               six
+            "
+        },
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_text("ZERO\nONE\nTWO\n", cx);
+    });
+    cx.run_until_parked();
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
+                buffer.read(cx).text_snapshot(),
+                Some(base_text.into()),
+                false,
+                None,
+                cx,
+            )
+        })
+        .await;
+    diff.update(cx, |diff, cx| {
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), false, cx);
+    });
+    cx.run_until_parked();
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+            - one
+            - two
+            - three
+            - four
+            - five
+            - six
             "
         },
     );

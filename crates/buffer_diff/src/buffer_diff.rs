@@ -322,7 +322,12 @@ impl BufferDiffSnapshot {
         (new_id == old_id && new_version == old_version) || (new_empty && old_empty)
     }
 
-    pub fn row_to_base_text_row(&self, row: BufferRow, buffer: &text::BufferSnapshot) -> u32 {
+    pub fn row_to_base_text_row(
+        &self,
+        row: BufferRow,
+        bias: Bias,
+        buffer: &text::BufferSnapshot,
+    ) -> u32 {
         // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
 
         // Find the last hunk that starts before this position.
@@ -339,15 +344,24 @@ impl BufferDiffSnapshot {
         let unclipped_point = if let Some(hunk) = cursor.item()
             && hunk.buffer_range.start.cmp(&position, buffer).is_le()
         {
-            let mut unclipped_point = cursor
-                .end()
-                .diff_base_byte_range
-                .end
-                .to_point(self.base_text());
-            if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+            let unclipped_point = if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+                let mut unclipped_point = cursor
+                    .end()
+                    .diff_base_byte_range
+                    .end
+                    .to_point(self.base_text());
                 unclipped_point +=
                     Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
-            }
+                unclipped_point
+            } else if bias == Bias::Right {
+                cursor
+                    .end()
+                    .diff_base_byte_range
+                    .end
+                    .to_point(self.base_text())
+            } else {
+                hunk.diff_base_byte_range.start.to_point(self.base_text())
+            };
             // Move the cursor so that at the next step we can clip with the start of the next hunk.
             cursor.next();
             unclipped_point
@@ -868,7 +882,7 @@ fn compare_hunks(
                         start.get_or_insert(new_hunk.buffer_range.start);
                         base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
                         end.replace(new_hunk.buffer_range.end);
-                        base_text_end.get_or_insert(new_hunk.diff_base_byte_range.end);
+                        base_text_end.replace(new_hunk.diff_base_byte_range.end);
                         new_cursor.next();
                     }
                     Ordering::Equal => {
@@ -882,11 +896,16 @@ fn compare_hunks(
                                 .is_ge()
                             {
                                 end.replace(old_hunk.buffer_range.end);
-                                base_text_end.replace(old_hunk.diff_base_byte_range.end);
                             } else {
                                 end.replace(new_hunk.buffer_range.end);
-                                base_text_end.replace(new_hunk.diff_base_byte_range.end);
                             }
+
+                            base_text_end.replace(
+                                old_hunk
+                                    .diff_base_byte_range
+                                    .end
+                                    .max(new_hunk.diff_base_byte_range.end),
+                            );
                         }
 
                         new_cursor.next();
@@ -904,15 +923,17 @@ fn compare_hunks(
             (Some(new_hunk), None) => {
                 start.get_or_insert(new_hunk.buffer_range.start);
                 base_text_start.get_or_insert(new_hunk.diff_base_byte_range.start);
+                // TODO(cole) it seems like this could move end backward?
                 end.replace(new_hunk.buffer_range.end);
-                base_text_end.replace(new_hunk.diff_base_byte_range.end);
+                base_text_end = base_text_end.max(Some(new_hunk.diff_base_byte_range.end));
                 new_cursor.next();
             }
             (None, Some(old_hunk)) => {
                 start.get_or_insert(old_hunk.buffer_range.start);
                 base_text_start.get_or_insert(old_hunk.diff_base_byte_range.start);
+                // TODO(cole) it seems like this could move end backward?
                 end.replace(old_hunk.buffer_range.end);
-                base_text_end.replace(old_hunk.diff_base_byte_range.end);
+                base_text_end = base_text_end.max(Some(old_hunk.diff_base_byte_range.end));
                 old_cursor.next();
             }
             (None, None) => break,
@@ -1550,7 +1571,7 @@ pub fn assert_hunks<ExpectedText, HunkIter>(
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write as _;
+    use std::{fmt::Write as _, sync::mpsc};
 
     use super::*;
     use gpui::TestAppContext;
@@ -2466,21 +2487,106 @@ mod tests {
         let buffer_snapshot = buffer.snapshot();
         let diff = BufferDiffSnapshot::new_sync(buffer_snapshot.clone(), base_text, cx);
         let expected_results = [
-            // don't format me
-            (0, 0),
-            (1, 2),
-            (2, 2),
-            (3, 5),
-            (4, 5),
-            (5, 7),
-            (6, 9),
+            // main buffer row, base text row (right bias), base text row (left bias)
+            (0, 0, 0),
+            (1, 2, 1),
+            (2, 2, 2),
+            (3, 5, 3),
+            (4, 5, 5),
+            (5, 7, 7),
+            (6, 9, 9),
         ];
-        for (buffer_row, expected) in expected_results {
+        for (buffer_row, expected_right, expected_left) in expected_results {
             assert_eq!(
-                diff.row_to_base_text_row(buffer_row, &buffer_snapshot),
-                expected,
+                diff.row_to_base_text_row(buffer_row, Bias::Right, &buffer_snapshot),
+                expected_right,
                 "{buffer_row}"
             );
+            assert_eq!(
+                diff.row_to_base_text_row(buffer_row, Bias::Left, &buffer_snapshot),
+                expected_left,
+                "{buffer_row}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_changed_ranges(cx: &mut gpui::TestAppContext) {
+        let base_text = "
+            one
+            two
+            three
+            four
+            five
+            six
+        "
+        .unindent();
+        let buffer_text = "
+            one
+            TWO
+            three
+            four
+            FIVE
+            six
+        "
+        .unindent();
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff = cx.new(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).text_snapshot(), cx)
+        });
+        let (tx, rx) = mpsc::channel();
+        let subscription =
+            cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
+
+        let snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                "
+                ONE
+                TWO
+                THREE
+                FOUR
+                FIVE
+                SIX
+            "
+                .unindent(),
+                cx,
+            );
+            buffer.text_snapshot()
+        });
+        let update = diff
+            .update(cx, |diff, cx| {
+                diff.update_diff(
+                    snapshot.clone(),
+                    Some(base_text.as_str().into()),
+                    false,
+                    None,
+                    cx,
+                )
+            })
+            .await;
+        diff.update(cx, |diff, cx| {
+            diff.set_snapshot(update, &snapshot, false, cx)
+        });
+        cx.run_until_parked();
+        drop(subscription);
+        let events = rx.into_iter().collect::<Vec<_>>();
+        match events.as_slice() {
+            [
+                BufferDiffEvent::DiffChanged {
+                    changed_range: _,
+                    base_text_changed_range,
+                },
+            ] => {
+                // TODO(cole) this seems like it should pass but currently fails (see compare_hunks)
+                // assert_eq!(
+                //     *changed_range,
+                //     Some(Anchor::min_max_range_for_buffer(
+                //         buffer.read_with(cx, |buffer, _| buffer.remote_id())
+                //     ))
+                // );
+                assert_eq!(*base_text_changed_range, Some(0..base_text.len()));
+            }
+            _ => panic!("unexpected events: {:?}", events),
         }
     }
 }

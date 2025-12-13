@@ -10,7 +10,7 @@ use language::{Buffer, Capability};
 use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, PathKey};
 use project::Project;
 use rope::Point;
-use text::OffsetRangeExt as _;
+use text::{Bias, OffsetRangeExt as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
     Styled as _, Window, div,
@@ -341,7 +341,7 @@ impl SplittableEditor {
 
 #[cfg(test)]
 impl SplittableEditor {
-    fn check_invariants(&self, cx: &App) {
+    fn check_invariants(&self, quiesced: bool, cx: &App) {
         use buffer_diff::DiffHunkStatusKind;
         use collections::HashSet;
         use multi_buffer::MultiBufferOffset;
@@ -410,50 +410,35 @@ impl SplittableEditor {
         let secondary_excerpts = secondary.multibuffer.read(cx).excerpt_ids();
         assert_eq!(primary_excerpts.len(), secondary_excerpts.len(),);
 
-        let primary_diff_hunks = self
-            .primary_multibuffer
-            .read(cx)
-            .snapshot(cx)
-            .diff_hunks()
-            .collect::<Vec<_>>();
-        let secondary_diff_hunks = secondary
-            .multibuffer
-            .read(cx)
-            .snapshot(cx)
-            .diff_hunks()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            primary_diff_hunks.len(),
-            secondary_diff_hunks.len(),
-            "\n\nprimary: {primary_diff_hunks:#?}\nsecondary: {secondary_diff_hunks:#?}",
-        );
+        if quiesced {
+            let primary_snapshot = self.primary_multibuffer.read(cx).snapshot(cx);
+            let secondary_snapshot = secondary.multibuffer.read(cx).snapshot(cx);
+            let primary_diff_hunks = primary_snapshot
+                .diff_hunks()
+                .map(|hunk| hunk.diff_base_byte_range.clone())
+                .collect::<Vec<_>>();
+            let secondary_diff_hunks = secondary_snapshot
+                .diff_hunks()
+                .map(|hunk| hunk.diff_base_byte_range.clone())
+                .collect::<Vec<_>>();
+            pretty_assertions::assert_eq!(primary_diff_hunks, secondary_diff_hunks);
 
-        // self.primary_multibuffer.read(cx).check_invariants(cx);
-        // secondary.multibuffer.read(cx).check_invariants(cx);
-        // Assertions:...
-        //
-        // left.display_lines().filter(is_unmodified) == right.display_lines().filter(is_unmodified)
-        //
-        // left excerpts and right excerpts bijectivity
-        //
-        //
-
-        // let primary_buffer_text = self
-        //     .primary_multibuffer
-        //     .read(cx)
-        //     .text_summary_for_range(Anchor::min()..Anchor::max());
-        // let secondary_buffer_text = secondary
-        //     .multibuffer
-        //     .read(cx)
-        //     .text_summary_for_range(Anchor::min()..Anchor::max());
-        // let primary_buffer_base_text = self
-        //     .primary_multibuffer
-        //     .read(cx)
-        //     .base_text_summary_for_range(Anchor::min()..Anchor::max());
-        // let secondary_buffer_base_text = secondary
-        //     .multibuffer
-        //     .read(cx)
-        //     .base_text_summary_for_range(Anchor::min()..Anchor::max());
+            let primary_unmodified_rows = primary_snapshot
+                .text()
+                .split("\n")
+                .zip(primary_snapshot.row_infos(MultiBufferRow(0)))
+                .filter(|(_, row_info)| row_info.diff_status.is_none())
+                .map(|(line, _)| line.to_owned())
+                .collect::<Vec<_>>();
+            let secondary_unmodified_rows = secondary_snapshot
+                .text()
+                .split("\n")
+                .zip(secondary_snapshot.row_infos(MultiBufferRow(0)))
+                .filter(|(_, row_info)| row_info.diff_status.is_none())
+                .map(|(line, _)| line.to_owned())
+                .collect::<Vec<_>>();
+            pretty_assertions::assert_eq!(primary_unmodified_rows, secondary_unmodified_rows);
+        }
     }
 
     fn randomly_edit_excerpts(
@@ -535,62 +520,6 @@ impl SplittableEditor {
             }
         }
     }
-
-    fn randomly_mutate(
-        &mut self,
-        rng: &mut impl rand::Rng,
-        mutation_count: usize,
-        cx: &mut Context<Self>,
-    ) {
-        use rand::prelude::*;
-
-        if rng.random_bool(0.7) {
-            let buffers = self.primary_editor.read(cx).buffer().read(cx).all_buffers();
-            let buffer = buffers.iter().choose(rng);
-
-            if let Some(buffer) = buffer {
-                buffer.update(cx, |buffer, cx| {
-                    if rng.random() {
-                        log::info!("randomly editing single buffer");
-                        buffer.randomly_edit(rng, mutation_count, cx);
-                    } else {
-                        log::info!("randomly undoing/redoing in single buffer");
-                        buffer.randomly_undo_redo(rng, cx);
-                    }
-                });
-            } else {
-                log::info!("randomly editing multibuffer");
-                self.primary_multibuffer.update(cx, |multibuffer, cx| {
-                    multibuffer.randomly_edit(rng, mutation_count, cx);
-                });
-            }
-        } else if rng.random() {
-            self.randomly_edit_excerpts(rng, mutation_count, cx);
-        } else {
-            log::info!("updating diffs and excerpts");
-            for buffer in self.primary_multibuffer.read(cx).all_buffers() {
-                let diff = self
-                    .primary_multibuffer
-                    .read(cx)
-                    .diff_for(buffer.read(cx).remote_id())
-                    .unwrap();
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
-                diff.update(cx, |diff, cx| {
-                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                });
-                // TODO(split-diff) might be a good idea to try to separate the diff recalculation from the excerpt recalculation
-                let diff_snapshot = diff.read(cx).snapshot(cx);
-                let ranges = diff_snapshot
-                    .hunks(&buffer_snapshot)
-                    .map(|hunk| hunk.range.clone())
-                    .collect::<Vec<_>>();
-                let path = PathKey::for_buffer(&buffer, cx);
-                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-            }
-        }
-
-        self.check_invariants(cx);
-    }
 }
 
 impl EventEmitter<EditorEvent> for SplittableEditor {}
@@ -655,9 +584,13 @@ impl SecondaryEditor {
             .into_iter()
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
-                    let start_row =
-                        diff_snapshot.row_to_base_text_row(range.start.row, main_buffer);
-                    let end_row = diff_snapshot.row_to_base_text_row(range.end.row, main_buffer);
+                    let start_row = diff_snapshot.row_to_base_text_row(
+                        range.start.row,
+                        Bias::Left,
+                        main_buffer,
+                    );
+                    let end_row =
+                        diff_snapshot.row_to_base_text_row(range.end.row, Bias::Right, main_buffer);
                     let end_column = diff_snapshot.base_text().line_len(end_row);
                     Point::new(start_row, 0)..Point::new(end_row, end_column)
                 };
@@ -692,7 +625,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::AppContext as _;
     use language::Capability;
-    use multi_buffer::MultiBuffer;
+    use multi_buffer::{MultiBuffer, PathKey};
     use project::Project;
     use rand::rngs::StdRng;
     use settings::SettingsStore;
@@ -712,6 +645,8 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+        use rand::prelude::*;
+
         init_test(cx);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let (workspace, cx) =
@@ -728,10 +663,84 @@ mod tests {
             editor
         });
 
-        for _ in 0..10 {
+        let operations = std::env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(20);
+        let rng = &mut rng;
+        for _ in 0..operations {
             editor.update(cx, |editor, cx| {
-                editor.randomly_mutate(&mut rng, 5, cx);
-            })
+                let buffers = editor
+                    .primary_editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_buffers();
+
+                if buffers.is_empty() {
+                    editor.randomly_edit_excerpts(rng, 2, cx);
+                    editor.check_invariants(true, cx);
+                    return;
+                }
+
+                let quiesced = match rng.random_range(0..100) {
+                    0..=69 if !buffers.is_empty() => {
+                        let buffer = buffers.iter().choose(rng).unwrap();
+                        buffer.update(cx, |buffer, cx| {
+                            if rng.random() {
+                                log::info!("randomly editing single buffer");
+                                buffer.randomly_edit(rng, 5, cx);
+                            } else {
+                                log::info!("randomly undoing/redoing in single buffer");
+                                buffer.randomly_undo_redo(rng, cx);
+                            }
+                        });
+                        false
+                    }
+                    70..=79 => {
+                        log::info!("mutating excerpts");
+                        editor.randomly_edit_excerpts(rng, 2, cx);
+                        false
+                    }
+                    80..=89 if !buffers.is_empty() => {
+                        log::info!("recalculating buffer diff");
+                        let buffer = buffers.iter().choose(rng).unwrap();
+                        let diff = editor
+                            .primary_multibuffer
+                            .read(cx)
+                            .diff_for(buffer.read(cx).remote_id())
+                            .unwrap();
+                        let buffer_snapshot = buffer.read(cx).text_snapshot();
+                        diff.update(cx, |diff, cx| {
+                            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                        });
+                        false
+                    }
+                    _ => {
+                        log::info!("quiescing");
+                        for buffer in buffers {
+                            let buffer_snapshot = buffer.read(cx).text_snapshot();
+                            let diff = editor
+                                .primary_multibuffer
+                                .read(cx)
+                                .diff_for(buffer.read(cx).remote_id())
+                                .unwrap();
+                            diff.update(cx, |diff, cx| {
+                                diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                            });
+                            let diff_snapshot = diff.read(cx).snapshot(cx);
+                            let ranges = diff_snapshot
+                                .hunks(&buffer_snapshot)
+                                .map(|hunk| hunk.range.clone())
+                                .collect::<Vec<_>>();
+                            let path = PathKey::for_buffer(&buffer, cx);
+                            editor.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
+                        }
+                        true
+                    }
+                };
+
+                editor.check_invariants(quiesced, cx);
+            });
         }
     }
 }

@@ -3143,6 +3143,11 @@ impl MultiBuffer {
                             inserted_hunk_info: Some(hunk),
                             ..
                         }) => excerpts.item().is_some_and(|excerpt| {
+                            if let Some(diff) = snapshot.diffs.get(&excerpt.buffer_id)
+                                && let Some(main_buffer) = &diff.main_buffer
+                            {
+                                return hunk.hunk_start_anchor.is_valid(main_buffer);
+                            }
                             hunk.hunk_start_anchor.is_valid(&excerpt.buffer)
                         }),
                         _ => true,
@@ -3259,6 +3264,7 @@ impl MultiBuffer {
                             log::trace!("skipping hunk that starts before excerpt");
                             continue;
                         }
+                        hunk_buffer_range.end.to_point(&excerpt.buffer);
                         let hunk_excerpt_start = excerpt_start
                             + hunk_buffer_range.start.saturating_sub(excerpt_buffer_start);
                         let hunk_excerpt_end = excerpt_end
