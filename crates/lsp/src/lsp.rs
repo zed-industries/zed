@@ -48,9 +48,9 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 /// The default amount of time to wait while initializing or fetching LSP servers, in seconds.
 pub const DEFAULT_LSP_REQUEST_TIMEOUT_SECS: u64 = 120;
-const DEFAULT_LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS); 
-// TODO: Remove this constant (only used for LSP store) and make it adhere to the project settings LSP timeout 
-pub const LSP_REQUEST_TIMEOUT: Duration = DEFAULT_LSP_REQUEST_TIMEOUT; 
+const DEFAULT_LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS);
+// TODO: Remove this constant (only used for LSP store) and make it adhere to the project settings LSP timeout
+pub const LSP_REQUEST_TIMEOUT: Duration = DEFAULT_LSP_REQUEST_TIMEOUT;
 
 // TODO: Make this configurable as well
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1385,11 +1385,10 @@ impl LanguageServer {
             None => Either::Right(future::pending::<String>()),
         }
     }
-    
+
     pub fn request_timer(&self) -> impl Future<Output = String> {
         Self::request_timeout_future(self.executor.clone(), self.request_timeout)
     }
-
 
     /// Sends a RPC notification to the language server.
     ///

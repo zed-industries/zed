@@ -12,6 +12,7 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::{
     paths::{PathMatcher, PathStyle},

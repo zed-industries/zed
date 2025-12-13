@@ -5,7 +5,7 @@ use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
-use lsp::{LanguageServerName, DEFAULT_LSP_REQUEST_TIMEOUT_SECS};
+use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
@@ -106,7 +106,7 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
 }
 
 /// Common language server settings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct GlobalLspSettings {
     /// Whether to show the LSP servers button in the status bar.
@@ -117,7 +117,7 @@ pub struct GlobalLspSettings {
     /// Ignored if set to `0`.
     ///
     /// Default: `120`
-    pub request_timeout: ui64,
+    pub request_timeout: u64,
 }
 
 impl Default for GlobalLspSettings {
@@ -130,7 +130,7 @@ impl Default for GlobalLspSettings {
 }
 
 impl GlobalLspSettings {
-    /// Returns the timeout duration for the LSP settings, or None if no timeout should be used. 
+    /// Returns the timeout duration for the LSP settings, or None if no timeout should be used.
     pub fn request_timeout(&self) -> Option<Duration> {
         match self.request_timeout {
             0 => None,
@@ -567,6 +567,12 @@ impl Settings for ProjectSettings {
                     .as_ref()
                     .unwrap()
                     .button
+                    .unwrap(),
+                request_timeout: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .request_timeout
                     .unwrap(),
             },
             dap: project
