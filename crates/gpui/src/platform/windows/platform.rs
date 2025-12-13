@@ -409,10 +409,10 @@ impl Platform for WindowsPlatform {
         let mut hidden_windows = self.inner.state.hidden_windows.borrow_mut();
         hidden_windows.clear();
 
-        let hidden_windows_ptr = &mut *hidden_windows as *mut Vec<HWND>;
+        let current_pid = std::process::id();
         let mut context = HideOtherAppsContext {
-            current_pid: std::process::id(),
-            hidden_windows: hidden_windows_ptr,
+            current_pid,
+            hidden_windows: &mut *hidden_windows,
         };
 
         unsafe {
@@ -748,22 +748,19 @@ impl Platform for WindowsPlatform {
     }
 }
 
-struct HideOtherAppsContext {
+struct HideOtherAppsContext<'a> {
     current_pid: u32,
-    hidden_windows: *mut Vec<HWND>,
+    hidden_windows: &'a mut Vec<HWND>,
 }
 
 unsafe extern "system" fn hide_other_apps_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let context = unsafe { &mut *(lparam.0 as *mut HideOtherAppsContext) };
     if should_hide_window(hwnd, context.current_pid) {
-        let minimized = unsafe { ShowWindowAsync(hwnd, SW_MINIMIZE) }
-            .ok()
-            .log_err()
-            .is_some();
-        if minimized {
-            let hidden_windows = unsafe { &mut *context.hidden_windows };
-            hidden_windows.push(hwnd);
-        }
+        // Note: ShowWindowAsync returns the previous visibility state, not success/failure.
+        // Since we already filtered visible windows in should_hide_window, we record all
+        // windows we attempted to minimize.
+        unsafe { ShowWindowAsync(hwnd, SW_MINIMIZE) }.ok().log_err();
+        context.hidden_windows.push(hwnd);
     }
     BOOL(1)
 }
@@ -796,7 +793,12 @@ fn should_hide_window(hwnd: HWND, current_pid: u32) -> bool {
     }
 
     let ex_styles = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    // Skip tool windows (floating toolbars, etc.)
     if ex_styles & WS_EX_TOOLWINDOW.0 != 0 {
+        return false;
+    }
+    // Skip windows that should not be activated (often background/overlay windows)
+    if ex_styles & WS_EX_NOACTIVATE.0 != 0 {
         return false;
     }
 
