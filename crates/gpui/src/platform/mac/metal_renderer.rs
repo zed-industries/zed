@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, DrawOrder, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -521,6 +521,7 @@ impl MetalRenderer {
                             color_attachment.set_load_action(metal::MTLLoadAction::Load);
                         },
                     );
+                    command_encoder.set_depth_stencil_state(&self.depth_stencil_state);
 
                     if did_draw {
                         self.draw_paths_from_intermediate(
@@ -849,6 +850,7 @@ impl MetalRenderer {
                 .iter()
                 .map(|path| PathSprite {
                     bounds: path.clipped_bounds(),
+                    order: path.order,
                 })
                 .collect();
         } else {
@@ -856,7 +858,10 @@ impl MetalRenderer {
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.clipped_bounds());
             }
-            sprites = vec![PathSprite { bounds }];
+            sprites = vec![PathSprite {
+                bounds,
+                order: first_path.order,
+            }];
         }
 
         align_offset(instance_offset);
@@ -1407,6 +1412,7 @@ enum PathRasterizationInputIndex {
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
+    pub order: DrawOrder,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

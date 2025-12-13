@@ -16,6 +16,10 @@ float4 to_device_position_with_order(float2 unit_vertex, Bounds_ScaledPixels bou
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
+float4 to_device_position_transformed_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size,
+                          uint draw_order);
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
@@ -633,7 +637,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
-      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+      to_device_position_transformed_with_order(unit_vertex, sprite.bounds, sprite.transformation, viewport_size, sprite.order);
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -687,7 +691,7 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
   float4 device_position =
-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, sprite.bounds, viewport_size, sprite.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -818,7 +822,7 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   // Don't apply content mask because it was already accounted for when
   // rasterizing the path.
   float4 device_position =
-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, sprite.bounds, viewport_size, sprite.order);
 
   float2 screen_position = float2(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * float2(sprite.bounds.size.width, sprite.bounds.size.height);
   float2 texture_coords = screen_position / float2(viewport_size->width, viewport_size->height);
@@ -1040,6 +1044,31 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
   float2 device_position =
       transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float4 to_device_position_transformed_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size,
+                          uint draw_order) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+
+  // Apply the transformation matrix to the position via matrix multiplication.
+  float2 transformed_position = float2(0, 0);
+  transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
+  transformed_position[1] = position[0] * transformation.rotation_scale[1][0] + position[1] * transformation.rotation_scale[1][1];
+
+  // Add in the translation component of the transformation matrix.
+  transformed_position[0] += transformation.translation[0];
+  transformed_position[1] += transformation.translation[1];
+
+  float2 viewport_size = float2((float)input_viewport_size->width,
+                                (float)input_viewport_size->height);
+  float2 device_position =
+      transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
+  float depth = order_to_depth(draw_order);
+  return float4(device_position, depth, 1.);
 }
 
 
