@@ -453,9 +453,8 @@ where
         if vec.is_empty() {
             return Ok(None);
         } else {
-            // Validate that all tool calls have required fields and generate temporary IDs if needed
-            let mut processed_vec = Vec::new();
-            for (index, mut tool_call) in vec.into_iter().enumerate() {
+            // Validate that all tool calls have required fields
+            for tool_call in &vec {
                 if tool_call.r#type.is_none() || tool_call.function.is_none() {
                     return Ok(None); // Malformed - missing required type/function fields
                 }
@@ -466,13 +465,10 @@ where
                         return Ok(None); // Both name and arguments are empty
                     }
                 }
-                // Generate temporary ID if missing
-                if tool_call.id.is_none() {
-                    tool_call.id = Some(format!("temp-id-{}", index));
-                }
-                processed_vec.push(tool_call);
+                // Note: We allow missing id fields for streaming chunks
+                // They will be handled by the conversion logic
             }
-            return Ok(Some(processed_vec));
+            return Ok(Some(vec));
         }
     }
 
@@ -550,11 +546,11 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
     // But be more lenient for streaming scenarios
     if let Ok(tool_call) = serde_json::from_value::<ToolCallChunk>(value.clone()) {
         // For streaming, we only need type and function
-        // ID can be generated or missing in intermediate chunks
+        // ID can be missing in intermediate chunks for DeepSeek
         if tool_call.r#type.is_some() && tool_call.function.is_some() {
-            // Generate temporary ID if missing
-            let id = tool_call.id.or_else(|| Some(format!("temp-id-{}", index)));
-            return Some(ToolCallChunk { id, ..tool_call });
+            // Only generate temporary ID if we're in the non-standard path
+            // For DeepSeek streaming, missing ID in subsequent chunks is normal
+            return Some(tool_call);
         }
     }
 
@@ -638,7 +634,15 @@ pub struct ResponseStreamEvent {
 fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serde_json::Error> {
     // First try the standard parsing
     match serde_json::from_str(line) {
-        Ok(result) => return Ok(result),
+        Ok(result) => {
+            // Debug: check if finish_reason is preserved
+            if let ResponseStreamResult::Ok(ref event) = result {
+                if let Some(choice) = event.choices.first() {
+                    if choice.finish_reason.is_some() {}
+                }
+            }
+            return Ok(result);
+        }
         Err(_) => {
             // If standard parsing fails, try a more lenient approach
             let value: serde_json::Value = serde_json::from_str(line)?;
@@ -710,14 +714,43 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                                                                     {
                                                                         // For DeepSeek streaming, we don't require name field
                                                                         // A tool call is valid if it has either name or arguments (or both)
+                                                                        // However, for final chunks with finish_reason, we allow empty function objects
                                                                         let has_name = function_obj
                                                                             .get("name")
+                                                                            .and_then(|v| {
+                                                                                v.as_str()
+                                                                            })
+                                                                            .filter(|s| {
+                                                                                !s.is_empty()
+                                                                            })
                                                                             .is_some();
                                                                         let has_args = function_obj
                                                                             .get("arguments")
+                                                                            .and_then(|v| {
+                                                                                v.as_str()
+                                                                            })
+                                                                            .filter(|s| {
+                                                                                !s.is_empty()
+                                                                            })
                                                                             .is_some();
 
-                                                                        if has_name || has_args {
+                                                                        // Check if this is a final chunk with finish_reason
+                                                                        let is_final_chunk =
+                                                                            choice_value
+                                                                                .get(
+                                                                                    "finish_reason",
+                                                                                )
+                                                                                .and_then(|v| {
+                                                                                    v.as_str()
+                                                                                })
+                                                                                .is_some();
+
+                                                                        if has_name
+                                                                            || has_args
+                                                                            || (is_final_chunk
+                                                                                && function_obj
+                                                                                    .is_empty())
+                                                                        {
                                                                             // Check if arguments contain "malformed json" - this indicates a truly malformed call
                                                                             let is_malformed = function_obj.get("arguments")
                                                                                 .and_then(|v| v.as_str())
@@ -726,21 +759,23 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
 
                                                                             if !is_malformed {
                                                                                 // Create a valid ToolCallChunk
+                                                                                // For DeepSeek streaming, only use ID if it's present and non-empty
                                                                                 let tool_call_id = tool_call_value
                                                                                     .get("id")
                                                                                     .and_then(|v| v.as_str())
-                                                                                    .map(|s| s.to_string())
-                                                                                    .or_else(|| Some(format!("temp-id-{}", index)));
+                                                                                    .filter(|s| !s.is_empty()) // Filter out empty strings
+                                                                                    .map(|s| s.to_string());
 
                                                                                 let function_chunk = FunctionChunk {
                                                                                     name: function_obj.get("name")
                                                                                         .and_then(|v| v.as_str())
-                                                                                        .map(|s| s.to_string()),
+                                                                                        .map(|s| s.to_string()), // Keep empty strings
                                                                                     arguments: function_obj.get("arguments")
                                                                                         .and_then(|v| v.as_str())
-                                                                                        .map(|s| s.to_string()),
+                                                                                        .map(|s| s.to_string()), // Keep empty strings
                                                                                 };
 
+                                                                                // Always add the tool call for DeepSeek streaming
                                                                                 converted_tool_calls.push(ToolCallChunk {
                                                                                     index,
                                                                                     id: tool_call_id,
@@ -1121,11 +1156,8 @@ mod tests {
                         );
                         if let Some(tool_calls) = &delta.tool_calls {
                             assert_eq!(tool_calls.len(), 1, "Should have one tool call");
-                            assert!(tool_calls[0].id.is_some(), "Should have a generated ID");
-                            assert!(
-                                tool_calls[0].id.as_ref().unwrap().starts_with("temp-id-"),
-                                "Should have temporary ID"
-                            );
+                            // For DeepSeek streaming, ID might be None in intermediate chunks
+                            // This is OK as long as the tool call is otherwise valid
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().name,
                                 Some("search".to_string())
@@ -1150,7 +1182,7 @@ mod tests {
     #[test]
     fn test_deepseek_streaming_tool_calls() {
         // Test DeepSeek's streaming tool call responses
-        // First chunk: has name but no arguments
+        // First chunk: has id, name but no arguments
         let first_chunk = json!({
             "choices": [{
                 "index": 0,
@@ -1158,10 +1190,11 @@ mod tests {
                     "role": "assistant",
                     "tool_calls": [
                         {
+                            "id": "chatcmpl-tool-f77a6d4c2faa4f55a346e0504f0e5033",
                             "type": "function",
                             "function": {
-                                "name": "search",
-                                "arguments": ""
+                                "arguments": "",
+                                "name": "grep"
                             }
                         }
                     ]
@@ -1175,16 +1208,21 @@ mod tests {
                 assert_eq!(event.choices.len(), 1);
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(delta.tool_calls.is_some(), "Tool calls should be accepted");
+                        assert!(
+                            delta.tool_calls.is_some(),
+                            "Tool calls should be accepted, but got None in final chunk"
+                        );
                         if let Some(tool_calls) = &delta.tool_calls {
                             assert_eq!(tool_calls.len(), 1);
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().name,
-                                Some("search".to_string())
+                                Some("grep".to_string())
                             );
 
-                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
-                            assert!(tool_calls[0].id.as_ref().unwrap().starts_with("temp-id-"));
+                            assert_eq!(
+                                tool_calls[0].id,
+                                Some("chatcmpl-tool-f77a6d4c2faa4f55a346e0504f0e5033".to_string())
+                            );
                         }
                     }
                 }
@@ -1192,7 +1230,7 @@ mod tests {
             _ => panic!("Expected success response"),
         }
 
-        // Second chunk: has arguments but no name
+        // Second chunk: has arguments but no id or name
         let second_chunk = json!({
             "choices": [{
                 "index": 0,
@@ -1201,8 +1239,8 @@ mod tests {
                         {
                             "type": "function",
                             "function": {
-                                "name": "",
-                                "arguments": "{\"query\":\""
+                                "arguments": "{\"regex\":",
+                                "name": ""
                             }
                         }
                     ]
@@ -1224,13 +1262,14 @@ mod tests {
                             assert_eq!(tool_calls.len(), 1);
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().arguments,
-                                Some("{\"query\":\"".to_string())
+                                Some("{\"regex\":".to_string())
                             );
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().name,
                                 Some("".to_string())
                             );
-                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
+                            // No ID in this chunk
+                            assert!(tool_calls[0].id.is_none());
                         }
                     }
                 }
@@ -1247,8 +1286,8 @@ mod tests {
                         {
                             "type": "function",
                             "function": {
-                                "name": "",
-                                "arguments": "test\"}"
+                                "arguments": " \"copy.*agent.*thread\"",
+                                "name": ""
                             }
                         }
                     ]
@@ -1270,15 +1309,44 @@ mod tests {
                             assert_eq!(tool_calls.len(), 1);
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().arguments,
-                                Some("test\"}".to_string())
+                                Some(" \"copy.*agent.*thread\"".to_string())
                             );
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().name,
                                 Some("".to_string())
                             );
-                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
+                            // No ID in this chunk
+                            assert!(tool_calls[0].id.is_none());
                         }
                     }
+                }
+            }
+            _ => panic!("Expected success response"),
+        }
+    }
+    #[test]
+    fn test_deepseek_final_chunk_with_finish_reason() {
+        // Final chunk: has finish_reason and empty id
+        // Note: Based on actual DeepSeek behavior, the final chunk might not have tool_calls
+        let final_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "delta": {
+                    "role": "assistant"
+                }
+            }]
+        });
+
+        let result = parse_response_stream_result(&final_chunk.to_string());
+
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    assert_eq!(choice.finish_reason, Some("tool_calls".to_string()));
+                    // Final chunk might not have tool_calls, and that's OK
+                    // The important part is that finish_reason is preserved
                 }
             }
             _ => panic!("Expected success response"),
