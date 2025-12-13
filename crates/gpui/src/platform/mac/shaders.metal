@@ -77,7 +77,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position =
-      to_device_position_with_depth(unit_vertex, quad.bounds, viewport_size, quad.order);
+      to_device_position_with_order(unit_vertex, quad.bounds, viewport_size, quad.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
@@ -481,7 +481,7 @@ vertex ShadowVertexOutput shadow_vertex(
   bounds.size.height += 2. * margin;
 
   float4 device_position =
-      to_device_position(unit_vertex, bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, bounds, viewport_size, shadow.order);
   float4 clip_distance =
       distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
   float4 color = hsla_to_rgba(shadow.color);
@@ -566,7 +566,7 @@ vertex UnderlineVertexOutput underline_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
   float4 device_position =
-      to_device_position(unit_vertex, underline.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, underline.bounds, viewport_size, underline.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                  underline.content_mask.bounds);
   float4 color = hsla_to_rgba(underline.color);
@@ -859,7 +859,7 @@ vertex SurfaceVertexOutput surface_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   SurfaceBounds surface = surfaces[surface_id];
   float4 device_position =
-      to_device_position(unit_vertex, surface.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, surface.bounds, viewport_size, surface.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds,
                                                  surface.content_mask.bounds);
   // We are going to copy the whole texture, so the texture position corresponds

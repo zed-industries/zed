@@ -337,6 +337,7 @@ impl MetalRenderer {
             height: DevicePixels(size.height as i32),
         };
         self.update_path_intermediate_textures(device_pixels_size);
+        self.update_depth_texture(device_pixels_size);
     }
 
     fn update_depth_texture(&mut self, size: Size<DevicePixels>) {
