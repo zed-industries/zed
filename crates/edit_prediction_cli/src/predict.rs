@@ -9,6 +9,7 @@ use crate::{
     progress::{InfoStyle, Progress, Step},
     retrieve_context::run_context_retrieval,
 };
+use anyhow::Context as _;
 use edit_prediction::{DebugEvent, EditPredictionStore};
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
@@ -26,14 +27,14 @@ pub async fn run_prediction(
     repetition_count: usize,
     app_state: Arc<EpAppState>,
     mut cx: AsyncApp,
-) {
+) -> anyhow::Result<()> {
     if !example.predictions.is_empty() {
-        return;
+        return Ok(());
     }
 
-    let provider = provider.unwrap();
+    let provider = provider.context("provider is required")?;
 
-    run_context_retrieval(example, app_state.clone(), cx.clone()).await;
+    run_context_retrieval(example, app_state.clone(), cx.clone()).await?;
 
     if matches!(
         provider,
@@ -42,14 +43,14 @@ pub async fn run_prediction(
         let _step_progress = Progress::global().start(Step::Predict, &example.name);
 
         if example.prompt.is_none() {
-            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await;
+            run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
         }
 
         let batched = matches!(provider, PredictionProvider::Teacher);
         return predict_anthropic(example, repetition_count, batched).await;
     }
 
-    run_load_project(example, app_state.clone(), cx.clone()).await;
+    run_load_project(example, app_state.clone(), cx.clone()).await?;
 
     let _step_progress = Progress::global().start(Step::Predict, &example.name);
 
@@ -62,10 +63,9 @@ pub async fn run_prediction(
             .get_or_init(|| {
                 let client = app_state.client.clone();
                 cx.spawn(async move |cx| {
-                    client
-                        .sign_in_with_optional_connect(true, cx)
-                        .await
-                        .unwrap();
+                    if let Err(e) = client.sign_in_with_optional_connect(true, cx).await {
+                        eprintln!("Authentication failed: {}", e);
+                    }
                 })
                 .shared()
             })
@@ -73,33 +73,30 @@ pub async fn run_prediction(
             .await;
     }
 
-    let ep_store = cx
-        .update(|cx| EditPredictionStore::try_global(cx).unwrap())
-        .unwrap();
+    let ep_store = cx.update(|cx| {
+        EditPredictionStore::try_global(cx).context("EditPredictionStore not initialized")
+    })??;
 
-    ep_store
-        .update(&mut cx, |store, _cx| {
-            let model = match provider {
-                PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-                PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
-                PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
-                PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-                PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
-                    unreachable!()
-                }
-            };
-            store.set_edit_prediction_model(model);
-        })
-        .unwrap();
-    let state = example.state.as_ref().unwrap();
+    ep_store.update(&mut cx, |store, _cx| {
+        let model = match provider {
+            PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
+            PredictionProvider::Zeta2 => edit_prediction::EditPredictionModel::Zeta2,
+            PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
+            PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
+            PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching => {
+                unreachable!()
+            }
+        };
+        store.set_edit_prediction_model(model);
+    })?;
+    let state = example.state.as_ref().context("state must be set")?;
     let run_dir = RUN_DIR.join(&example.name);
 
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));
 
-    let mut debug_rx = ep_store
-        .update(&mut cx, |store, cx| store.debug_info(&state.project, cx))
-        .unwrap();
+    let mut debug_rx =
+        ep_store.update(&mut cx, |store, cx| store.debug_info(&state.project, cx))?;
     let debug_task = cx.background_spawn({
         let updated_example = updated_example.clone();
         let current_run_ix = current_run_ix.clone();
@@ -153,14 +150,14 @@ pub async fn run_prediction(
             run_dir.clone()
         };
 
-        fs::create_dir_all(&run_dir).unwrap();
+        fs::create_dir_all(&run_dir)?;
         if LATEST_EXAMPLE_RUN_DIR.is_symlink() {
-            fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR).unwrap();
+            fs::remove_file(&*LATEST_EXAMPLE_RUN_DIR)?;
         }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&run_dir, &*LATEST_EXAMPLE_RUN_DIR).unwrap();
+        std::os::unix::fs::symlink(&run_dir, &*LATEST_EXAMPLE_RUN_DIR)?;
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&run_dir, &*LATEST_EXAMPLE_RUN_DIR).unwrap();
+        std::os::windows::fs::symlink_dir(&run_dir, &*LATEST_EXAMPLE_RUN_DIR)?;
 
         updated_example
             .lock()
@@ -181,10 +178,8 @@ pub async fn run_prediction(
                     cloud_llm_client::PredictEditsRequestTrigger::Cli,
                     cx,
                 )
-            })
-            .unwrap()
-            .await
-            .unwrap();
+            })?
+            .await?;
 
         let actual_patch = prediction
             .and_then(|prediction| {
@@ -213,20 +208,23 @@ pub async fn run_prediction(
         }
     }
 
-    ep_store
-        .update(&mut cx, |store, _| {
-            store.remove_project(&state.project);
-        })
-        .unwrap();
-    debug_task.await.unwrap();
+    ep_store.update(&mut cx, |store, _| {
+        store.remove_project(&state.project);
+    })?;
+    debug_task.await?;
 
     *example = Arc::into_inner(updated_example)
-        .unwrap()
+        .ok_or_else(|| anyhow::anyhow!("Failed to unwrap Arc"))?
         .into_inner()
-        .unwrap();
+        .map_err(|_| anyhow::anyhow!("Failed to unwrap Mutex"))?;
+    Ok(())
 }
 
-async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batched: bool) {
+async fn predict_anthropic(
+    example: &mut Example,
+    _repetition_count: usize,
+    batched: bool,
+) -> anyhow::Result<()> {
     let llm_model_name = "claude-sonnet-4-5";
     let max_tokens = 16384;
     let llm_client = if batched {
@@ -234,12 +232,9 @@ async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batc
     } else {
         AnthropicClient::plain()
     };
-    let llm_client = llm_client.expect("Failed to create LLM client");
+    let llm_client = llm_client.context("Failed to create LLM client")?;
 
-    let prompt = example
-        .prompt
-        .as_ref()
-        .unwrap_or_else(|| panic!("Prompt is required for an example {}", &example.name));
+    let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
     let messages = vec![anthropic::Message {
         role: anthropic::Role::User,
@@ -251,11 +246,10 @@ async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batc
 
     let Some(response) = llm_client
         .generate(llm_model_name, max_tokens, messages)
-        .await
-        .unwrap()
+        .await?
     else {
         // Request stashed for batched processing
-        return;
+        return Ok(());
     };
 
     let actual_output = response
@@ -268,7 +262,7 @@ async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batc
         .collect::<Vec<String>>()
         .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(example, &actual_output);
+    let actual_patch = TeacherPrompt::parse(example, &actual_output)?;
 
     let prediction = ExamplePrediction {
         actual_patch,
@@ -277,19 +271,21 @@ async fn predict_anthropic(example: &mut Example, _repetition_count: usize, batc
     };
 
     example.predictions.push(prediction);
+    Ok(())
 }
 
-pub async fn sync_batches(provider: &PredictionProvider) {
+pub async fn sync_batches(provider: &PredictionProvider) -> anyhow::Result<()> {
     match provider {
         PredictionProvider::Teacher => {
             let cache_path = crate::paths::LLM_CACHE_DB.as_ref();
             let llm_client =
-                AnthropicClient::batch(cache_path).expect("Failed to create LLM client");
+                AnthropicClient::batch(cache_path).context("Failed to create LLM client")?;
             llm_client
                 .sync_batches()
                 .await
-                .expect("Failed to sync batches");
+                .context("Failed to sync batches")?;
         }
         _ => (),
-    }
+    };
+    Ok(())
 }

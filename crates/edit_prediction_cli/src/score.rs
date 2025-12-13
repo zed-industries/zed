@@ -15,7 +15,7 @@ pub async fn run_scoring(
     args: &PredictArgs,
     app_state: Arc<EpAppState>,
     cx: AsyncApp,
-) {
+) -> anyhow::Result<()> {
     run_prediction(
         example,
         Some(args.provider),
@@ -23,7 +23,7 @@ pub async fn run_scoring(
         app_state,
         cx,
     )
-    .await;
+    .await?;
 
     let _progress = Progress::global().start(Step::Score, &example.name);
 
@@ -43,6 +43,7 @@ pub async fn run_scoring(
     }
 
     example.score = scores;
+    Ok(())
 }
 
 fn parse_patch(patch: &str) -> Vec<DiffLine<'_>> {

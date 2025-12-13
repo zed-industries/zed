@@ -636,7 +636,6 @@ impl PickerDelegate for BranchListDelegate {
             return Task::ready(());
         };
 
-        const RECENT_BRANCHES_COUNT: usize = 10;
         let display_remotes = self.display_remotes;
         cx.spawn_in(window, async move |picker, cx| {
             let mut matches: Vec<Entry> = if query.is_empty() {
@@ -649,7 +648,6 @@ impl PickerDelegate for BranchListDelegate {
                             !branch.is_remote()
                         }
                     })
-                    .take(RECENT_BRANCHES_COUNT)
                     .map(|branch| Entry::Branch {
                         branch,
                         positions: Vec::new(),
