@@ -1431,6 +1431,17 @@ impl Workspace {
                             && let Ok(display_uuid) = display.uuid()
                         {
                             let window_bounds = window.inner_window_bounds();
+                            let has_paths = !this.root_paths(cx).is_empty();
+
+                            if !has_paths {
+                                cx.background_executor()
+                                    .spawn(persistence::write_no_project_window_bounds(
+                                        SerializedWindowBounds(window_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
+                            }
+
                             if let Some(database_id) = workspace_id {
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
@@ -1639,6 +1650,7 @@ impl Workspace {
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
+                let is_empty_workspace = project_paths.is_empty();
 
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
@@ -1647,6 +1659,13 @@ impl Workspace {
                     if let (Some(display), Some(bounds)) =
                         (workspace.display, workspace.window_bounds.as_ref())
                     {
+                        (Some(bounds.0), Some(display))
+                    } else {
+                        (None, None)
+                    }
+                } else if is_empty_workspace {
+                    // Empty workspace - try to restore the last known no-project window bounds
+                    if let Some((display, bounds)) = persistence::read_no_project_window_bounds() {
                         (Some(bounds.0), Some(display))
                     } else {
                         (None, None)
