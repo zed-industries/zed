@@ -29,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, ModMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -1018,6 +1018,12 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
+
                 let keystroke = {
                     let code = event.detail.into();
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -1082,6 +1088,11 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
+
+                // Macros containing modifiers might result in
+                // the modifiers missing from the event.
+                // We therefore update the mask from the global state.
+                update_xkb_mask_from_event_state(&mut state.xkb, event.state);
 
                 let keystroke = {
                     let code = event.detail.into();
@@ -2515,4 +2526,20 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[inline]
+fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::KeyButMask) {
+    let depressed_mods = event_state.remove((ModMask::LOCK | ModMask::M2).bits());
+    let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
+    let locked_mods = xkb.serialize_mods(xkbc::STATE_MODS_LOCKED);
+    let locked_layout = xkb.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+    xkb.update_mask(
+        depressed_mods.into(),
+        latched_mods,
+        locked_mods,
+        0,
+        0,
+        locked_layout,
+    );
 }
