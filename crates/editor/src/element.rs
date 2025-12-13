@@ -1017,10 +1017,16 @@ impl EditorElement {
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&event.modifiers(), cx);
+        let mouse_down_hovered_link_modifier = if let ClickEvent::Mouse(mouse_event) = event {
+            Editor::is_cmd_or_ctrl_pressed(&mouse_event.down.modifiers, cx)
+        } else {
+            true
+        };
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
             && hovered_link_modifier
+            && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
         {
             let point = position_map.point_for_position(mouse_position);
