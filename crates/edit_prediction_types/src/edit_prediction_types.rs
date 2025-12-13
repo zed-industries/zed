@@ -249,6 +249,12 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditPredictionGranularity {
+    Word,
+    Line,
+    Full,
+}
 /// Returns edits updated based on user edits since the old snapshot. None is returned if any user
 /// edit is not a prefix of a predicted insertion.
 pub fn interpolate_edits(
