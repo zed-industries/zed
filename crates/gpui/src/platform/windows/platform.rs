@@ -406,13 +406,15 @@ impl Platform for WindowsPlatform {
     fn hide(&self) {}
 
     fn hide_other_apps(&self) {
+        use std::ops::DerefMut;
+
         let mut hidden_windows = self.inner.state.hidden_windows.borrow_mut();
         hidden_windows.clear();
 
         let current_pid = std::process::id();
         let mut context = HideOtherAppsContext {
             current_pid,
-            hidden_windows: &mut *hidden_windows,
+            hidden_windows: hidden_windows.deref_mut(),
         };
 
         unsafe {
