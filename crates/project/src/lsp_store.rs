@@ -78,7 +78,7 @@ use lsp::{
     AdapterServerCapabilities, CodeActionKind, CompletionContext, CompletionOptions,
     DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
-    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LSP_REQUEST_TIMEOUT,
+    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, DEFAULT_LSP_REQUEST_TIMEOUT,
     LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
     LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
     OneOf, RenameFilesParams, SymbolKind, TextDocumentSyncSaveOptions, TextEdit, Uri,
@@ -399,7 +399,6 @@ impl LocalLspStore {
             let stderr_capture = stderr_capture.clone();
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
-            let request_timeout = request_timeout.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
                 let binary = binary.await?;
@@ -5518,7 +5517,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -5584,7 +5583,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -5650,7 +5649,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -5716,7 +5715,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -5783,7 +5782,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -5851,7 +5850,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -6013,7 +6012,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -6778,7 +6777,7 @@ impl LspStore {
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
@@ -7074,7 +7073,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 for_server.map(|id| id.to_proto()),
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -7422,7 +7421,7 @@ impl LspStore {
             let request_task = client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -7501,7 +7500,7 @@ impl LspStore {
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );
@@ -7565,7 +7564,7 @@ impl LspStore {
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );

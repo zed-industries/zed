@@ -47,12 +47,16 @@ const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 /// The default amount of time to wait while initializing or fetching LSP servers, in seconds.
+/// 
+/// Should not be used in most cases and is exported solely for use inside ProjectSettings defaults.
 pub const DEFAULT_LSP_REQUEST_TIMEOUT_SECS: u64 = 120;
-const DEFAULT_LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS);
-// TODO: Remove this constant (only used for LSP store) and make it adhere to the project settings LSP timeout
-pub const LSP_REQUEST_TIMEOUT: Duration = DEFAULT_LSP_REQUEST_TIMEOUT;
+/// A timeout representing the value of [DEFAULT_LSP_REQUEST_TIMEOUT_SECS].
+/// 
+/// Should **only be used as a fallback** when a corresponding config value cannot be obtained!
+pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS);
+// TODO: Figure out how to configure lsp_store to adhere to relevant config setting instead of
+// solely using this
 
-// TODO: Make this configurable as well
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
