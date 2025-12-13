@@ -310,7 +310,7 @@ message GitFileHistory {
     reserved 2;
     uint64 repository_id = 3;
     string path = 4;
-    uint64 skip = 5;
+    optional string last_commit_hash = 5;
     optional uint64 limit = 6;
 }
 
