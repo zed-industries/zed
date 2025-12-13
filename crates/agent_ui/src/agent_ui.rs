@@ -445,6 +445,7 @@ mod tests {
             default_height: px(600.),
             default_model: None,
             inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],

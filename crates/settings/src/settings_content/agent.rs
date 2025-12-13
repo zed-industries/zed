@@ -36,7 +36,13 @@ pub struct AgentSettingsContent {
     pub default_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
-    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model to use for the inline assistant when streaming tools are enabled.
+    ///
+    /// Default: true
+    pub inline_assistant_use_streaming_tools: Option<bool>,
+    /// Model to use for generating git commit messages.
+    ///
+    /// Default: true
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -128,6 +134,9 @@ impl AgentSettingsContent {
             provider: provider.into(),
             model,
         });
+    }
+    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
+        self.inline_assistant_use_streaming_tools = Some(use_tools);
     }
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {
