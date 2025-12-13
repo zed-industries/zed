@@ -885,6 +885,8 @@ impl TaskStatus {
     }
 }
 
+const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
+
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
@@ -1732,8 +1734,9 @@ impl Terminal {
             .last_hyperlink_search_position
             .map_or(true, |last_pos| {
                 // Only search if mouse moved significantly or enough time passed
-                let distance_moved =
-                    ((position.x - last_pos.x).abs() + (position.y - last_pos.y).abs()) > px(5.0);
+                let distance_moved = ((position.x - last_pos.x).abs()
+                    + (position.y - last_pos.y).abs())
+                    > FIND_HYPERLINK_THROTTLE_PX;
                 let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
                 distance_moved || time_elapsed
             })
@@ -2851,5 +2854,103 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+
+    mod perf {
+        use super::super::*;
+        use gpui::{
+            Entity, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext,
+            VisualTestContext, point,
+        };
+        use util::default;
+        use util_macros::perf;
+
+        async fn init_scroll_perf_test(
+            cx: &mut TestAppContext,
+        ) -> (Entity<Terminal>, &mut VisualTestContext) {
+            cx.update(|cx| {
+                let settings_store = settings::SettingsStore::test(cx);
+                cx.set_global(settings_store);
+            });
+
+            cx.executor().allow_parking();
+
+            let window = cx.add_empty_window();
+            let builder = window
+                .update(|window, cx| {
+                    let settings = TerminalSettings::get_global(cx);
+                    let test_path_hyperlink_timeout_ms = 100;
+                    TerminalBuilder::new(
+                        None,
+                        None,
+                        task::Shell::System,
+                        HashMap::default(),
+                        CursorShape::default(),
+                        AlternateScroll::On,
+                        None,
+                        settings.path_hyperlink_regexes.clone(),
+                        test_path_hyperlink_timeout_ms,
+                        false,
+                        window.window_handle().window_id().as_u64(),
+                        None,
+                        cx,
+                        vec![],
+                    )
+                })
+                .await
+                .unwrap();
+            let terminal = window.new(|cx| builder.subscribe(cx));
+
+            terminal.update(window, |term, cx| {
+                term.write_output("long line ".repeat(1000).as_bytes(), cx);
+            });
+
+            (terminal, window)
+        }
+
+        #[perf]
+        #[gpui::test]
+        async fn scroll_long_line_benchmark(cx: &mut TestAppContext) {
+            let (terminal, window) = init_scroll_perf_test(cx).await;
+            let wobble = point(FIND_HYPERLINK_THROTTLE_PX, px(0.0));
+            let mut scroll_by = |lines: i32| {
+                window.update_window_entity(&terminal, |terminal, window, cx| {
+                    let bounds = terminal.last_content.terminal_bounds.bounds;
+                    let center = bounds.origin + bounds.center();
+                    let position = center + wobble * lines as f32;
+
+                    terminal.mouse_move(
+                        &MouseMoveEvent {
+                            position,
+                            ..default()
+                        },
+                        cx,
+                    );
+
+                    terminal.scroll_wheel(
+                        &ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(Point::new(0.0, lines as f32)),
+                            ..default()
+                        },
+                        1.0,
+                    );
+
+                    assert!(
+                        terminal
+                            .events
+                            .iter()
+                            .any(|event| matches!(event, InternalEvent::Scroll(_))),
+                        "Should have Scroll event when scrolling within terminal bounds"
+                    );
+                    terminal.sync(window, cx);
+                });
+            };
+
+            for _ in 0..20 {
+                scroll_by(1);
+                scroll_by(-1);
+            }
+        }
     }
 }
