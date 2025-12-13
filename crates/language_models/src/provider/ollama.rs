@@ -43,6 +43,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
     pub api_url: String,
+    pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -238,10 +239,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let settings = OllamaLanguageModelProvider::settings(cx);
 
         // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            models.insert(model.name.clone(), model.clone());
+        if settings.auto_discover {
+            for model in self.state.read(cx).fetched_models.iter() {
+                models.insert(model.name.clone(), model.clone());
+            }
         }
 
         // Override with available models from settings
