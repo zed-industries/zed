@@ -520,6 +520,12 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
                     .filter(|s| !s.is_empty()) // Filter out empty strings
                     .map(|s| s.to_string());
 
+                // For DeepSeek streaming: if this is a subsequent chunk with empty name
+                // and no arguments, don't create a tool call chunk to avoid overriding
+                // the valid name from the first chunk
+                if name.is_none() && arguments.is_none() {
+                    return None;
+                }
                 // Create function chunk even if name or arguments are missing
                 // This allows for partial streaming data
                 let function_chunk = FunctionChunk { name, arguments };

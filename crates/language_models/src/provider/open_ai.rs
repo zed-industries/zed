@@ -583,8 +583,11 @@ impl OpenAiEventMapper {
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
+                        // Only update name if it's not empty to preserve the name from first chunk
                         if let Some(name) = function.name.clone() {
-                            entry.name = name;
+                            if !name.is_empty() {
+                                entry.name = name;
+                            }
                         }
 
                         if let Some(arguments) = function.arguments.clone() {
