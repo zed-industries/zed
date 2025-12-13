@@ -87,6 +87,10 @@ Zed is made up of several smaller crates - let's go over those you're most likel
 - [`cli`](/crates/cli) is the CLI crate which invokes the Zed binary.
 - [`zed`](/crates/zed) is where all things come together, and the `main` entry point for Zed.
 
+## Learning Rust
+
+Zed is written primarily in rust. Coming from a different language like TypeScript or C++? It may be helpful to follow something like [rustlings](https://rustlings.rust-lang.org/) to see how rust is different.
+
 ## Packaging Zed
 
 Check our [notes for packaging Zed](https://zed.dev/docs/development/linux#notes-for-packaging-zed).
