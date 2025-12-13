@@ -1175,6 +1175,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    mouse_cursor_hidden: bool,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1460,6 +1461,26 @@ impl Workspace {
                     store.workspaces.remove(&window_handle);
                 })
             }),
+            cx.intercept_keystrokes(|event, _, cx| {
+                if event.keystroke.modifiers.platform
+                    || event.keystroke.modifiers.control
+                    || event.keystroke.modifiers.alt
+                {
+                    return;
+                }
+
+                cx.active_window()
+                    .and_then(|w| w.downcast::<Workspace>())
+                    .map(|workspace| {
+                        cx.defer(move |cx| {
+                            workspace
+                                .update(cx, |workspace, _window, cx| {
+                                    workspace.hide_mouse_cursor(cx)
+                                })
+                                .log_err();
+                        });
+                    });
+            }),
         ];
 
         cx.defer_in(window, |this, window, cx| {
@@ -1519,6 +1540,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            mouse_cursor_hidden: false,
         }
     }
 
@@ -6359,6 +6381,20 @@ impl Workspace {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
+
+    fn hide_mouse_cursor(&mut self, cx: &mut Context<Self>) {
+        if !self.mouse_cursor_hidden {
+            self.mouse_cursor_hidden = true;
+            cx.notify();
+        }
+    }
+
+    fn show_mouse_cursor(&mut self, cx: &mut Context<Self>) {
+        if self.mouse_cursor_hidden {
+            self.mouse_cursor_hidden = false;
+            cx.notify();
+        }
+    }
 }
 
 fn leader_border_for_pane(
@@ -6682,7 +6718,7 @@ impl Render for Workspace {
             (None, None)
         };
         let ui_font = theme::setup_ui_font(window, cx);
-
+        let workspace = cx.entity();
         let theme = cx.theme().clone();
         let colors = theme.colors();
         let notification_entities = self
@@ -6705,6 +6741,11 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
+                .on_mouse_move(move |_event, _window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_mouse_cursor(cx);
+                    })
+                })
                 .children(self.titlebar_item.clone())
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
@@ -6718,6 +6759,19 @@ impl Render for Workspace {
                         .flex_1()
                         .flex()
                         .flex_col()
+                        .child({
+                            let mouse_cursor_hidden = self.mouse_cursor_hidden;
+                            canvas(
+                                |_bounds, _window, _cx| {},
+                                move |_bounds, _hitbox, window, _cx| {
+                                    if mouse_cursor_hidden {
+                                        window.set_window_cursor_style(CursorStyle::None);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        })
                         .child(
                             div()
                                 .id("workspace")
