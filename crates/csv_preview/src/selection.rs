@@ -184,6 +184,22 @@ impl TableSelection {
         }
     }
 
+    /// Check if any cell in the given display row has focus
+    pub fn is_row_focused(
+        &self,
+        display_row: DisplayRow,
+        ordered_indices: &OrderedIndices,
+    ) -> bool {
+        if let (Some(focused), Some(data_row)) = (
+            &self.focused_cell,
+            ordered_indices.get_data_row(display_row),
+        ) {
+            focused.row == data_row
+        } else {
+            false
+        }
+    }
+
     /// Initialize focus and selection to top-left cell if not already set
     fn ensure_focus_initialized(&mut self, ordered_indices: &OrderedIndices) {
         if let Some(data_row) = ordered_indices.get_data_row(DisplayRow::new(0)) {

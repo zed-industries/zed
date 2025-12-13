@@ -1,7 +1,7 @@
 use ui::{
-    AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Context,
-    ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _, SharedString, Styled as _,
-    StyledTypography as _, Tooltip, div,
+    ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
+    Clickable as _, Context, ElementId, FluentBuilder as _, IntoElement as _, ParentElement as _,
+    SharedString, Styled as _, StyledTypography as _, Tooltip, div,
 };
 
 use crate::{CsvPreviewView, settings::FontType, settings::RowIdentifiers};
@@ -143,10 +143,24 @@ impl CsvPreviewView {
                 .into(),
             RowIdentifiers::RowNum => (display_index + 1).to_string().into(),
         };
+        // Check if this row has focus to highlight the line number
+        let ordered_indices = self.get_ordered_indices();
+        let is_focused = self.selection.is_row_focused(
+            crate::types::DisplayRow::new(display_index),
+            ordered_indices,
+        );
+
+        // Use normal text color for focused row, muted color otherwise
+        let text_color = if is_focused {
+            cx.theme().colors().text
+        } else {
+            row_identifier_text_color
+        };
+
         let value = div()
             .flex()
             .child(row_identifier)
-            .text_color(row_identifier_text_color)
+            .text_color(text_color)
             .h_full()
             // Row identifiers are always centered
             .items_center()
