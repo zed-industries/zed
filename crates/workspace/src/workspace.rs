@@ -4,6 +4,7 @@ pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
+mod open_editor;
 pub mod pane;
 pub mod pane_group;
 mod path_list;
@@ -58,6 +59,9 @@ use node_runtime::NodeRuntime;
 use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
+};
+pub use open_editor::{
+    PreviewSourceExtractor, PreviewSourceRegistry, register_preview_source_extractor,
 };
 pub use pane::*;
 pub use pane_group::{
@@ -231,6 +235,8 @@ actions!(
         NewWindow,
         /// Opens a file or directory.
         Open,
+        /// Opens the source editor for the current preview.
+        OpenEditor,
         /// Opens multiple files.
         OpenFiles,
         /// Opens the current location in terminal.
@@ -568,6 +574,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);
+    open_editor::init(cx);
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
     cx.on_action(|_: &Reload, cx| reload(cx));
@@ -748,6 +755,42 @@ impl Global for ProjectItemRegistry {}
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     cx.default_global::<ProjectItemRegistry>().register::<I>();
 }
+
+/// Register a preview factory that can create preview views from items.
+/// Called by preview crates (markdown_preview, svg_preview) during initialization.
+pub fn register_preview_factory(factory: Arc<dyn PreviewFactory>, cx: &mut App) {
+    cx.default_global::<PreviewRegistry>()
+        .factories
+        .push(factory);
+}
+
+/// Factory trait for creating preview views from items.
+/// Preview crates (markdown_preview, svg_preview) implement this trait
+/// and register themselves with the workspace to avoid circular dependencies.
+pub trait PreviewFactory: Send + Sync {
+    /// Check if this factory can create a preview for the given item
+    fn can_preview(&self, item: &dyn ItemHandle, cx: &App) -> bool;
+
+    /// Check if this factory can preview files with the given extension (lightweight check)
+    fn can_preview_extension(&self, extension: &str) -> bool;
+
+    /// Create a preview view for the item
+    fn create_preview(
+        &self,
+        item: Box<dyn ItemHandle>,
+        language_registry: Arc<language::LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Box<dyn ItemHandle>;
+}
+
+/// Registry for preview factories that can create preview views from editors
+#[derive(Default)]
+pub struct PreviewRegistry {
+    factories: Vec<Arc<dyn PreviewFactory>>,
+}
+
+impl Global for PreviewRegistry {}
 
 #[derive(Default)]
 pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
@@ -3505,23 +3548,63 @@ impl Workspace {
         });
 
         let project_path = path.into();
+
+        // Check if preview mode should apply to this path
+        let preview_mode = self.check_preview_mode_for_path(&project_path, cx);
         let task = self.load_path(project_path.clone(), window, cx);
+        let workspace_handle = self.weak_self.clone();
+
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
 
-            pane.update_in(cx, |pane, window, cx| {
-                pane.open_item(
-                    project_entry_id,
-                    project_path,
-                    focus_item,
-                    allow_preview,
-                    activate,
-                    None,
-                    window,
-                    cx,
-                    build_item,
-                )
-            })
+            match preview_mode {
+                None => {
+                    // Normal flow: no preview mode
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.open_item(
+                            project_entry_id,
+                            project_path,
+                            focus_item,
+                            allow_preview,
+                            activate,
+                            None,
+                            window,
+                            cx,
+                            build_item,
+                        )
+                    })
+                }
+                Some(settings::PreviewMode::PreviewOnly) => {
+                    workspace_handle.update_in(cx, |workspace, window, cx| {
+                        workspace.open_with_preview_only(
+                            pane,
+                            project_entry_id,
+                            project_path,
+                            build_item,
+                            focus_item,
+                            allow_preview,
+                            activate,
+                            window,
+                            cx,
+                        )
+                    })?
+                }
+                Some(settings::PreviewMode::PreviewAndEditor) => {
+                    workspace_handle.update_in(cx, |workspace, window, cx| {
+                        workspace.open_with_preview_and_editor(
+                            pane,
+                            project_entry_id,
+                            project_path,
+                            build_item,
+                            focus_item,
+                            allow_preview,
+                            activate,
+                            window,
+                            cx,
+                        )
+                    })?
+                }
+            }
         })
     }
 
@@ -3633,6 +3716,188 @@ impl Workspace {
     {
         self.find_project_item::<T>(pane, project_item, cx)
             .is_some()
+    }
+
+    /// Check if a path matches any preview mode rules (lightweight, path-based check)
+    fn check_preview_mode_for_path(
+        &self,
+        path: &ProjectPath,
+        cx: &App,
+    ) -> Option<settings::PreviewMode> {
+        // Check if ANY registered preview factory can handle this file type by extension
+        let extension = path.path.extension()?;
+        let registry = cx.try_global::<PreviewRegistry>()?;
+        let can_preview = registry
+            .factories
+            .iter()
+            .any(|factory| factory.can_preview_extension(extension));
+
+        if !can_preview {
+            return None;
+        }
+
+        let settings = WorkspaceSettings::get(None, cx);
+
+        // Check rules in order (first match wins)
+        let path_style = self.project.read(cx).path_style(cx);
+        for rule in &settings.file_preview_modes {
+            let matcher =
+                util::paths::PathMatcher::new(std::slice::from_ref(&rule.filter), path_style)
+                    .ok()?;
+
+            if matcher.is_match(&path.path) {
+                return Some(rule.mode);
+            }
+        }
+
+        None
+    }
+
+    /// Create a preview view for an item using registered factories
+    fn create_preview_for_item(
+        &self,
+        item: Box<dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        // Find which factory can preview this item, then clone the Arc
+        let factory = {
+            let registry = cx.try_global::<PreviewRegistry>()?;
+
+            // Find the first factory that can preview this item
+            registry
+                .factories
+                .iter()
+                .find(|factory| factory.can_preview(item.as_ref(), cx))
+                .cloned()?
+        };
+
+        // Get language registry from project before calling factory
+        let language_registry = self.project.read(cx).languages().clone();
+
+        // Now we can call create_preview without holding the registry borrow
+        Some(factory.create_preview(item, language_registry, window, cx))
+    }
+
+    /// Open a file with preview-only mode (from path-based check)
+    fn open_with_preview_only(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        project_entry_id: Option<ProjectEntryId>,
+        _project_path: ProjectPath,
+        build_item: WorkspaceItemBuilder,
+        focus_item: bool,
+        allow_preview: bool,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Box<dyn ItemHandle>> {
+        let pane = pane.upgrade().context("pane was dropped")?;
+
+        // Check if item already exists in pane
+        if let Some(project_entry_id) = project_entry_id {
+            if let Some(existing_item) = pane.read(cx).item_for_entry(project_entry_id, cx) {
+                pane.update(cx, |pane, cx| {
+                    let index = pane.index_for_item(existing_item.as_ref()).unwrap();
+                    if !allow_preview {
+                        pane.unpreview_item_if_preview(existing_item.item_id());
+                    }
+                    if activate {
+                        pane.activate_item(index, focus_item, focus_item, window, cx);
+                    }
+                });
+                return Ok(existing_item.boxed_clone());
+            }
+        }
+
+        // Build the editor (but don't add it to pane yet)
+        let editor = pane.update(cx, |pane, cx| build_item(pane, window, cx));
+
+        // Create preview from editor
+        let preview = self
+            .create_preview_for_item(editor.clone(), window, cx)
+            .context("Failed to create preview")?;
+
+        // Add preview to pane (not the editor)
+        pane.update(cx, |pane, cx| {
+            let destination_index = if allow_preview {
+                pane.close_current_preview_item(window, cx)
+            } else {
+                None
+            };
+
+            if allow_preview {
+                pane.replace_preview_item_id(preview.item_id(), window, cx);
+            }
+
+            pane.add_item_inner(
+                preview.clone(),
+                true,
+                focus_item,
+                activate,
+                destination_index,
+                window,
+                cx,
+            );
+        });
+
+        Ok(preview)
+    }
+
+    /// Open a file with preview-and-editor mode (from path-based check)
+    fn open_with_preview_and_editor(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        project_entry_id: Option<ProjectEntryId>,
+        project_path: ProjectPath,
+        build_item: WorkspaceItemBuilder,
+        focus_item: bool,
+        allow_preview: bool,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Box<dyn ItemHandle>> {
+        let pane = pane.upgrade().context("pane was dropped")?;
+
+        // First, open editor normally using pane.open_item
+        let editor = pane.update(cx, |pane, cx| {
+            pane.open_item(
+                project_entry_id,
+                project_path,
+                focus_item,
+                allow_preview,
+                activate,
+                None,
+                window,
+                cx,
+                build_item,
+            )
+        });
+
+        // Create preview from editor
+        let _ = match self.create_preview_for_item(editor.clone(), window, cx) {
+            Some(preview) => {
+                let preview_pane = self.adjacent_pane(window, cx);
+                let _ = preview_pane.update(cx, |preview_pane, cx| {
+                    preview_pane.add_item(
+                        preview, false, // Don't activate preview pane
+                        false, // Don't focus preview
+                        None, window, cx,
+                    );
+                });
+            }
+            None => {}
+        };
+
+        // Now activate and focus the editor in the original pane
+        pane.update(cx, |pane, cx| {
+            if let Some(item) = pane.active_item() {
+                let index = pane.index_for_item(item.as_ref()).unwrap();
+                pane.activate_item(index, activate, focus_item, window, cx);
+            }
+        });
+
+        Ok(editor)
     }
 
     pub fn open_project_item<T>(

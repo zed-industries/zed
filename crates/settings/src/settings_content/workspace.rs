@@ -112,6 +112,47 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Rules for automatic file preview modes.
+    /// Rules are evaluated in order; first match wins.
+    ///
+    /// Example:
+    /// ```json
+    /// "file_preview_modes": [
+    ///   {"filter": "README.md", "mode": "preview_only"},
+    ///   {"filter": "docs/**/*.md", "mode": "preview_and_editor"}
+    /// ]
+    /// ```
+    pub file_preview_modes: Option<Vec<FilePreviewModeRule>>,
+}
+
+/// Configuration for automatic file preview modes based on file patterns
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FilePreviewModeRule {
+    /// Glob pattern for matching files
+    /// Examples: "*.md", "docs/**/*.md", "README.md"
+    pub filter: String,
+
+    /// Preview mode to apply
+    /// - "preview_only": Show only preview (markdown/SVG)
+    /// - "preview_and_editor": Show both preview and editor side-by-side
+    #[serde(default = "default_preview_mode")]
+    pub mode: PreviewMode,
+}
+
+/// Mode for displaying file previews
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewMode {
+    /// Show only the preview view
+    PreviewOnly,
+
+    /// Show both preview and editor in split panes
+    #[default]
+    PreviewAndEditor,
+}
+
+fn default_preview_mode() -> PreviewMode {
+    PreviewMode::PreviewAndEditor
 }
 
 #[with_fallible_options]

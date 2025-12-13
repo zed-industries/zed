@@ -190,6 +190,10 @@ impl SvgPreviewView {
         )
     }
 
+    pub fn buffer(&self) -> Option<&Entity<Buffer>> {
+        self.buffer.as_ref()
+    }
+
     pub fn is_svg_file(buffer: &Entity<MultiBuffer>, cx: &App) -> bool {
         buffer
             .read(cx)
