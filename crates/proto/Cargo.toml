@@ -23,8 +23,6 @@ serde.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true
-protoc-bin-vendored = "3"
-which.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
