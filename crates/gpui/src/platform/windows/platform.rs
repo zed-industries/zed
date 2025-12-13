@@ -62,6 +62,7 @@ pub(crate) struct WindowsPlatformState {
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     directx_devices: RefCell<Option<DirectXDevices>>,
+    hidden_windows: RefCell<Vec<HWND>>,
 }
 
 #[derive(Default)]
@@ -88,6 +89,7 @@ impl WindowsPlatformState {
             current_cursor: Cell::new(current_cursor),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
+            hidden_windows: RefCell::new(Vec::new()),
         }
     }
 }
@@ -403,14 +405,36 @@ impl Platform for WindowsPlatform {
 
     fn hide(&self) {}
 
-    // todo(windows)
     fn hide_other_apps(&self) {
-        unimplemented!()
+        let mut hidden_windows = self.inner.state.hidden_windows.borrow_mut();
+        hidden_windows.clear();
+
+        let hidden_windows_ptr = &mut *hidden_windows as *mut Vec<HWND>;
+        let mut context = HideOtherAppsContext {
+            current_pid: std::process::id(),
+            hidden_windows: hidden_windows_ptr,
+        };
+
+        unsafe {
+            EnumWindows(
+                Some(hide_other_apps_enum_proc),
+                LPARAM(&mut context as *mut _ as isize),
+            )
+            .log_err();
+        }
     }
 
-    // todo(windows)
     fn unhide_other_apps(&self) {
-        unimplemented!()
+        let mut hidden_windows = self.inner.state.hidden_windows.borrow_mut();
+        for hwnd in hidden_windows.drain(..) {
+            unsafe {
+                if hwnd.is_invalid() || !IsWindow(Some(hwnd)).as_bool() {
+                    continue;
+                }
+
+                ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+            }
+        }
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -723,6 +747,87 @@ impl Platform for WindowsPlatform {
         self.update_jump_list(menus, entries)
     }
 }
+
+struct HideOtherAppsContext {
+    current_pid: u32,
+    hidden_windows: *mut Vec<HWND>,
+}
+
+unsafe extern "system" fn hide_other_apps_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let context = unsafe { &mut *(lparam.0 as *mut HideOtherAppsContext) };
+    if should_hide_window(hwnd, context.current_pid) {
+        let minimized = unsafe { ShowWindowAsync(hwnd, SW_MINIMIZE) }
+            .ok()
+            .log_err()
+            .is_some();
+        if minimized {
+            let hidden_windows = unsafe { &mut *context.hidden_windows };
+            hidden_windows.push(hwnd);
+        }
+    }
+    BOOL(1)
+}
+
+fn should_hide_window(hwnd: HWND, current_pid: u32) -> bool {
+    if hwnd.is_invalid() {
+        return false;
+    }
+
+    if !unsafe { IsWindowVisible(hwnd).as_bool() } {
+        return false;
+    }
+
+    let mut pid = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    if pid == current_pid {
+        return false;
+    }
+
+    if unsafe { IsIconic(hwnd).as_bool() } {
+        return false;
+    }
+
+    if let Ok(owner) = unsafe { GetWindow(hwnd, GW_OWNER) } {
+        if !owner.is_invalid() {
+            return false;
+        }
+    }
+
+    let ex_styles = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    if ex_styles & WS_EX_TOOLWINDOW.0 != 0 {
+        return false;
+    }
+
+    if let Some(class_name) = window_class_name(hwnd) {
+        if SHELL_WINDOW_CLASSES
+            .iter()
+            .any(|blocked| class_name.eq_ignore_ascii_case(blocked))
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn window_class_name(hwnd: HWND) -> Option<String> {
+    let mut buffer = [0u16; 256];
+    let len = unsafe { GetClassNameW(hwnd, &mut buffer) };
+    if len == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buffer[..len as usize]))
+}
+
+// Skip shell-managed windows (desktop, taskbar, etc.) when hiding other apps.
+const SHELL_WINDOW_CLASSES: &[&str] = &[
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+];
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
