@@ -310,8 +310,9 @@ message GitFileHistory {
     reserved 2;
     uint64 repository_id = 3;
     string path = 4;
-    uint64 skip = 5;
+    reserved 5; // Deprecated
     optional uint64 limit = 6;
+    optional string last_commit_hash = 7;
 }
 
 message GitFileHistoryResponse {
