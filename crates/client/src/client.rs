@@ -1744,6 +1744,7 @@ pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
     {
         return Some(stripped);
     }
+
     if let Some(stripped) = link
         .strip_prefix(ZED_URL_SCHEME)
         .and_then(|result| result.strip_prefix("://"))
