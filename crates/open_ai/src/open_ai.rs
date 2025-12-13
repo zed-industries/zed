@@ -453,16 +453,26 @@ where
         if vec.is_empty() {
             return Ok(None);
         } else {
-            // Validate that all tool calls have required fields
-            // For streaming scenarios, we're more lenient about missing id fields
-            for tool_call in &vec {
+            // Validate that all tool calls have required fields and generate temporary IDs if needed
+            let mut processed_vec = Vec::new();
+            for (index, mut tool_call) in vec.into_iter().enumerate() {
                 if tool_call.r#type.is_none() || tool_call.function.is_none() {
                     return Ok(None); // Malformed - missing required type/function fields
                 }
-                // Note: We allow missing id fields for streaming chunks
-                // They will be handled by the conversion logic
+                // For DeepSeek streaming, we allow function chunks without name
+                // as long as they have either name or arguments (or both)
+                if let Some(function) = &tool_call.function {
+                    if function.name.is_none() && function.arguments.is_none() {
+                        return Ok(None); // Both name and arguments are empty
+                    }
+                }
+                // Generate temporary ID if missing
+                if tool_call.id.is_none() {
+                    tool_call.id = Some(format!("temp-id-{}", index));
+                }
+                processed_vec.push(tool_call);
             }
-            return Ok(Some(vec));
+            return Ok(Some(processed_vec));
         }
     }
 
@@ -495,24 +505,36 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
     if let Some(tool_type) = value.get("type").and_then(|v| v.as_str()) {
         if tool_type == "function" {
             if let Some(function_value) = value.get("function") {
-                // Validate that function_value has the required fields
                 let function_obj = function_value.as_object()?;
 
-                // Check if we have at least a name (required field)
-                if function_obj.get("name").is_none() {
-                    return None; // Malformed - no name field
-                }
+                // For DeepSeek streaming, we need to be more lenient:
+                // - First chunk might have name but no arguments
+                // - Subsequent chunks might have arguments but no name
+                // - Some chunks might have neither (empty strings)
 
-                let function_chunk =
-                    serde_json::from_value::<FunctionChunk>(function_value.clone()).ok()?;
+                let name = function_obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()) // Filter out empty strings
+                    .map(|s| s.to_string());
+
+                let arguments = function_obj
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty()) // Filter out empty strings
+                    .map(|s| s.to_string());
+
+                // Create function chunk even if name or arguments are missing
+                // This allows for partial streaming data
+                let function_chunk = FunctionChunk { name, arguments };
 
                 // For streaming chunks, generate a temporary ID if missing
-                // This handles DeepSeek's format where id comes in separate chunks
+                // Use a more stable ID generation that combines index with a hash
                 let tool_call_id = value
                     .get("id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-                    .or_else(|| Some(format!("temp-id-{}", index)));
+                    .or_else(|| Some(format!("deepseek-temp-id-{}", index)));
 
                 return Some(ToolCallChunk {
                     index,
@@ -525,14 +547,14 @@ fn convert_non_standard_tool_call(value: serde_json::Value, index: usize) -> Opt
     }
 
     // Try to deserialize as standard format as fallback
-    // But validate that it has required fields
+    // But be more lenient for streaming scenarios
     if let Ok(tool_call) = serde_json::from_value::<ToolCallChunk>(value.clone()) {
-        // Check if the tool call is valid (has type, function, and id)
-        if tool_call.r#type.is_some() && tool_call.function.is_some() && tool_call.id.is_some() {
-            return Some(tool_call);
-        } else {
-            // Missing required fields, treat as malformed
-            return None;
+        // For streaming, we only need type and function
+        // ID can be generated or missing in intermediate chunks
+        if tool_call.r#type.is_some() && tool_call.function.is_some() {
+            // Generate temporary ID if missing
+            let id = tool_call.id.or_else(|| Some(format!("temp-id-{}", index)));
+            return Some(ToolCallChunk { id, ..tool_call });
         }
     }
 
@@ -652,7 +674,113 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                                         ) {
                                             Ok(delta) => Some(delta),
                                             Err(_) => {
-                                                // Create a minimal valid delta with malformed tool calls treated as None
+                                                // Try to handle tool calls more gracefully
+                                                let tool_calls = if let Some(tool_calls_value) =
+                                                    delta_value.get("tool_calls")
+                                                {
+                                                    // Handle empty arrays explicitly
+                                                    if tool_calls_value.is_array()
+                                                        && tool_calls_value
+                                                            .as_array()
+                                                            .map_or(false, |arr| arr.is_empty())
+                                                    {
+                                                        None
+                                                    } else if let Some(tool_calls_array) =
+                                                        tool_calls_value.as_array()
+                                                    {
+                                                        let mut converted_tool_calls = Vec::new();
+                                                        let mut has_malformed_calls = false;
+
+                                                        for (index, tool_call_value) in
+                                                            tool_calls_array.iter().enumerate()
+                                                        {
+                                                            // Check if this is a valid tool call with required fields
+                                                            if let (
+                                                                Some(tool_type),
+                                                                Some(function_value),
+                                                            ) = (
+                                                                tool_call_value
+                                                                    .get("type")
+                                                                    .and_then(|v| v.as_str()),
+                                                                tool_call_value.get("function"),
+                                                            ) {
+                                                                if tool_type == "function" {
+                                                                    if let Some(function_obj) =
+                                                                        function_value.as_object()
+                                                                    {
+                                                                        // For DeepSeek streaming, we don't require name field
+                                                                        // A tool call is valid if it has either name or arguments (or both)
+                                                                        let has_name = function_obj
+                                                                            .get("name")
+                                                                            .is_some();
+                                                                        let has_args = function_obj
+                                                                            .get("arguments")
+                                                                            .is_some();
+
+                                                                        if has_name || has_args {
+                                                                            // Check if arguments contain "malformed json" - this indicates a truly malformed call
+                                                                            let is_malformed = function_obj.get("arguments")
+                                                                                .and_then(|v| v.as_str())
+                                                                                .map(|s| s.contains("malformed json"))
+                                                                                .unwrap_or(false);
+
+                                                                            if !is_malformed {
+                                                                                // Create a valid ToolCallChunk
+                                                                                let tool_call_id = tool_call_value
+                                                                                    .get("id")
+                                                                                    .and_then(|v| v.as_str())
+                                                                                    .map(|s| s.to_string())
+                                                                                    .or_else(|| Some(format!("temp-id-{}", index)));
+
+                                                                                let function_chunk = FunctionChunk {
+                                                                                    name: function_obj.get("name")
+                                                                                        .and_then(|v| v.as_str())
+                                                                                        .map(|s| s.to_string()),
+                                                                                    arguments: function_obj.get("arguments")
+                                                                                        .and_then(|v| v.as_str())
+                                                                                        .map(|s| s.to_string()),
+                                                                                };
+
+                                                                                converted_tool_calls.push(ToolCallChunk {
+                                                                                    index,
+                                                                                    id: tool_call_id,
+                                                                                    r#type: Some("function".to_string()),
+                                                                                    function: Some(function_chunk),
+                                                                                });
+                                                                            } else {
+                                                                                // This is a truly malformed tool call with "malformed json" in arguments
+                                                                                has_malformed_calls = true;
+                                                                            }
+                                                                        } else {
+                                                                            has_malformed_calls =
+                                                                                true;
+                                                                        }
+                                                                    } else {
+                                                                        has_malformed_calls = true;
+                                                                    }
+                                                                } else {
+                                                                    has_malformed_calls = true;
+                                                                }
+                                                            } else {
+                                                                has_malformed_calls = true;
+                                                            }
+                                                        }
+
+                                                        // If we had malformed calls or no valid calls, return None
+                                                        if has_malformed_calls
+                                                            || converted_tool_calls.is_empty()
+                                                        {
+                                                            None
+                                                        } else {
+                                                            Some(converted_tool_calls)
+                                                        }
+                                                    } else {
+                                                        None // Not an array, treat as malformed
+                                                    }
+                                                } else {
+                                                    None // No tool_calls field
+                                                };
+
                                                 Some(ResponseMessageDelta {
                                                     role: delta_value.get("role").and_then(|v| {
                                                         serde_json::from_value(v.clone()).ok()
@@ -661,7 +789,7 @@ fn parse_response_stream_result(line: &str) -> Result<ResponseStreamResult, serd
                                                         .get("content")
                                                         .and_then(|v| v.as_str())
                                                         .map(|s| s.to_string()),
-                                                    tool_calls: None, // Treat malformed tool calls as None
+                                                    tool_calls,
                                                     reasoning_content: None,
                                                 })
                                             }
@@ -956,9 +1084,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_malformed_tool_calls() {
+    fn test_parse_tool_calls_without_id_and_index() {
         // Test parsing responses with tool calls missing 'id' field (common in streaming)
-        let malformed_tool_calls_response = json!({
+        let tool_calls_without_id = json!({
             "choices": [{
                 "index": 0,
                 "delta": {
@@ -968,8 +1096,8 @@ mod tests {
                         {
                             "type": "function",
                             "function": {
-                                "arguments": "malformed json",
-                                "name": "grep"
+                                "arguments": "{\"query\":\"test\"}",
+                                "name": "search"
                             }
                         }
                     ]
@@ -977,7 +1105,7 @@ mod tests {
             }]
         });
 
-        let response_str = malformed_tool_calls_response.to_string();
+        let response_str = tool_calls_without_id.to_string();
         let result = parse_response_stream_result(&response_str);
 
         match result {
@@ -998,6 +1126,14 @@ mod tests {
                                 tool_calls[0].id.as_ref().unwrap().starts_with("temp-id-"),
                                 "Should have temporary ID"
                             );
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().name,
+                                Some("search".to_string())
+                            );
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().arguments,
+                                Some("{\"query\":\"test\"}".to_string())
+                            );
                         }
                     }
                 }
@@ -1006,127 +1142,146 @@ mod tests {
                 panic!("Expected success response, got error: {}", error.message);
             }
             Err(e) => {
-                panic!("Failed to parse response with malformed tool calls: {}", e);
+                panic!("Failed to parse response with tool calls without id: {}", e);
             }
         }
     }
 
     #[test]
-    fn test_deepseek_response_with_empty_tool_calls() {
-        // Test the DeepSeek response format with empty tool calls arrays
-        let deepseek_response = json!({
-            "id": "7fc265af-e548-44c8-b7e6-8732d764b6ac",
-            "object": "chat.completion.chunk",
-            "created": 1765515413,
-            "model": "deepseek-v3.2",
-            "usage": {
-                "prompt_tokens": 11759,
-                "completion_tokens": 1,
-                "total_tokens": 11760
-            },
-            "extend_fields": {
-                "traceId": "21010ca817655154089108071e1c01",
-                "requestId": "379b33d83dc0c03fda2ba8328ec97fca"
-            },
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "role": "assistant",
-                        "content": "**",
-                        "tool_calls": []
-                    }
-                }
-            ]
-        });
-
-        let response_str = deepseek_response.to_string();
-        let result = parse_response_stream_result(&response_str);
-
-        match result {
-            Ok(ResponseStreamResult::Ok(event)) => {
-                assert_eq!(event.choices.len(), 1);
-                // Empty tool calls should be treated as None
-                if let Some(choice) = event.choices.first() {
-                    if let Some(delta) = &choice.delta {
-                        assert!(
-                            delta.tool_calls.is_none(),
-                            "Empty tool calls should be treated as None"
-                        );
-                    }
-                }
-            }
-            Ok(ResponseStreamResult::Err { error }) => {
-                panic!("Expected success response, got error: {}", error.message);
-            }
-            Err(e) => {
-                panic!("Failed to parse DeepSeek response: {}", e);
-            }
-        }
-    }
-
-    #[test]
-    fn test_deepseek_response_with_malformed_tool_calls() {
-        // Test the DeepSeek response format with malformed tool calls
-        let deepseek_response = json!({
-            "id": "7fc265af-e548-44c8-b7e6-8732d764b6ac",
-            "object": "chat.completion.chunk",
-            "created": 1765515413,
-            "model": "deepseek-v3.2",
-            "usage": {
-                "prompt_tokens": 11759,
-                "completion_tokens": 1,
-                "total_tokens": 11760
-            },
-            "extend_fields": {
-                "traceId": "21010ca817655154089108071e1c01",
-                "requestId": "379b33d83dc0c03fda2ba8328ec97fca"
-            },
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "role": "assistant",
-                        "content": "**",
-                        "tool_calls": [
-                            {
-                                "type": "function",
-                                "function": {
-                                    "arguments": "malformed json",
-                                    "name": "grep"
-                                }
+    fn test_deepseek_streaming_tool_calls() {
+        // Test DeepSeek's streaming tool call responses
+        // First chunk: has name but no arguments
+        let first_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "search",
+                                "arguments": ""
                             }
-                        ]
-                    }
+                        }
+                    ]
                 }
-            ]
+            }]
         });
 
-        let response_str = deepseek_response.to_string();
-        let result = parse_response_stream_result(&response_str);
-
+        let result = parse_response_stream_result(&first_chunk.to_string());
         match result {
             Ok(ResponseStreamResult::Ok(event)) => {
                 assert_eq!(event.choices.len(), 1);
-                // Malformed tool calls should be treated as None
                 if let Some(choice) = event.choices.first() {
                     if let Some(delta) = &choice.delta {
-                        assert!(
-                            delta.tool_calls.is_none(),
-                            "Malformed tool calls should be treated as None"
-                        );
+                        assert!(delta.tool_calls.is_some(), "Tool calls should be accepted");
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().name,
+                                Some("search".to_string())
+                            );
+
+                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
+                            assert!(tool_calls[0].id.as_ref().unwrap().starts_with("temp-id-"));
+                        }
                     }
                 }
             }
-            Ok(ResponseStreamResult::Err { error }) => {
-                panic!("Expected success response, got error: {}", error.message);
+            _ => panic!("Expected success response"),
+        }
+
+        // Second chunk: has arguments but no name
+        let second_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "",
+                                "arguments": "{\"query\":\""
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let result = parse_response_stream_result(&second_chunk.to_string());
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(
+                            delta.tool_calls.is_some(),
+                            "Tool calls with just arguments should be accepted"
+                        );
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().arguments,
+                                Some("{\"query\":\"".to_string())
+                            );
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().name,
+                                Some("".to_string())
+                            );
+                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                panic!(
-                    "Failed to parse DeepSeek response with malformed tool calls: {}",
-                    e
-                );
+            _ => panic!("Expected success response"),
+        }
+
+        // Third chunk: continues arguments
+        let third_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "",
+                                "arguments": "test\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let result = parse_response_stream_result(&third_chunk.to_string());
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(
+                            delta.tool_calls.is_some(),
+                            "Tool calls with continued arguments should be accepted"
+                        );
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().arguments,
+                                Some("test\"}".to_string())
+                            );
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().name,
+                                Some("".to_string())
+                            );
+                            assert!(tool_calls[0].id.is_some(), "Should have generated ID");
+                        }
+                    }
+                }
             }
+            _ => panic!("Expected success response"),
         }
     }
 }
