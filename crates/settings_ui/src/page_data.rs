@@ -6017,7 +6017,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             files: USER,
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
-                            title: "In Text Threads",
+                            title: "Display In Text Threads",
                             description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
                             field: Box::new(SettingField {
                                 json_path: Some("edit_prediction.in_text_threads"),
@@ -7454,9 +7454,9 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
     vec![
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Providers".into(),
+            title: "Configure Providers".into(),
             json_path: Some("edit_predictions.providers"),
-            description: Some("Configure different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
             in_json: false,
             files: USER,
             render: Arc::new(|_, window, cx| {
@@ -7487,7 +7487,7 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Edit Predictions Disabled In",
+            title: "Disable in Language Scopes",
             description: "Controls whether edit predictions are shown in the given language scopes.",
             field: Box::new(
                 SettingField {
