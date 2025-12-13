@@ -840,35 +840,33 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
-    #[ztracing::instrument(skip_all, fields(point=?point, ret))]
-    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> WrapRow {
+    #[ztracing::instrument(skip_all, fields(point=?point))]
+    pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
             return WrapRow(0);
         }
 
-        *point.column_mut() = 0;
+        let point = WrapPoint::new(point.row(), 0);
 
         let mut cursor = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
-        // start
+
         cursor.seek(&point, Bias::Right);
-        // end
         if cursor.item().is_none() {
             cursor.prev();
         }
 
-        // start
         while let Some(transform) = cursor.item() {
-            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
+            let tab_transform_start = cursor.start().1;
+            if transform.is_isomorphic() && tab_transform_start.row() < point.0.row {
                 return cmp::min(cursor.end().0.row(), point.row());
             } else {
                 cursor.prev();
             }
         }
-        // end
 
-        unreachable!()
+        WrapRow(0)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -891,13 +889,11 @@ impl WrapSnapshot {
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
         self.text_chunks(WrapRow(0)).collect()
     }
 
     #[cfg(test)]
-    #[ztracing::instrument(skip_all)]
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
@@ -1297,6 +1293,43 @@ mod tests {
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;
+
+    #[gpui::test]
+    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let text_system = cx.read(|cx| cx.text_system().clone());
+
+        let tab_size = 4.try_into().unwrap();
+        let font = test_font();
+        let _font_id = text_system.resolve_font(&font);
+        let font_size = px(14.0);
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local(
+                "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
+                cx,
+            )
+        });
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        log::info!("Buffer text: {:?}", buffer_snapshot.text());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        log::info!("FoldMap text: {:?}", fold_snapshot.text());
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        log::info!("TabMap text: {:?}", tabs_snapshot.text());
+        let soft_wrapping = Some(font_size * 3);
+        let (_wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
+
+        assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
+        assert_eq!(
+            wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
+            WrapRow(4)
+        );
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {

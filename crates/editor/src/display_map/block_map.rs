@@ -545,7 +545,7 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
