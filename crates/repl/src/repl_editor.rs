@@ -9,6 +9,9 @@ use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 
+use settings::{CellMarkerStyle, Settings};
+
+use crate::repl_settings::ReplSettings;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
@@ -416,6 +419,80 @@ fn jupytext_cells(
     (snippets, None)
 }
 
+// Returns the ranges of cells using inverse jupytext markers (# $$)
+// In this style, code comes first and the marker terminates the cell.
+fn inverse_jupytext_cells(
+    buffer: &BufferSnapshot,
+    range: Range<Point>,
+) -> (Vec<Range<Point>>, Option<Point>) {
+    let Some(language) = buffer.language() else {
+        return (Vec::new(), None);
+    };
+
+    let default_scope = language.default_scope();
+    let comment_prefixes = default_scope.line_comment_prefixes();
+    if comment_prefixes.is_empty() {
+        return (Vec::new(), None);
+    }
+
+    let inverse_jupytext_prefixes = comment_prefixes
+        .iter()
+        .map(|comment_prefix| format!("{comment_prefix}$$"))
+        .collect::<Vec<_>>();
+
+    let is_marker = |row: u32| -> bool {
+        inverse_jupytext_prefixes
+            .iter()
+            .any(|prefix| buffer.contains_str_at(Point::new(row, 0), prefix))
+    };
+
+    // Find the end marker at or after the cursor position
+    let mut end_marker_row = None;
+    for row in range.start.row..=buffer.max_point().row {
+        if is_marker(row) {
+            end_marker_row = Some(row);
+            break;
+        }
+    }
+
+    // If no end marker found, there are no trailing marker cells
+    let Some(end_row) = end_marker_row else {
+        return (Vec::new(), None);
+    };
+
+    // Find the previous end marker (or start of file) to determine cell start
+    let mut start_row = 0;
+    if range.start.row > 0 {
+        for row in (0..range.start.row).rev() {
+            if is_marker(row) {
+                start_row = row + 1;
+                break;
+            }
+        }
+    }
+
+    let mut snippets = Vec::new();
+
+    // Create the cell range (excluding trailing blank lines before the marker)
+    snippets.push(cell_range(buffer, start_row, end_row));
+
+    // Look for the next cell if cursor spans multiple cells
+    let mut current_start = end_row + 1;
+    for row in end_row + 1..=buffer.max_point().row {
+        if is_marker(row) {
+            if row <= range.end.row {
+                snippets.push(cell_range(buffer, current_start, row));
+                current_start = row + 1;
+            } else {
+                // Return our snippets and the next cell start position
+                return (snippets, Some(Point::new(current_start, 0)));
+            }
+        }
+    }
+
+    (snippets, None)
+}
+
 fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
@@ -427,9 +504,14 @@ fn runnable_ranges(
         return (markdown_code_blocks(buffer, range, cx), None);
     }
 
-    let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
-    if !jupytext_snippets.is_empty() {
-        return (jupytext_snippets, next_cursor);
+    let cell_marker_style = ReplSettings::get_global(cx).cell_marker_style;
+
+    let (cell_snippets, next_cursor) = match cell_marker_style {
+        CellMarkerStyle::Jupytext => jupytext_cells(buffer, range.clone()),
+        CellMarkerStyle::InverseJupytext => inverse_jupytext_cells(buffer, range.clone()),
+    };
+    if !cell_snippets.is_empty() {
+        return (cell_snippets, next_cursor);
     }
 
     let snippet_range = cell_range(buffer, range.start.row, range.end.row);
@@ -496,9 +578,16 @@ mod tests {
     use gpui::App;
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    }
 
     #[gpui::test]
     fn test_snippet_ranges(cx: &mut App) {
+        init_test(cx);
         // Create a test language
         let test_language = Arc::new(Language::new(
             LanguageConfig {
@@ -565,6 +654,7 @@ mod tests {
 
     #[gpui::test]
     fn test_jupytext_snippet_ranges(cx: &mut App) {
+        init_test(cx);
         // Create a test language
         let test_language = Arc::new(Language::new(
             LanguageConfig {
@@ -638,6 +728,195 @@ mod tests {
                     print(5 + 5)"#
                 }
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_inverse_jupytext_snippet_ranges(cx: &mut App) {
+        init_test(cx);
+
+        // Set the cell marker style to inverse jupytext
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.repl.get_or_insert_default().cell_marker_style =
+                    Some(CellMarkerStyle::InverseJupytext);
+            });
+        });
+
+        // Create a test language
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    # Hello!
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+                    # $$
+
+                    print(3 + 3)
+                    print(4 + 4)
+
+                    print(5 + 5)
+                    # $$
+
+
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Inverse jupytext snippet surrounding an empty selection
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx);
+
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                # Hello!
+                # This is some arithmetic
+                print(1 + 1)
+                print(2 + 2)
+                # $$"# }]
+        );
+
+        // Inverse jupytext snippets intersecting a non-empty selection
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(10, 2), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+                    # $$"#
+                },
+                indoc! { r#"
+
+                    print(3 + 3)
+                    print(4 + 4)
+
+                    print(5 + 5)
+                    # $$"#
+                }
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_mixed_markers_jupytext_mode(cx: &mut App) {
+        init_test(cx);
+        // Default is jupytext mode - # $$ markers should be ignored as regular comments
+
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    # %%
+                    print(1 + 1)
+                    # $$ this is ignored in jupytext mode
+                    print(2 + 2)
+                    # %%
+                    print(3 + 3)
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // In jupytext mode, # $$ is treated as a regular comment, not a cell boundary
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                # %%
+                print(1 + 1)
+                # $$ this is ignored in jupytext mode
+                print(2 + 2)"# }]
+        );
+    }
+
+    #[gpui::test]
+    fn test_mixed_markers_inverse_jupytext_mode(cx: &mut App) {
+        init_test(cx);
+
+        // Set the cell marker style to inverse jupytext
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.repl.get_or_insert_default().cell_marker_style =
+                    Some(CellMarkerStyle::InverseJupytext);
+            });
+        });
+
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+                    # %% this is ignored in inverse jupytext mode
+                    print(2 + 2)
+                    # $$
+                    print(3 + 3)
+                    # $$
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // In inverse jupytext mode, # %% is treated as a regular comment, not a cell boundary
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![indoc! { r#"
+                print(1 + 1)
+                # %% this is ignored in inverse jupytext mode
+                print(2 + 2)
+                # $$"# }]
         );
     }
 
