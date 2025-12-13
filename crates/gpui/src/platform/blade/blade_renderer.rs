@@ -342,6 +342,7 @@ pub struct BladeRenderer {
     path_intermediate_msaa_texture: Option<gpu::Texture>,
     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
     rendering_parameters: RenderingParameters,
+    skip_draws: bool,
 }
 
 impl BladeRenderer {
@@ -428,29 +429,31 @@ impl BladeRenderer {
             path_intermediate_msaa_texture,
             path_intermediate_msaa_texture_view,
             rendering_parameters,
+            skip_draws: false,
         })
     }
 
-    fn wait_for_gpu(&mut self) {
-        if let Some(last_sp) = self.last_sync_point.take()
-            && !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS)
-        {
-            log::error!("GPU hung");
-            #[cfg(target_os = "linux")]
-            if self.gpu.device_information().driver_name == "radv" {
+    fn wait_for_gpu(&mut self) -> anyhow::Result<()> {
+        if let Some(last_sp) = self.last_sync_point.take() {
+            if !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {
+                log::error!("GPU hung");
+                #[cfg(target_os = "linux")]
+                if self.gpu.device_information().driver_name == "radv" {
+                    log::error!(
+                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                    );
+                    log::error!(
+                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                    );
+                }
                 log::error!(
-                    "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                    "your device information is: {:?}",
+                    self.gpu.device_information()
                 );
-                log::error!(
-                    "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
-                );
+                return Err(anyhow::anyhow!("GPU device hung or lost"));
             }
-            log::error!(
-                "your device information is: {:?}",
-                self.gpu.device_information()
-            );
-            while !self.gpu.wait_for(&last_sp, MAX_FRAME_TIME_MS) {}
         }
+        Ok(())
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
@@ -476,7 +479,10 @@ impl BladeRenderer {
         };
 
         if always_resize || gpu_size != self.surface_config.size {
-            self.wait_for_gpu();
+            if let Err(err) = self.wait_for_gpu() {
+                log::error!("Failed to wait for GPU during resize: {}", err);
+                return;
+            }
             self.surface_config.size = gpu_size;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
@@ -514,7 +520,10 @@ impl BladeRenderer {
 
     pub fn update_transparency(&mut self, transparent: bool) {
         if transparent != self.surface_config.transparent {
-            self.wait_for_gpu();
+            if let Err(err) = self.wait_for_gpu() {
+                log::error!("Failed to wait for GPU during transparency update: {}", err);
+                return;
+            }
             self.surface_config.transparent = transparent;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
@@ -537,6 +546,17 @@ impl BladeRenderer {
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
         &self.atlas
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn prepare_atlas(&self) {
+        self.atlas.handle_device_lost();
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn adopt_atlas(&mut self, atlas: &Arc<BladeAtlas>) {
+        atlas.update_gpu_context(&self.gpu);
+        self.atlas = Arc::clone(atlas);
     }
 
     #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -623,7 +643,9 @@ impl BladeRenderer {
     }
 
     pub fn destroy(&mut self) {
-        self.wait_for_gpu();
+        if let Err(err) = self.wait_for_gpu() {
+            log::error!("Failed to wait for GPU during destroy: {}", err);
+        }
         self.atlas.destroy();
         self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
@@ -641,7 +663,28 @@ impl BladeRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn resume_rendering(&mut self) {
+        self.skip_draws = false;
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn pause_rendering(&mut self) {
+        self.skip_draws = true;
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn destroy_surface(&mut self) {
+        self.gpu.destroy_surface(&mut self.surface);
+    }
+
+    pub fn draw(&mut self, scene: &Scene) -> anyhow::Result<()> {
+        if self.skip_draws {
+            return Ok(());
+        }
+
+        self.wait_for_gpu()?;
+
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
 
@@ -776,7 +819,9 @@ impl BladeRenderer {
                     texture_id,
                     sprites,
                 } => {
-                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+                        continue;
+                    };
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.mono_sprites);
@@ -799,7 +844,9 @@ impl BladeRenderer {
                     texture_id,
                     sprites,
                 } => {
-                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+                        continue;
+                    };
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.poly_sprites);
@@ -908,14 +955,33 @@ impl BladeRenderer {
         drop(pass);
 
         self.command_encoder.present(frame);
-        let sync_point = self.gpu.submit(&mut self.command_encoder);
+
+        let sync_point = {
+            use std::panic::{AssertUnwindSafe, catch_unwind};
+            match catch_unwind(AssertUnwindSafe(|| {
+                self.gpu.submit(&mut self.command_encoder)
+            })) {
+                Ok(sp) => sp,
+                Err(e) => {
+                    let msg = if let Some(s) = e.downcast_ref::<String>() {
+                        s.as_str()
+                    } else if let Some(s) = e.downcast_ref::<&str>() {
+                        *s
+                    } else {
+                        "unknown panic"
+                    };
+                    log::error!("GPU crash: {}", msg);
+                    return Err(anyhow::anyhow!("GPU device crashed during submit: {}", msg));
+                }
+            }
+        };
 
         profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
 
-        self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
+        Ok(())
     }
 }
 
