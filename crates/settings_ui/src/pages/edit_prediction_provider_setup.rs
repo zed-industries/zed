@@ -126,8 +126,12 @@ fn render_api_key_provider(
         })
     });
 
-    let (has_key, env_var_name) = api_key_state.read_with(cx, |state, _| {
-        (state.has_key(), Some(state.env_var_name().clone()))
+    let (has_key, env_var_name, is_from_env_var) = api_key_state.read_with(cx, |state, _| {
+        (
+            state.has_key(),
+            Some(state.env_var_name().clone()),
+            state.is_from_env_var(),
+        )
     });
 
     let write_key = move |api_key: Option<String>, cx: &mut App| {
@@ -163,13 +167,26 @@ fn render_api_key_provider(
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         );
+    let configured_card_label = if is_from_env_var {
+        "API key set in environment variable"
+    } else {
+        "API Key Configured"
+    };
 
     let container = if has_key {
         base_container.child(header).child(
-            ConfiguredApiCard::new("API key configured")
+            ConfiguredApiCard::new(configured_card_label)
                 .button_label("Reset Key")
                 .button_tab_index(0)
-                // .disabled() TODO: Disable button to reset if the env var is set
+                .disabled(is_from_env_var)
+                .when_some(env_var_name, |this, env_var_name| {
+                    this.when(is_from_env_var, |this| {
+                        this.tooltip_label(format!(
+                            "To reset your API key, unset the {} environment variable.",
+                            env_var_name
+                        ))
+                    })
+                })
                 .on_click(move |_, _, cx| {
                     write_key(None, cx);
                 }),
