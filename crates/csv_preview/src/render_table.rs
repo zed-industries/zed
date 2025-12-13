@@ -214,14 +214,10 @@ impl CsvPreviewView {
                     .is_cell_selected(display_index.into(), col, &ordered_indices);
 
             // Check if this cell is focused using display coordinates
-            let is_focused =
-                this.selection
-                    .is_cell_focused(display_index.into(), col, &ordered_indices);
+            let is_focused = this.selection.is_cell_focused(display_index.into(), col);
 
             // Check if this cell is the selection anchor using display coordinates
-            let is_anchor =
-                this.selection
-                    .is_cell_anchor(display_index.into(), col, &ordered_indices);
+            let is_anchor = this.selection.is_cell_anchor(display_index.into(), col);
 
             elements.push(CsvPreviewView::create_selectable_cell(
                 DisplayCellId::new(display_index.into(), col),

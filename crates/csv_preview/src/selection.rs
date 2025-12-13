@@ -152,12 +152,7 @@ impl TableSelection {
     }
 
     /// Check if cell at display coordinates is focused.
-    pub fn is_cell_focused(
-        &self,
-        display_row: DisplayRow,
-        col: usize,
-        _ordered_indices: &OrderedIndices,
-    ) -> bool {
+    pub fn is_cell_focused(&self, display_row: DisplayRow, col: usize) -> bool {
         if let Some(focused) = &self.focused_cell {
             focused.row == display_row && focused.col == col
         } else {
@@ -166,12 +161,7 @@ impl TableSelection {
     }
 
     /// Check if cell at display coordinates is the selection anchor.
-    pub fn is_cell_anchor(
-        &self,
-        display_row: DisplayRow,
-        col: usize,
-        _ordered_indices: &OrderedIndices,
-    ) -> bool {
+    pub fn is_cell_anchor(&self, display_row: DisplayRow, col: usize) -> bool {
         if let Some(anchor) = &self.selection_anchor {
             anchor.row == display_row && anchor.col == col
         } else {
@@ -180,11 +170,7 @@ impl TableSelection {
     }
 
     /// Check if any cell in the given display row has focus
-    pub fn is_row_focused(
-        &self,
-        display_row: DisplayRow,
-        _ordered_indices: &OrderedIndices,
-    ) -> bool {
+    pub fn is_row_focused(&self, display_row: DisplayRow) -> bool {
         if let Some(focused) = &self.focused_cell {
             focused.row == display_row
         } else {
