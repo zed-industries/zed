@@ -72,6 +72,7 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 
@@ -536,22 +537,12 @@ impl EditPredictionStore {
         self.edit_prediction_model = model;
     }
 
-    pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
+        self.sweep_ai.api_token.read(cx).has_key()
     }
 
-    pub fn has_mercury_api_token(&self) -> bool {
-        self.mercury
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_mercury_api_token(&self, cx: &App) -> bool {
+        self.mercury.api_token.read(cx).has_key()
     }
 
     #[cfg(feature = "cli-support")]

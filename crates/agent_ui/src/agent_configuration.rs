@@ -34,9 +34,9 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
-    Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
-    PopoverMenu, Switch, Tooltip, WithScrollbar, prelude::*,
+    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
+    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
