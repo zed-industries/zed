@@ -1,8 +1,13 @@
+#![allow(clippy::clone_on_copy)]
+
 mod boundary;
 mod duplicate;
+mod jump_list;
 mod object;
 mod paste;
 mod select;
+
+pub use jump_list::{JumpEntry, JumpList};
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
@@ -56,6 +61,12 @@ actions!(
         HelixSelectNext,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSelectPrevious,
+        /// Saves the current selection to the jump list (Ctrl-s in Helix).
+        HelixSaveSelection,
+        /// Jumps backward in the jump list (Ctrl-o in Helix).
+        HelixJumpBackward,
+        /// Jumps forward in the jump list (Ctrl-i in Helix).
+        HelixJumpForward,
     ]
 );
 
@@ -80,6 +91,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, Vim::helix_save_selection);
+    Vim::action(editor, cx, Vim::helix_jump_backward);
+    Vim::action(editor, cx, Vim::helix_jump_forward);
 }
 
 impl Vim {
@@ -830,6 +844,148 @@ impl Vim {
                 })
             });
         }
+    }
+
+    /// Saves the current selection positions to the Helix jump list.
+    fn helix_save_selection(
+        &mut self,
+        _: &HelixSaveSelection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = self.update_editor(cx, |_, editor, _cx| {
+            let buffer_id = editor.buffer().entity_id();
+            let selections: Vec<_> = editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|s| s.head().clone())
+                .collect();
+
+            JumpEntry::new(buffer_id, selections)
+        });
+
+        if let Some(entry) = entry {
+            Vim::update_globals(cx, |globals, _| {
+                globals.helix_jump_list.push(entry);
+            });
+        }
+    }
+
+    /// Jumps backward in the Helix jump list.
+    fn helix_jump_backward(
+        &mut self,
+        _: &HelixJumpBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        // If at present (end of list), save current position first before jumping
+        let at_present = Vim::update_globals(cx, |globals, _| globals.helix_jump_list.at_present());
+
+        if at_present {
+            // Save current position
+            self.helix_save_selection(&HelixSaveSelection, window, cx);
+            // Go back one more since we just pushed
+            Vim::update_globals(cx, |globals, _| {
+                globals.helix_jump_list.step_back();
+            });
+        }
+
+        let entry = Vim::update_globals(cx, |globals, _| {
+            globals.helix_jump_list.backward(count).cloned()
+        });
+
+        if let Some(entry) = entry {
+            self.helix_jump_to_entry(entry, window, cx);
+        }
+    }
+
+    /// Jumps forward in the Helix jump list.
+    fn helix_jump_forward(
+        &mut self,
+        _: &HelixJumpForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        let entry = Vim::update_globals(cx, |globals, _| {
+            globals.helix_jump_list.forward(count).cloned()
+        });
+
+        if let Some(entry) = entry {
+            self.helix_jump_to_entry(entry, window, cx);
+        }
+    }
+
+    /// Navigates to a jump entry, switching buffers if necessary.
+    fn helix_jump_to_entry(
+        &mut self,
+        entry: JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Check if we're already in the target buffer
+        let current_buffer = self.update_editor(cx, |_, editor, _| editor.buffer().entity_id());
+
+        if current_buffer == Some(entry.buffer_id) {
+            // Same buffer - just update selections
+            self.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges(entry.selections.iter().map(|a| a.clone()..a.clone()));
+                });
+            });
+        } else {
+            // Different buffer - find and activate it
+            self.helix_jump_to_buffer(entry, window, cx);
+        }
+    }
+
+    /// Navigates to a jump entry in a different buffer.
+    fn helix_jump_to_buffer(
+        &mut self,
+        entry: JumpEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            // Find item with matching buffer
+            let item = workspace
+                .items(cx)
+                .find(|item| {
+                    item.act_as::<Editor>(cx)
+                        .is_some_and(|e| e.read(cx).buffer().entity_id() == entry.buffer_id)
+                })
+                .cloned();
+
+            if let Some(item) = item {
+                // Activate pane containing this item
+                if let Some(pane) = workspace.pane_for(&*item) {
+                    pane.update(cx, |pane, cx| {
+                        if let Some(idx) = pane.index_for_item(&*item) {
+                            pane.activate_item(idx, true, true, window, cx);
+                        }
+                    });
+                }
+
+                // Update selections in the editor
+                if let Some(editor) = item.act_as::<Editor>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_anchor_ranges(
+                                entry.selections.iter().map(|a| a.clone()..a.clone()),
+                            );
+                        });
+                    });
+                }
+            }
+        });
     }
 }
 
@@ -1663,6 +1819,136 @@ mod test {
                 first linˇe
                 second line
                 third line"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_basic(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Set initial position and save it
+        cx.set_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Move to a different position and save
+        cx.simulate_keystrokes("j j");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Jump backward should go to first saved position
+        cx.simulate_keystrokes("ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+
+        // Jump forward should return to second position
+        cx.simulate_keystrokes("ctrl-i");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line ˇthree"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_auto_save_on_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Save a position
+        cx.set_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Move to a new position (but don't save)
+        cx.simulate_keystrokes("j j $");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line threˇe"},
+            Mode::HelixNormal,
+        );
+
+        // Jump backward - should auto-save current position first
+        cx.simulate_keystrokes("ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                line ˇone
+                line two
+                line three"},
+            Mode::HelixNormal,
+        );
+
+        // Jump forward should go to the auto-saved position
+        cx.simulate_keystrokes("ctrl-i");
+        cx.assert_state(
+            indoc! {"
+                line one
+                line two
+                line threˇe"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_list_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Create multiple jump entries
+        cx.set_state(
+            indoc! {"
+                ˇposition one
+                position two
+                position three
+                position four"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        cx.simulate_keystrokes("j");
+        cx.simulate_keystrokes("ctrl-s");
+
+        // Now at position four, jump back by 2
+        cx.simulate_keystrokes("2 ctrl-o");
+        cx.assert_state(
+            indoc! {"
+                position one
+                ˇposition two
+                position three
+                position four"},
             Mode::HelixNormal,
         );
     }
