@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use crate::{
     data_ordering::OrderedIndices,
-    types::{DataCellId, DisplayRow},
+    types::{DataCellId, DisplayCellId, DisplayRow},
 };
 
 /// Navigation direction for keyboard focus movement
@@ -30,7 +30,7 @@ pub struct TableSelection {
     /// Currently selected cells in data coordinates
     selected_cells: SelectedCells,
     /// Starting position for drag selection in display coordinates
-    selection_start_display: Option<(usize, usize)>,
+    selection_start_display: Option<DisplayCellId>,
     /// Whether user is currently dragging to select
     is_selecting: bool,
     /// Currently focused cell in data coordinates
@@ -79,7 +79,7 @@ impl TableSelection {
         }
 
         // Remember display coordinates for extend_selection_to
-        self.selection_start_display = Some((display_row.get(), col));
+        self.selection_start_display = Some(DisplayCellId::new(display_row, col));
         self.is_selecting = true;
     }
 
@@ -91,16 +91,16 @@ impl TableSelection {
         ordered_indices: &OrderedIndices,
         preserve_existing: bool,
     ) {
-        if let Some((start_display_row, start_col)) = self.selection_start_display {
+        if let Some(start_display_cell) = self.selection_start_display {
             if !preserve_existing {
                 self.selected_cells.clear();
             }
 
             // Create rectangle in display coordinates
-            let min_display_row = start_display_row.min(display_row.get());
-            let max_display_row = start_display_row.max(display_row.get());
-            let min_col = start_col.min(col);
-            let max_col = start_col.max(col);
+            let min_display_row = start_display_cell.row.get().min(display_row.get());
+            let max_display_row = start_display_cell.row.get().max(display_row.get());
+            let min_col = start_display_cell.col.min(col);
+            let max_col = start_display_cell.col.max(col);
 
             // Convert each display cell to data coordinates for storage
             for display_r in min_display_row..=max_display_row {
@@ -118,10 +118,9 @@ impl TableSelection {
             }
 
             // Ensure anchor remains at the start position during drag
-            if let Some(start_data_row) =
-                ordered_indices.get_data_row(DisplayRow::new(start_display_row))
-            {
-                self.selection_anchor = Some(DataCellId::new(start_data_row, start_col));
+            if let Some(start_data_row) = ordered_indices.get_data_row(start_display_cell.row) {
+                self.selection_anchor =
+                    Some(DataCellId::new(start_data_row, start_display_cell.col));
             }
         }
     }
