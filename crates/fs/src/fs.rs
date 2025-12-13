@@ -100,7 +100,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         content: Pin<&mut (dyn AsyncRead + Send)>,
     ) -> Result<()>;
-    async fn extract_tar_file(
+    async fn extract_archive(
         &self,
         path: &Path,
         content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
@@ -550,7 +550,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn extract_tar_file(
+    async fn extract_archive(
         &self,
         path: &Path,
         content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,
@@ -2340,7 +2340,7 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn extract_tar_file(
+    async fn extract_archive(
         &self,
         path: &Path,
         content: Archive<Pin<&mut (dyn AsyncRead + Send)>>,

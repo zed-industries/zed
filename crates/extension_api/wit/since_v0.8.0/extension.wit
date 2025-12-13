@@ -25,6 +25,8 @@ world extension {
         gzip,
         /// A gzipped tar archive (`.tar.gz`).
         gzip-tar,
+        /// A xz compressed archive (`.xz`)
+        xz,
         /// A ZIP file (`.zip`).
         zip,
         /// An uncompressed file.
