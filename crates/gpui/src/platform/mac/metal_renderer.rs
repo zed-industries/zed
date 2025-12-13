@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    ArcPath, AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite,
+    PaintSurface, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Surface, Underline, point, size,
 };
 use anyhow::Result;
@@ -559,7 +559,7 @@ impl MetalRenderer {
 
     fn draw_paths_to_intermediate(
         &self,
-        paths: &[Path<ScaledPixels>],
+        paths: &[ArcPath],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
@@ -594,13 +594,19 @@ impl MetalRenderer {
 
         align_offset(instance_offset);
         let mut vertices = Vec::new();
-        for path in paths {
-            vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
-                xy_position: v.xy_position,
-                st_position: v.st_position,
-                color: path.color,
-                bounds: path.bounds.intersect(&path.content_mask.bounds),
-            }));
+        for arc_path in paths {
+            vertices.extend(
+                arc_path
+                    .path
+                    .vertices
+                    .iter()
+                    .map(|v| PathRasterizationVertex {
+                        xy_position: v.xy_position,
+                        st_position: v.st_position,
+                        color: arc_path.color,
+                        bounds: arc_path.clipped_bounds(),
+                    }),
+            );
         }
         let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
         let next_offset = *instance_offset + vertices_bytes_len;
@@ -767,7 +773,7 @@ impl MetalRenderer {
 
     fn draw_paths_from_intermediate(
         &self,
-        paths: &[Path<ScaledPixels>],
+        paths: &[ArcPath],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
