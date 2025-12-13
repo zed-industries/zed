@@ -13,6 +13,15 @@ pub struct ReplSettings {
     ///
     /// Default: 128
     pub max_columns: usize,
+    /// Whether to show small single-line outputs inline instead of in a block.
+    ///
+    /// Default: true
+    pub inline_output: bool,
+    /// Maximum number of characters for an output to be shown inline.
+    /// Only applies when `inline_output` is true.
+    ///
+    /// Default: 50
+    pub inline_output_max_length: usize,
 }
 
 impl Settings for ReplSettings {
@@ -22,6 +31,8 @@ impl Settings for ReplSettings {
         Self {
             max_lines: repl.max_lines.unwrap(),
             max_columns: repl.max_columns.unwrap(),
+            inline_output: repl.inline_output.unwrap_or(true),
+            inline_output_max_length: repl.inline_output_max_length.unwrap_or(50),
         }
     }
 }
