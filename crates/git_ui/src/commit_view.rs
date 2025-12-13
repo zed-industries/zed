@@ -391,14 +391,16 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let github_url = self.remote.as_ref().map(|remote| {
-            format!(
+        let remote_info = self.remote.as_ref().map(|remote| {
+            let provider = remote.host.name();
+            let url = format!(
                 "{}/{}/{}/commit/{}",
                 remote.host.base_url(),
                 remote.owner,
                 remote.repo,
                 commit.sha
-            )
+            );
+            (provider, url)
         });
 
         let (additions, deletions) = self.calculate_changed_lines(cx);
@@ -472,9 +474,14 @@ impl CommitView {
                                     .children(commit_diff_stat),
                             ),
                     )
-                    .children(github_url.map(|url| {
-                        Button::new("view_on_github", "View on GitHub")
-                            .icon(IconName::Github)
+                    .children(remote_info.map(|(provider_name, url)| {
+                        let icon = match provider_name.as_str() {
+                            "GitHub" => IconName::Github,
+                            _ => IconName::Link,
+                        };
+
+                        Button::new("view_on_provider", format!("View on {}", provider_name))
+                            .icon(icon)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
