@@ -613,6 +613,7 @@ pub fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
+        search_everywhere::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
