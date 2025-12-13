@@ -15,6 +15,7 @@ pub(crate) enum Head {
 
 impl Head {
     pub fn editor<V: 'static>(
+        use_modal_editing: bool,
         placeholder_text: Arc<str>,
         edit_handler: impl FnMut(&mut V, &Entity<Editor>, &EditorEvent, &mut Window, &mut Context<V>)
         + 'static,
@@ -24,6 +25,7 @@ impl Head {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
+            editor.set_use_modal_editing(use_modal_editing);
             editor
         });
         cx.subscribe_in(&editor, window, edit_handler).detach();
