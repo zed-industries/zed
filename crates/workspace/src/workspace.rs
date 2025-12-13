@@ -1564,9 +1564,17 @@ impl Workspace {
                     return;
                 }
 
-                with_active_or_new_workspace(cx, |workspace, _, cx| {
-                    workspace.hide_mouse_cursor(cx);
-                });
+                cx.active_window()
+                    .and_then(|w| w.downcast::<Workspace>())
+                    .map(|workspace| {
+                        cx.defer(move |cx| {
+                            workspace
+                                .update(cx, |workspace, _window, cx| {
+                                    workspace.hide_mouse_cursor(cx)
+                                })
+                                .log_err();
+                        });
+                    });
             }),
         ];
 
