@@ -296,6 +296,20 @@ impl TestAppContext {
         &self.text_system
     }
 
+    /// Simulates writing credentials to the platform keychain.
+    pub fn write_credentials(&self, url: &str, username: &str, password: &[u8]) {
+        let _ = self
+            .test_platform
+            .write_credentials(url, username, password);
+    }
+
+    /// Simulates reading credentials from the platform keychain.
+    pub fn read_credentials(&self, url: &str) -> Option<(String, Vec<u8>)> {
+        smol::block_on(self.test_platform.read_credentials(url))
+            .ok()
+            .flatten()
+    }
+
     /// Simulates writing to the platform clipboard
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.test_platform.write_to_clipboard(item)

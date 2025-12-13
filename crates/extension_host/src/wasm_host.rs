@@ -1,9 +1,11 @@
+pub mod llm_provider;
 pub mod wit;
 
 use crate::capability_granter::CapabilityGranter;
 use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
@@ -64,7 +66,7 @@ pub struct WasmHost {
 
 #[derive(Clone, Debug)]
 pub struct WasmExtension {
-    tx: UnboundedSender<ExtensionCall>,
+    tx: Arc<UnboundedSender<ExtensionCall>>,
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
@@ -74,7 +76,10 @@ pub struct WasmExtension {
 
 impl Drop for WasmExtension {
     fn drop(&mut self) {
-        self.tx.close_channel();
+        // Only close the channel when this is the last clone holding the sender
+        if Arc::strong_count(&self.tx) == 1 {
+            self.tx.close_channel();
+        }
     }
 }
 
@@ -671,7 +676,7 @@ impl WasmHost {
             Ok(WasmExtension {
                 manifest,
                 work_dir,
-                tx,
+                tx: Arc::new(tx),
                 zed_api_version,
                 _task: task,
             })

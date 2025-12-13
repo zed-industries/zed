@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
-use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
+use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_servers::AgentServer;
 use anyhow::Result;
 use collections::IndexMap;
@@ -292,12 +292,16 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                     h_flex()
                                         .w_full()
                                         .gap_1p5()
-                                        .when_some(model_info.icon, |this, icon| {
-                                            this.child(
-                                                Icon::new(icon)
-                                                    .color(model_icon_color)
-                                                    .size(IconSize::Small)
-                                            )
+                                        .map(|this| match &model_info.icon {
+                                            Some(icon) => this.child(
+                                                match icon {
+                                                    AgentModelIcon::Path(path) => Icon::from_external_svg(path.clone()),
+                                                    AgentModelIcon::Named(icon) => Icon::new(*icon)
+                                                }
+                                                .color(model_icon_color)
+                                                .size(IconSize::Small)
+                                            ),
+                                            None => this,
                                         })
                                         .child(Label::new(model_info.name.clone()).truncate()),
                                 )

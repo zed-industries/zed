@@ -1,13 +1,12 @@
 use std::{cmp::Reverse, sync::Arc};
 
 use collections::IndexMap;
+use futures::{StreamExt, channel::mpsc};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
-};
+use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Task};
 use language_model::{
-    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
-    LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -47,7 +46,9 @@ pub fn language_model_selector(
 }
 
 fn all_models(cx: &App) -> GroupedModels {
-    let providers = LanguageModelRegistry::global(cx).read(cx).providers();
+    let providers = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .visible_providers();
 
     let recommended = providers
         .iter()
@@ -57,12 +58,12 @@ fn all_models(cx: &App) -> GroupedModels {
                 .into_iter()
                 .map(|model| ModelInfo {
                     model,
-                    icon: provider.icon(),
+                    icon: ProviderIcon::from_provider(provider.as_ref()),
                 })
         })
         .collect();
 
-    let all = providers
+    let all: Vec<ModelInfo> = providers
         .iter()
         .flat_map(|provider| {
             provider
@@ -70,7 +71,7 @@ fn all_models(cx: &App) -> GroupedModels {
                 .into_iter()
                 .map(|model| ModelInfo {
                     model,
-                    icon: provider.icon(),
+                    icon: ProviderIcon::from_provider(provider.as_ref()),
                 })
         })
         .collect();
@@ -79,9 +80,25 @@ fn all_models(cx: &App) -> GroupedModels {
 }
 
 #[derive(Clone)]
+enum ProviderIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
+impl ProviderIcon {
+    fn from_provider(provider: &dyn LanguageModelProvider) -> Self {
+        if let Some(path) = provider.icon_path() {
+            Self::Path(path)
+        } else {
+            Self::Name(provider.icon())
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
-    icon: IconName,
+    icon: ProviderIcon,
 }
 
 pub struct LanguageModelPickerDelegate {
@@ -91,7 +108,7 @@ pub struct LanguageModelPickerDelegate {
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
     _authenticate_all_providers_task: Task<()>,
-    _subscriptions: Vec<Subscription>,
+    _refresh_models_task: Task<()>,
     popover_styles: bool,
     focus_handle: FocusHandle,
 }
@@ -116,24 +133,42 @@ impl LanguageModelPickerDelegate {
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
-            _subscriptions: vec![cx.subscribe_in(
-                &LanguageModelRegistry::global(cx),
-                window,
-                |picker, _, event, window, cx| {
-                    match event {
-                        language_model::Event::ProviderStateChanged(_)
-                        | language_model::Event::AddedProvider(_)
-                        | language_model::Event::RemovedProvider(_) => {
-                            let query = picker.query(cx);
-                            picker.delegate.all_models = Arc::new(all_models(cx));
-                            // Update matches will automatically drop the previous task
-                            // if we get a provider event again
-                            picker.update_matches(query, window, cx)
-                        }
-                        _ => {}
+            _refresh_models_task: {
+                // Create a channel to signal when models need refreshing
+                let (refresh_tx, mut refresh_rx) = mpsc::unbounded::<()>();
+
+                // Subscribe to registry events and send refresh signals through the channel
+                let registry = LanguageModelRegistry::global(cx);
+                cx.subscribe(&registry, move |_picker, _, event, _cx| match event {
+                    language_model::Event::ProviderStateChanged(_)
+                    | language_model::Event::AddedProvider(_)
+                    | language_model::Event::RemovedProvider(_)
+                    | language_model::Event::ProvidersChanged => {
+                        refresh_tx.unbounded_send(()).ok();
                     }
-                },
-            )],
+                    language_model::Event::DefaultModelChanged
+                    | language_model::Event::InlineAssistantModelChanged
+                    | language_model::Event::CommitMessageModelChanged
+                    | language_model::Event::ThreadSummaryModelChanged => {}
+                })
+                .detach();
+
+                // Spawn a task that listens for refresh signals and updates the picker
+                cx.spawn_in(window, async move |this, cx| {
+                    while let Some(()) = refresh_rx.next().await {
+                        if this
+                            .update_in(cx, |picker, window, cx| {
+                                picker.delegate.all_models = Arc::new(all_models(cx));
+                                picker.refresh(window, cx);
+                            })
+                            .is_err()
+                        {
+                            // Picker was dropped, exit the loop
+                            break;
+                        }
+                    }
+                })
+            },
             popover_styles,
             focus_handle,
         }
@@ -392,7 +427,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let configured_providers = language_model_registry
             .read(cx)
-            .providers()
+            .visible_providers()
             .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
             .collect::<Vec<_>>();
@@ -504,11 +539,16 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             h_flex()
                                 .w_full()
                                 .gap_1p5()
-                                .child(
-                                    Icon::new(model_info.icon)
+                                .child(match &model_info.icon {
+                                    ProviderIcon::Name(icon_name) => Icon::new(*icon_name)
                                         .color(model_icon_color)
                                         .size(IconSize::Small),
-                                )
+                                    ProviderIcon::Path(icon_path) => {
+                                        Icon::from_external_svg(icon_path.clone())
+                                            .color(model_icon_color)
+                                            .size(IconSize::Small)
+                                    }
+                                })
                                 .child(Label::new(model_info.model.name().0).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
@@ -657,7 +697,7 @@ mod tests {
             .into_iter()
             .map(|(provider, name)| ModelInfo {
                 model: Arc::new(TestLanguageModel::new(name, provider)),
-                icon: IconName::Ai,
+                icon: ProviderIcon::Name(IconName::Ai),
             })
             .collect()
     }

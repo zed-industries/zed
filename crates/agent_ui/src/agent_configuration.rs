@@ -36,7 +36,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     Button, ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure,
     Divider, DividerColor, ElevationIndex, IconName, IconPosition, IconSize, Indicator, LabelSize,
-    PopoverMenu, Switch, Tooltip, WithScrollbar, prelude::*,
+    PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -117,7 +117,7 @@ impl AgentConfiguration {
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -261,9 +261,13 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        if let Some(icon_path) = provider.icon_path() {
+                                            Icon::from_external_svg(icon_path)
+                                        } else {
+                                            Icon::new(provider.icon())
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()
@@ -416,7 +420,7 @@ impl AgentConfiguration {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
 
         let popover_menu = PopoverMenu::new("add-provider-popover")
             .trigger(
@@ -879,6 +883,7 @@ impl AgentConfiguration {
                             .child(context_server_configuration_menu)
                             .child(
                             Switch::new("context-server-switch", is_running.into())
+                                .color(SwitchColor::Accent)
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();

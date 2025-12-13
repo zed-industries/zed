@@ -1722,6 +1722,11 @@
   // and change the value to `false`.
   "auto_install_extensions": {
     "html": true,
+    "copilot-chat": true,
+    "anthropic": true,
+    "google-ai": true,
+    "openai": true,
+    "openrouter": true,
   },
   // The capabilities granted to extensions.
   //
