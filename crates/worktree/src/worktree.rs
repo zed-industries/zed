@@ -3669,19 +3669,19 @@ impl BackgroundScanner {
                 .snapshot
                 .ignores_by_parent_abs_path
                 .extend(ignores);
+            if let Some(exclude) = exclude {
+                self.state
+                    .lock()
+                    .await
+                    .snapshot
+                    .repo_exclude_by_work_dir_abs_path
+                    .insert(root_abs_path.as_path().into(), (exclude, false));
+            }
+
             repo
         } else {
             None
         };
-
-        if let Some(exclude) = exclude {
-            self.state
-                .lock()
-                .await
-                .snapshot
-                .repo_exclude_by_work_dir_abs_path
-                .insert(root_abs_path.as_path().into(), (exclude, false));
-        }
 
         let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
             && self.scanning_enabled

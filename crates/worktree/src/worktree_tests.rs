@@ -2441,7 +2441,8 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
         project_dir,
         true,
         fs.clone(),
-        Arc::default(),
+        Default::default(),
+        true,
         &mut cx.to_async(),
     )
     .await
