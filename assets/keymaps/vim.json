@@ -90,6 +90,7 @@
       "g shift-r": "vim::PushReplaceWithRegister",
       "g r n": "editor::Rename",
       "g r r": "editor::FindAllReferences",
+      "g r h": ["editor::FindAllReferences", { "inline": true }],
       "g r i": "editor::GoToImplementation",
       "g r a": "editor::ToggleCodeActions",
       "g g": "vim::StartOfDocument",

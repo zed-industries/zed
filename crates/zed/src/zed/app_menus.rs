@@ -251,6 +251,13 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     "Find All References",
                     editor::actions::FindAllReferences::default(),
                 ),
+                MenuItem::action(
+                    "Peek All References",
+                    editor::actions::FindAllReferences {
+                        inline: true,
+                        ..Default::default()
+                    },
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(

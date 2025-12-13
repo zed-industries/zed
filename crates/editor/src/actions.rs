@@ -854,12 +854,15 @@ actions!(
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+    #[serde(default)]
+    pub inline: bool,
 }
 
 impl Default for FindAllReferences {
     fn default() -> Self {
         Self {
             always_open_multibuffer: true,
+            inline: false,
         }
     }
 }

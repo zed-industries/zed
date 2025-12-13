@@ -829,6 +829,10 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if let Some(task) = self.try_handle_inline_references_save(&options, window, cx) {
+            return task;
+        }
+
         // Add meta data tracking # of auto saves
         if options.autosave {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
