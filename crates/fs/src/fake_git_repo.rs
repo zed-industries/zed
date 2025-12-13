@@ -23,6 +23,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, LazyLock},
 };
+use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
@@ -200,6 +201,7 @@ impl GitRepository for FakeGitRepository {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
+                message: "initial commit".into(),
                 ..Default::default()
             })
         }
@@ -381,11 +383,18 @@ impl GitRepository for FakeGitRepository {
             Ok(state
                 .branches
                 .iter()
-                .map(|branch_name| Branch {
-                    is_head: Some(branch_name) == current_branch.as_ref(),
-                    ref_name: branch_name.into(),
-                    most_recent_commit: None,
-                    upstream: None,
+                .map(|branch_name| {
+                    let ref_name = if branch_name.starts_with("refs/") {
+                        branch_name.into()
+                    } else {
+                        format!("refs/heads/{branch_name}").into()
+                    };
+                    Branch {
+                        is_head: Some(branch_name) == current_branch.as_ref(),
+                        ref_name,
+                        most_recent_commit: None,
+                        upstream: None,
+                    }
                 })
                 .collect())
         })
@@ -444,7 +453,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        _content: Rope,
+        _line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames
@@ -561,7 +575,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn run_hook(
@@ -569,7 +583,7 @@ impl GitRepository for FakeGitRepository {
         _hook: RunHook,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        async { Ok(()) }.boxed()
     }
 
     fn push(

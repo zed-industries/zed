@@ -63,6 +63,10 @@ impl AgentModelSelector {
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
     }
+
+    pub fn active_model(&self, cx: &App) -> Option<language_model::ConfiguredModel> {
+        self.selector.read(cx).delegate.active_model(cx)
+    }
 }
 
 impl Render for AgentModelSelector {
@@ -98,7 +102,7 @@ impl Render for AgentModelSelector {
                 .child(
                     Icon::new(IconName::ChevronDown)
                         .color(color)
-                        .size(IconSize::XSmall),
+                        .size(IconSize::Small),
                 ),
             move |_window, cx| {
                 Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)

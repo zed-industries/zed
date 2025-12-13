@@ -14,7 +14,7 @@ use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task,
+    Task, WeakEntity,
 };
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
@@ -688,7 +688,7 @@ pub struct TextThread {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<Entity<Project>>,
+    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
     completion_mode: agent_settings::CompletionMode,
 }
@@ -708,7 +708,7 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -742,7 +742,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -873,7 +873,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1165,10 +1165,6 @@ impl TextThread {
 
     pub fn language_registry(&self) -> Arc<LanguageRegistry> {
         self.language_registry.clone()
-    }
-
-    pub fn project(&self) -> Option<Entity<Project>> {
-        self.project.clone()
     }
 
     pub fn prompt_builder(&self) -> Arc<PromptBuilder> {
@@ -2967,7 +2963,7 @@ impl TextThread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = &self.project else {
+        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
             return;
         };
         project.read(cx).user_store().update(cx, |user_store, cx| {

@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
+use ztracing::instrument;
 
 #[cfg(test)]
 pub const TREE_BASE: usize = 2;
@@ -379,6 +380,7 @@ impl<T: Item> SumTree<T> {
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`.
     ///
     /// Only returns the item that exactly has the target match.
+    #[instrument(skip_all)]
     pub fn find_exact<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,
@@ -404,6 +406,7 @@ impl<T: Item> SumTree<T> {
     }
 
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
+    #[instrument(skip_all)]
     pub fn find<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,

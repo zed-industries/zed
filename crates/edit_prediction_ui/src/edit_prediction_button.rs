@@ -3,7 +3,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use codestral::CodestralEditPredictionDelegate;
 use copilot::{Copilot, Status};
-use edit_prediction::{SweepFeatureFlag, Zeta2FeatureFlag};
+use edit_prediction::{MercuryFeatureFlag, SweepFeatureFlag, Zeta2FeatureFlag};
 use edit_prediction_types::EditPredictionDelegateHandle;
 use editor::{
     Editor, MultiBufferOffset, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll,
@@ -23,6 +23,7 @@ use language::{
 use project::DisableAiSettings;
 use regex::Regex;
 use settings::{
+    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
     EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, Settings, SettingsStore,
     update_settings_file,
@@ -44,7 +45,7 @@ use workspace::{
 use zed_actions::OpenBrowser;
 
 use crate::{
-    RatePredictions, SweepApiKeyModal,
+    ExternalProviderApiKeyModal, RatePredictions,
     rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag,
 };
 
@@ -311,21 +312,31 @@ impl Render for EditPredictionButton {
             provider @ (EditPredictionProvider::Experimental(_) | EditPredictionProvider::Zed) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
-                let is_sweep = matches!(
-                    provider,
+                let ep_icon;
+                let mut missing_token = false;
+
+                match provider {
                     EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME
-                    )
-                );
-
-                let sweep_missing_token = is_sweep
-                    && !edit_prediction::EditPredictionStore::try_global(cx)
-                        .map_or(false, |ep_store| ep_store.read(cx).has_sweep_api_token());
-
-                let ep_icon = match (is_sweep, enabled) {
-                    (true, _) => IconName::SweepAi,
-                    (false, true) => IconName::ZedPredict,
-                    (false, false) => IconName::ZedPredictDisabled,
+                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                    ) => {
+                        ep_icon = IconName::SweepAi;
+                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token());
+                    }
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+                    ) => {
+                        ep_icon = IconName::Inception;
+                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token());
+                    }
+                    _ => {
+                        ep_icon = if enabled {
+                            IconName::ZedPredict
+                        } else {
+                            IconName::ZedPredictDisabled
+                        };
+                    }
                 };
 
                 if edit_prediction::should_show_upsell_modal() {
@@ -369,7 +380,7 @@ impl Render for EditPredictionButton {
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
 
-                let indicator_color = if sweep_missing_token {
+                let indicator_color = if missing_token {
                     Some(Color::Error)
                 } else if enabled && (!show_editor_predictions || over_limit) {
                     Some(if over_limit {
@@ -532,6 +543,12 @@ impl EditPredictionButton {
             ));
         }
 
+        if cx.has_flag::<MercuryFeatureFlag>() {
+            providers.push(EditPredictionProvider::Experimental(
+                EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+            ));
+        }
+
         if cx.has_flag::<Zeta2FeatureFlag>() {
             providers.push(EditPredictionProvider::Experimental(
                 EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
@@ -628,7 +645,66 @@ impl EditPredictionButton {
                                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                                     workspace.update(cx, |workspace, cx| {
                                         workspace.toggle_modal(window, cx, |window, cx| {
-                                            SweepApiKeyModal::new(window, cx)
+                                            ExternalProviderApiKeyModal::new(
+                                                window,
+                                                cx,
+                                                |api_key, store, cx| {
+                                                    store
+                                                        .sweep_ai
+                                                        .set_api_token(api_key, cx)
+                                                        .detach_and_log_err(cx);
+                                                },
+                                            )
+                                        });
+                                    });
+                                };
+                            } else {
+                                set_completion_provider(fs.clone(), cx, provider);
+                            }
+                        });
+
+                        menu.item(entry)
+                    }
+                    EditPredictionProvider::Experimental(
+                        EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+                    ) => {
+                        let has_api_token = edit_prediction::EditPredictionStore::try_global(cx)
+                            .map_or(false, |ep_store| ep_store.read(cx).has_mercury_api_token());
+
+                        let should_open_modal = !has_api_token || is_current;
+
+                        let entry = if has_api_token {
+                            ContextMenuEntry::new("Mercury")
+                                .toggleable(IconPosition::Start, is_current)
+                        } else {
+                            ContextMenuEntry::new("Mercury")
+                                .icon(IconName::XCircle)
+                                .icon_color(Color::Error)
+                                .documentation_aside(
+                                    DocumentationSide::Left,
+                                    DocumentationEdge::Bottom,
+                                    |_| {
+                                        Label::new("Click to configure your Mercury API token")
+                                            .into_any_element()
+                                    },
+                                )
+                        };
+
+                        let entry = entry.handler(move |window, cx| {
+                            if should_open_modal {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.toggle_modal(window, cx, |window, cx| {
+                                            ExternalProviderApiKeyModal::new(
+                                                window,
+                                                cx,
+                                                |api_key, store, cx| {
+                                                    store
+                                                        .mercury
+                                                        .set_api_token(api_key, cx)
+                                                        .detach_and_log_err(cx);
+                                                },
+                                            )
                                         });
                                     });
                                 };

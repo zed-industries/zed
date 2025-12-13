@@ -1,17 +1,17 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
-use editor::{Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer};
+use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
-    AnyElement, App, AppContext as _, Asset, AsyncApp, AsyncWindowContext, Context, Element,
-    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Element, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
-    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope,
-    TextBuffer,
+    Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
+    Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{Avatar, DiffStat, Tooltip, prelude::*};
+use ui::{DiffStat, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -33,6 +33,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
 
 actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
@@ -68,6 +69,7 @@ struct GitBlob {
     display_name: Arc<str>,
 }
 
+const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
@@ -145,15 +147,71 @@ impl CommitView {
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
+
+        let message_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(commit.message.clone(), cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            let snapshot = message_buffer.read(cx).snapshot();
+            let full_range = Point::zero()..snapshot.max_point();
+            let range = ExcerptRange {
+                context: full_range.clone(),
+                primary: full_range,
+            };
+            multibuffer.set_excerpt_ranges_for_path(
+                PathKey::with_sort_prefix(
+                    COMMIT_MESSAGE_SORT_PREFIX,
+                    RelPath::unix("commit message").unwrap().into(),
+                ),
+                message_buffer.clone(),
+                &snapshot,
+                vec![range],
+                cx,
+            )
+        });
+
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
             editor.disable_inline_diagnostics();
+            editor.set_show_breakpoints(false, cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
+            editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
+
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Above(editor::Anchor::min()),
+                    height: Some(1),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(|_| gpui::Empty.into_any_element()),
+                    priority: 0,
+                }]
+                .into_iter()
+                .chain(
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                        .map(|anchor| BlockProperties {
+                            placement: BlockPlacement::Below(anchor),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(|_| gpui::Empty.into_any_element()),
+                            priority: 0,
+                        }),
+                ),
+                None,
+                cx,
+            );
 
             editor
         });
+
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let first_worktree_id = project
@@ -163,7 +221,6 @@ impl CommitView {
             .map(|worktree| worktree.read(cx).id());
 
         let repository_clone = repository.clone();
-        let commit_message = commit.message.clone();
 
         cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
@@ -202,92 +259,28 @@ impl CommitView {
                     this.multibuffer.update(cx, |multibuffer, cx| {
                         let snapshot = buffer.read(cx).snapshot();
                         let path = snapshot.file().unwrap().path().clone();
-
-                        let hunks: Vec<_> = buffer_diff.read(cx).hunks(&snapshot, cx).collect();
-
-                        let excerpt_ranges = if hunks.is_empty() {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        } else {
-                            hunks
-                                .into_iter()
-                                .map(|hunk| {
-                                    let start = hunk.range.start.max(language::Point::new(
-                                        hunk.range.start.row.saturating_sub(3),
-                                        0,
-                                    ));
-                                    let end_row =
-                                        (hunk.range.end.row + 3).min(snapshot.max_point().row);
-                                    let end =
-                                        language::Point::new(end_row, snapshot.line_len(end_row));
-                                    start..end
-                                })
-                                .collect()
+                        let excerpt_ranges = {
+                            let mut hunks = buffer_diff.read(cx).hunks(&snapshot, cx).peekable();
+                            if hunks.peek().is_none() {
+                                vec![language::Point::zero()..snapshot.max_point()]
+                            } else {
+                                hunks
+                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                    .collect::<Vec<_>>()
+                            }
                         };
 
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
                             PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             excerpt_ranges,
-                            0,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
                     });
                 })?;
             }
-
-            let message_buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(commit_message, cx);
-                buffer.set_capability(Capability::ReadOnly, cx);
-                buffer
-            })?;
-
-            this.update(cx, |this, cx| {
-                this.multibuffer.update(cx, |multibuffer, cx| {
-                    let range = ExcerptRange {
-                        context: Anchor::MIN..Anchor::MAX,
-                        primary: Anchor::MIN..Anchor::MAX,
-                    };
-                    multibuffer.insert_excerpts_after(
-                        ExcerptId::min(),
-                        message_buffer.clone(),
-                        [range],
-                        cx,
-                    )
-                });
-
-                this.editor.update(cx, |editor, cx| {
-                    editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
-                    editor
-                        .disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
-
-                    editor.insert_blocks(
-                        [BlockProperties {
-                            placement: BlockPlacement::Above(editor::Anchor::min()),
-                            height: Some(1),
-                            style: BlockStyle::Sticky,
-                            render: Arc::new(|_| gpui::Empty.into_any_element()),
-                            priority: 0,
-                        }]
-                        .into_iter()
-                        .chain(
-                            editor
-                                .buffer()
-                                .read(cx)
-                                .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
-                                .map(|anchor| BlockProperties {
-                                    placement: BlockPlacement::Below(anchor),
-                                    height: Some(1),
-                                    style: BlockStyle::Sticky,
-                                    render: Arc::new(|_| gpui::Empty.into_any_element()),
-                                    priority: 0,
-                                }),
-                        ),
-                        None,
-                        cx,
-                    )
-                });
-            })?;
 
             anyhow::Ok(())
         })
@@ -326,17 +319,7 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let remote = self.remote.as_ref().filter(|r| r.host_supports_avatars());
-
-        if let Some(remote) = remote {
-            let avatar_asset = CommitAvatarAsset::new(remote.clone(), sha.clone());
-            if let Some(Some(url)) = window.use_asset::<CommitAvatarAsset>(&avatar_asset, cx) {
-                return Avatar::new(url.to_string())
-                    .size(size)
-                    .into_element()
-                    .into_any();
-            }
-        }
+        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
 
         v_flex()
             .w(size)
@@ -347,10 +330,15 @@ impl CommitView {
             .justify_center()
             .items_center()
             .child(
-                Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .size(IconSize::Medium)
-                    .into_element(),
+                avatar
+                    .avatar(window, cx)
+                    .map(|a| a.size(size).into_any_element())
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::Person)
+                            .color(Color::Muted)
+                            .size(IconSize::Medium)
+                            .into_any_element()
+                    }),
             )
             .into_any()
     }
@@ -425,12 +413,23 @@ impl CommitView {
             None
         };
 
+        let gutter_width = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let style = editor.style(cx);
+            let font_id = window.text_system().resolve_font(&style.text.font());
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            snapshot
+                .gutter_dimensions(font_id, font_size, style, window, cx)
+                .full_width()
+        });
+
         h_flex()
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
+            .w_full()
             .child(
                 h_flex()
-                    .w(self.editor.read(cx).last_gutter_dimensions().full_width())
+                    .w(gutter_width)
                     .justify_center()
                     .child(self.render_commit_avatar(&commit.sha, rems_from_px(48.), window, cx)),
             )
@@ -641,54 +640,6 @@ impl CommitView {
             })?
             .await?;
         anyhow::Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-struct CommitAvatarAsset {
-    sha: SharedString,
-    remote: GitRemote,
-}
-
-impl std::hash::Hash for CommitAvatarAsset {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.sha.hash(state);
-        self.remote.host.name().hash(state);
-    }
-}
-
-impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
-        Self { remote, sha }
-    }
-}
-
-impl Asset for CommitAvatarAsset {
-    type Source = Self;
-    type Output = Option<SharedString>;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let client = cx.http_client();
-        async move {
-            match source
-                .remote
-                .host
-                .commit_author_avatar_url(
-                    &source.remote.owner,
-                    &source.remote.repo,
-                    source.sha.clone(),
-                    client,
-                )
-                .await
-            {
-                Ok(Some(url)) => Some(SharedString::from(url.to_string())),
-                Ok(None) => None,
-                Err(_) => None,
-            }
-        }
     }
 }
 
@@ -1019,7 +970,9 @@ impl Render for CommitView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
-            .child(div().flex_grow().child(self.editor.clone()))
+            .when(!self.editor.read(cx).is_empty(cx), |this| {
+                this.child(div().flex_grow().child(self.editor.clone()))
+            })
     }
 }
 
