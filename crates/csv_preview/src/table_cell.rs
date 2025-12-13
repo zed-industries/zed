@@ -96,13 +96,15 @@ impl CsvPreviewView {
         // Called when user presses mouse button down on a cell
         .on_mouse_down(MouseButton::Left, {
             let view = view_entity.clone();
-            move |_event, _window, cx| {
+            move |_event, window, cx| {
                 view.update(cx, |this, cx| {
                     let ordered_indices = this.get_ordered_indices().clone();
-                    this.selection.start_selection(
+                    let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
+                    this.selection.start_selection_with_cumulative(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
+                        preserve_existing,
                     );
                     cx.notify();
                 });
@@ -111,16 +113,18 @@ impl CsvPreviewView {
         // Called when user moves mouse over a cell (for drag selection)
         .on_mouse_move({
             let view = view_entity.clone();
-            move |_event, _window, cx| {
+            move |_event, window, cx| {
                 view.update(cx, |this, cx| {
                     if !this.selection.is_selecting() {
                         return;
                     }
                     let ordered_indices = this.get_ordered_indices().clone();
+                    let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.extend_selection_to(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
+                        preserve_existing,
                     );
                     cx.notify();
                 });

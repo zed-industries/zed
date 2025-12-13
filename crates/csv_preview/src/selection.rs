@@ -57,14 +57,17 @@ impl TableSelection {
         }
     }
 
-    /// Start cell selection at display position, stored as data coordinates.
-    pub fn start_selection(
+    /// Start cell selection with option to preserve existing selection (cumulative).
+    pub fn start_selection_with_cumulative(
         &mut self,
         display_row: DisplayRow,
         col: usize,
         ordered_indices: &OrderedIndices,
+        preserve_existing: bool,
     ) {
-        self.selected_cells.clear();
+        if !preserve_existing {
+            self.selected_cells.clear();
+        }
 
         // Convert display coordinates to data coordinates for storage
         if let Some(data_row) = ordered_indices.get_data_row(display_row) {
@@ -86,9 +89,12 @@ impl TableSelection {
         display_row: DisplayRow,
         col: usize,
         ordered_indices: &OrderedIndices,
+        preserve_existing: bool,
     ) {
         if let Some((start_display_row, start_col)) = self.selection_start_display {
-            self.selected_cells.clear();
+            if !preserve_existing {
+                self.selected_cells.clear();
+            }
 
             // Create rectangle in display coordinates
             let min_display_row = start_display_row.min(display_row.get());
