@@ -2319,6 +2319,8 @@ pub mod evals {
                 &mut cx,
             );
 
+            cx.quit();
+
             judge(output)
         });
     }
