@@ -1196,6 +1196,7 @@ impl MetalRenderer {
                 ptr::write(
                     buffer_contents,
                     SurfaceBounds {
+                        order: surface.order,
                         bounds: surface.bounds,
                         content_mask: surface.content_mask.clone(),
                     },
@@ -1418,6 +1419,7 @@ pub struct PathSprite {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct SurfaceBounds {
+    pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
 }
