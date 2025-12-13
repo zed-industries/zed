@@ -348,7 +348,7 @@ pub(crate) fn new_debugger_pane(
                         debug_assert!(_previous_subscription.is_none());
                         running
                             .panes
-                            .split(&this_pane, &new_pane, split_direction)?;
+                            .split(&this_pane, &new_pane, split_direction, cx)?;
                         anyhow::Ok(new_pane)
                     })
                 })
@@ -1462,7 +1462,7 @@ impl RunningState {
         this.serialize_layout(window, cx);
         match event {
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1889,9 +1889,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self) {
+    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies();
+        self.panes.invert_axies(cx);
     }
 }
 

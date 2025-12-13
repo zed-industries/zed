@@ -1557,7 +1557,7 @@ impl Panel for DebugPanel {
             self.sessions_with_children.keys().for_each(|session_item| {
                 session_item.update(cx, |item, cx| {
                     item.running_state()
-                        .update(cx, |state, _| state.invert_axies())
+                        .update(cx, |state, cx| state.invert_axies(cx))
                 })
             });
         }

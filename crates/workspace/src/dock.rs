@@ -1,4 +1,5 @@
 use crate::persistence::model::DockData;
+use crate::utility_pane::utility_slot_for_dock_position;
 use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -13,6 +14,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
+use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
@@ -24,6 +26,21 @@ pub enum PanelEvent {
 }
 
 pub use proto::PanelId;
+
+pub struct MinimizePane;
+pub struct ClosePane;
+
+pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    /// The element to render in the adjacent pane's tab bar when this utility pane is minimized
+    fn toggle_button(&self, cx: &App) -> AnyElement;
+    fn minimized(&self, cx: &App) -> bool;
+}
+
+pub enum UtilityPanePosition {
+    Left,
+    Right,
+}
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -57,6 +74,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
+    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
+        None
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -81,6 +101,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
+    fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -184,6 +205,10 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
+    }
+
+    fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView> {
+        self.read(cx).utility_pane(window, cx)
     }
 }
 
@@ -586,6 +611,20 @@ impl Dock {
         );
 
         self.restore_state(window, cx);
+
+        if let Some(utility_view) = panel.utility_pane(window, cx) {
+            let slot = utility_slot_for_dock_position(self.position);
+            let workspace = self.workspace.clone();
+            let id = Entity::entity_id(&panel);
+            cx.defer(move |cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.register_utility_pane(slot, id, utility_view, cx);
+                    });
+                }
+            });
+        }
+
         if panel.read(cx).starts_open(window, cx) {
             self.activate_panel(index, window, cx);
             self.set_open(true, window, cx);
@@ -637,6 +676,14 @@ impl Dock {
                     std::cmp::Ordering::Greater => {}
                 }
             }
+
+            let slot = utility_slot_for_dock_position(self.position);
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.clear_utility_pane_if_provider(slot, Entity::entity_id(panel), cx);
+                });
+            }
+
             self.panel_entries.remove(panel_ix);
             cx.notify();
         }
@@ -891,7 +938,13 @@ impl Render for PanelButtons {
             .enumerate()
             .filter_map(|(i, entry)| {
                 let icon = entry.panel.icon(window, cx)?;
-                let icon_tooltip = entry.panel.icon_tooltip(window, cx)?;
+                let icon_tooltip = entry
+                    .panel
+                    .icon_tooltip(window, cx)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("can't render a panel button without an icon tooltip")
+                    })
+                    .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
 

@@ -342,7 +342,7 @@ impl TerminalPanel {
             pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
-                let _removal_result = self.center.remove(pane);
+                let _removal_result = self.center.remove(pane, cx);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
                         pane.set_zoomed(false, cx);
@@ -393,7 +393,10 @@ impl TerminalPanel {
                         };
                         panel
                             .update_in(cx, |panel, window, cx| {
-                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                panel
+                                    .center
+                                    .split(&pane, &new_pane, direction, cx)
+                                    .log_err();
                                 window.focus(&new_pane.focus_handle(cx));
                             })
                             .ok();
@@ -415,7 +418,7 @@ impl TerminalPanel {
                     new_pane.update(cx, |pane, cx| {
                         pane.add_item(item, true, true, None, window, cx);
                     });
-                    self.center.split(&pane, &new_pane, direction).log_err();
+                    self.center.split(&pane, &new_pane, direction, cx).log_err();
                     window.focus(&new_pane.focus_handle(cx));
                 }
             }
@@ -1066,7 +1069,7 @@ impl TerminalPanel {
             .find_pane_in_direction(&self.active_pane, direction, cx)
             .cloned()
         {
-            self.center.swap(&self.active_pane, &to);
+            self.center.swap(&self.active_pane, &to, cx);
             cx.notify();
         }
     }
@@ -1074,7 +1077,7 @@ impl TerminalPanel {
     fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction)
+            .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
             cx.notify();
@@ -1189,6 +1192,7 @@ pub fn new_terminal_pane(
                                         &this_pane,
                                         &new_pane,
                                         split_direction,
+                                        cx,
                                     )?;
                                     anyhow::Ok(new_pane)
                                 })
@@ -1482,6 +1486,7 @@ impl Render for TerminalPanel {
                                                     &terminal_panel.active_pane,
                                                     &new_pane,
                                                     SplitDirection::Right,
+                                                    cx,
                                                 )
                                                 .log_err();
                                             let new_pane = new_pane.read(cx);
