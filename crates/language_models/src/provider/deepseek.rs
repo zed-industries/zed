@@ -474,8 +474,12 @@ impl DeepSeekEventMapper {
                 }
 
                 if let Some(function) = tool_call.function.as_ref() {
+                    // Only update name if it's not empty and entry.name is not already set
+                    // This preserves the name from the first chunk
                     if let Some(name) = function.name.clone() {
-                        entry.name = name;
+                        if !name.is_empty() && entry.name.is_empty() {
+                            entry.name = name;
+                        }
                     }
 
                     if let Some(arguments) = function.arguments.clone() {
@@ -655,6 +659,140 @@ impl Render for ConfigurationView {
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .into_any_element()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deepseek::*;
+    use language_model::LanguageModelCompletionEvent;
+
+    #[test]
+    fn test_deepseek_event_mapper_name_preservation() {
+        let mut mapper = DeepSeekEventMapper::new();
+
+        // First chunk with name
+        let first_chunk = StreamResponse {
+            id: "test".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1234567890,
+            model: "deepseek-chat".to_string(),
+            choices: vec![StreamChoice {
+                index: 0,
+                delta: StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: Some(vec![ToolCallChunk {
+                        index: 0,
+                        id: Some("call_123".to_string()),
+                        function: Some(FunctionChunk {
+                            name: Some("grep".to_string()),
+                            arguments: Some("{\"pattern\":".to_string()),
+                        }),
+                    }]),
+                    reasoning_content: None,
+                },
+                finish_reason: None,
+            }],
+            usage: None,
+        };
+
+        let events = mapper.map_event(first_chunk);
+        assert!(events.is_empty()); // No events until tool_calls finish
+
+        // Second chunk with empty name (should be filtered)
+        let second_chunk = StreamResponse {
+            id: "test".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1234567890,
+            model: "deepseek-chat".to_string(),
+            choices: vec![StreamChoice {
+                index: 0,
+                delta: StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: Some(vec![ToolCallChunk {
+                        index: 0,
+                        id: None,
+                        function: Some(FunctionChunk {
+                            name: None, // Empty name filtered to None
+                            arguments: Some("\"test\"}".to_string()),
+                        }),
+                    }]),
+                    reasoning_content: None,
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+
+        let events = mapper.map_event(second_chunk);
+
+        // Should have ToolUse and Stop events
+        assert_eq!(events.len(), 2);
+
+        match &events[0] {
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                assert_eq!(tool_use.name.to_string(), "grep");
+                assert_eq!(tool_use.raw_input.to_string(), "{\"pattern\":\"test\"}");
+            }
+            _ => panic!("Expected ToolUse event"),
+        }
+
+        match &events[1] {
+            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                assert_eq!(reason, &StopReason::ToolUse);
+            }
+            _ => panic!("Expected Stop event"),
+        }
+    }
+
+    #[test]
+    fn test_deepseek_event_mapper_malformed_arguments() {
+        let mut mapper = DeepSeekEventMapper::new();
+
+        let chunk = StreamResponse {
+            id: "test".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1234567890,
+            model: "deepseek-chat".to_string(),
+            choices: vec![StreamChoice {
+                index: 0,
+                delta: StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: Some(vec![ToolCallChunk {
+                        index: 0,
+                        id: Some("call_123".to_string()),
+                        function: Some(FunctionChunk {
+                            name: Some("grep".to_string()),
+                            arguments: Some("{invalid json}".to_string()),
+                        }),
+                    }]),
+                    reasoning_content: None,
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+
+        let events = mapper.map_event(chunk);
+
+        // Should have ToolUseJsonParseError and Stop events
+        assert_eq!(events.len(), 2);
+
+        match &events[0] {
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                tool_name,
+                raw_input,
+                ..
+            }) => {
+                assert_eq!(tool_name.to_string(), "grep");
+                assert_eq!(raw_input.to_string(), "{invalid json}");
+            }
+            _ => panic!("Expected ToolUseJsonParseError event"),
         }
     }
 }

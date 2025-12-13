@@ -254,10 +254,31 @@ pub struct ToolCallChunk {
     pub function: Option<FunctionChunk>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for FunctionChunk {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawFunctionChunk {
+            name: Option<String>,
+            arguments: Option<String>,
+        }
+
+        let raw = RawFunctionChunk::deserialize(deserializer)?;
+
+        // Filter empty strings to None, similar to OpenAI implementation
+        let name = raw.name.filter(|s| !s.is_empty());
+        let arguments = raw.arguments.filter(|s| !s.is_empty());
+
+        Ok(FunctionChunk { name, arguments })
+    }
 }
 
 pub async fn stream_completion(
@@ -305,5 +326,206 @@ pub async fn stream_completion(
             response.status(),
             body,
         );
+    }
+}
+
+// Helper function for testing DeepSeek streaming responses
+#[allow(dead_code)]
+fn parse_response_stream_result(line: &str) -> Result<StreamResponse, serde_json::Error> {
+    serde_json::from_str(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_function_chunk_empty_string_filtering() {
+        // Test that empty strings are filtered to None
+        let json_with_empty = r#"{"name": "", "arguments": ""}"#;
+        let chunk: FunctionChunk = serde_json::from_str(json_with_empty).unwrap();
+
+        assert_eq!(chunk.name, None);
+        assert_eq!(chunk.arguments, None);
+
+        // Test that non-empty strings are preserved
+        let json_with_content = r#"{"name": "grep", "arguments": "{\"pattern\": \"test\"}"}"#;
+        let chunk: FunctionChunk = serde_json::from_str(json_with_content).unwrap();
+
+        assert_eq!(chunk.name, Some("grep".to_string()));
+        assert_eq!(chunk.arguments, Some("{\"pattern\": \"test\"}".to_string()));
+
+        // Test mixed case
+        let json_mixed = r#"{"name": "grep", "arguments": ""}"#;
+        let chunk: FunctionChunk = serde_json::from_str(json_mixed).unwrap();
+
+        assert_eq!(chunk.name, Some("grep".to_string()));
+        assert_eq!(chunk.arguments, None);
+    }
+
+    #[test]
+    fn test_deepseek_streaming_response_parsing() {
+        // This simulates a real DeepSeek streaming response with tool calls
+        let response_json = r#"{
+            "id": "chat-123",
+            "object": "chat.completion.chunk",
+            "created": 1699012345,
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "name": "grep",
+                            "arguments": "{\"pattern\":"
+                        }
+                    }]
+                },
+                "finish_reason": null
+            }]
+        }"#;
+
+        let response: StreamResponse = serde_json::from_str(response_json).unwrap();
+
+        assert_eq!(response.choices.len(), 1);
+        let choice = &response.choices[0];
+        assert_eq!(choice.delta.tool_calls.as_ref().unwrap().len(), 1);
+
+        let tool_call = &choice.delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tool_call.index, 0);
+        assert_eq!(tool_call.id, Some("call_123".to_string()));
+
+        let function = tool_call.function.as_ref().unwrap();
+        assert_eq!(function.name, Some("grep".to_string()));
+        assert_eq!(function.arguments, Some("{\"pattern\":".to_string()));
+    }
+
+    #[test]
+    fn test_deepseek_streaming_response_empty_name() {
+        // Test that empty names in subsequent chunks are filtered out
+        let response_json = r#"{
+            "id": "chat-123",
+            "object": "chat.completion.chunk",
+            "created": 1699012345,
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "name": "",
+                            "arguments": "\"test\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        }"#;
+
+        let response: StreamResponse = serde_json::from_str(response_json).unwrap();
+
+        let choice = &response.choices[0];
+        let tool_call = &choice.delta.tool_calls.as_ref().unwrap()[0];
+
+        // Empty name should be filtered to None
+        assert_eq!(tool_call.function.as_ref().unwrap().name, None);
+        assert_eq!(
+            tool_call.function.as_ref().unwrap().arguments,
+            Some("\"test\"}".to_string())
+        );
+    }
+
+    #[test]
+    fn test_deepseek_actual_streaming_response() {
+        // Test with actual DeepSeek streaming response chunks
+        // First chunk: has id, name but empty arguments
+        let first_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620432,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"chatcmpl-tool-5d8d905545f643c38be37e55bbec5e3c","function":{"arguments":"","name":"grep"}}]}}]}"#;
+
+        let result = parse_response_stream_result(first_chunk);
+        match result {
+            Ok(event) => {
+                assert_eq!(event.choices.len(), 1);
+                let choice = &event.choices[0];
+                assert!(choice.delta.tool_calls.is_some());
+                let tool_calls = choice.delta.tool_calls.as_ref().unwrap();
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].index, 0);
+                assert_eq!(
+                    tool_calls[0].id,
+                    Some("chatcmpl-tool-5d8d905545f643c38be37e55bbec5e3c".to_string())
+                );
+                // The name should be Some("grep") after filtering
+                assert_eq!(
+                    tool_calls[0].function.as_ref().unwrap().name,
+                    Some("grep".to_string())
+                );
+                assert_eq!(tool_calls[0].function.as_ref().unwrap().arguments, None); // Empty string filtered out
+            }
+            Err(_) => panic!("Expected success response for first chunk"),
+        }
+
+        // Second chunk: partial arguments, empty name
+        let second_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620432,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"function":{"arguments":"{\"regex","name":""}}]}}]}"#;
+
+        let result = parse_response_stream_result(second_chunk);
+        match result {
+            Ok(event) => {
+                assert_eq!(event.choices.len(), 1);
+                let choice = &event.choices[0];
+                assert!(choice.delta.tool_calls.is_some());
+                let tool_calls = choice.delta.tool_calls.as_ref().unwrap();
+                assert_eq!(tool_calls.len(), 1);
+                assert!(tool_calls[0].id.is_none()); // No ID in this chunk
+                assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None); // Empty string filtered out
+                assert_eq!(
+                    tool_calls[0].function.as_ref().unwrap().arguments,
+                    Some("{\"regex".to_string())
+                );
+            }
+            Err(_) => panic!("Expected success response for second chunk"),
+        }
+
+        // Third chunk: more arguments
+        let third_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620433,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"function":{"arguments":"\": \"","name":""}}]}}]}"#;
+
+        let result = parse_response_stream_result(third_chunk);
+        match result {
+            Ok(event) => {
+                assert_eq!(event.choices.len(), 1);
+                let choice = &event.choices[0];
+                assert!(choice.delta.tool_calls.is_some());
+                let tool_calls = choice.delta.tool_calls.as_ref().unwrap();
+                assert_eq!(tool_calls.len(), 1);
+                assert!(tool_calls[0].id.is_none());
+                assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None);
+                assert_eq!(
+                    tool_calls[0].function.as_ref().unwrap().arguments,
+                    Some("\": \"".to_string())
+                );
+            }
+            Err(_) => panic!("Expected success response for third chunk"),
+        }
+
+        // Last chunk with finish_reason
+        let last_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620434,"model":"deepseek-chat","choices":[{"index":0,"finish_reason":"tool_calls","delta":{"role":"assistant","content":""}}]}"#;
+
+        let result = parse_response_stream_result(last_chunk);
+        match result {
+            Ok(event) => {
+                assert_eq!(event.choices.len(), 1);
+                let choice = &event.choices[0];
+                assert_eq!(choice.finish_reason, Some("tool_calls".to_string()));
+                // No tool calls in the final chunk
+                if let Some(tool_calls) = &choice.delta.tool_calls {
+                    assert!(tool_calls.is_empty());
+                }
+            }
+            Err(_) => panic!("Expected success response for last chunk"),
+        }
     }
 }
