@@ -39,6 +39,43 @@ impl CsvPreviewView {
             }
         }
 
+        // Calculate rectangle dimensions and empty cells for toast message
+        let selected_cell_count = selected_cells.len();
+        let (rectangle_dimensions, empty_cells_count) =
+            if self.settings.copy_format == CopyFormat::Markdown {
+                // For markdown, use the selected columns approach
+                let mut selected_columns: HashSet<usize> = HashSet::new();
+                for columns in rows_data.values() {
+                    selected_columns.extend(columns.keys());
+                }
+                let cols = selected_columns.len();
+                let rows = rows_data.len();
+                let total_cells = rows * cols;
+                let empty_cells = total_cells - selected_cell_count;
+                ((rows, cols), empty_cells)
+            } else {
+                // For CSV/TSV, calculate global column range
+                let mut global_min_col = usize::MAX;
+                let mut global_max_col = 0;
+                for columns in rows_data.values() {
+                    if !columns.is_empty() {
+                        let row_min = *columns.keys().next().unwrap();
+                        let row_max = *columns.keys().last().unwrap();
+                        global_min_col = global_min_col.min(row_min);
+                        global_max_col = global_max_col.max(row_max);
+                    }
+                }
+                let cols = if global_min_col <= global_max_col {
+                    global_max_col - global_min_col + 1
+                } else {
+                    0
+                };
+                let rows = rows_data.len();
+                let total_cells = rows * cols;
+                let empty_cells = total_cells - selected_cell_count;
+                ((rows, cols), empty_cells)
+            };
+
         let content = if self.settings.copy_format == CopyFormat::Markdown {
             self.format_as_markdown_table(&rows_data)
         } else {
@@ -127,11 +164,19 @@ impl CsvPreviewView {
                 CopyFormat::Markdown => "Markdown",
             };
 
-            let cell_count = selected_cells.len();
-            let message = if cell_count == 1 {
-                format!("{} cell copied as {}", cell_count, format_name)
+            let (rows, cols) = rectangle_dimensions;
+            let message = if selected_cell_count == 1 {
+                format!("1 cell copied as {}", format_name)
+            } else if empty_cells_count == 0 {
+                format!(
+                    "{} cells copied as {} ({}×{})",
+                    selected_cell_count, format_name, rows, cols
+                )
             } else {
-                format!("{} cells copied as {}", cell_count, format_name)
+                format!(
+                    "{} cells copied as {} ({}×{}, {} empty)",
+                    selected_cell_count, format_name, rows, cols, empty_cells_count
+                )
             };
 
             workspace.update(cx, |workspace: &mut Workspace, cx| {
