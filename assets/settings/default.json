@@ -1421,6 +1421,8 @@
   "journal": {
     // The path of the directory where journal entries are stored
     "path": "~",
+    // What name to use for folders and journal files.
+    "date_format": "%Y/%m/%d.md",
     // What format to display the hours in
     // May take 2 values:
     // 1. hour12

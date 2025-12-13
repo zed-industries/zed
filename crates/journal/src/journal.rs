@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveTime, Timelike};
+use chrono::{Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
@@ -26,6 +26,10 @@ pub struct JournalSettings {
     ///
     /// Default: `~`
     pub path: String,
+    /// Date format for journal entries.
+    ///
+    /// Default: `%Y/%m/%d.md`
+    pub date_format: String,
     /// What format to display the hours in.
     ///
     /// Default: hour12
@@ -39,6 +43,7 @@ impl settings::Settings for JournalSettings {
         Self {
             path: journal.path.unwrap(),
             hour_format: journal.hour_format.unwrap(),
+            date_format: journal.date_format.unwrap(),
         }
     }
 }
@@ -66,10 +71,14 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     let journal_dir_clone = journal_dir.clone();
 
     let now = Local::now();
-    let month_dir = journal_dir
-        .join(format!("{:02}", now.year()))
-        .join(format!("{:02}", now.month()));
-    let entry_path = month_dir.join(format!("{:02}.md", now.day()));
+    let entry_path = journal_dir.join(now.format(&settings.date_format).to_string());
+
+    if entry_path.file_name().is_none() {
+        log::error!("Invalid date_format: must produce a file path, not just directories");
+        return;
+    }
+
+    let month_dir = entry_path.parent().unwrap_or(&journal_dir).to_path_buf();
     let now = now.time();
     let entry_heading = heading_entry(now, &settings.hour_format);
 
