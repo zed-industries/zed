@@ -32,6 +32,7 @@
 /script/node_modules
 /snap
 /zed.xcworkspace
+/tasks
 DerivedData/
 Packages
 xcuserdata/
@@ -42,3 +43,4 @@ xcuserdata/
 
 # `nix build` output
 /result 
+/logs

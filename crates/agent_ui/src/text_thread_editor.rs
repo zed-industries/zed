@@ -5,6 +5,7 @@ use crate::{
 use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
+
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
@@ -22,11 +23,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
-    Styled, Subscription, Task, WeakEntity, actions, div, img, point, prelude::*,
-    pulsating_between, size,
+    Action, Animation, AnimationExt, AnyElement, App, ClipboardEntry, ClipboardItem, CursorStyle,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
+    prelude::*, pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -203,6 +204,8 @@ pub struct TextThreadEditor {
     dragged_file_worktrees: Vec<Entity<Worktree>>,
     language_model_selector: Entity<LanguageModelSelector>,
     language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    title_edit_mode: bool,
+    temp_title_input: SharedString,
 }
 
 const MAX_TAB_TITLE_LEN: usize = 16;
@@ -282,6 +285,7 @@ impl TextThreadEditor {
         let slash_commands = text_thread.read(cx).slash_commands().clone();
         let focus_handle = editor.read(cx).focus_handle(cx);
 
+        let current_title = text_thread.read(cx).summary().or_default();
         let mut this = Self {
             text_thread,
             slash_commands,
@@ -301,6 +305,8 @@ impl TextThreadEditor {
             last_error: None,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
+            title_edit_mode: false,
+            temp_title_input: current_title,
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
@@ -1520,26 +1526,32 @@ impl TextThreadEditor {
 
                 editor.insert(&text, window, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let anchor_before = snapshot.anchor_after(point);
-                let anchor_after = editor
-                    .selections
-                    .newest_anchor()
-                    .head()
-                    .bias_left(&snapshot);
+                // Only create a fold if there's a title (for multi-line selections)
+                // Skip folds for single line selections with empty titles
+                if !crease_title.is_empty() {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let anchor_before = snapshot.anchor_after(point);
+                    let anchor_after = editor
+                        .selections
+                        .newest_anchor()
+                        .head()
+                        .bias_left(&snapshot);
 
-                editor.insert("\n", window, cx);
+                    editor.insert("\n", window, cx);
 
-                let fold_placeholder =
-                    quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
-                let crease = Crease::inline(
-                    anchor_before..anchor_after,
-                    fold_placeholder,
-                    render_quote_selection_output_toggle,
-                    |_, _, _, _| Empty.into_any(),
-                );
-                editor.insert_creases(vec![crease], cx);
-                editor.fold_at(start_row, window, cx);
+                    let fold_placeholder =
+                        quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
+                    let crease = Crease::inline(
+                        anchor_before..anchor_after,
+                        fold_placeholder,
+                        render_quote_selection_output_toggle,
+                        |_, _, _, _| Empty.into_any(),
+                    );
+                    editor.insert_creases(vec![crease], cx);
+                    editor.fold_at(start_row, window, cx);
+                } else {
+                    editor.insert("\n", window, cx);
+                }
             }
         })
     }
@@ -2007,6 +2019,116 @@ impl TextThreadEditor {
     pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
         self.text_thread
             .update(cx, |text_thread, cx| text_thread.summarize(true, cx));
+    }
+
+    pub fn start_title_edit(&mut self, cx: &mut Context<Self>) {
+        self.title_edit_mode = true;
+        self.temp_title_input = self.title(cx);
+        cx.notify();
+    }
+
+    pub fn save_title_edit(&mut self, cx: &mut Context<Self>) {
+        if self.title_edit_mode {
+            let new_title = self.temp_title_input.clone();
+            self.title_edit_mode = false;
+
+            self.text_thread.update(cx, |text_thread, cx| {
+                text_thread.set_custom_summary(new_title.to_string(), cx)
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn cancel_title_edit(&mut self, cx: &mut Context<Self>) {
+        self.title_edit_mode = false;
+        self.temp_title_input = self.title(cx);
+        cx.notify();
+    }
+
+    fn regenerate_title(&mut self, cx: &mut Context<Self>) {
+        self.regenerate_summary(cx);
+    }
+
+    fn render_title_editor(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        if self.title_edit_mode {
+            let temp_input = self.temp_title_input.clone();
+            let title_input = div()
+                .flex()
+                .items_center()
+                .child(
+                    div()
+                        .border_2()
+                        .border_color(cx.theme().colors().border_focused)
+                        .bg(cx.theme().colors().surface_background)
+                        .rounded_md()
+                        .p_3()
+                        .min_w(px(300.0))
+                        .cursor(CursorStyle::IBeam)
+                        .child(
+                            div()
+                                .text_ui(cx)
+                                .text_color(cx.theme().colors().text)
+                                .child(if temp_input.is_empty() {
+                                    "Enter thread title...".into()
+                                } else {
+                                    temp_input
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(
+                            Button::new("save", "Save")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.save_title_edit(cx);
+                                }))
+                                .style(ButtonStyle::Subtle),
+                        )
+                        .child(
+                            Button::new("cancel", "Cancel")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.cancel_title_edit(cx);
+                                }))
+                                .style(ButtonStyle::Subtle),
+                        ),
+                );
+
+            title_input.into_any_element()
+        } else {
+            let current_title = self.title(cx);
+            let title_display = ButtonLike::new("title-edit")
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(DynamicSpacing::Base02.rems(cx))
+                        .children([
+                            div().child(
+                                IconButton::new("regenerate-title", IconName::Rerun)
+                                    .icon_size(IconSize::Small)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.regenerate_title(cx);
+                                    }))
+                                    .tooltip(Tooltip::text("Regenerate title")),
+                            ),
+                            div()
+                                .text_ui(cx)
+                                .text_color(cx.theme().colors().text)
+                                .child(current_title),
+                        ]),
+                )
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.start_title_edit(cx);
+                }));
+
+            title_display.into_any_element()
+        }
     }
 
     fn render_remaining_tokens(&self, cx: &App) -> Option<impl IntoElement + use<>> {
@@ -2580,6 +2702,7 @@ impl Render for TextThreadEditor {
                 language_model_selector.toggle(window, cx);
             })
             .size_full()
+            .child(self.render_title_editor(window, cx))
             .child(
                 div()
                     .flex_grow()
