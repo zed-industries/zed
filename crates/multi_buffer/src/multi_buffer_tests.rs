@@ -3718,7 +3718,7 @@ fn format_diff(
 // }
 
 #[gpui::test]
-async fn test_inverted_diff(cx: &mut TestAppContext) {
+async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         ZERO

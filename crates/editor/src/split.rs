@@ -423,18 +423,22 @@ impl SplittableEditor {
                 .collect::<Vec<_>>();
             pretty_assertions::assert_eq!(primary_diff_hunks, secondary_diff_hunks);
 
+            // Filtering out empty lines is a bit of a hack, to work around a case where
+            // the base text has a trailing newline but the current text doesn't, or vice versa.
+            // In this case, we get the additional newline on one side, but that line is not
+            // marked as added/deleted by rowinfos.
             let primary_unmodified_rows = primary_snapshot
                 .text()
                 .split("\n")
                 .zip(primary_snapshot.row_infos(MultiBufferRow(0)))
-                .filter(|(_, row_info)| row_info.diff_status.is_none())
+                .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
                 .map(|(line, _)| line.to_owned())
                 .collect::<Vec<_>>();
             let secondary_unmodified_rows = secondary_snapshot
                 .text()
                 .split("\n")
                 .zip(secondary_snapshot.row_infos(MultiBufferRow(0)))
-                .filter(|(_, row_info)| row_info.diff_status.is_none())
+                .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
                 .map(|(line, _)| line.to_owned())
                 .collect::<Vec<_>>();
             pretty_assertions::assert_eq!(primary_unmodified_rows, secondary_unmodified_rows);
