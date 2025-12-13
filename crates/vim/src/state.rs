@@ -142,6 +142,11 @@ pub enum Operator {
     HelixPrevious {
         around: bool,
     },
+    HelixSurroundAdd,
+    HelixSurroundReplace {
+        replaced_char: Option<char>,
+    },
+    HelixSurroundDelete,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1035,6 +1040,9 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixSurroundAdd => "helix_ms",
+            Operator::HelixSurroundReplace { .. } => "helix_mr",
+            Operator::HelixSurroundDelete => "helix_md",
         }
     }
 
@@ -1059,6 +1067,14 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixSurroundAdd => "ms".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: None,
+            } => "mr".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: Some(c),
+            } => format!("mr{}", c),
+            Operator::HelixSurroundDelete => "md".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1103,6 +1119,9 @@ impl Operator {
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
+            Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
         }
     }
 
@@ -1128,7 +1147,10 @@ impl Operator {
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }
-            | Operator::HelixPrevious { .. } => true,
+            | Operator::HelixPrevious { .. }
+            | Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
