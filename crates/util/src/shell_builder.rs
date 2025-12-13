@@ -73,6 +73,24 @@ impl ShellBuilder {
         self
     }
 
+    pub fn build_login_shell(self) -> (String, Vec<String>) {
+        (
+            self.program,
+            match self.kind {
+                ShellKind::Fish
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Rc
+                | ShellKind::Xonsh
+                | ShellKind::Elvish
+                | ShellKind::Nushell
+                | ShellKind::Posix
+                | ShellKind::Pwsh => vec!["-l".to_owned()],
+                ShellKind::PowerShell | ShellKind::Cmd => vec![],
+            },
+        )
+    }
+
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
