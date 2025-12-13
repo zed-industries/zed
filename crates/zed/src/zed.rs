@@ -4741,6 +4741,7 @@ mod tests {
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph",
                 "git_onboarding",
                 "git_panel",
                 "go_to_line",
@@ -4918,6 +4919,7 @@ mod tests {
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
+            git_graph::init(cx);
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
