@@ -286,6 +286,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_sign_in: Option<bool>,
+    /// Whether to show the app menu button in the title bar.
+    ///
+    /// Default: true
+    pub show_app_menu: Option<bool>,
     /// Whether to show the menus in the title bar.
     ///
     /// Default: false

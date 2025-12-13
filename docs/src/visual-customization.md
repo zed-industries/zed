@@ -119,6 +119,7 @@ To disable this behavior use:
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
     "show_sign_in": true,           // Show/hide sign-in button
+    "show_app_menu": true,          // Show/hide app menu button (Settings, Keymap, Themes, etc.)
     "show_menus": false             // Show/hide menus
   },
 ```
