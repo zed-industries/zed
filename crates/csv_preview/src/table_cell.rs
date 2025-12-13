@@ -26,7 +26,7 @@ impl CellBorderColors {
     /// Red for focused cell only
     pub const FOCUS: Hsla = Hsla {
         h: 0.0, // 0 degrees = pure red
-        s: 1.0,
+        s: 0.2,
         l: 0.4,
         a: 0.7,
     };
@@ -34,7 +34,7 @@ impl CellBorderColors {
     /// Bright blue for anchor cell only
     pub const ANCHOR: Hsla = Hsla {
         h: 0.6, // 216 degrees = bright blue
-        s: 1.0,
+        s: 0.1,
         l: 0.5,
         a: 0.7,
     };
@@ -179,13 +179,13 @@ fn create_table_cell(
         })
         .when(is_selected, |div| div.bg(selected_bg_color))
         .when(is_focused && is_anchor, |div| {
-            div.border_1().border_color(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
+            div.bg(CellBorderColors::FOCUS_ANCHOR) // Focus + Anchor (blended color)
         })
         .when(is_focused && !is_anchor, |div| {
-            div.border_1().border_color(CellBorderColors::FOCUS) // Focus only
+            div.bg(CellBorderColors::FOCUS) // Focus only
         })
         .when(is_anchor && !is_focused, |div| {
-            div.border_1().border_color(CellBorderColors::ANCHOR) // Anchor only
+            div.bg(CellBorderColors::ANCHOR) // Anchor only
         })
         .map(|div| match font_type {
             FontType::Ui => div.font_ui(cx),
