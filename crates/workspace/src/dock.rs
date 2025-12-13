@@ -941,7 +941,14 @@ impl Render for PanelButtons {
                         .anchor(menu_anchor)
                         .attach(menu_attach)
                         .trigger(move |is_active, _window, _cx| {
-                            IconButton::new(name, icon)
+                            // Include active state in element ID to invalidate the cached
+                            // tooltip when panel state changes (e.g., via keyboard shortcut)
+                            let button_id = if is_active_button {
+                                ElementId::Name(format!("{}-active", name).into())
+                            } else {
+                                ElementId::Name(name.into())
+                            };
+                            IconButton::new(button_id, icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
