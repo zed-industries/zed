@@ -2947,7 +2947,7 @@ mod tests {
                 });
             };
 
-            for _ in 0..20 {
+            for _ in 0..20000 {
                 scroll_by(1);
                 scroll_by(-1);
             }
