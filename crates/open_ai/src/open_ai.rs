@@ -453,22 +453,43 @@ where
         if vec.is_empty() {
             return Ok(None);
         } else {
-            // Validate that all tool calls have required fields
-            for tool_call in &vec {
+            // Validate and clean up tool calls
+            let mut cleaned_tool_calls = Vec::new();
+            for tool_call in vec {
                 if tool_call.r#type.is_none() || tool_call.function.is_none() {
                     return Ok(None); // Malformed - missing required type/function fields
                 }
-                // For DeepSeek streaming, we allow function chunks without name
-                // as long as they have either name or arguments (or both)
+                // Clean up the function chunk by filtering empty strings
                 if let Some(function) = &tool_call.function {
-                    if function.name.is_none() && function.arguments.is_none() {
+                    let name = function.name.as_ref().filter(|s| !s.is_empty()).cloned();
+                    let arguments = function
+                        .arguments
+                        .as_ref()
+                        .filter(|s| !s.is_empty())
+                        .cloned();
+
+                    // For DeepSeek streaming, we allow function chunks without name
+                    // as long as they have either name or arguments (or both)
+                    if name.is_none() && arguments.is_none() {
                         return Ok(None); // Both name and arguments are empty
                     }
+
+                    // Create a cleaned tool call with filtered empty strings
+                    let cleaned_tool_call = ToolCallChunk {
+                        index: tool_call.index,
+                        id: tool_call.id.clone(),
+                        r#type: tool_call.r#type.clone(),
+                        function: Some(FunctionChunk { name, arguments }),
+                    };
+                    cleaned_tool_calls.push(cleaned_tool_call);
+                } else {
+                    cleaned_tool_calls.push(tool_call);
                 }
-                // Note: We allow missing id fields for streaming chunks
-                // They will be handled by the conversion logic
             }
-            return Ok(Some(vec));
+            if cleaned_tool_calls.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(cleaned_tool_calls));
         }
     }
 
@@ -1270,10 +1291,8 @@ mod tests {
                                 tool_calls[0].function.as_ref().unwrap().arguments,
                                 Some("{\"regex\":".to_string())
                             );
-                            assert_eq!(
-                                tool_calls[0].function.as_ref().unwrap().name,
-                                Some("".to_string())
-                            );
+                            // Name should be None since it's empty string in the input
+                            assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None);
                             // No ID in this chunk
                             assert!(tool_calls[0].id.is_none());
                         }
@@ -1317,13 +1336,45 @@ mod tests {
                                 tool_calls[0].function.as_ref().unwrap().arguments,
                                 Some(" \"copy.*agent.*thread\"".to_string())
                             );
-                            assert_eq!(
-                                tool_calls[0].function.as_ref().unwrap().name,
-                                Some("".to_string())
-                            );
+                            // Name should be None since it's empty string in the input
+                            assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None);
                             // No ID in this chunk
                             assert!(tool_calls[0].id.is_none());
                         }
+                    }
+                }
+            }
+            _ => panic!("Expected success response"),
+        }
+        // Fourth chunk: empty name and empty arguments (should not create tool call)
+        let empty_chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "arguments": "",
+                                "name": ""
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let result = parse_response_stream_result(&empty_chunk.to_string());
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        // This should be None since both name and arguments are empty
+                        assert!(
+                            delta.tool_calls.is_none(),
+                            "Tool calls with empty name and arguments should not be created"
+                        );
                     }
                 }
             }
@@ -1356,6 +1407,106 @@ mod tests {
                 }
             }
             _ => panic!("Expected success response"),
+        }
+    }
+
+    #[test]
+    fn test_deepseek_actual_streaming_response() {
+        // Test with actual DeepSeek streaming response chunks
+        // First chunk: has id, name but empty arguments
+        let first_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620432,"model":"deepseek-v3.2","usage":{"prompt_tokens":10006,"completion_tokens":229,"total_tokens":10235},"extend_fields":{"traceId":"2101114817656204167275883e1b4d","requestId":"d98357c7a9fe56c80d3a0fa552217817"},"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"chatcmpl-tool-5d8d905545f643c38be37e55bbec5e3c","type":"function","function":{"arguments":"","name":"grep"}}]}}]}"#;
+
+        let result = parse_response_stream_result(first_chunk);
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_some());
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert_eq!(
+                                tool_calls[0].id,
+                                Some("chatcmpl-tool-5d8d905545f643c38be37e55bbec5e3c".to_string())
+                            );
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().name,
+                                Some("grep".to_string())
+                            );
+                            assert_eq!(tool_calls[0].function.as_ref().unwrap().arguments, None); // Empty string filtered out
+                        }
+                    }
+                }
+            }
+            _ => panic!("Expected success response for first chunk"),
+        }
+
+        // Second chunk: partial arguments, empty name
+        let second_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620432,"model":"deepseek-v3.2","usage":{"prompt_tokens":10006,"completion_tokens":230,"total_tokens":10236},"extend_fields":{"traceId":"2101114817656204167275883e1b4d","requestId":"d98357c7a9fe56c80d3a0fa552217817"},"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"arguments":"{\"regex","name":""}}]}}]}"#;
+
+        let result = parse_response_stream_result(second_chunk);
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_some());
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert!(tool_calls[0].id.is_none()); // No ID in this chunk
+                            assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None); // Empty string filtered out
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().arguments,
+                                Some("{\"regex".to_string())
+                            );
+                        }
+                    }
+                }
+            }
+            _ => panic!("Expected success response for second chunk"),
+        }
+
+        // Third chunk: more arguments
+        let third_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620433,"model":"deepseek-v3.2","usage":{"prompt_tokens":10006,"completion_tokens":232,"total_tokens":10238},"extend_fields":{"traceId":"2101114817656204167275883e1b4d","requestId":"d98357c7a9fe56c80d3a0fa552217817"},"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"arguments":"\": \"","name":""}}]}}]}"#;
+
+        let result = parse_response_stream_result(third_chunk);
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_some());
+                        if let Some(tool_calls) = &delta.tool_calls {
+                            assert_eq!(tool_calls.len(), 1);
+                            assert!(tool_calls[0].id.is_none());
+                            assert_eq!(tool_calls[0].function.as_ref().unwrap().name, None);
+                            assert_eq!(
+                                tool_calls[0].function.as_ref().unwrap().arguments,
+                                Some("\": \"".to_string())
+                            );
+                        }
+                    }
+                }
+            }
+            _ => panic!("Expected success response for third chunk"),
+        }
+
+        // Last chunk with finish_reason and empty tool call
+        let last_chunk = r#"{"id":"345aef33-13a5-44d2-aa7b-c34d7bf0c90c","object":"chat.completion.chunk","created":1765620434,"model":"deepseek-v3.2","usage":{"prompt_tokens":10006,"completion_tokens":258,"total_tokens":10264},"extend_fields":{"traceId":"2101114817656204167275883e1b4d","requestId":"d98357c7a9fe56c80d3a0fa552217817"},"choices":[{"index":0,"finish_reason":"tool_calls","delta":{"role":"assistant","content":"","tool_calls":[{"id":"","type":"function","function":{}}]}}]}"#;
+
+        let result = parse_response_stream_result(last_chunk);
+        match result {
+            Ok(ResponseStreamResult::Ok(event)) => {
+                assert_eq!(event.choices.len(), 1);
+                if let Some(choice) = event.choices.first() {
+                    assert_eq!(choice.finish_reason, Some("tool_calls".to_string()));
+                    // Tool calls should be None since both id and function are empty
+                    if let Some(delta) = &choice.delta {
+                        assert!(delta.tool_calls.is_none());
+                    }
+                }
+            }
+            _ => panic!("Expected success response for last chunk"),
         }
     }
 }
