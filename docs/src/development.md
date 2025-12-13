@@ -10,6 +10,10 @@ If you'd like to develop collaboration features, additionally see:
 
 - [Local Collaboration](./development/local-collaboration.md)
 
+## Learning Rust
+
+Zed is written primarily in rust. Coming from a different language like TypeScript or C++? It may be helpful to follow something like [rustlings](https://rustlings.rust-lang.org/) to see how rust is different.
+
 ## Keychain access
 
 Zed stores secrets in the system keychain.
