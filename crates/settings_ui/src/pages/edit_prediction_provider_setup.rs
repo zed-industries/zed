@@ -108,15 +108,14 @@ fn render_api_key_provider(
     api_key_state: Entity<ApiKeyState>,
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<EditPredictionSetupPage>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
-    _ = _window.use_keyed_state(title, cx, |_, cx| {
+    _ = window.use_keyed_state(title, cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
             key_state.load_if_needed(current_url(cx), |state| state, cx)
         });
-        dbg!("spawning");
         cx.spawn(async move |_, cx| {
             task.await.ok();
             weak_page
