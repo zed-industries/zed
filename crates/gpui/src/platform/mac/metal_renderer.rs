@@ -117,6 +117,8 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    depth_texture: Option<metal::Texture>,
+    depth_stencil_state: metal::DepthStencilState,
 }
 
 #[repr(C)]
@@ -264,6 +266,10 @@ impl MetalRenderer {
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
+        let depth_stencil_descriptor = metal::DepthStencilDescriptor::new();
+        depth_stencil_descriptor.set_depth_compare_function(metal::MTLCompareFunction::LessEqual);
+        depth_stencil_descriptor.set_depth_write_enabled(true);
+
         Self {
             device,
             layer,
@@ -284,6 +290,8 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            depth_texture: None,
+            depth_stencil_state: device.new_depth_stencil_state(&depth_stencil_descriptor),
         }
     }
 
