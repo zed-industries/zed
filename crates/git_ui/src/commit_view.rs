@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use editor::actions::OpenParentExcerpts;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
@@ -966,8 +967,17 @@ impl Render for CommitView {
         let is_stash = self.stash.is_some();
 
         v_flex()
+            .id("commit-view")
             .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
+            // todo!
+            // add your action listerners here
+            // .on_action()
             .size_full()
+            // editor can check if this action is via the window.is_action_avaliable
+            // if it is we can handle it here
+            .on_action(|_: &OpenParentExcerpts, _window, _cx| {
+                dbg!("Action is hit");
+            })
             .bg(cx.theme().colors().editor_background)
             .child(self.render_header(window, cx))
             .when(!self.editor.read(cx).is_empty(cx), |this| {
