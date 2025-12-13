@@ -27711,7 +27711,7 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         "
     });
 
-    // Case 2: Test adding new line after nested list preserves indent of previous line
+    // Case 2: Test adding new line after nested list continues the list with unchecked task
     cx.set_state(&indoc! {"
         - [ ] Item 1
             - [ ] Item 1.a
@@ -27728,20 +27728,12 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         - [x] Item 2
             - [x] Item 2.a
             - [x] Item 2.b
-            ˇ"
+            - [ ] ˇ"
     });
 
-    // Case 3: Test adding a new nested list item preserves indent
-    cx.set_state(&indoc! {"
-        - [ ] Item 1
-            - [ ] Item 1.a
-        - [x] Item 2
-            - [x] Item 2.a
-            - [x] Item 2.b
-            ˇ"
-    });
+    // Case 3: Test adding content to continued list item
     cx.update_editor(|editor, window, cx| {
-        editor.handle_input("-", window, cx);
+        editor.handle_input("Item 2.c", window, cx);
     });
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
@@ -27750,22 +27742,10 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         - [x] Item 2
             - [x] Item 2.a
             - [x] Item 2.b
-            -ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(" [x] Item 2.c", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        - [ ] Item 1
-            - [ ] Item 1.a
-        - [x] Item 2
-            - [x] Item 2.a
-            - [x] Item 2.b
-            - [x] Item 2.cˇ"
+            - [ ] Item 2.cˇ"
     });
 
-    // Case 4: Test adding new line after nested ordered list preserves indent of previous line
+    // Case 4: Test adding new line after nested ordered list continues with next number
     cx.set_state(indoc! {"
         1. Item 1
             1. Item 1.a
@@ -27782,44 +27762,12 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
         2. Item 2
             1. Item 2.a
             2. Item 2.b
-            ˇ"
+            3. ˇ"
     });
 
-    // Case 5: Adding new ordered list item preserves indent
-    cx.set_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            ˇ"
-    });
+    // Case 5: Adding content to continued ordered list item
     cx.update_editor(|editor, window, cx| {
-        editor.handle_input("3", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            3ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(".", window, cx);
-    });
-    cx.run_until_parked();
-    cx.assert_editor_state(indoc! {"
-        1. Item 1
-            1. Item 1.a
-        2. Item 2
-            1. Item 2.a
-            2. Item 2.b
-            3.ˇ"
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(" Item 2.c", window, cx);
+        editor.handle_input("Item 2.c", window, cx);
     });
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
@@ -29185,4 +29133,204 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.assert_editor_state(after);
+}
+
+#[gpui::test]
+async fn test_newline_markdown_lists(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(indoc! {"
+        - Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - Item 1
+        - ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        * Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        * Item 1
+        * ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        + Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        + Item 1
+        + ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        1. Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        1. Item 1
+        2. ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        5. Item 5ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        5. Item 5
+        6. ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [ ] Unchecked taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [ ] Unchecked task
+        - [ ] ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [x] Checked taskˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [x] Checked task
+        - [ ] ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        1. ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        - [ ] ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ
+    "});
+
+    cx.set_state(indoc! {"
+          - Indented itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+          - Indented item
+          - ˇ
+    "});
+
+    cx.set_state(indoc! {"
+          1. Indented ordered itemˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+          1. Indented ordered item
+          2. ˇ
+    "});
+
+    // Test task list without space after bracket (- [x]text format)
+    cx.set_state(indoc! {"
+        - [x]No space after bracketˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - [x]No space after bracket
+        - [ ] ˇ
+    "});
+
+    // Test that non-empty selection doesn't trigger list continuation
+    cx.set_state(indoc! {"
+        - «Item 1ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state("- \nˇ\n");
+
+    // Test cursor in middle of line - list continuation still applies
+    cx.set_state(indoc! {"
+        - Item ˇ1
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state("- Item \n- ˇ1\n");
+
+    // Test that non-Markdown languages don't get list continuation even with setting enabled
+    let mut cx = EditorTestContext::new(&mut cx.cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..LanguageConfig::default()
+                },
+                None,
+            ))),
+            cx,
+        )
+    });
+
+    cx.set_state(indoc! {"
+        - Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - Item 1
+        ˇ
+    "});
+
+    // Test that setting disabled prevents list continuation in Markdown
+    update_test_language_settings(&mut cx.cx, |settings| {
+        settings.defaults.extend_list_on_newline = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(&mut cx.cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Markdown".into(),
+                    ..LanguageConfig::default()
+                },
+                None,
+            ))),
+            cx,
+        )
+    });
+
+    cx.set_state(indoc! {"
+        - Item 1ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        - Item 1
+        ˇ
+    "});
 }

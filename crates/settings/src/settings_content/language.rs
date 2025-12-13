@@ -363,6 +363,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub extend_comment_on_newline: Option<bool>,
+    /// Whether to continue markdown lists when pressing enter.
+    ///
+    /// Default: true
+    pub extend_list_on_newline: Option<bool>,
     /// Inlay hint related settings.
     pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,
