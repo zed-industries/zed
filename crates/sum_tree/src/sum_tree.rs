@@ -250,11 +250,11 @@ impl<T: Item> SumTree<T> {
                 <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
             }
 
-            nodes.push(Node::Leaf {
+            nodes.push(SumTree(Arc::new(Node::Leaf {
                 summary,
                 items,
                 item_summaries,
-            });
+            })));
         }
 
         let mut parent_nodes = Vec::new();
@@ -263,25 +263,27 @@ impl<T: Item> SumTree<T> {
             height += 1;
             let mut current_parent_node = None;
             for child_node in nodes.drain(..) {
-                let parent_node = current_parent_node.get_or_insert_with(|| Node::Internal {
-                    summary: <T::Summary as Summary>::zero(cx),
-                    height,
-                    child_summaries: ArrayVec::new(),
-                    child_trees: ArrayVec::new(),
+                let parent_node = current_parent_node.get_or_insert_with(|| {
+                    SumTree(Arc::new(Node::Internal {
+                        summary: <T::Summary as Summary>::zero(cx),
+                        height,
+                        child_summaries: ArrayVec::new(),
+                        child_trees: ArrayVec::new(),
+                    }))
                 });
                 let Node::Internal {
                     summary,
                     child_summaries,
                     child_trees,
                     ..
-                } = parent_node
+                } = Arc::get_mut(&mut parent_node.0).unwrap()
                 else {
                     unreachable!()
                 };
                 let child_summary = child_node.summary();
                 <T::Summary as Summary>::add_summary(summary, child_summary, cx);
                 child_summaries.push(child_summary.clone());
-                child_trees.push(Self(Arc::new(child_node)));
+                child_trees.push(child_node);
 
                 if child_trees.len() == 2 * TREE_BASE {
                     parent_nodes.extend(current_parent_node.take());
@@ -295,7 +297,7 @@ impl<T: Item> SumTree<T> {
             Self::new(cx)
         } else {
             debug_assert_eq!(nodes.len(), 1);
-            Self(Arc::new(nodes.pop().unwrap()))
+            nodes.pop().unwrap()
         }
     }
 
