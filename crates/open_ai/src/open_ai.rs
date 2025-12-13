@@ -1425,10 +1425,13 @@ mod tests {
                         assert!(delta.tool_calls.is_some());
                         if let Some(tool_calls) = &delta.tool_calls {
                             assert_eq!(tool_calls.len(), 1);
+                            // Check the index field - DeepSeek doesn't provide it, so it should be 0 (default)
+                            assert_eq!(tool_calls[0].index, 0);
                             assert_eq!(
                                 tool_calls[0].id,
                                 Some("chatcmpl-tool-5d8d905545f643c38be37e55bbec5e3c".to_string())
                             );
+                            // The name should be Some("grep") after filtering
                             assert_eq!(
                                 tool_calls[0].function.as_ref().unwrap().name,
                                 Some("grep".to_string())

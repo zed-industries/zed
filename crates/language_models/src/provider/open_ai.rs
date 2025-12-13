@@ -583,9 +583,10 @@ impl OpenAiEventMapper {
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
-                        // Only update name if it's not empty to preserve the name from first chunk
+                        // Only update name if it's not empty and entry.name is not already set
+                        // This preserves the name from the first chunk
                         if let Some(name) = function.name.clone() {
-                            if !name.is_empty() {
+                            if !name.is_empty() && entry.name.is_empty() {
                                 entry.name = name;
                             }
                         }
