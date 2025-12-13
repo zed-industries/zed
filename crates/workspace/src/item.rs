@@ -345,6 +345,10 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn include_in_nav_history() -> bool {
         true
     }
+
+    fn supports_rename(&self) -> bool {
+        false
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -513,6 +517,7 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn supports_rename(&self, cx: &App) -> bool;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -1039,6 +1044,10 @@ impl<T: Item> ItemHandle for Entity<T> {
             this.focus_handle(cx).focus(window);
             window.dispatch_action(action, cx);
         })
+    }
+
+    fn supports_rename(&self, cx: &App) -> bool {
+        self.read(cx).supports_rename()
     }
 }
 
