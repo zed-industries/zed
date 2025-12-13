@@ -1131,6 +1131,18 @@ fn wr_distance(
     }
 }
 
+fn micromamba_shell_name(kind: ShellKind) -> &'static str {
+    match kind {
+        ShellKind::Csh => "csh",
+        ShellKind::Fish => "fish",
+        ShellKind::Nushell => "nu",
+        ShellKind::PowerShell => "powershell",
+        ShellKind::Cmd => "cmd.exe",
+        // default / catch-all:
+        _ => "posix",
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -1297,23 +1309,28 @@ impl ToolchainLister for PythonToolchainProvider {
                     .as_option()
                     .map(|venv| venv.conda_manager)
                     .unwrap_or(settings::CondaManager::Auto);
-
                 let manager = match conda_manager {
                     settings::CondaManager::Conda => "conda",
                     settings::CondaManager::Mamba => "mamba",
                     settings::CondaManager::Micromamba => "micromamba",
-                    settings::CondaManager::Auto => {
-                        // When auto, prefer the detected manager or fall back to conda
-                        toolchain
-                            .environment
-                            .manager
-                            .as_ref()
-                            .and_then(|m| m.executable.file_name())
-                            .and_then(|name| name.to_str())
-                            .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
-                            .unwrap_or("conda")
-                    }
+                    settings::CondaManager::Auto => toolchain
+                        .environment
+                        .manager
+                        .as_ref()
+                        .and_then(|m| m.executable.file_name())
+                        .and_then(|name| name.to_str())
+                        .filter(|name| matches!(*name, "conda" | "mamba" | "micromamba"))
+                        .unwrap_or("conda"),
                 };
+
+                if manager == "micromamba" {
+                    let shell = micromamba_shell_name(shell);
+                    activation_script
+                        .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                }
+
+                let env_name = toolchain.environment.name.as_deref().unwrap_or("base");
+                activation_script.push(format!("{manager} activate {env_name}"));
 
                 if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("{manager} activate {name}"));
