@@ -556,6 +556,14 @@ impl Copilot {
         let server = start_language_server.await;
         this.update(cx, |this, cx| {
             cx.notify();
+
+            if env::var("ZED_FORCE_COPILOT_ERROR").is_ok() {
+                this.server = CopilotServer::Error(
+                    "Forced error for testing (ZED_FORCE_COPILOT_ERROR)".into(),
+                );
+                return;
+            }
+
             match server {
                 Ok((server, status)) => {
                     this.server = CopilotServer::Running(RunningCopilotServer {
