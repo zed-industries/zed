@@ -635,6 +635,7 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<String>>;
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>>;
 }
 
 pub enum DiffType {
@@ -720,6 +721,11 @@ pub struct GitRepositoryCheckpoint {
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitCommitTemplate {
+    pub template: Option<String>,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -1057,6 +1063,51 @@ impl GitRepository for RealGitRepository {
                 let repo = repo.lock();
                 let content = repo.find_blob(oid.0)?.content().to_owned();
                 Ok(String::from_utf8(content)?)
+            })
+            .boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+
+                let output = new_smol_command(git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(["config", "--get", "commit.template"])
+                    .output()
+                    .await
+                    .context("failed to run git config --get commit.template")?;
+
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || path.is_empty() {
+                    return Ok(GitCommitTemplate { template: None });
+                }
+
+                let mut path_buf = PathBuf::from(&path);
+                if let Some(path_str) = path.strip_prefix("~/") {
+                    path_buf = paths::home_dir().join(path_str);
+                } else if path_buf.is_relative() {
+                    path_buf = working_directory.join(path_buf);
+                }
+
+                let template = match std::fs::read_to_string(&path_buf) {
+                    Ok(s) if !s.trim().is_empty() => Some(s),
+                    Err(err) => {
+                        log::warn!(
+                            "failed to read commit template {}: {}",
+                            path_buf.display(),
+                            err
+                        );
+                        None
+                    }
+                    _ => None,
+                };
+
+                Ok(GitCommitTemplate { template })
             })
             .boxed()
     }
