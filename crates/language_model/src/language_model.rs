@@ -1,3 +1,4 @@
+mod api_key;
 mod model;
 mod rate_limiter;
 mod registry;
@@ -30,6 +31,7 @@ use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
 
+pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
 pub use crate::registry::*;
@@ -37,6 +39,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
+pub use zed_env_vars::{EnvVar, env_var};
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");

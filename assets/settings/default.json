@@ -1410,8 +1410,9 @@
       "proxy_no_verify": null,
     },
     "codestral": {
-      "model": null,
-      "max_tokens": null,
+      "api_url": "https://codestral.mistral.ai",
+      "model": "codestral-latest",
+      "max_tokens": 150,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.

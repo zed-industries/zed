@@ -5111,7 +5111,6 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "copilot",
- "credentials_provider",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5275,7 +5274,6 @@ dependencies = [
  "text",
  "theme",
  "ui",
- "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -8802,6 +8800,7 @@ dependencies = [
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
+ "credentials_provider",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -8820,6 +8819,7 @@ dependencies = [
  "telemetry_events",
  "thiserror 2.0.17",
  "util",
+ "zed_env_vars",
 ]
 
 [[package]]
@@ -8876,7 +8876,6 @@ dependencies = [
  "util",
  "vercel",
  "x_ai",
- "zed_env_vars",
 ]
 
 [[package]]
@@ -14778,6 +14777,8 @@ dependencies = [
  "assets",
  "bm25",
  "client",
+ "copilot",
+ "edit_prediction",
  "editor",
  "feature_flags",
  "fs",
@@ -14786,6 +14787,7 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "language",
+ "language_models",
  "log",
  "menu",
  "node_runtime",
