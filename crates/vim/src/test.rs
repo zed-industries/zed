@@ -8,7 +8,7 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
-    actions::{DeleteLine, WrapSelectionsInTag},
+    actions::{DeleteLine, MoveDown, MoveUp, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
@@ -2500,4 +2500,42 @@ async fn test_deactivate(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _window, _cx| {
         assert_eq!(editor.cursor_shape(), CursorShape::Underline);
     });
+}
+
+#[gpui::test]
+async fn test_k_on_first_row_with_goal_column(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let bind_up = KeyBinding::new("up", MoveUp, Some("Editor"));
+    cx.update(|_, cx| cx.bind_keys([bind_up]));
+
+    cx.set_state("Hello ˇWorld", Mode::Normal);
+
+    // Pressing 'up' will set the goal column.
+    cx.simulate_keystrokes("up");
+    cx.assert_editor_state("ˇHello World");
+
+    // Pressing 'k' shouldn't move the cursor since we're already on the first
+    // row.
+    cx.simulate_keystrokes("k");
+    cx.assert_editor_state("ˇHello World");
+}
+
+#[gpui::test]
+async fn test_j_on_last_row_with_goal_column(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let bind_down = KeyBinding::new("down", MoveDown, Some("Editor"));
+    cx.update(|_, cx| cx.bind_keys([bind_down]));
+
+    cx.set_state("Hello ˇWorld", Mode::Normal);
+
+    // Pressing 'down' will set the goal column.
+    cx.simulate_keystrokes("down");
+    cx.assert_editor_state("Hello Worlˇd");
+
+    // Pressing 'j' shouldn't move the cursor since we're already on the last
+    // row.
+    cx.simulate_keystrokes("j");
+    cx.assert_editor_state("Hello Worlˇd");
 }

@@ -9187,7 +9187,7 @@ impl Element for EditorElement {
                             .is_none_or(|info| info.buffer_row.is_none())
                     };
 
-                    let start_anchor = if start_row == Default::default() {
+                    let start_anchor = if start_row == 0 {
                         Anchor::min()
                     } else {
                         snapshot.buffer_snapshot().anchor_before(
