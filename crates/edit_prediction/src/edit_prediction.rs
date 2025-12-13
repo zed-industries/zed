@@ -135,6 +135,23 @@ static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
     })
 });
 
+#[cfg(test)]
+static TEST_FORCE_CUSTOM_URL_MODE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+pub fn set_test_custom_url_mode(enabled: bool) {
+    TEST_FORCE_CUSTOM_URL_MODE.store(enabled, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn has_custom_url() -> bool {
+    #[cfg(test)]
+    if TEST_FORCE_CUSTOM_URL_MODE.load(std::sync::atomic::Ordering::SeqCst) {
+        return true;
+    }
+    PREDICT_EDITS_URL.is_some()
+}
+
 pub struct Zeta2FeatureFlag;
 
 impl FeatureFlag for Zeta2FeatureFlag {
@@ -1591,8 +1608,13 @@ impl EditPredictionStore {
         #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
         #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
-            http_client::Url::parse(&predict_edits_url)?
+        let url = if has_custom_url() {
+            if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
+                http_client::Url::parse(&predict_edits_url)?
+            } else {
+                // Test mode: use a placeholder URL that FakeHttpClient can match
+                http_client::Url::parse("http://test-custom-url/predict")?
+            }
         } else {
             client
                 .http_client()
@@ -1695,18 +1717,31 @@ impl EditPredictionStore {
         Res: DeserializeOwned,
     {
         let http_client = client.http_client();
-        let mut token = llm_token.acquire(&client).await?;
+        let has_custom_url = has_custom_url();
+
+        // Custom URL: auth optional (use if available, proceed without if not)
+        // No custom URL: auth required (fail if not authenticated)
+        let mut token = if has_custom_url {
+            llm_token.acquire(&client).await.ok()
+        } else {
+            Some(llm_token.acquire(&client).await?)
+        };
         let mut did_retry = false;
 
         loop {
             let request_builder = http_client::Request::builder().method(Method::POST);
 
-            let request = build(
-                request_builder
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", token))
-                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string()),
-            )?;
+            let mut request_builder = request_builder
+                .header("Content-Type", "application/json")
+                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
+
+            // Only add Authorization header if we have a token
+            if let Some(ref token_value) = token {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", token_value));
+            }
+
+            let request = build(request_builder)?;
 
             let mut response = http_client.send(request).await?;
 
@@ -1730,13 +1765,14 @@ impl EditPredictionStore {
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry
+                && token.is_some()
                 && response
                     .headers()
                     .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
                     .is_some()
             {
                 did_retry = true;
-                token = llm_token.refresh(&client).await?;
+                token = Some(llm_token.refresh(&client).await?);
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
