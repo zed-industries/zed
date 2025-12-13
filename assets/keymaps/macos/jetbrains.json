@@ -74,7 +74,6 @@
       "alt-enter": "editor::ToggleCodeActions",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-j": "editor::Hover",
-      "cmd-p": "editor::ShowSignatureHelp",
       "cmd-\\": "assistant::InlineAssist"
     }
   },
