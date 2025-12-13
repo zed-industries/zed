@@ -5,7 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffFilterMode, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
@@ -16,7 +16,7 @@ use editor::{
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
-    status::FileStatus,
+    status::{FileStatus, StageStatus},
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
@@ -36,7 +36,7 @@ use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{Checkbox, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -70,6 +70,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    filter_mode: DiffFilterMode,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -320,6 +321,7 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            filter_mode: DiffFilterMode::default(),
             _task: task,
             _subscription: branch_diff_subscription,
         }
@@ -327,6 +329,56 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub fn show_staged_only(&self) -> bool {
+        self.filter_mode == DiffFilterMode::StagedOnly
+    }
+
+    pub fn show_unstaged_only(&self) -> bool {
+        self.filter_mode == DiffFilterMode::UnstagedOnly
+    }
+
+    pub fn toggle_filter_mode(
+        &mut self,
+        mode: DiffFilterMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_mode = if self.filter_mode == mode {
+            DiffFilterMode::All
+        } else {
+            mode
+        };
+        self.rebuild_for_filter_change(window, cx);
+    }
+
+    fn file_matches_filter(filter_mode: DiffFilterMode, status: &FileStatus) -> bool {
+        match filter_mode {
+            DiffFilterMode::All => true,
+            DiffFilterMode::StagedOnly => status.staging() != StageStatus::Unstaged,
+            DiffFilterMode::UnstagedOnly => status.staging() != StageStatus::Staged,
+        }
+    }
+
+    fn rebuild_for_filter_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Full rebuild is necessary because excerpt boundaries encode context information.
+        // The MultiBuffer's update_path_excerpts only expands ranges (never contracts),
+        // so filtering at render time would leave incorrect context around hidden hunks.
+        // Rebuilding ensures context lines are properly recalculated around visible hunks.
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_diff_filter_mode(self.filter_mode, cx);
+            let paths: Vec<_> = multibuffer.paths().collect();
+            for path in paths {
+                multibuffer.remove_excerpts_for_path(path, cx);
+            }
+        });
+        self.buffer_diff_subscriptions.clear();
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
     }
 
     pub fn move_to_entry(
@@ -499,6 +551,7 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff_read = diff.read(cx);
+        let all_diff_hunks_expanded = self.multibuffer.read(cx).all_diff_hunks_expanded();
 
         let excerpt_ranges = {
             let diff_hunk_ranges = diff_read
@@ -507,6 +560,10 @@ impl ProjectDiff {
                     &snapshot,
                     cx,
                 )
+                .filter(|diff_hunk| {
+                    self.filter_mode
+                        .should_show_hunk(diff_hunk, all_diff_hunks_expanded)
+                })
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
             let conflicts = conflict_addon
                 .conflict_set(snapshot.remote_id())
@@ -584,10 +641,13 @@ impl ProjectDiff {
     pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
+            let filter_mode = this.filter_mode;
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
+                let load_buffers = branch_diff
+                    .load_buffers(|status| Self::file_matches_filter(filter_mode, status), cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
+
             let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
@@ -617,6 +677,7 @@ impl ProjectDiff {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
+
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
@@ -1102,7 +1163,7 @@ impl ProjectDiffToolbar {
                     });
                 }
             })
-            .ok();
+            .log_err();
     }
 
     fn unstage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1115,7 +1176,7 @@ impl ProjectDiffToolbar {
                     panel.unstage_all(&Default::default(), window, cx);
                 });
             })
-            .ok();
+            .log_err();
     }
 }
 
@@ -1164,6 +1225,8 @@ impl Render for ProjectDiffToolbar {
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
+        let show_staged_only = project_diff.read(cx).show_staged_only();
+        let show_unstaged_only = project_diff.read(cx).show_unstaged_only();
 
         h_group_xl()
             .my_neg_1()
@@ -1171,6 +1234,49 @@ impl Render for ProjectDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_between()
+            .child(
+                h_group_sm()
+                    .items_center()
+                    .child({
+                        let project_diff_weak = project_diff.downgrade();
+                        Checkbox::new("show-staged", show_staged_only.into()).on_click(
+                            move |_, window, cx| {
+                                project_diff_weak
+                                    .update(cx, |project_diff, cx| {
+                                        project_diff.toggle_filter_mode(
+                                            DiffFilterMode::StagedOnly,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .log_err();
+                            },
+                        )
+                    })
+                    .child(Label::new("Staged")),
+            )
+            .child(
+                h_group_sm()
+                    .items_center()
+                    .child({
+                        let project_diff_weak = project_diff.downgrade();
+                        Checkbox::new("show-unstaged", show_unstaged_only.into()).on_click(
+                            move |_, window, cx| {
+                                project_diff_weak
+                                    .update(cx, |project_diff, cx| {
+                                        project_diff.toggle_filter_mode(
+                                            DiffFilterMode::UnstagedOnly,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .log_err();
+                            },
+                        )
+                    })
+                    .child(Label::new("Unstaged")),
+            )
+            .child(vertical_divider())
             .child(
                 h_group_sm()
                     .when(button_states.selection, |el| {
@@ -2376,5 +2482,10 @@ mod tests {
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
         cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
+    }
+
+    #[test]
+    fn test_diff_filter_mode_default() {
+        assert_eq!(DiffFilterMode::default(), DiffFilterMode::All);
     }
 }

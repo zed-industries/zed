@@ -256,7 +256,11 @@ impl BranchDiff {
     }
 
     #[instrument(skip_all)]
-    pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
+    pub fn load_buffers(
+        &mut self,
+        file_filter: impl Fn(&FileStatus) -> bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
         let Some(repo) = self.repo.clone() else {
             return output;
@@ -277,6 +281,9 @@ impl BranchDiff {
                     continue;
                 };
                 if !status.has_changes() {
+                    continue;
+                }
+                if !file_filter(&item.status) {
                     continue;
                 }
 
@@ -302,13 +309,16 @@ impl BranchDiff {
                     continue;
                 }
 
+                let file_status = diff_status_to_file_status(branch_diff);
+                if !file_filter(&file_status) {
+                    continue;
+                }
+
                 let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
                     continue;
                 };
                 let task =
                     Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
-
-                let file_status = diff_status_to_file_status(branch_diff);
 
                 output.push(DiffBuffer {
                     repo_path: path.clone(),
