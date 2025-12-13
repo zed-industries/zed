@@ -510,13 +510,13 @@ impl RatePredictionsModal {
                                     base_text_style: window.text_style(),
                                     syntax: cx.theme().syntax().clone(),
                                     code_block: StyleRefinement {
-                                        text: Some(TextStyleRefinement {
+                                        text: TextStyleRefinement {
                                             font_family: Some(
                                                 theme_settings.buffer_font.family.clone(),
                                             ),
                                             font_size: Some(buffer_font_size.into()),
                                             ..Default::default()
-                                        }),
+                                        },
                                         padding: EdgesRefinement {
                                             top: Some(DefiniteLength::Absolute(
                                                 AbsoluteLength::Pixels(px(8.)),
