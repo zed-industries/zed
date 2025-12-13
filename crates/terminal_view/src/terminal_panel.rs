@@ -30,8 +30,8 @@ use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
-    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitOperation, SplitRight, SplitUp,
+    SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
@@ -192,10 +192,10 @@ impl TerminalPanel {
                                             split_context.clone(),
                                             |menu, split_context| menu.context(split_context),
                                         )
-                                        .action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
+                                        .action("Split Right", SplitRight::default().boxed_clone())
+                                        .action("Split Left", SplitLeft::default().boxed_clone())
+                                        .action("Split Up", SplitUp::default().boxed_clone())
+                                        .action("Split Down", SplitDown::default().boxed_clone())
                                     })
                                     .into()
                                 }
@@ -382,42 +382,47 @@ impl TerminalPanel {
             }
             &pane::Event::Split {
                 direction,
-                clone_active_item,
+                operation,
             } => {
-                if clone_active_item {
-                    let fut = self.new_pane_with_cloned_active_terminal(window, cx);
-                    let pane = pane.clone();
-                    cx.spawn_in(window, async move |panel, cx| {
-                        let Some(new_pane) = fut.await else {
+                match operation {
+                    SplitOperation::Clone | SplitOperation::Clear => {
+                        let clone = matches!(operation, SplitOperation::Clone);
+                        let new_pane = self.new_pane_with_active_terminal(clone, window, cx);
+                        let pane = pane.clone();
+                        cx.spawn_in(window, async move |panel, cx| {
+                            let Some(new_pane) = new_pane.await else {
+                                return;
+                            };
+                            panel
+                                .update_in(cx, |panel, window, cx| {
+                                    panel.center.split(&pane, &new_pane, direction).log_err();
+                                    window.focus(&new_pane.focus_handle(cx));
+                                })
+                                .ok();
+                        })
+                        .detach();
+                    }
+                    SplitOperation::Move => {
+                        let Some(item) =
+                            pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
+                        else {
                             return;
                         };
-                        panel
-                            .update_in(cx, |panel, window, cx| {
-                                panel.center.split(&pane, &new_pane, direction).log_err();
-                                window.focus(&new_pane.focus_handle(cx));
-                            })
-                            .ok();
-                    })
-                    .detach();
-                } else {
-                    let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
-                    else {
-                        return;
-                    };
-                    let Ok(project) = self
-                        .workspace
-                        .update(cx, |workspace, _| workspace.project().clone())
-                    else {
-                        return;
-                    };
-                    let new_pane =
-                        new_terminal_pane(self.workspace.clone(), project, false, window, cx);
-                    new_pane.update(cx, |pane, cx| {
-                        pane.add_item(item, true, true, None, window, cx);
-                    });
-                    self.center.split(&pane, &new_pane, direction).log_err();
-                    window.focus(&new_pane.focus_handle(cx));
-                }
+                        let Ok(project) = self
+                            .workspace
+                            .update(cx, |workspace, _| workspace.project().clone())
+                        else {
+                            return;
+                        };
+                        let new_pane =
+                            new_terminal_pane(self.workspace.clone(), project, false, window, cx);
+                        new_pane.update(cx, |pane, cx| {
+                            pane.add_item(item, true, true, None, window, cx);
+                        });
+                        self.center.split(&pane, &new_pane, direction).log_err();
+                        window.focus(&new_pane.focus_handle(cx));
+                    }
+                };
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
@@ -430,8 +435,9 @@ impl TerminalPanel {
         }
     }
 
-    fn new_pane_with_cloned_active_terminal(
+    fn new_pane_with_active_terminal(
         &mut self,
+        clone: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Pane>>> {
@@ -443,21 +449,34 @@ impl TerminalPanel {
         let weak_workspace = self.workspace.clone();
         let project = workspace.project().clone();
         let active_pane = &self.active_pane;
-        let terminal_view = active_pane
-            .read(cx)
-            .active_item()
-            .and_then(|item| item.downcast::<TerminalView>());
-        let working_directory = terminal_view
-            .as_ref()
-            .and_then(|terminal_view| {
-                terminal_view
-                    .read(cx)
-                    .terminal()
-                    .read(cx)
-                    .working_directory()
-            })
-            .or_else(|| default_working_directory(workspace, cx));
-        let is_zoomed = active_pane.read(cx).is_zoomed();
+        let terminal_view = if clone {
+            active_pane
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<TerminalView>())
+        } else {
+            None
+        };
+        let working_directory = if clone {
+            terminal_view
+                .as_ref()
+                .and_then(|terminal_view| {
+                    terminal_view
+                        .read(cx)
+                        .terminal()
+                        .read(cx)
+                        .working_directory()
+                })
+                .or_else(|| default_working_directory(workspace, cx))
+        } else {
+            default_working_directory(workspace, cx)
+        };
+
+        let is_zoomed = if clone {
+            active_pane.read(cx).is_zoomed()
+        } else {
+            false
+        };
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
                 .update(cx, |project, cx| match terminal_view {
@@ -1470,7 +1489,7 @@ impl Render for TerminalPanel {
                             window.focus(&pane.read(cx).focus_handle(cx));
                         } else {
                             let future =
-                                terminal_panel.new_pane_with_cloned_active_terminal(window, cx);
+                                terminal_panel.new_pane_with_active_terminal(true, window, cx);
                             cx.spawn_in(window, async move |terminal_panel, cx| {
                                 if let Some(new_pane) = future.await {
                                     _ = terminal_panel.update_in(

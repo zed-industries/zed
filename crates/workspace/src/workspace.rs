@@ -4125,14 +4125,20 @@ impl Workspace {
             }
             pane::Event::Split {
                 direction,
-                clone_active_item,
+                operation,
             } => {
-                if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx)
-                        .detach();
-                } else {
-                    self.split_and_move(pane.clone(), *direction, window, cx);
-                }
+                match operation {
+                    SplitOperation::Clone => {
+                        self.split_and_clone(pane.clone(), *direction, window, cx)
+                            .detach();
+                    }
+                    SplitOperation::Clear => {
+                        self.split_pane(pane.clone(), *direction, window, cx);
+                    }
+                    SplitOperation::Move => {
+                        self.split_and_move(pane.clone(), *direction, window, cx);
+                    }
+                };
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
