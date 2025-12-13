@@ -840,6 +840,8 @@ impl WrapSnapshot {
         self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
+    /// Try to find a TabRow start that is also a WrapRow start
+    /// Every TabRow start is a WrapRow start
     #[ztracing::instrument(skip_all, fields(point=?point))]
     pub fn prev_row_boundary(&self, point: WrapPoint) -> WrapRow {
         if self.transforms.is_empty() {
@@ -857,13 +859,58 @@ impl WrapSnapshot {
             cursor.prev();
         }
 
+        //                          real newline     fake          fake
+        // text:      helloworldasldlfjasd\njdlasfalsk\naskdjfasdkfj\n
+        // dimensions v       v           v            v            v
+        // transforms |-------|-----NW----|-----W------|-----W------|
+        // cursor    ^        ^^^^^^^^^^^^^                          ^
+        //                               (^)           ^^^^^^^^^^^^^^
+        // point:                                            ^
+        // point(col_zero):                           (^)
+        //
+        //
+        //
+
+        // let mut point_to_check = cursor.end().0;
+        // *point_to_check.column_mut() = 0;
+        // loop {
+
+        //     if self.to_tab_point(point_to_check).column() == 0 {
+        //         return point_to_check.row();
+        //     }
+
+        //     if point_to_check.row() == WrapRow(0) {
+        //         unreachable!();
+        //     }
+
+        //     *point_to_check.row_mut() -= 1;
+
+        // }
+
         while let Some(transform) = cursor.item() {
-            let tab_transform_start = cursor.start().1;
-            if transform.is_isomorphic() && tab_transform_start.row() < point.0.row {
-                return cmp::min(cursor.end().0.row(), point.row());
-            } else {
-                cursor.prev();
+            if transform.is_isomorphic() {
+                // this transform only has real linefeeds
+                let tab_summary = &transform.summary.input;
+                // is the wrap just before the end of the transform a tab row?
+                // thats only if this transform has at least one newline
+                //
+                // "this wrap row is a tab row" <=> self.to_tab_point(WrapPoint::new(wrap_row, 0)).column() == 0
+                if tab_summary.lines.row > 1 {
+                    let wrap_point_at_end = cursor.end().0.row();
+                    return cmp::min(wrap_point_at_end - RowDelta(1), point.row())
+                } else if cursor.start().1.column() == 0 {
+                    return cmp::min(cursor.end().0.row(), point.row());
+                }
             }
+
+            cursor.prev();
+
+            // let tab_transform_start = cursor.start().1;
+            // if transform.is_isomorphic() && tab_transform_start.row() < point.0.row {
+            //     return cmp::min(cursor.end().0.row(), point.row());
+            // } else {
+            //     cursor.prev();
+            // }
         }
 
         WrapRow(0)
@@ -1310,6 +1357,7 @@ mod tests {
                 cx,
             )
         });
+
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
@@ -1326,8 +1374,12 @@ mod tests {
 
         assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
         assert_eq!(
+            wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(8,0))),
+            WrapRow(7)
+        );
+        assert_eq!(
             wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
-            WrapRow(4)
+            WrapRow(9)
         );
     }
 
