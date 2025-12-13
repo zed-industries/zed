@@ -29,25 +29,36 @@ impl AgentModelSelector {
 
         Self {
             selector: cx.new(move |cx| {
-                let fs = fs.clone();
                 language_model_selector(
                     {
                         let model_context = model_usage_context.clone();
                         move |cx| model_context.configured_model(cx)
                     },
-                    move |model, cx| {
-                        let provider = model.provider_id().0.to_string();
-                        let model_id = model.id().0.to_string();
-                        match &model_usage_context {
-                            ModelUsageContext::InlineAssistant => {
-                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_inline_assistant_model(provider.clone(), model_id);
-                                });
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            let provider = model.provider_id().0.to_string();
+                            let model_id = model.id().0.to_string();
+                            match &model_usage_context {
+                                ModelUsageContext::InlineAssistant => {
+                                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                        settings
+                                            .agent
+                                            .get_or_insert_default()
+                                            .set_inline_assistant_model(provider.clone(), model_id);
+                                    });
+                                }
                             }
                         }
+                    },
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            crate::favorite_models::add_to_settings(model, fs.clone(), cx);
+                        }
+                    },
+                    move |model, cx| {
+                        crate::favorite_models::remove_from_settings(model, fs.clone(), cx);
                     },
                     true, // Use popover styles for picker
                     focus_handle_clone,

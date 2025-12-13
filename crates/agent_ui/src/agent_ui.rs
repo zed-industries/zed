@@ -9,6 +9,7 @@ mod context;
 mod context_server_configuration;
 #[cfg(test)]
 mod evals;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -448,6 +449,8 @@ mod tests {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models_as_selections: vec![],
+            favorite_models_as_ids: Arc::new(Default::default()),
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
