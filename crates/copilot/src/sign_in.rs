@@ -3,13 +3,15 @@ use anyhow::Context as _;
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point, svg,
+    Subscription, Window, WindowBounds, WindowOptions, div, point,
 };
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
+const ERROR_LABEL: &str =
+    "Copilot had issues starting. You can try reinstalling it and signing in again.";
 
 struct CopilotStatusToast;
 
@@ -233,7 +235,6 @@ impl CopilotCodeVerification {
     fn render_prompting_modal(
         connect_clicked: bool,
         data: &PromptUserDeviceFlow,
-
         cx: &mut Context<Self>,
     ) -> impl Element {
         let connect_button_label = if connect_clicked {
@@ -241,6 +242,7 @@ impl CopilotCodeVerification {
         } else {
             "Connect to GitHub"
         };
+
         v_flex()
             .flex_1()
             .gap_2p5()
@@ -327,6 +329,26 @@ impl CopilotCodeVerification {
             )
     }
 
+    fn render_error_modal(_cx: &mut Context<Self>) -> impl Element {
+        v_flex()
+            .gap_2()
+            .text_center()
+            .justify_center()
+            .child(Headline::new("An Error Happened").size(HeadlineSize::Large))
+            .child(Label::new(ERROR_LABEL).color(Color::Muted))
+            .child(
+                Button::new("copilot-subscribe-button", "Reinstall Copilot and Sign In")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
+                    .icon(IconName::Download)
+                    .icon_color(Color::Muted)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .on_click(|_, window, cx| reinstall_and_sign_in(window, cx)),
+            )
+    }
+
     fn before_dismiss(
         &mut self,
         cx: &mut Context<'_, CopilotCodeVerification>,
@@ -358,13 +380,14 @@ impl Render for CopilotCodeVerification {
                 self.connect_clicked = false;
                 Self::render_enabled_modal(cx).into_any_element()
             }
+            Status::Error(..) => Self::render_error_modal(cx).into_any_element(),
             _ => div().into_any_element(),
         };
 
         v_flex()
-            .size_full()
-            .id("copilot code verification")
+            .id("copilot_code_verification")
             .track_focus(&self.focus_handle(cx))
+            .size_full()
             .px_4()
             .py_8()
             .gap_2()
@@ -451,12 +474,16 @@ impl ConfigurationView {
             None
         }
     }
-    
-    fn render_loading_button(&self, label: SharedString) -> impl IntoElement{
+
+    fn render_loading_button(
+        &self,
+        label: impl Into<SharedString>,
+        edit_prediction: bool,
+    ) -> impl IntoElement {
         ButtonLike::new("loading_button")
             .disabled(true)
             .style(ButtonStyle::Outlined)
-            .size(ButtonSize::Medium)
+            .when(edit_prediction, |this| this.size(ButtonSize::Medium))
             .child(
                 h_flex()
                     .w_full()
@@ -472,114 +499,129 @@ impl ConfigurationView {
             )
     }
 
-    fn render_for_edit_prediction(&self, cx: &App) -> impl IntoElement {
-        let loading_button = |label: SharedString| {
-            ButtonLike::new("loading_button")
-                .disabled(true)
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_1()
-                        .justify_center()
-                        .child(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .with_rotate_animation(4),
-                        )
-                        .child(Label::new(label)),
-                )
+    fn render_sign_in_button(&self, edit_prediction: bool) -> impl IntoElement {
+        let label = if edit_prediction {
+            "Sign in to GitHub"
+        } else {
+            "Sign in to use GitHub Copilot"
         };
 
-        let sign_in_button = Button::new("sign_in", "Sign in to GitHub")
+        Button::new("sign_in", label)
+            .map(|this| {
+                if edit_prediction {
+                    this.size(ButtonSize::Medium)
+                } else {
+                    this.full_width()
+                }
+            })
             .style(ButtonStyle::Outlined)
-            .size(ButtonSize::Medium)
             .icon(IconName::Github)
             .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
-            .on_click(|_, window, cx| initiate_sign_in(window, cx));
-
-        let action_element: AnyElement = if let Some(msg) = self.loading_message() {
-            loading_button(msg).into_any_element()
-        } else if self.is_error() {
-            v_flex()
-                .child(Label::new("Copilot had issues starting."))
-                .into_any_element()
-        } else {
-            sign_in_button.into_any_element()
-        };
-
-        h_flex()
-            .pt_2p5()
-            .w_full()
-            .justify_between()
-            .child(
-                v_flex()
-                    .w_full()
-                    .max_w_1_2()
-                    .child(Label::new("Authenticate To Use"))
-                    .child(
-                        Label::new("To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    ),
-            )
-            .child(action_element)
+            .on_click(|_, window, cx| initiate_sign_in(window, cx))
     }
 
-    fn render_for_chat(&self, cx: &App) -> impl IntoElement {
-        let loading_button = |label: SharedString| {
-            ButtonLike::new("loading_button")
-                .disabled(true)
-                .style(ButtonStyle::Outlined)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_1()
-                        .justify_center()
-                        .child(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Muted)
-                                .with_rotate_animation(4),
-                        )
-                        .child(Label::new(label)),
-                )
+    fn render_reinstall_button(&self, edit_prediction: bool) -> impl IntoElement {
+        let label = if edit_prediction {
+            "Reinstall and Sign in"
+        } else {
+            "Reinstall Copilot and Sign in"
         };
 
-        let sign_in_button = Button::new("sign_in", "Sign in to use GitHub Copilot")
+        Button::new("reinstall_and_sign_in", label)
+            .map(|this| {
+                if edit_prediction {
+                    this.size(ButtonSize::Medium)
+                } else {
+                    this.full_width()
+                }
+            })
             .style(ButtonStyle::Outlined)
-            .full_width()
-            .icon(IconName::Github)
+            .icon(IconName::Download)
             .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
-            .on_click(|_, window, cx| initiate_sign_in(window, cx));
+            .on_click(|_, window, cx| reinstall_and_sign_in(window, cx))
+    }
 
-        let start_copy = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-        let error_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different LLM provider.";
+    fn render_for_edit_prediction(&self) -> impl IntoElement {
+        let container = |description: SharedString, action: AnyElement| {
+            h_flex()
+                .pt_2p5()
+                .w_full()
+                .justify_between()
+                .child(
+                    v_flex()
+                        .w_full()
+                        .max_w_1_2()
+                        .child(Label::new("Authenticate To Use"))
+                        .child(
+                            Label::new(description)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        ),
+                )
+                .child(action)
+        };
+
+        let start_label = "To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.".into();
+        let no_status_label = "Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit predictions provider.".into();
 
         if let Some(msg) = self.loading_message() {
-            loading_button(msg).into_any_element()
+            container(
+                start_label,
+                self.render_loading_button(msg, true).into_any_element(),
+            )
+            .into_any_element()
+        } else if self.is_error() {
+            container(
+                ERROR_LABEL.into(),
+                self.render_reinstall_button(true).into_any_element(),
+            )
+            .into_any_element()
+        } else if self.has_no_status() {
+            container(
+                no_status_label,
+                self.render_sign_in_button(true).into_any_element(),
+            )
+            .into_any_element()
+        } else {
+            container(
+                start_label,
+                self.render_sign_in_button(true).into_any_element(),
+            )
+            .into_any_element()
+        }
+    }
+
+    fn render_for_chat(&self) -> impl IntoElement {
+        let start_label = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+        let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different LLM provider.";
+
+        if let Some(msg) = self.loading_message() {
+            v_flex()
+                .gap_2()
+                .child(Label::new(start_label))
+                .child(self.render_loading_button(msg, false))
+                .into_any_element()
         } else if self.is_error() {
             v_flex()
-                .gap_6()
-                .child(Label::new("Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot."))
-                .child(svg().size_8().path(IconName::CopilotError.path()))
+                .gap_2()
+                .child(Label::new(ERROR_LABEL))
+                .child(self.render_reinstall_button(false))
                 .into_any_element()
         } else if self.has_no_status() {
             v_flex()
-                .gap_6()
-                .child(Label::new(error_label))
+                .gap_2()
+                .child(Label::new(no_status_label))
+                .child(self.render_sign_in_button(false))
                 .into_any_element()
         } else {
             v_flex()
                 .gap_2()
-                .child(Label::new(start_copy))
-                .child(sign_in_button)
+                .child(Label::new(start_label))
+                .child(self.render_sign_in_button(false))
                 .into_any_element()
         }
     }
@@ -599,9 +641,9 @@ impl Render for ConfigurationView {
         }
 
         if self.edit_prediction {
-            self.render_for_edit_prediction(cx).into_any_element()
+            self.render_for_edit_prediction().into_any_element()
         } else {
-            self.render_for_chat(cx).into_any_element()
+            self.render_for_chat().into_any_element()
         }
     }
 }
