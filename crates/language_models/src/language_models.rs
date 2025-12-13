@@ -83,9 +83,20 @@ fn register_openai_compatible_providers(
 
     for provider_id in new {
         if !old.contains(provider_id) {
+            let mut final_provider_id = provider_id.clone();
+            let mut counter = 1;
+            while registry
+                .provider(&LanguageModelProviderId::from(
+                    final_provider_id.to_string(),
+                ))
+                .is_some()
+            {
+                final_provider_id = format!("{} {}", provider_id, counter).into();
+                counter += 1;
+            }
             registry.register_provider(
                 Arc::new(OpenAiCompatibleLanguageModelProvider::new(
-                    provider_id.clone(),
+                    final_provider_id.clone(),
                     client.http_client(),
                     cx,
                 )),
