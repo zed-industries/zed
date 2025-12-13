@@ -211,7 +211,7 @@ fn render_api_key_provider<Ent: 'static>(
     container.when_some(additional_fields, |this, additional_fields| {
         this.child(
             div()
-                .when(!has_key, |this| this.mt_4())
+                .map(|this| if has_key { this.mt_1() } else { this.mt_4() })
                 .px_neg_8()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
