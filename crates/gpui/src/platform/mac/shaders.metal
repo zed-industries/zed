@@ -8,11 +8,18 @@ float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
+float order_to_depth(uint draw_order);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
+float4 to_device_position_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          constant Size_DevicePixels *input_viewport_size, uint draw_order);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
+float4 to_device_position_transformed_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size,
+                          uint draw_order);
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
@@ -74,7 +81,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position =
-      to_device_position(unit_vertex, quad.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, quad.bounds, viewport_size, quad.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
@@ -478,7 +485,7 @@ vertex ShadowVertexOutput shadow_vertex(
   bounds.size.height += 2. * margin;
 
   float4 device_position =
-      to_device_position(unit_vertex, bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, bounds, viewport_size, shadow.order);
   float4 clip_distance =
       distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
   float4 color = hsla_to_rgba(shadow.color);
@@ -563,7 +570,7 @@ vertex UnderlineVertexOutput underline_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Underline underline = underlines[underline_id];
   float4 device_position =
-      to_device_position(unit_vertex, underline.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, underline.bounds, viewport_size, underline.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                  underline.content_mask.bounds);
   float4 color = hsla_to_rgba(underline.color);
@@ -630,7 +637,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position =
-      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+      to_device_position_transformed_with_order(unit_vertex, sprite.bounds, sprite.transformation, viewport_size, sprite.order);
   float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds, sprite.transformation);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -684,7 +691,7 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
   float4 device_position =
-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, sprite.bounds, viewport_size, sprite.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -815,7 +822,7 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   // Don't apply content mask because it was already accounted for when
   // rasterizing the path.
   float4 device_position =
-      to_device_position(unit_vertex, sprite.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, sprite.bounds, viewport_size, sprite.order);
 
   float2 screen_position = float2(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * float2(sprite.bounds.size.width, sprite.bounds.size.height);
   float2 texture_coords = screen_position / float2(viewport_size->width, viewport_size->height);
@@ -856,7 +863,7 @@ vertex SurfaceVertexOutput surface_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   SurfaceBounds surface = surfaces[surface_id];
   float4 device_position =
-      to_device_position(unit_vertex, surface.bounds, viewport_size);
+      to_device_position_with_order(unit_vertex, surface.bounds, viewport_size, surface.order);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds,
                                                  surface.content_mask.bounds);
   // We are going to copy the whole texture, so the texture position corresponds
@@ -984,6 +991,12 @@ float4 oklab_to_srgb(float4 color) {
   return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
+float order_to_depth(uint draw_order) {
+    // Map draw_order to [0, 1] range where lower order = closer to camera
+    // Using u32::MAX as the maximum possible order
+    return float(draw_order) / float(0xFFFFFFFF);
+}
+
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *input_viewport_size) {
   float2 position =
@@ -994,6 +1007,20 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   float2 device_position =
       position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float4 to_device_position_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          constant Size_DevicePixels *input_viewport_size, uint draw_order) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+  float2 viewport_size = float2((float)input_viewport_size->width,
+                                (float)input_viewport_size->height);
+  float2 device_position =
+      position / viewport_size * float2(2., -2.) + float2(-1., 1.);
+  float depth = order_to_depth(draw_order);
+
+  return float4(device_position, depth, 1.);
 }
 
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -1017,6 +1044,31 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
   float2 device_position =
       transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float4 to_device_position_transformed_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          TransformationMatrix transformation,
+                          constant Size_DevicePixels *input_viewport_size,
+                          uint draw_order) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+
+  // Apply the transformation matrix to the position via matrix multiplication.
+  float2 transformed_position = float2(0, 0);
+  transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
+  transformed_position[1] = position[0] * transformation.rotation_scale[1][0] + position[1] * transformation.rotation_scale[1][1];
+
+  // Add in the translation component of the transformation matrix.
+  transformed_position[0] += transformation.translation[0];
+  transformed_position[1] += transformation.translation[1];
+
+  float2 viewport_size = float2((float)input_viewport_size->width,
+                                (float)input_viewport_size->height);
+  float2 device_position =
+      transformed_position / viewport_size * float2(2., -2.) + float2(-1., 1.);
+  float depth = order_to_depth(draw_order);
+  return float4(device_position, depth, 1.);
 }
 
 

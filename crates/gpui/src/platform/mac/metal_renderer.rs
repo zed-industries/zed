@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, DrawOrder, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -117,6 +117,8 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    depth_texture: Option<metal::Texture>,
+    depth_stencil_state: metal::DepthStencilState,
 }
 
 #[repr(C)]
@@ -217,6 +219,7 @@ impl MetalRenderer {
             "shadow_vertex",
             "shadow_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
         let quads_pipeline_state = build_pipeline_state(
             &device,
@@ -225,6 +228,7 @@ impl MetalRenderer {
             "quad_vertex",
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
@@ -233,6 +237,7 @@ impl MetalRenderer {
             "underline_vertex",
             "underline_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -241,6 +246,7 @@ impl MetalRenderer {
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -249,6 +255,7 @@ impl MetalRenderer {
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
@@ -257,12 +264,19 @@ impl MetalRenderer {
             "surface_vertex",
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
+            Some(MTLPixelFormat::Depth32Float),
         );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
+
+        let depth_stencil_descriptor = metal::DepthStencilDescriptor::new();
+        depth_stencil_descriptor.set_depth_compare_function(metal::MTLCompareFunction::LessEqual);
+        depth_stencil_descriptor.set_depth_write_enabled(true);
+
+        let depth_stencil_state = device.new_depth_stencil_state(&depth_stencil_descriptor);
 
         Self {
             device,
@@ -284,6 +298,8 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            depth_texture: None,
+            depth_stencil_state,
         }
     }
 
@@ -321,6 +337,23 @@ impl MetalRenderer {
             height: DevicePixels(size.height as i32),
         };
         self.update_path_intermediate_textures(device_pixels_size);
+        self.update_depth_texture(device_pixels_size);
+    }
+
+    fn update_depth_texture(&mut self, size: Size<DevicePixels>) {
+        if size.width.0 <= 0 || size.height.0 <= 0 {
+            self.depth_texture = None;
+            return;
+        }
+
+        let texture_descriptor = metal::TextureDescriptor::new();
+        texture_descriptor.set_width(size.width.0 as u64);
+        texture_descriptor.set_height(size.height.0 as u64);
+        texture_descriptor.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
+        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        texture_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
+
+        self.depth_texture = Some(self.device.new_texture(&texture_descriptor));
     }
 
     fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
@@ -441,12 +474,16 @@ impl MetalRenderer {
         let mut command_encoder = new_command_encoder(
             command_buffer,
             drawable,
+            self.depth_texture.as_ref(),
             viewport_size,
             |color_attachment| {
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
             },
         );
+
+        // Where can we set this?
+        command_encoder.set_depth_stencil_state(&self.depth_stencil_state);
 
         for batch in scene.batches() {
             let ok = match batch {
@@ -478,11 +515,13 @@ impl MetalRenderer {
                     command_encoder = new_command_encoder(
                         command_buffer,
                         drawable,
+                        self.depth_texture.as_ref(),
                         viewport_size,
                         |color_attachment| {
                             color_attachment.set_load_action(metal::MTLLoadAction::Load);
                         },
                     );
+                    command_encoder.set_depth_stencil_state(&self.depth_stencil_state);
 
                     if did_draw {
                         self.draw_paths_from_intermediate(
@@ -811,6 +850,7 @@ impl MetalRenderer {
                 .iter()
                 .map(|path| PathSprite {
                     bounds: path.clipped_bounds(),
+                    order: path.order,
                 })
                 .collect();
         } else {
@@ -818,7 +858,10 @@ impl MetalRenderer {
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.clipped_bounds());
             }
-            sprites = vec![PathSprite { bounds }];
+            sprites = vec![PathSprite {
+                bounds,
+                order: first_path.order,
+            }];
         }
 
         align_offset(instance_offset);
@@ -1153,6 +1196,7 @@ impl MetalRenderer {
                 ptr::write(
                     buffer_contents,
                     SurfaceBounds {
+                        order: surface.order,
                         bounds: surface.bounds,
                         content_mask: surface.content_mask.clone(),
                     },
@@ -1169,6 +1213,7 @@ impl MetalRenderer {
 fn new_command_encoder<'a>(
     command_buffer: &'a metal::CommandBufferRef,
     drawable: &'a metal::MetalDrawableRef,
+    depth_texture: Option<&metal::Texture>,
     viewport_size: Size<DevicePixels>,
     configure_color_attachment: impl Fn(&RenderPassColorAttachmentDescriptorRef),
 ) -> &'a metal::RenderCommandEncoderRef {
@@ -1180,6 +1225,14 @@ fn new_command_encoder<'a>(
     color_attachment.set_texture(Some(drawable.texture()));
     color_attachment.set_store_action(metal::MTLStoreAction::Store);
     configure_color_attachment(color_attachment);
+
+    if let Some(depth_texture) = depth_texture {
+        let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
+        depth_attachment.set_texture(Some(depth_texture));
+        depth_attachment.set_load_action(metal::MTLLoadAction::Clear);
+        depth_attachment.set_store_action(metal::MTLStoreAction::DontCare);
+        depth_attachment.set_clear_depth(1.0); // todo: what's a correct value?
+    }
 
     let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
     command_encoder.set_viewport(metal::MTLViewport {
@@ -1200,6 +1253,7 @@ fn build_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
+    depth_pixel_format: Option<metal::MTLPixelFormat>,
 ) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
@@ -1221,6 +1275,10 @@ fn build_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+
+    if let Some(depth_format) = depth_pixel_format {
+        descriptor.set_depth_attachment_pixel_format(depth_format);
+    }
 
     device
         .new_render_pipeline_state(&descriptor)
@@ -1355,11 +1413,13 @@ enum PathRasterizationInputIndex {
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
+    pub order: DrawOrder,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct SurfaceBounds {
+    pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
 }
