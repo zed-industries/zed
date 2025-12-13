@@ -38,7 +38,7 @@ use x11rb::{
 };
 use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
+use xkbcommon::xkb::{self as xkbc, Keysym, STATE_LAYOUT_EFFECTIVE, STATE_MODS_LOCKED};
 
 use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
@@ -1023,12 +1023,13 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
+                    if should_update_xkb_key_state(keysym, &state.xkb) {
+                        state.xkb.update_key(code, xkbc::KeyDirection::Down);
+                    }
+
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
 
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
@@ -1088,12 +1089,13 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
+                    if should_update_xkb_key_state(keysym, &state.xkb) {
+                        state.xkb.update_key(code, xkbc::KeyDirection::Up);
+                    }
+
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
 
                     keystroke
                 };
@@ -2515,4 +2517,37 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+/// Determines whether to update the internal xkb key state for this keysym.
+///
+/// Returns `false` (skip update) for:
+/// - Lock modifiers (Caps_Lock, Num_Lock, Scroll_Lock, Shift_Lock): When activated via a single
+///   button, should never have their xkb key state updated in order to properly activate.
+///
+/// - Shift_L/Shift_R when Shift Lock is active: This allows double-tap Shift activation
+///   of Shift Lock to work properly. Without this, the key release after Shift Lock
+///   activation would interfere with the locked state.
+///
+/// Returns `true` for all other keys, as update_key is needed for proper state tracking
+/// to prevent race conditions with custom macros on some Linux distributions.
+#[inline]
+fn should_update_xkb_key_state(keysym: Keysym, xkb_state: &xkbc::State) -> bool {
+    // Lock modifiers are managed via XkbStateNotify, not individual key events
+    if matches!(
+        keysym,
+        Keysym::Caps_Lock | Keysym::Num_Lock | Keysym::Scroll_Lock | Keysym::Shift_Lock
+    ) {
+        return false;
+    }
+
+    // Skip updating for Shift keys when Shift Lock is active to allow
+    // double-tap Shift activation/deactivation to work correctly
+    if matches!(keysym, Keysym::Shift_L | Keysym::Shift_R)
+        && xkb_state.mod_name_is_active(xkbc::MOD_NAME_SHIFT, STATE_MODS_LOCKED)
+    {
+        return false;
+    }
+
+    true
 }
