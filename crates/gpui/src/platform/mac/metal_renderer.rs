@@ -481,6 +481,9 @@ impl MetalRenderer {
             },
         );
 
+        // Where can we set this?
+        command_encoder.set_depth_stencil_state(&self.depth_stencil_state);
+
         for batch in scene.batches() {
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(

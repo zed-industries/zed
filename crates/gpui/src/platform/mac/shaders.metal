@@ -8,8 +8,11 @@ float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
 float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
+float order_to_depth(uint draw_order);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
+float4 to_device_position_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          constant Size_DevicePixels *input_viewport_size, uint draw_order);
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
@@ -74,7 +77,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position =
-      to_device_position(unit_vertex, quad.bounds, viewport_size);
+      to_device_position_with_depth(unit_vertex, quad.bounds, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
@@ -984,6 +987,12 @@ float4 oklab_to_srgb(float4 color) {
   return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
+float order_to_depth(uint draw_order) {
+    // Map draw_order to [0, 1] range where lower order = closer to camera
+    // Using u32::MAX as the maximum possible order
+    return float(draw_order) / float(0xFFFFFFFF);
+}
+
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *input_viewport_size) {
   float2 position =
@@ -994,6 +1003,20 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   float2 device_position =
       position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float4 to_device_position_with_order(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          constant Size_DevicePixels *input_viewport_size, uint draw_order) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+  float2 viewport_size = float2((float)input_viewport_size->width,
+                                (float)input_viewport_size->height);
+  float2 device_position =
+      position / viewport_size * float2(2., -2.) + float2(-1., 1.);
+  float depth = order_to_depth(draw_order);
+
+  return float4(device_position, depth, 1.);
 }
 
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
