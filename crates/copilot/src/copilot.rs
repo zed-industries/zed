@@ -21,7 +21,10 @@ use language::{
     language_settings::{EditPredictionProvider, all_language_settings, language_settings},
     point_from_lsp, point_to_lsp,
 };
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName, DEFAULT_LSP_REQUEST_TIMEOUT};
+use lsp::{
+    DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServer, LanguageServerBinary, LanguageServerId,
+    LanguageServerName,
+};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::{DisableAiSettings, project_settings::ProjectSettings};
@@ -506,11 +509,13 @@ impl Copilot {
                 Path::new("/")
             };
 
-            let request_timeout = cx.update(|app| {
-                ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .request_timeout()
-            }).unwrap_or_else(|_| Some(DEFAULT_LSP_REQUEST_TIMEOUT));
+            let request_timeout = cx
+                .update(|app| {
+                    ProjectSettings::get_global(app)
+                        .global_lsp_settings
+                        .request_timeout()
+                })
+                .unwrap_or_else(|_| Some(DEFAULT_LSP_REQUEST_TIMEOUT));
 
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
