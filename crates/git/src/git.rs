@@ -45,6 +45,8 @@ actions!(
         Blame,
         /// Shows the git history for the current file.
         FileHistory,
+        /// Shows a diff of the current file against a selected commit.
+        DiffWithCommit,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
