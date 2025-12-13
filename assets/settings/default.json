@@ -122,6 +122,11 @@
   // Whether to enable helix mode and key bindings.
   // Enabling this mode will automatically enable vim mode.
   "helix_mode": false,
+  // Settings that only apply to Helix overlays.
+  "helix": {
+    // Accent color for Helix jump labels rendered by `g w`.
+    "jump_label_accent": "#e63333"
+  },
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
