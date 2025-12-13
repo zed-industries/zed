@@ -975,7 +975,7 @@ impl AgentConfiguration {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
                     AgentIcon::Path(icon_path)
                 } else {
-                    AgentIcon::Name(IconName::Ai)
+                    AgentIcon::Name(IconName::Sparkle)
                 };
                 let display_name = agent_server_store
                     .agent_display_name(&name)
@@ -1137,6 +1137,7 @@ impl AgentConfiguration {
     ) -> impl IntoElement {
         let id = id.into();
         let display_name = display_name.into();
+
         let icon = match icon {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
                 .size(IconSize::Small)
