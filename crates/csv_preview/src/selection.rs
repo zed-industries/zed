@@ -29,13 +29,11 @@ pub type SelectedCells = HashSet<DataCellId>;
 pub struct TableSelection {
     /// Currently selected cells in data coordinates
     selected_cells: SelectedCells,
-    /// Starting position for drag selection in display coordinates
-    selection_start_display: Option<DisplayCellId>,
     /// Whether user is currently dragging to select
     is_selecting: bool,
     /// Currently focused cell in display coordinates
     focused_cell: Option<DisplayCellId>,
-    /// Anchor cell for keyboard range selection (shift+arrow keys) in display coordinates
+    /// Anchor cell for range selection (both keyboard and mouse) in display coordinates
     selection_anchor: Option<DisplayCellId>,
 }
 
@@ -50,7 +48,6 @@ impl TableSelection {
     pub fn new() -> Self {
         Self {
             selected_cells: HashSet::new(),
-            selection_start_display: None,
             is_selecting: false,
             focused_cell: None,
             selection_anchor: None,
@@ -79,8 +76,6 @@ impl TableSelection {
             self.selection_anchor = Some(display_cell_id);
         }
 
-        // Remember display coordinates for extend_selection_to
-        self.selection_start_display = Some(DisplayCellId::new(display_row, col));
         self.is_selecting = true;
     }
 
@@ -92,16 +87,16 @@ impl TableSelection {
         ordered_indices: &OrderedIndices,
         preserve_existing: bool,
     ) {
-        if let Some(start_display_cell) = self.selection_start_display {
+        if let Some(anchor_cell) = self.selection_anchor {
             if !preserve_existing {
                 self.selected_cells.clear();
             }
 
             // Create rectangle in display coordinates
-            let min_display_row = start_display_cell.row.get().min(display_row.get());
-            let max_display_row = start_display_cell.row.get().max(display_row.get());
-            let min_col = start_display_cell.col.min(col);
-            let max_col = start_display_cell.col.max(col);
+            let min_display_row = anchor_cell.row.get().min(display_row.get());
+            let max_display_row = anchor_cell.row.get().max(display_row.get());
+            let min_col = anchor_cell.col.min(col);
+            let max_col = anchor_cell.col.max(col);
 
             // Convert each display cell to data coordinates for storage
             for display_r in min_display_row..=max_display_row {
@@ -115,9 +110,6 @@ impl TableSelection {
 
             // Update focused cell to follow the current mouse position (selection frontier)
             self.focused_cell = Some(DisplayCellId::new(display_row, col));
-
-            // Ensure anchor remains at the start position during drag
-            self.selection_anchor = Some(start_display_cell);
         }
     }
 
