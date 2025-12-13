@@ -255,6 +255,7 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
+    pub lsp_adapter_names: &'a [String],
 }
 
 impl SettingsStore {
@@ -1057,9 +1058,14 @@ impl SettingsStore {
             })
         });
 
-        generator
+        let mut schema = generator
             .root_schema_for::<UserSettingsContent>()
-            .to_value()
+            .to_value();
+
+        // Post-process the schema to inject LSP schema references
+        inject_lsp_settings_schemas(&mut schema, params.lsp_adapter_names);
+
+        schema
     }
 
     fn recompute_values(
@@ -1155,6 +1161,53 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
+    }
+}
+
+fn inject_lsp_settings_schemas(schema: &mut serde_json::Value, lsp_adapter_names: &[String]) {
+    // Navigate to /properties/lsp in the schema
+    let Some(lsp_property) = schema
+        .pointer_mut("/properties/lsp")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+
+    // Get or create the properties object for the lsp map
+    let lsp_properties = lsp_property
+        .entry("properties")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("properties should be an object");
+
+    // For each LSP adapter, create a schema that references the on-demand schema
+    for server_name in lsp_adapter_names {
+        // Create or get the server-specific schema entry
+        let server_schema = lsp_properties
+            .entry(server_name.clone())
+            .or_insert_with(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                })
+            })
+            .as_object_mut()
+            .expect("server schema should be an object");
+
+        // Get or create properties for this server
+        let server_properties = server_schema
+            .entry("properties")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .expect("server properties should be an object");
+
+        // Reference the on-demand schema for initialization_options
+        server_properties.insert(
+            "initialization_options".to_string(),
+            serde_json::json!({
+                "$ref": format!("zed://schemas/settings/lsp/{server_name}")
+            }),
+        );
     }
 }
 

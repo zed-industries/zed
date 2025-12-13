@@ -8533,6 +8533,7 @@ dependencies = [
  "extension",
  "gpui",
  "language",
+ "lsp",
  "paths",
  "project",
  "schemars",

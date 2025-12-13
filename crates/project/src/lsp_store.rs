@@ -3907,6 +3907,30 @@ impl LspStore {
         }
     }
 
+    /// Creates an LspAdapterDelegate for the given worktree, if this is a local LspStore.
+    /// Returns None if this is a remote LspStore or no worktree is available.
+    pub fn create_adapter_delegate(
+        &self,
+        worktree: &Entity<Worktree>,
+        cx: &mut App,
+    ) -> Option<Arc<dyn LspAdapterDelegate>> {
+        let local = self.as_local()?;
+        Some(LocalLspAdapterDelegate::from_local_lsp(local, worktree, cx))
+    }
+
+    /// Creates an LspAdapterDelegate using the first available worktree.
+    /// Returns None if this is a remote LspStore or no worktree is available.
+    pub fn create_adapter_delegate_for_first_worktree(
+        &self,
+        cx: &mut App,
+    ) -> Option<Arc<dyn LspAdapterDelegate>> {
+        let local = self.as_local()?;
+        let worktree = local.worktree_store.read(cx).worktrees().next()?;
+        Some(LocalLspAdapterDelegate::from_local_lsp(
+            local, &worktree, cx,
+        ))
+    }
+
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -13856,7 +13880,7 @@ impl LocalLspAdapterDelegate {
         })
     }
 
-    fn from_local_lsp(
+    pub(crate) fn from_local_lsp(
         local: &LocalLspStore,
         worktree: &Entity<Worktree>,
         cx: &mut App,
