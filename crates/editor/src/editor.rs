@@ -16,6 +16,7 @@ pub mod blink_manager;
 mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
+mod cursor_vfx;
 pub mod display_map;
 mod editor_settings;
 mod element;
@@ -24,6 +25,7 @@ mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
+mod inertial_cursor;
 mod inlays;
 pub mod items;
 mod jsx_tag_auto_close;
@@ -50,6 +52,7 @@ mod signature_help;
 pub mod test;
 
 pub(crate) use actions::*;
+pub use cursor_vfx::{CursorVfxConfig, CursorVfxSystem};
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
@@ -61,6 +64,7 @@ pub use element::{
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
+pub use inertial_cursor::{CursorAnimationTicker, InertialCursorConfig, QuadCursor};
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
@@ -1061,6 +1065,9 @@ pub struct Editor {
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
+    quad_cursor: Option<inertial_cursor::QuadCursor>,
+    cursor_animation_ticker: inertial_cursor::CursorAnimationTicker,
+    cursor_vfx_system: Option<cursor_vfx::CursorVfxSystem>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -2281,6 +2288,23 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
+            quad_cursor: {
+                let smooth_caret = EditorSettings::get_global(cx).smooth_caret;
+                let config = Self::build_inertial_cursor_config(smooth_caret);
+                // Create QuadCursor if smooth caret is enabled (4-corner animation)
+                if config.enabled {
+                    Some(inertial_cursor::QuadCursor::new(
+                        config,
+                        gpui::point(gpui::Pixels::ZERO, gpui::Pixels::ZERO),
+                        10.0, // Default cell width - will be updated on first layout
+                        20.0, // Default cell height - will be updated on first layout
+                    ))
+                } else {
+                    None
+                }
+            },
+            cursor_animation_ticker: inertial_cursor::CursorAnimationTicker::new(),
+            cursor_vfx_system: None, // VFX disabled in simplified mode
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3093,6 +3117,110 @@ impl Editor {
 
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
+    }
+
+    pub fn quad_cursor(&self) -> Option<&inertial_cursor::QuadCursor> {
+        self.quad_cursor.as_ref()
+    }
+
+    pub fn quad_cursor_mut(&mut self) -> Option<&mut inertial_cursor::QuadCursor> {
+        self.quad_cursor.as_mut()
+    }
+
+    fn build_inertial_cursor_config(enabled: bool) -> inertial_cursor::InertialCursorConfig {
+        if enabled {
+            inertial_cursor::InertialCursorConfig::from_mode(settings::SmoothCaretMode::On)
+        } else {
+            inertial_cursor::InertialCursorConfig::from_mode(settings::SmoothCaretMode::Off)
+        }
+    }
+
+    pub fn is_cursor_animating(&self) -> bool {
+        self.quad_cursor.as_ref().is_some_and(|c| c.is_animating())
+    }
+
+    pub fn snap_quad_cursor(&mut self) {
+        if let Some(cursor) = &mut self.quad_cursor {
+            cursor.snap_to_logical();
+        }
+    }
+
+    pub fn update_quad_cursor_position(&mut self, pos: gpui::Point<gpui::Pixels>) {
+        if let Some(cursor) = &mut self.quad_cursor {
+            cursor.set_logical_pos(pos);
+        }
+    }
+
+    pub fn set_quad_cursor_cell_size(&mut self, width: f32, height: f32) {
+        if let Some(cursor) = &mut self.quad_cursor {
+            cursor.set_cell_size(width, height);
+        }
+    }
+
+    pub fn cursor_vfx_system(&self) -> Option<&cursor_vfx::CursorVfxSystem> {
+        self.cursor_vfx_system.as_ref()
+    }
+
+    pub fn cursor_vfx_system_mut(&mut self) -> Option<&mut cursor_vfx::CursorVfxSystem> {
+        self.cursor_vfx_system.as_mut()
+    }
+
+    /// Set the display refresh rate for cursor animation frame pacing.
+    /// This helps ensure smooth animation by synchronizing with the display.
+    /// If not set, defaults to 120Hz which works well for most displays.
+    pub fn set_cursor_refresh_rate(&mut self, hz: f32) {
+        self.cursor_animation_ticker.set_refresh_rate(hz);
+    }
+
+    pub fn tick_cursor_animations(&mut self) -> bool {
+        let now = std::time::Instant::now();
+
+        // Check if quad cursor needs animating
+        let quad_animating = self.quad_cursor.as_ref().is_some_and(|c| c.is_animating());
+
+        if !quad_animating {
+            // No animation needed - stop the ticker
+            self.cursor_animation_ticker.stop();
+            return false;
+        }
+
+        // Get smoothed dt from the ticker (with frame pacing)
+        let dt = self.cursor_animation_ticker.tick(now);
+        let dt_secs = dt.as_secs_f32();
+
+        // Sub-stepping for high refresh rate stability (no upper limit)
+        let steps = ((dt_secs / inertial_cursor::MAX_ANIMATION_DT).ceil() as usize).max(1);
+        let dt_per_step = dt_secs / steps as f32;
+
+        let mut still_animating = false;
+
+        // Update quad cursor physics
+        if let Some(cursor) = &mut self.quad_cursor {
+            for _ in 0..steps {
+                if cursor.update_physics(dt_per_step) {
+                    still_animating = true;
+                }
+            }
+        }
+
+        // If animation finished, stop the ticker
+        if !still_animating {
+            self.cursor_animation_ticker.stop();
+        }
+
+        still_animating
+    }
+
+    pub fn update_cursor_vfx(&mut self, cursor_pos: gpui::Point<gpui::Pixels>, dt: f32) {
+        if let Some(vfx) = &mut self.cursor_vfx_system {
+            vfx.update(cursor_pos, dt);
+        }
+    }
+
+    pub fn is_cursor_vfx_animating(&self) -> bool {
+        self.cursor_vfx_system
+            .as_ref()
+            .is_some_and(|vfx| vfx.is_animating())
     }
 
     pub fn set_current_line_highlight(

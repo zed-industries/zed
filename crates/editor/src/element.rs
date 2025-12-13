@@ -1652,6 +1652,11 @@ impl EditorElement {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
+            let blink_opacity = if editor.blink_manager.read(cx).visible() {
+                1.0
+            } else {
+                0.0
+            };
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1730,10 +1735,35 @@ impl EditorElement {
                         None
                     };
 
-                    let x = cursor_character_x - scroll_pixel_position.x.into();
-                    let y = ((cursor_position.row().as_f64() - scroll_position.y)
+                    let logical_x = cursor_character_x - scroll_pixel_position.x.into();
+                    let logical_y: Pixels = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+
+                    // For the newest (primary) cursor, use inertial animation if enabled
+                    // Order: 1) set target 2) tick physics 3) read position
+                    // This ensures physics uses the NEW target, eliminating one-frame lag
+                    let (x, y, tail_origin, quad_corners) = if selection.is_newest {
+                        // Check for quad cursor (4-corner mode) first - only update active cursor
+                        if editor.quad_cursor().is_some() {
+                            // 1. Set target position FIRST
+                            editor.update_quad_cursor_position(point(logical_x, logical_y));
+                            editor
+                                .set_quad_cursor_cell_size(block_width.into(), line_height.into());
+                            // 2. Tick physics with NEW target (fixes one-frame lag)
+                            editor.tick_cursor_animations();
+                            // 3. Read animated position
+                            let quad = editor.quad_cursor().expect("quad_cursor checked above");
+                            let corners = quad.corner_positions();
+                            let visual = quad.visual_pos();
+                            (visual.x, visual.y, None, Some(corners))
+                        } else {
+                            (logical_x, logical_y, None, None)
+                        }
+                    } else {
+                        (logical_x, logical_y, None, None)
+                    };
+
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1773,7 +1803,14 @@ impl EditorElement {
                         color: player_color.cursor,
                         block_width,
                         origin: point(x, y),
+                        tail_origin,
+                        quad_corners,
                         line_height,
+                        opacity: if selection.is_local {
+                            blink_opacity
+                        } else {
+                            1.0
+                        },
                         shape: selection.cursor_shape,
                         block_text,
                         cursor_name: None,
@@ -1793,6 +1830,27 @@ impl EditorElement {
 
         if let Some(bounds) = autoscroll_bounds {
             window.request_autoscroll(bounds);
+        }
+
+        // Update VFX and request next frame if still animating
+        // Note: tick_cursor_animations() handles physics with centralized frame pacing
+        let is_animating = self.editor.update(cx, |editor, _cx| {
+            let cursor_animating = editor.is_cursor_animating();
+
+            // Update VFX system with cursor position from quad cursor
+            if let Some(quad) = editor.quad_cursor() {
+                let pos = quad.visual_pos();
+                let dt = quad.last_frame_dt();
+                editor.update_cursor_vfx(pos, dt);
+            }
+
+            let vfx_animating = editor.is_cursor_vfx_animating();
+
+            cursor_animating || vfx_animating
+        });
+        // Always request animation frame if cursor is animating to ensure smooth updates
+        if is_animating {
+            window.request_animation_frame();
         }
 
         cursor_layouts
@@ -11120,9 +11178,17 @@ pub struct IndentGuideLayout {
 
 pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
+    /// Tail position for smear effect. If Some, cursor is rendered as stretched shape.
+    tail_origin: Option<gpui::Point<Pixels>>,
+    /// Four corner positions for quad animation.
+    /// When set, this takes precedence over tail_origin.
+    /// Corners are in order: [top-left, top-right, bottom-right, bottom-left]
+    quad_corners: Option<[gpui::Point<Pixels>; 4]>,
     block_width: Pixels,
     line_height: Pixels,
     color: Hsla,
+    /// Opacity for smooth blink (0.0 = hidden, 1.0 = fully visible).
+    opacity: f32,
     shape: CursorShape,
     block_text: Option<ShapedLine>,
     cursor_name: Option<AnyElement>,
@@ -11146,13 +11212,32 @@ impl CursorLayout {
     ) -> CursorLayout {
         CursorLayout {
             origin,
+            tail_origin: None,
+            quad_corners: None,
             block_width,
             line_height,
             color,
+            opacity: 1.0,
             shape,
             block_text,
             cursor_name: None,
         }
+    }
+
+    pub fn with_tail(mut self, tail_origin: Option<gpui::Point<Pixels>>) -> Self {
+        self.tail_origin = tail_origin;
+        self
+    }
+
+    /// Corners should be in order: [top-left, top-right, bottom-right, bottom-left]
+    pub fn with_quad_corners(mut self, corners: Option<[gpui::Point<Pixels>; 4]>) -> Self {
+        self.quad_corners = corners;
+        self
+    }
+
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
     }
 
     pub fn bounding_rect(&self, origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
@@ -11222,13 +11307,85 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
-        let bounds = self.bounds(origin);
+        let color = Hsla {
+            a: self.color.a * self.opacity,
+            ..self.color
+        };
 
-        //Draw background or border quad
+        if self.opacity < 0.01 {
+            return;
+        }
+
+        let head_bounds = self.bounds(origin);
+
+        if let Some(corners) = self.quad_corners {
+            let corners_with_offset = [
+                gpui::Point::new(corners[0].x + origin.x, corners[0].y + origin.y),
+                gpui::Point::new(corners[1].x + origin.x, corners[1].y + origin.y),
+                gpui::Point::new(corners[2].x + origin.x, corners[2].y + origin.y),
+                gpui::Point::new(corners[3].x + origin.x, corners[3].y + origin.y),
+            ];
+
+            // Check if corners form a parallelogram (not a rectangle)
+            // In a rectangle: top edge and bottom edge are parallel and equal length
+            // Deformation = how much the corners deviate from a perfect rectangle
+            let top_edge_x = f32::from(corners_with_offset[1].x - corners_with_offset[0].x);
+            let bottom_edge_x = f32::from(corners_with_offset[2].x - corners_with_offset[3].x);
+            let left_edge_y = f32::from(corners_with_offset[3].y - corners_with_offset[0].y);
+            let right_edge_y = f32::from(corners_with_offset[2].y - corners_with_offset[1].y);
+
+            // Measure skew: difference between parallel edges indicates parallelogram deformation
+            let horizontal_skew = (top_edge_x - bottom_edge_x).abs();
+            let vertical_skew = (left_edge_y - right_edge_y).abs();
+            let deformation =
+                (horizontal_skew * horizontal_skew + vertical_skew * vertical_skew).sqrt();
+
+            if deformation > 2.0 && !matches!(self.shape, CursorShape::Hollow) {
+                self.paint_quad_corners(corners_with_offset, color, window);
+
+                if let Some(name) = &mut self.cursor_name {
+                    name.paint(window, cx);
+                }
+
+                if let Some(block_text) = &self.block_text {
+                    block_text
+                        .paint(self.origin + origin, self.line_height, window, cx)
+                        .log_err();
+                }
+                return;
+            }
+        }
+
+        // Check if we should render smear effect (head/tail mode)
+        if let Some(tail_offset) = self.tail_origin {
+            let tail_point = tail_offset + origin;
+            let head_point = self.origin + origin;
+            let dx = f32::from(head_point.x - tail_point.x);
+            let dy = f32::from(head_point.y - tail_point.y);
+            let smear_distance = (dx * dx + dy * dy).sqrt();
+
+            // Only render smear if distance is significant (>2 pixels)
+            if smear_distance > 2.0 {
+                self.paint_smear(head_bounds, tail_point, color, window);
+
+                if let Some(name) = &mut self.cursor_name {
+                    name.paint(window, cx);
+                }
+
+                if let Some(block_text) = &self.block_text {
+                    block_text
+                        .paint(self.origin + origin, self.line_height, window, cx)
+                        .log_err();
+                }
+                return;
+            }
+        }
+
+        // Normal cursor rendering (no smear or quad)
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color, BorderStyle::Solid)
+            outline(head_bounds, color, BorderStyle::Solid)
         } else {
-            fill(bounds, self.color)
+            fill(head_bounds, color)
         };
 
         if let Some(name) = &mut self.cursor_name {
@@ -11241,6 +11398,139 @@ impl CursorLayout {
             block_text
                 .paint(self.origin + origin, self.line_height, window, cx)
                 .log_err();
+        }
+    }
+
+    /// Used for parallelogram deformation during movement.
+    fn paint_quad_corners(
+        &self,
+        corners: [gpui::Point<Pixels>; 4],
+        color: Hsla,
+        window: &mut Window,
+    ) {
+        match self.shape {
+            CursorShape::Bar => {
+                // Bar: only use left edge of quad (corners 0 and 3)
+                let bar_width = px(2.0);
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(corners[0]);
+                builder.line_to(point(corners[0].x + bar_width, corners[0].y));
+                builder.line_to(point(corners[3].x + bar_width, corners[3].y));
+                builder.line_to(corners[3]);
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Block => {
+                // Block: draw full parallelogram using all 4 corners
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(corners[0]); // top-left
+                builder.line_to(corners[1]); // top-right
+                builder.line_to(corners[2]); // bottom-right
+                builder.line_to(corners[3]); // bottom-left
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Underline => {
+                // Underline: use bottom edge of quad (corners 2 and 3)
+                let underline_height = px(2.0);
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(point(corners[3].x, corners[3].y - underline_height));
+                builder.line_to(point(corners[2].x, corners[2].y - underline_height));
+                builder.line_to(corners[2]);
+                builder.line_to(corners[3]);
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Hollow => {
+                // Hollow cursors don't support quad animation, fall back to head bounds
+                // This case is handled earlier in paint() but included for completeness
+            }
+        }
+    }
+
+    /// Paint cursor with smear effect (stretched between head and tail).
+    fn paint_smear(
+        &self,
+        head_bounds: Bounds<Pixels>,
+        tail_point: gpui::Point<Pixels>,
+        color: Hsla,
+        window: &mut Window,
+    ) {
+        match self.shape {
+            CursorShape::Bar => {
+                // Bar: draw parallelogram from tail to head
+                let bar_width = px(2.0);
+                let head_top = head_bounds.origin;
+                let tail_bottom = point(tail_point.x, tail_point.y + self.line_height);
+
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(head_top);
+                builder.line_to(point(head_top.x + bar_width, head_top.y));
+                builder.line_to(point(tail_bottom.x + bar_width, tail_bottom.y));
+                builder.line_to(tail_bottom);
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Block => {
+                // Block: stretched quad connecting head and tail
+                let head_origin = head_bounds.origin;
+                let head_end = point(
+                    head_origin.x + self.block_width,
+                    head_origin.y + self.line_height,
+                );
+                let tail_end = point(
+                    tail_point.x + self.block_width,
+                    tail_point.y + self.line_height,
+                );
+
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(head_origin);
+                builder.line_to(point(head_end.x, head_origin.y));
+                builder.line_to(tail_end);
+                builder.line_to(point(tail_point.x, tail_end.y));
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Underline => {
+                // Underline: stretched at bottom
+                let underline_y = head_bounds.origin.y + self.line_height - px(2.0);
+                let head_origin = point(head_bounds.origin.x, underline_y);
+                let tail_origin_y = tail_point.y + self.line_height - px(2.0);
+
+                let mut builder = gpui::PathBuilder::fill();
+                builder.move_to(head_origin);
+                builder.line_to(point(head_origin.x + self.block_width, head_origin.y));
+                builder.line_to(point(
+                    tail_point.x + self.block_width,
+                    tail_origin_y + px(2.0),
+                ));
+                builder.line_to(point(tail_point.x, tail_origin_y + px(2.0)));
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
+            }
+            CursorShape::Hollow => {
+                // Hollow: no smear, just outline at head position
+                let cursor = outline(head_bounds, color, BorderStyle::Solid);
+                window.paint_quad(cursor);
+            }
         }
     }
 

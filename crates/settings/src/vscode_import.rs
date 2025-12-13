@@ -296,6 +296,7 @@ impl VsCodeSettings {
             ),
             selection_highlight: self.read_bool("editor.selectionHighlight"),
             show_signature_help_after_edits: self.read_bool("editor.parameterHints.enabled"),
+            smooth_caret: None,
             snippet_sort_order: None,
             toolbar: None,
             use_smartcase_search: self.read_bool("search.smartCase"),

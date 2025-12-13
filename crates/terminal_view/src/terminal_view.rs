@@ -6,7 +6,10 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{
+    CursorAnimationTicker, EditorSettings, InertialCursorConfig, QuadCursor, actions::SelectAll,
+    blink_manager::BlinkManager,
+};
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
@@ -135,6 +138,8 @@ pub struct TerminalView {
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
     ime_state: Option<ImeState>,
+    quad_cursor: Option<QuadCursor>,
+    cursor_animation_ticker: CursorAnimationTicker,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -245,6 +250,21 @@ impl TerminalView {
             )
         });
 
+        // Initialize smooth cursor animation based on editor's smooth_caret setting
+        let smooth_caret_enabled = EditorSettings::get_global(cx).smooth_caret;
+        let config = Self::build_inertial_cursor_config(smooth_caret_enabled);
+        let quad_cursor = if config.enabled {
+            Some(QuadCursor::new(
+                config,
+                gpui::point(gpui::Pixels::ZERO, gpui::Pixels::ZERO),
+                10.0,
+                20.0,
+            ))
+        } else {
+            None
+        };
+        let cursor_animation_ticker = CursorAnimationTicker::new();
+
         let _subscriptions = vec![
             focus_in,
             focus_out,
@@ -271,9 +291,56 @@ impl TerminalView {
             scroll_handle,
             cwd_serialized: false,
             ime_state: None,
+            quad_cursor,
+            cursor_animation_ticker,
             _subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
+    }
+
+    fn build_inertial_cursor_config(enabled: bool) -> InertialCursorConfig {
+        if enabled {
+            InertialCursorConfig::from_mode(settings::SmoothCaretMode::On)
+        } else {
+            InertialCursorConfig::from_mode(settings::SmoothCaretMode::Off)
+        }
+    }
+
+    pub fn quad_cursor(&self) -> Option<&QuadCursor> {
+        self.quad_cursor.as_ref()
+    }
+
+    pub fn quad_cursor_mut(&mut self) -> Option<&mut QuadCursor> {
+        self.quad_cursor.as_mut()
+    }
+
+    pub fn update_quad_cursor_position(&mut self, pos: gpui::Point<gpui::Pixels>) {
+        if let Some(quad) = &mut self.quad_cursor {
+            quad.set_logical_pos(pos);
+        }
+    }
+
+    pub fn set_quad_cursor_cell_size(&mut self, width: f32, height: f32) {
+        if let Some(quad) = &mut self.quad_cursor {
+            quad.set_cell_size(width, height);
+        }
+    }
+
+    pub fn tick_cursor_animations(&mut self) -> bool {
+        if let Some(quad) = &mut self.quad_cursor {
+            let dt = self.cursor_animation_ticker.tick(std::time::Instant::now());
+            quad.update_physics(dt.as_secs_f32());
+            quad.is_animating()
+        } else {
+            false
+        }
+    }
+
+    pub fn is_cursor_animating(&self) -> bool {
+        self.quad_cursor
+            .as_ref()
+            .map(|q| q.is_animating())
+            .unwrap_or(false)
     }
 
     /// Enable 'embedded' mode where the terminal displays the full content with an optional limit of lines.

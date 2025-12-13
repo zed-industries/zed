@@ -195,6 +195,9 @@
   "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
+  // Enable smooth cursor animation.
+  // When true, cursor animates smoothly between positions and blinks with opacity fade.
+  "smooth_caret": true,
   // Cursor shape for the default editor.
   //  1. A vertical bar
   //     "bar"

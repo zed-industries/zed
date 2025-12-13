@@ -1099,15 +1099,26 @@ impl Element for TerminalElement {
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
-                let cursor = if let AlacCursorShape::Hidden = cursor.shape {
+                // Get blink opacity from blink_manager
+                let blink_opacity = if self.terminal_view.read(cx).blink_manager.read(cx).visible()
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+
+                // Store cursor info before the closure to avoid borrow issues
+                let cursor_shape = cursor.shape;
+                let cursor_char_str = cursor_char.to_string();
+
+                let cursor = if let AlacCursorShape::Hidden = cursor_shape {
                     None
                 } else {
                     let cursor_point = DisplayCursor::from(cursor.point, display_offset);
                     let cursor_text = {
-                        let str_trxt = cursor_char.to_string();
-                        let len = str_trxt.len();
+                        let len = cursor_char_str.len();
                         window.text_system().shape_line(
-                            str_trxt.into(),
+                            cursor_char_str.into(),
                             text_style.font_size.to_pixels(window.rem_size()),
                             &[TextRun {
                                 len,
@@ -1122,7 +1133,7 @@ impl Element for TerminalElement {
                     let focused = self.focused;
                     TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
                         move |(cursor_position, block_width)| {
-                            let (shape, text) = match cursor.shape {
+                            let (shape, text) = match cursor_shape {
                                 AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                                 AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
                                 AlacCursorShape::Underline => (CursorShape::Underline, None),
@@ -1140,6 +1151,7 @@ impl Element for TerminalElement {
                                 shape,
                                 text,
                             )
+                            .with_opacity(blink_opacity)
                         },
                     )
                 };
@@ -1335,6 +1347,11 @@ impl Element for TerminalElement {
                         && let Some(mut cursor) = original_cursor {
                             cursor.paint(origin, window, cx);
                         }
+
+                    // Request animation frame if cursor is animating for smooth updates
+                    if self.terminal_view.read(cx).is_cursor_animating() {
+                        window.request_animation_frame();
+                    }
 
                     if let Some(mut element) = block_below_cursor_element {
                         element.paint(window, cx);
