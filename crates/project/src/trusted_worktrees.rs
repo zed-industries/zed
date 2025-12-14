@@ -430,31 +430,6 @@ impl TrustedWorktreesStore {
             }
         }
 
-        #[cfg(not(any(test, feature = "test-support")))]
-        let mut new_trusted_globals = HashSet::default();
-        #[cfg(not(any(test, feature = "test-support")))]
-        let new_trusted_worktrees = self
-            .trusted_paths
-            .clone()
-            .into_iter()
-            .map(|(host, paths)| {
-                let abs_paths = paths
-                    .into_iter()
-                    .flat_map(|path| match path {
-                        PathTrust::Worktree(worktree_id) => self
-                            .find_worktree_data(worktree_id, cx)
-                            .map(|(abs_path, ..)| abs_path.to_path_buf()),
-                        PathTrust::AbsPath(abs_path) => Some(abs_path),
-                        PathTrust::Global => {
-                            new_trusted_globals.insert(host.clone());
-                            None
-                        }
-                    })
-                    .collect();
-                (host, abs_paths)
-            })
-            .collect();
-
         cx.emit(TrustedWorktreesEvent::Trusted(
             remote_host,
             trusted_paths.clone(),
@@ -462,6 +437,28 @@ impl TrustedWorktreesStore {
 
         #[cfg(not(any(test, feature = "test-support")))]
         if self.downstream_client.is_none() {
+            let mut new_trusted_globals = HashSet::default();
+            let new_trusted_worktrees = self
+                .trusted_paths
+                .clone()
+                .into_iter()
+                .map(|(host, paths)| {
+                    let abs_paths = paths
+                        .into_iter()
+                        .flat_map(|path| match path {
+                            PathTrust::Worktree(worktree_id) => self
+                                .find_worktree_data(worktree_id, cx)
+                                .map(|(abs_path, ..)| abs_path.to_path_buf()),
+                            PathTrust::AbsPath(abs_path) => Some(abs_path),
+                            PathTrust::Global => {
+                                new_trusted_globals.insert(host.clone());
+                                None
+                            }
+                        })
+                        .collect();
+                    (host, abs_paths)
+                })
+                .collect();
             // Do not persist auto trusted worktrees
             if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
                 self.serialization_task = cx.background_spawn(async move {
@@ -472,7 +469,7 @@ impl TrustedWorktreesStore {
                 });
             }
         }
-        #[cfg(not(any(test, feature = "test-support")))]
+
         if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
             let trusted_paths = trusted_paths
                 .iter()

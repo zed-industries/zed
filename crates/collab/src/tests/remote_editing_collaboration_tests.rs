@@ -866,7 +866,12 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         .insert_tree(
             path!("/projects"),
             json!({
-                "project_a": { "main.rs": "fn main() {}" },
+                "project_a": {
+                    ".zed": {
+                        "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
+                    },
+                    "main.rs": "fn main() {}"
+                },
                 "project_b": { "lib.rs": "pub fn lib() {}" }
             }),
         )
@@ -892,7 +897,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     });
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
-    let (project_a, _) = client_a
+    let (project_a, worktree_id_a) = client_a
         .build_ssh_project(path!("/projects/project_a"), client_ssh.clone(), true, cx_a)
         .await;
 
@@ -932,6 +937,23 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     });
     assert!(has_restricted, "should have restricted worktrees");
 
+    let buffer_before_approval = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer((worktree_id_a, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    cx_a.read(|cx| {
+        let file = buffer_before_approval.read(cx).file();
+        assert_eq!(
+            language_settings(Some("Rust".into()), file, cx).language_servers,
+            ["...".to_string()],
+            "remote .zed/settings.json must not sync before trust approval"
+        )
+    });
+
     trusted_worktrees.update(cx_a, |store, cx| {
         store.trust(
             HashSet::from_iter([PathTrust::Worktree(worktree_ids[0])]),
@@ -939,6 +961,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
             cx,
         );
     });
+    cx_a.run_until_parked();
 
     let can_trust_a =
         trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
@@ -946,6 +969,14 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
         trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
     assert!(can_trust_a, "project_a should be trusted after trust()");
     assert!(!can_trust_b, "project_b should still be restricted");
+    cx_a.read(|cx| {
+        let file = buffer_before_approval.read(cx).file();
+        assert_eq!(
+            language_settings(Some("Rust".into()), file, cx).language_servers,
+            ["override-rust-analyzer".to_string()],
+            "remote .zed/settings.json should sync after trust approval"
+        )
+    });
 
     trusted_worktrees.update(cx_a, |store, cx| {
         store.trust(
