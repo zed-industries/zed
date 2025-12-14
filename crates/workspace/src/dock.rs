@@ -75,6 +75,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
+
     fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
         None
     }
@@ -82,6 +83,10 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         false
     }
     fn set_utility_pane_expanded(&mut self, _expanded: bool, _cx: &mut Context<Self>) {}
+    fn utility_pane_width(&self, _cx: &App) -> Pixels {
+        px(400.0)
+    }
+    fn set_utility_pane_width(&mut self, _width: Option<Pixels>, _cx: &mut Context<Self>) {}
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -109,6 +114,8 @@ pub trait PanelHandle: Send + Sync {
     fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView>;
     fn utility_pane_expanded(&self, cx: &App) -> bool;
     fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App);
+    fn utility_pane_width(&self, cx: &App) -> Pixels;
+    fn set_utility_pane_width(&self, width: Option<Pixels>, cx: &mut App);
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -224,6 +231,14 @@ where
 
     fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App) {
         self.update(cx, |this, cx| this.set_utility_pane_expanded(expanded, cx))
+    }
+
+    fn utility_pane_width(&self, cx: &App) -> Pixels {
+        self.read(cx).utility_pane_width(cx)
+    }
+
+    fn set_utility_pane_width(&self, width: Option<Pixels>, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_utility_pane_width(width, cx))
     }
 }
 

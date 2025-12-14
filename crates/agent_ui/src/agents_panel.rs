@@ -4,7 +4,7 @@ use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
     Action, AnyView, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Task, WeakEntity,
-    actions, prelude::*,
+    actions, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
@@ -26,6 +26,8 @@ struct SerializedAgentsPanel {
     width: Option<Pixels>,
     #[serde(default)]
     utility_pane_expanded: bool,
+    #[serde(default)]
+    utility_pane_width: Option<Pixels>,
 }
 
 actions!(
@@ -51,6 +53,7 @@ pub struct AgentsPanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     utility_pane_expanded: bool,
+    utility_pane_width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
 }
 
@@ -79,6 +82,7 @@ impl AgentsPanel {
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
                         panel.utility_pane_expanded = serialized_panel.utility_pane_expanded;
+                        panel.utility_pane_width = serialized_panel.utility_pane_width;
                     }
                     panel
                 })
@@ -95,6 +99,7 @@ impl AgentsPanel {
             fs,
             width: None,
             utility_pane_expanded: false,
+            utility_pane_width: None,
             pending_serialization: Task::ready(None),
         }
     }
@@ -102,6 +107,7 @@ impl AgentsPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let utility_pane_expanded = self.utility_pane_expanded;
+        let utility_pane_width = self.utility_pane_width;
         self.pending_serialization = cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
@@ -109,6 +115,7 @@ impl AgentsPanel {
                     serde_json::to_string(&SerializedAgentsPanel {
                         width,
                         utility_pane_expanded,
+                        utility_pane_width,
                     })
                     .unwrap(),
                 )
@@ -201,6 +208,16 @@ impl Panel for AgentsPanel {
 
     fn set_utility_pane_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.utility_pane_expanded = expanded;
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn utility_pane_width(&self, _cx: &App) -> Pixels {
+        self.utility_pane_width.unwrap_or(px(400.0))
+    }
+
+    fn set_utility_pane_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+        self.utility_pane_width = width;
         self.serialize(cx);
         cx.notify();
     }

@@ -128,13 +128,15 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::{item::ItemBufferKind, notifications::NotificationId};
+use crate::{
+    item::ItemBufferKind, notifications::NotificationId, utility_pane::UTILITY_PANE_MIN_WIDTH,
+};
 use crate::{
     persistence::{
         SerializedAxis,
         model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     },
-    utility_pane::{UtilityPaneFrame, UtilityPaneSlot, UtilityPaneState},
+    utility_pane::{DraggedUtilityPane, UtilityPaneFrame, UtilityPaneSlot, UtilityPaneState},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -6318,6 +6320,7 @@ impl Workspace {
                 left_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
@@ -6340,6 +6343,7 @@ impl Workspace {
                 right_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
     }
 
     fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
@@ -6354,6 +6358,42 @@ impl Workspace {
                 bottom_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
+    }
+
+    fn max_utility_pane_width(&self, window: &Window, cx: &App) -> Pixels {
+        let left_dock_width = self
+            .left_dock
+            .read(cx)
+            .active_panel_size(window, cx)
+            .unwrap_or(px(0.0));
+        let right_dock_width = self
+            .right_dock
+            .read(cx)
+            .active_panel_size(window, cx)
+            .unwrap_or(px(0.0));
+        let center_pane_width = self.bounds.size.width - left_dock_width - right_dock_width;
+        center_pane_width - px(10.0)
+    }
+
+    fn clamp_utility_pane_widths(&mut self, window: &mut Window, cx: &mut App) {
+        let max_width = self.max_utility_pane_width(window, cx);
+
+        // Clamp left slot utility pane if it exists
+        if let Some(panel) = self.panel_for_utility_slot(UtilityPaneSlot::Left, cx) {
+            let current_width = panel.utility_pane_width(cx);
+            if current_width > max_width {
+                panel.set_utility_pane_width(Some(max_width.max(UTILITY_PANE_MIN_WIDTH)), cx);
+            }
+        }
+
+        // Clamp right slot utility pane if it exists
+        if let Some(panel) = self.panel_for_utility_slot(UtilityPaneSlot::Right, cx) {
+            let current_width = panel.utility_pane_width(cx);
+            if current_width > max_width {
+                panel.set_utility_pane_width(Some(max_width.max(UTILITY_PANE_MIN_WIDTH)), cx);
+            }
+        }
     }
 
     fn toggle_edit_predictions_all_files(
@@ -6818,6 +6858,34 @@ impl Render for Workspace {
                                                     }
                                                 };
                                                 workspace.serialize_workspace(window, cx);
+                                            }
+                                        },
+                                    ))
+                                    .on_drag_move(cx.listener(
+                                        move |workspace,
+                                              e: &DragMoveEvent<DraggedUtilityPane>,
+                                              window,
+                                              cx| {
+                                            let slot = e.drag(cx).0;
+                                            match slot {
+                                                UtilityPaneSlot::Left => {
+                                                    let left_dock_width = workspace.left_dock.read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(gpui::px(0.0));
+                                                    let new_width = e.event.position.x
+                                                        - workspace.bounds.left()
+                                                        - left_dock_width;
+                                                    workspace.resize_utility_pane(slot, new_width, window, cx);
+                                                }
+                                                UtilityPaneSlot::Right => {
+                                                    let right_dock_width = workspace.right_dock.read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(gpui::px(0.0));
+                                                    let new_width = workspace.bounds.right()
+                                                        - e.event.position.x
+                                                        - right_dock_width;
+                                                    workspace.resize_utility_pane(slot, new_width, window, cx);
+                                                }
                                             }
                                         },
                                     ))

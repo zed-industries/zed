@@ -1,13 +1,19 @@
 use std::sync::Arc;
 
-use gpui::{AnyView, App, EntityId, WeakEntity};
+use gpui::{
+    AnyView, App, AppContext, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement,
+    WeakEntity, deferred, px,
+};
 use ui::{
     ActiveTheme as _, Clickable, Context, DynamicSpacing, FluentBuilder as _, IconButton, IconName,
     IconSize, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, Styled as _,
-    Tab, Window, div, px,
+    Tab, Window, div,
 };
 
 use crate::{DockPosition, PanelHandle, Workspace};
+
+pub(crate) const UTILITY_PANE_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
+pub(crate) const UTILITY_PANE_MIN_WIDTH: Pixels = px(20.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UtilityPaneSlot {
@@ -19,6 +25,15 @@ pub enum UtilityPaneSlot {
 pub struct UtilityPaneState {
     pub left_slot: Option<EntityId>,
     pub right_slot: Option<EntityId>,
+}
+
+#[derive(Clone)]
+pub struct DraggedUtilityPane(pub UtilityPaneSlot);
+
+impl Render for DraggedUtilityPane {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +141,35 @@ impl Workspace {
             cx.notify();
         }
     }
+
+    pub fn resize_utility_pane(
+        &mut self,
+        slot: UtilityPaneSlot,
+        new_width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
+            let max_width = self.max_utility_pane_width(window, cx);
+            let width = new_width.max(UTILITY_PANE_MIN_WIDTH).min(max_width);
+            panel.set_utility_pane_width(Some(width), cx);
+            cx.notify();
+            self.serialize_workspace(window, cx);
+        }
+    }
+
+    pub fn reset_utility_pane_width(
+        &mut self,
+        slot: UtilityPaneSlot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
+            panel.set_utility_pane_width(None, cx);
+            cx.notify();
+            self.serialize_workspace(window, cx);
+        }
+    }
 }
 
 #[derive(IntoElement)]
@@ -151,10 +195,70 @@ impl RenderOnce for UtilityPaneFrame {
         let workspace = self.workspace.clone();
         let slot = self.slot;
 
+        let Some(width) = workspace.upgrade().and_then(|ws| {
+            ws.read_with(cx, |ws, cx| {
+                ws.panel_for_utility_slot(slot, cx)
+                    .map(|panel| panel.utility_pane_width(cx))
+            })
+        }) else {
+            return gpui::Empty.into_any_element();
+        };
+
+        let create_resize_handle = || {
+            let workspace_handle = workspace.clone();
+            let handle = div()
+                .id(match slot {
+                    UtilityPaneSlot::Left => "utility-pane-resize-handle-left",
+                    UtilityPaneSlot::Right => "utility-pane-resize-handle-right",
+                })
+                .on_drag(DraggedUtilityPane(slot), move |pane, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| pane.clone())
+                })
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    move |e: &gpui::MouseUpEvent, window, cx| {
+                        if e.click_count == 2 {
+                            workspace_handle
+                                .update(cx, |workspace, cx| {
+                                    workspace.reset_utility_pane_width(slot, window, cx);
+                                })
+                                .ok();
+                            cx.stop_propagation();
+                        }
+                    },
+                )
+                .occlude();
+
+            match slot {
+                UtilityPaneSlot::Left => deferred(
+                    handle
+                        .absolute()
+                        .right(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
+                        .top(px(0.))
+                        .h_full()
+                        .w(UTILITY_PANE_RESIZE_HANDLE_SIZE)
+                        .cursor_col_resize(),
+                ),
+                UtilityPaneSlot::Right => deferred(
+                    handle
+                        .absolute()
+                        .left(-UTILITY_PANE_RESIZE_HANDLE_SIZE / 2.)
+                        .top(px(0.))
+                        .h_full()
+                        .w(UTILITY_PANE_RESIZE_HANDLE_SIZE)
+                        .cursor_col_resize(),
+                ),
+            }
+        };
+
         div()
             .h_full()
             .bg(cx.theme().colors().tab_bar_background)
-            .w(px(400.0))
+            .w(width)
             .border_color(cx.theme().colors().border)
             .when(self.slot == UtilityPaneSlot::Left, |this| this.border_r_1())
             .when(self.slot == UtilityPaneSlot::Right, |this| {
@@ -204,6 +308,8 @@ impl RenderOnce for UtilityPaneFrame {
                         )
                     }),
             )
+            .child(create_resize_handle())
             .child(self.view)
+            .into_any_element()
     }
 }
