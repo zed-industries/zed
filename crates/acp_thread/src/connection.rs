@@ -20,7 +20,7 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
-    fn telemetry_id(&self) -> &'static str;
+    fn telemetry_id(&self) -> SharedString;
 
     fn new_thread(
         self: Rc<Self>,
@@ -322,8 +322,8 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "stub"
+        fn telemetry_id(&self) -> SharedString {
+            "stub".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {

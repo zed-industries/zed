@@ -11,6 +11,7 @@ use crate::{
     SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior,
     SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
+    column_pixels,
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
@@ -2269,7 +2270,8 @@ impl EditorElement {
         };
 
         let padding = ProjectSettings::get_global(cx).diagnostics.inline.padding as f32 * em_width;
-        let min_x = self.column_pixels(
+        let min_x = column_pixels(
+            &self.style,
             ProjectSettings::get_global(cx)
                 .diagnostics
                 .inline
@@ -2572,7 +2574,8 @@ impl EditorElement {
 
             let padded_line_end = line_end + padding;
 
-            let min_column_in_pixels = self.column_pixels(
+            let min_column_in_pixels = column_pixels(
+                &self.style,
                 ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
                 window,
             );
@@ -2796,7 +2799,7 @@ impl EditorElement {
                 .enumerate()
                 .filter_map(|(i, indent_guide)| {
                     let single_indent_width =
-                        self.column_pixels(indent_guide.tab_size as usize, window);
+                        column_pixels(&self.style, indent_guide.tab_size as usize, window);
                     let total_width = single_indent_width * indent_guide.depth as f32;
                     let start_x = Pixels::from(
                         ScrollOffset::from(content_origin.x + total_width)
@@ -2853,7 +2856,7 @@ impl EditorElement {
             .wrap_guides(cx)
             .into_iter()
             .flat_map(|(guide, active)| {
-                let wrap_position = self.column_pixels(guide, window);
+                let wrap_position = column_pixels(&self.style, guide, window);
                 let wrap_guide_x = wrap_position + horizontal_offset;
                 let display_wrap_guide = wrap_guide_x >= content_origin
                     && wrap_guide_x <= hitbox.bounds.right() - vertical_scrollbar_width;
@@ -4619,6 +4622,7 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         text_hitbox: &Hitbox,
+        style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<StickyHeaders> {
@@ -4626,7 +4630,7 @@ impl EditorElement {
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
 
-        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, cx);
+        let rows = Self::sticky_headers(self.editor.read(cx), snapshot, style, cx);
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
@@ -4685,6 +4689,7 @@ impl EditorElement {
     pub(crate) fn sticky_headers(
         editor: &Editor,
         snapshot: &EditorSnapshot,
+        style: &EditorStyle,
         cx: &App,
     ) -> Vec<StickyHeader> {
         let scroll_top = snapshot.scroll_position().y;
@@ -4692,7 +4697,7 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        let items = editor.sticky_headers(cx).unwrap_or_default();
+        let items = editor.sticky_headers(style, cx).unwrap_or_default();
 
         for item in items {
             let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
@@ -5255,7 +5260,7 @@ impl EditorElement {
     ) -> Option<AnyElement> {
         let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
         self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, window, cx)
+            editor.render_context_menu(max_height_in_lines, window, cx)
         })
     }
 
@@ -5282,16 +5287,18 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let position = self.editor.update(cx, |editor, _cx| {
+        let position = self.editor.update(cx, |editor, cx| {
             let visible_start_point = editor.display_to_pixel_point(
                 DisplayPoint::new(visible_range.start, 0),
                 editor_snapshot,
                 window,
+                cx,
             )?;
             let visible_end_point = editor.display_to_pixel_point(
                 DisplayPoint::new(visible_range.end, 0),
                 editor_snapshot,
                 window,
+                cx,
             )?;
 
             let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
@@ -5299,7 +5306,8 @@ impl EditorElement {
                 MenuPosition::PinnedToScreen(point) => (None, point),
                 MenuPosition::PinnedToEditor { source, offset } => {
                     let source_display_point = source.to_display_point(editor_snapshot);
-                    let source_point = editor.to_pixel_point(source, editor_snapshot, window)?;
+                    let source_point =
+                        editor.to_pixel_point(source, editor_snapshot, window, cx)?;
                     let position = content_origin + source_point + offset;
                     (Some(source_display_point), position)
                 }
@@ -7773,29 +7781,6 @@ impl EditorElement {
         });
     }
 
-    fn column_pixels(&self, column: usize, window: &Window) -> Pixels {
-        let style = &self.style;
-        let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let layout = window.text_system().shape_line(
-            SharedString::from(" ".repeat(column)),
-            font_size,
-            &[TextRun {
-                len: column,
-                font: style.text.font(),
-                color: Hsla::default(),
-                ..Default::default()
-            }],
-            None,
-        );
-
-        layout.width
-    }
-
-    fn max_line_number_width(&self, snapshot: &EditorSnapshot, window: &mut Window) -> Pixels {
-        let digit_count = snapshot.widest_line_number().ilog10() + 1;
-        self.column_pixels(digit_count as usize, window)
-    }
-
     fn shape_line_number(
         &self,
         text: SharedString,
@@ -8943,8 +8928,6 @@ impl Element for EditorElement {
                         max_lines,
                     } => {
                         let editor_handle = cx.entity();
-                        let max_line_number_width =
-                            self.max_line_number_width(&editor.snapshot(window, cx), window);
                         window.request_measured_layout(
                             Style::default(),
                             move |known_dimensions, available_space, window, cx| {
@@ -8954,7 +8937,6 @@ impl Element for EditorElement {
                                             editor,
                                             min_lines,
                                             max_lines,
-                                            max_line_number_width,
                                             known_dimensions,
                                             available_space.width,
                                             window,
@@ -9041,15 +9023,10 @@ impl Element for EditorElement {
                         .gutter_dimensions(
                             font_id,
                             font_size,
-                            self.max_line_number_width(&snapshot, window),
+                            style,
+                            window,
                             cx,
-                        )
-                        .or_else(|| {
-                            self.editor.read(cx).offset_content.then(|| {
-                                GutterDimensions::default_with_margin(font_id, font_size, cx)
-                            })
-                        })
-                        .unwrap_or_default();
+                        );
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9740,6 +9717,7 @@ impl Element for EditorElement {
                             &gutter_dimensions,
                             &gutter_hitbox,
                             &text_hitbox,
+                            &style,
                             window,
                             cx,
                         )
@@ -11456,7 +11434,6 @@ fn compute_auto_height_layout(
     editor: &mut Editor,
     min_lines: usize,
     max_lines: Option<usize>,
-    max_line_number_width: Pixels,
     known_dimensions: Size<Option<Pixels>>,
     available_width: AvailableSpace,
     window: &mut Window,
@@ -11480,14 +11457,7 @@ fn compute_auto_height_layout(
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
-    let gutter_dimensions = snapshot
-        .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
-        .or_else(|| {
-            editor
-                .offset_content
-                .then(|| GutterDimensions::default_with_margin(font_id, font_size, cx))
-        })
-        .unwrap_or_default();
+    let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
@@ -11550,7 +11520,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
 
         for x in 1..=100 {
             let (_, state) = cx.draw(
@@ -11578,7 +11548,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
 
         for x in 1..=100 {
             let (_, state) = cx.draw(
@@ -11603,7 +11573,7 @@ mod tests {
         });
 
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
                 style.text.line_height_in_pixels(window.rem_size())
@@ -11751,7 +11721,7 @@ mod tests {
         });
 
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
                 style.text.line_height_in_pixels(window.rem_size())
@@ -11878,7 +11848,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
 
         window
             .update(cx, |editor, window, cx| {
@@ -11949,7 +11919,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
         window
             .update(cx, |editor, window, cx| {
                 editor.set_placeholder_text("hello", window, cx);
@@ -12189,7 +12159,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
 
-        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         window
             .update(cx, |editor, _, cx| {
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);

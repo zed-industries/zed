@@ -1031,6 +1031,7 @@ impl GitStore {
             Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),
         };
+        let line_ending = buffer.line_ending();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
@@ -1042,7 +1043,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content)
+                    .blame(repo_path.clone(), content, line_ending)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -4692,11 +4693,9 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        let rx = self.run_hook(RunHook::PrePush, cx);
         self.send_job(
             Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
-                rx.await??;
                 match git_repo {
                     RepositoryState::Local(LocalRepositoryState {
                         backend,

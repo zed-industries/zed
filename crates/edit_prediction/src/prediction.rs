@@ -1,6 +1,5 @@
 use std::{
     ops::Range,
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -9,7 +8,7 @@ use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::interpolate_edits;
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
-use serde::Serialize;
+use zeta_prompt::ZetaPromptInput;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(pub SharedString);
@@ -40,7 +39,7 @@ impl EditPredictionResult {
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         buffer_snapshotted_at: Instant,
         response_received_at: Instant,
-        inputs: EditPredictionInputs,
+        inputs: ZetaPromptInput,
         cx: &mut AsyncApp,
     ) -> Self {
         if edits.is_empty() {
@@ -94,15 +93,7 @@ pub struct EditPrediction {
     pub buffer: Entity<Buffer>,
     pub buffer_snapshotted_at: Instant,
     pub response_received_at: Instant,
-    pub inputs: EditPredictionInputs,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EditPredictionInputs {
-    pub events: Vec<Arc<cloud_llm_client::predict_edits_v3::Event>>,
-    pub included_files: Vec<cloud_llm_client::predict_edits_v3::RelatedFile>,
-    pub cursor_point: cloud_llm_client::predict_edits_v3::Point,
-    pub cursor_path: Arc<Path>,
+    pub inputs: zeta_prompt::ZetaPromptInput,
 }
 
 impl EditPrediction {
@@ -133,9 +124,12 @@ impl std::fmt::Debug for EditPrediction {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use gpui::{App, Entity, TestAppContext, prelude::*};
     use language::{Buffer, ToOffset as _};
+    use zeta_prompt::ZetaPromptInput;
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
@@ -154,14 +148,13 @@ mod tests {
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
-            inputs: EditPredictionInputs {
+            inputs: ZetaPromptInput {
                 events: vec![],
-                included_files: vec![],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    line: cloud_llm_client::predict_edits_v3::Line(0),
-                    column: 0,
-                },
+                related_files: vec![].into(),
                 cursor_path: Path::new("path.txt").into(),
+                cursor_offset_in_excerpt: 0,
+                cursor_excerpt: "".into(),
+                editable_range_in_excerpt: 0..0,
             },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),

@@ -59,7 +59,7 @@ impl MouseContextMenu {
                 x: editor.gutter_dimensions.width,
                 y: Pixels::ZERO,
             };
-        let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, window, cx)?;
         let menu_position = MenuPosition::PinnedToEditor {
             source,
             offset: position - (source_position + content_origin),
@@ -280,7 +280,11 @@ pub fn deploy_context_menu(
                     "Copy Permalink",
                     Box::new(CopyPermalinkToLine),
                 )
-                .action_disabled_when(!has_git_repo, "File History", Box::new(git::FileHistory));
+                .action_disabled_when(
+                    !has_git_repo,
+                    "View File History",
+                    Box::new(git::FileHistory),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

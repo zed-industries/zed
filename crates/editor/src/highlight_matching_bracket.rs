@@ -7,6 +7,7 @@ use theme::ActiveTheme;
 enum MatchingBracketHighlight {}
 
 impl Editor {
+    #[ztracing::instrument(skip_all)]
     pub fn refresh_matching_bracket_highlights(
         &mut self,
         window: &Window,

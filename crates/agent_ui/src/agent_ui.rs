@@ -160,16 +160,6 @@ pub enum ExternalAgent {
 }
 
 impl ExternalAgent {
-    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
-        match server.telemetry_id() {
-            "gemini-cli" => Some(Self::Gemini),
-            "claude-code" => Some(Self::ClaudeCode),
-            "codex" => Some(Self::Codex),
-            "zed" => Some(Self::NativeAgent),
-            _ => None,
-        }
-    }
-
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
@@ -455,6 +445,7 @@ mod tests {
             default_height: px(600.),
             default_model: None,
             inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],

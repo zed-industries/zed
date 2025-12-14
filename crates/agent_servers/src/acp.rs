@@ -9,6 +9,8 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use settings::Settings as _;
+use task::ShellBuilder;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -21,7 +23,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape};
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -29,7 +31,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
-    telemetry_id: &'static str,
+    telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
@@ -54,7 +56,6 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
-    telemetry_id: &'static str,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -64,7 +65,6 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
-        telemetry_id,
         command.clone(),
         root_dir,
         default_mode,
@@ -81,7 +81,6 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
-        telemetry_id: &'static str,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -89,9 +88,11 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path);
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
+        let builder = ShellBuilder::new(&shell, cfg!(windows));
+        let mut child =
+            builder.build_command(Some(command.path.display().to_string()), &command.args);
         child
-            .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -199,6 +200,13 @@ impl AcpConnection {
             return Err(UnsupportedVersion.into());
         }
 
+        let telemetry_id = response
+            .agent_info
+            // Use the one the agent provides if we have one
+            .map(|info| info.name.into())
+            // Otherwise, just use the name
+            .unwrap_or_else(|| server_name.clone());
+
         Ok(Self {
             auth_methods: response.auth_methods,
             root_dir: root_dir.to_owned(),
@@ -233,8 +241,8 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
-    fn telemetry_id(&self) -> &'static str {
-        self.telemetry_id
+    fn telemetry_id(&self) -> SharedString {
+        self.telemetry_id.clone()
     }
 
     fn new_thread(

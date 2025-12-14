@@ -1,5 +1,6 @@
 mod components;
 mod page_data;
+mod pages;
 
 use anyhow::Result;
 use editor::{Editor, EditorEvent};
@@ -28,9 +29,8 @@ use std::{
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Banner, ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape,
-    KeyBinding, KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
+    KeybindingHint, PopoverMenu, Switch, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -38,7 +38,8 @@ use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decor
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
-    EnumVariantDropdown, SettingsInputField, font_picker, icon_theme_picker, theme_picker,
+    EnumVariantDropdown, SettingsInputField, SettingsSectionHeader, font_picker, icon_theme_picker,
+    theme_picker,
 };
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
@@ -613,7 +614,10 @@ pub fn open_settings_editor(
                 app_id: Some(app_id.to_owned()),
                 window_decorations: Some(window_decorations),
                 window_min_size: Some(gpui::Size {
-                    width: px(360.0),
+                    // Don't make the settings window thinner than this,
+                    // otherwise, it gets unusable. Users with smaller res monitors
+                    // can customize the height, but not the width.
+                    width: px(900.0),
                     height: px(240.0),
                 }),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
@@ -834,18 +838,9 @@ impl SettingsPageItem {
             };
 
         match self {
-            SettingsPageItem::SectionHeader(header) => v_flex()
-                .w_full()
-                .px_8()
-                .gap_1p5()
-                .child(
-                    Label::new(SharedString::new_static(header))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
-                )
-                .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                .into_any_element(),
+            SettingsPageItem::SectionHeader(header) => {
+                SettingsSectionHeader::new(SharedString::new_static(header)).into_any_element()
+            }
             SettingsPageItem::SettingItem(setting_item) => {
                 let (field_with_padding, _) =
                     render_setting_item_inner(setting_item, true, false, cx);
@@ -869,9 +864,20 @@ impl SettingsPageItem {
                         .map(apply_padding)
                         .child(
                             v_flex()
+                                .relative()
                                 .w_full()
                                 .max_w_1_2()
-                                .child(Label::new(sub_page_link.title.clone())),
+                                .child(Label::new(sub_page_link.title.clone()))
+                                .when_some(
+                                    sub_page_link.description.as_ref(),
+                                    |this, description| {
+                                        this.child(
+                                            Label::new(description.clone())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    },
+                                ),
                         )
                         .child(
                             Button::new(
@@ -909,7 +915,13 @@ impl SettingsPageItem {
                                     this.push_sub_page(sub_page_link.clone(), header, cx)
                                 })
                             }),
-                        ),
+                        )
+                        .child(render_settings_item_link(
+                            sub_page_link.title.clone(),
+                            sub_page_link.json_path,
+                            false,
+                            cx,
+                        )),
                 )
                 .when(!is_last, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
@@ -983,20 +995,6 @@ fn render_settings_item(
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
 
-    let clipboard_has_link = cx
-        .read_from_clipboard()
-        .and_then(|entry| entry.text())
-        .map_or(false, |maybe_url| {
-            setting_item.field.json_path().is_some()
-                && maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
-        });
-
-    let (link_icon, link_icon_color) = if clipboard_has_link {
-        (IconName::Check, Color::Success)
-    } else {
-        (IconName::Link, Color::Muted)
-    };
-
     h_flex()
         .id(setting_item.title)
         .min_w_0()
@@ -1056,40 +1054,60 @@ fn render_settings_item(
         )
         .child(control)
         .when(sub_page_stack().is_empty(), |this| {
-            // Intentionally using the description to make the icon button
-            // unique because some items share the same title (e.g., "Font Size")
-            let icon_button_id =
-                SharedString::new(format!("copy-link-btn-{}", setting_item.description));
-
-            this.child(
-                div()
-                    .absolute()
-                    .top(rems_from_px(18.))
-                    .map(|this| {
-                        if sub_field {
-                            this.visible_on_hover("setting-sub-item")
-                                .left(rems_from_px(-8.5))
-                        } else {
-                            this.visible_on_hover("setting-item")
-                                .left(rems_from_px(-22.))
-                        }
-                    })
-                    .child({
-                        IconButton::new(icon_button_id, link_icon)
-                            .icon_color(link_icon_color)
-                            .icon_size(IconSize::Small)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Copy Link"))
-                            .when_some(setting_item.field.json_path(), |this, path| {
-                                this.on_click(cx.listener(move |_, _, _, cx| {
-                                    let link = format!("zed://settings/{}", path);
-                                    cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                    cx.notify();
-                                }))
-                            })
-                    }),
-            )
+            this.child(render_settings_item_link(
+                setting_item.description,
+                setting_item.field.json_path(),
+                sub_field,
+                cx,
+            ))
         })
+}
+
+fn render_settings_item_link(
+    id: impl Into<ElementId>,
+    json_path: Option<&'static str>,
+    sub_field: bool,
+    cx: &mut Context<'_, SettingsWindow>,
+) -> impl IntoElement {
+    let clipboard_has_link = cx
+        .read_from_clipboard()
+        .and_then(|entry| entry.text())
+        .map_or(false, |maybe_url| {
+            json_path.is_some() && maybe_url.strip_prefix("zed://settings/") == json_path
+        });
+
+    let (link_icon, link_icon_color) = if clipboard_has_link {
+        (IconName::Check, Color::Success)
+    } else {
+        (IconName::Link, Color::Muted)
+    };
+
+    div()
+        .absolute()
+        .top(rems_from_px(18.))
+        .map(|this| {
+            if sub_field {
+                this.visible_on_hover("setting-sub-item")
+                    .left(rems_from_px(-8.5))
+            } else {
+                this.visible_on_hover("setting-item")
+                    .left(rems_from_px(-22.))
+            }
+        })
+        .child(
+            IconButton::new((id.into(), "copy-link-btn"), link_icon)
+                .icon_color(link_icon_color)
+                .icon_size(IconSize::Small)
+                .shape(IconButtonShape::Square)
+                .tooltip(Tooltip::text("Copy Link"))
+                .when_some(json_path, |this, path| {
+                    this.on_click(cx.listener(move |_, _, _, cx| {
+                        let link = format!("zed://settings/{}", path);
+                        cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        cx.notify();
+                    }))
+                }),
+        )
 }
 
 struct SettingItem {
@@ -1175,6 +1193,12 @@ impl PartialEq for SettingItem {
 #[derive(Clone)]
 struct SubPageLink {
     title: SharedString,
+    description: Option<SharedString>,
+    /// See [`SettingField.json_path`]
+    json_path: Option<&'static str>,
+    /// Whether or not the settings in this sub page are configurable in settings.json
+    /// Removes the "Edit in settings.json" button from the page.
+    in_json: bool,
     files: FileMask,
     render: Arc<
         dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
@@ -1835,6 +1859,7 @@ impl SettingsWindow {
                         header_str = *header;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
+                        json_path = sub_page_link.json_path;
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, sub_page_link.title.as_ref()]
@@ -2758,19 +2783,49 @@ impl SettingsWindow {
         page_content
     }
 
-    fn render_sub_page_items<'a, Items: Iterator<Item = (usize, &'a SettingsPageItem)>>(
+    fn render_sub_page_items<'a, Items>(
         &self,
         items: Items,
         page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
-    ) -> impl IntoElement {
-        let mut page_content = v_flex()
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
+        let page_content = v_flex()
             .id("settings-ui-page")
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.sub_page_scroll_handle);
+        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+    }
 
+    fn render_sub_page_items_section<'a, Items>(
+        &self,
+        items: Items,
+        page_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
+        let page_content = v_flex().id("settings-ui-sub-page-section").size_full();
+        self.render_sub_page_items_in(page_content, items, page_index, window, cx)
+    }
+
+    fn render_sub_page_items_in<'a, Items>(
+        &self,
+        mut page_content: Stateful<Div>,
+        items: Items,
+        page_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement
+    where
+        Items: Iterator<Item = (usize, &'a SettingsPageItem)>,
+    {
         let items: Vec<_> = items.collect();
         let items_len = items.len();
         let mut section_header = None;
@@ -2871,18 +2926,25 @@ impl SettingsWindow {
                         )
                         .child(self.render_sub_page_breadcrumbs()),
                 )
-                .child(
-                    Button::new("open-in-settings-file", "Edit in settings.json")
-                        .tab_index(0_isize)
-                        .style(ButtonStyle::OutlinedGhost)
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Edit in settings.json",
-                            &OpenCurrentFile,
-                            &self.focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_current_settings_file(window, cx);
-                        })),
+                .when(
+                    sub_page_stack()
+                        .last()
+                        .is_none_or(|sub_page| sub_page.link.in_json),
+                    |this| {
+                        this.child(
+                            Button::new("open-in-settings-file", "Edit in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::OutlinedGhost)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Edit in settings.json",
+                                    &OpenCurrentFile,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_current_settings_file(window, cx);
+                                })),
+                        )
+                    },
                 )
                 .into_any_element();
 

@@ -1,5 +1,4 @@
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use cloud_zeta2_prompt::write_codeblock;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use feature_flags::FeatureFlag;
@@ -362,14 +361,14 @@ impl RatePredictionsModal {
             write!(&mut formatted_inputs, "## Events\n\n").unwrap();
 
             for event in &prediction.inputs.events {
-                write!(&mut formatted_inputs, "```diff\n{event}```\n\n").unwrap();
+                formatted_inputs.push_str("```diff\n");
+                zeta_prompt::write_event(&mut formatted_inputs, event.as_ref());
+                formatted_inputs.push_str("```\n\n");
             }
 
-            write!(&mut formatted_inputs, "## Included files\n\n").unwrap();
+            write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
 
-            for included_file in &prediction.inputs.included_files {
-                let cursor_insertions = &[(prediction.inputs.cursor_point, "<|CURSOR|>")];
-
+            for included_file in prediction.inputs.related_files.as_ref() {
                 write!(
                     &mut formatted_inputs,
                     "### {}\n\n",
@@ -377,19 +376,27 @@ impl RatePredictionsModal {
                 )
                 .unwrap();
 
-                write_codeblock(
-                    &included_file.path,
-                    &included_file.excerpts,
-                    if included_file.path == prediction.inputs.cursor_path {
-                        cursor_insertions.as_slice()
-                    } else {
-                        &[]
-                    },
-                    included_file.max_row,
-                    false,
-                    &mut formatted_inputs,
-                );
+                for excerpt in included_file.excerpts.iter() {
+                    write!(
+                        &mut formatted_inputs,
+                        "```{}\n{}\n```\n",
+                        included_file.path.display(),
+                        excerpt.text
+                    )
+                    .unwrap();
+                }
             }
+
+            write!(&mut formatted_inputs, "## Cursor Excerpt\n\n").unwrap();
+
+            writeln!(
+                &mut formatted_inputs,
+                "```{}\n{}<CURSOR>{}\n```\n",
+                prediction.inputs.cursor_path.display(),
+                &prediction.inputs.cursor_excerpt[..prediction.inputs.cursor_offset_in_excerpt],
+                &prediction.inputs.cursor_excerpt[prediction.inputs.cursor_offset_in_excerpt..],
+            )
+            .unwrap();
 
             self.active_prediction = Some(ActivePrediction {
                 prediction,

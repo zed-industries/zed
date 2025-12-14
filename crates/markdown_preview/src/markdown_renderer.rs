@@ -75,8 +75,10 @@ impl RenderContext {
 
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
+        let buffer_font_features = settings.buffer_font.features.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
+        buffer_text_style.font_features = buffer_font_features;
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
 
         RenderContext {
@@ -631,8 +633,14 @@ fn render_markdown_code_block(
         .tooltip(Tooltip::text("Copy code block"))
         .visible_on_hover("markdown-block");
 
+    let font = gpui::Font {
+        family: cx.buffer_font_family.clone(),
+        features: cx.buffer_text_style.font_features.clone(),
+        ..Default::default()
+    };
+
     cx.with_common_p(div())
-        .font_family(cx.buffer_font_family.clone())
+        .font(font)
         .px_3()
         .py_3()
         .bg(cx.code_block_background_color)
