@@ -8,7 +8,7 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlag, FeatureFlagAppExt};
+use feature_flags::{FeatureFlagAppExt, InlineAssistantUseToolFeatureFlag};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -43,16 +43,6 @@ use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 
 actions!(inline_assistant, [ThumbsUpResult, ThumbsDownResult]);
-
-pub struct InlineAssistRatingFeatureFlag;
-
-impl FeatureFlag for InlineAssistRatingFeatureFlag {
-    const NAME: &'static str = "inline-assist-rating";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
 
 enum RatingState {
     Pending,
@@ -795,7 +785,7 @@ impl<T: 'static> PromptEditor<T> {
                             .into_any_element(),
                     ]
                 } else {
-                    let show_rating_buttons = cx.has_flag::<InlineAssistRatingFeatureFlag>();
+                    let show_rating_buttons = cx.has_flag::<InlineAssistantUseToolFeatureFlag>();
                     let rated = self.rated.rating_id().is_some();
 
                     let accept = IconButton::new("accept", IconName::Check)
