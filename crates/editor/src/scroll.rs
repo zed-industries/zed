@@ -27,8 +27,6 @@ use workspace::{ItemId, WorkspaceId};
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-// TODO: move to settings
-const SMOOTH_SCROLL_DURATION: Duration = Duration::from_millis(120);
 
 pub struct WasScrolled(pub(crate) bool);
 
