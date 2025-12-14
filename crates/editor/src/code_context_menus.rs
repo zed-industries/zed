@@ -1324,7 +1324,7 @@ pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
-    pub(crate) context: TaskContext,
+    pub context: TaskContext,
 }
 
 impl CodeActionContents {
@@ -1356,7 +1356,7 @@ impl CodeActionContents {
         self.len() == 0
     }
 
-    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {

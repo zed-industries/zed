@@ -637,6 +637,7 @@ pub fn main() {
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        code_actions_picker::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
