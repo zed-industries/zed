@@ -329,36 +329,30 @@ impl BufferDiffSnapshot {
         buffer: &text::BufferSnapshot,
     ) -> u32 {
         // TODO(split-diff) expose a parameter to reuse a cursor to avoid repeatedly seeking from the start
-
-        // Find the last hunk that starts before this position.
+        let target = buffer.anchor_before(Point::new(row, 0));
+        // Find the last hunk that starts before the target.
         let mut cursor = self.inner.hunks.cursor::<DiffHunkSummary>(buffer);
-        let position = buffer.anchor_before(Point::new(row, 0));
-        cursor.seek(&position, Bias::Left);
+        cursor.seek(&target, Bias::Left);
         if cursor
             .item()
-            .is_none_or(|hunk| hunk.buffer_range.start.cmp(&position, buffer).is_gt())
+            .is_none_or(|hunk| hunk.buffer_range.start.cmp(&target, buffer).is_gt())
         {
             cursor.prev();
         }
 
         let unclipped_point = if let Some(hunk) = cursor.item()
-            && hunk.buffer_range.start.cmp(&position, buffer).is_le()
+            && hunk.buffer_range.start.cmp(&target, buffer).is_le()
         {
-            let unclipped_point = if position.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
-                let mut unclipped_point = cursor
-                    .end()
-                    .diff_base_byte_range
-                    .end
-                    .to_point(self.base_text());
+            // Found a hunk that starts before the target.
+            let hunk_base_text_end = cursor.end().diff_base_byte_range.end;
+            let unclipped_point = if target.cmp(&cursor.end().buffer_range.end, buffer).is_ge() {
+                // Target falls strictly between two hunks.
+                let mut unclipped_point = hunk_base_text_end.to_point(self.base_text());
                 unclipped_point +=
                     Point::new(row, 0) - cursor.end().buffer_range.end.to_point(buffer);
                 unclipped_point
             } else if bias == Bias::Right {
-                cursor
-                    .end()
-                    .diff_base_byte_range
-                    .end
-                    .to_point(self.base_text())
+                hunk_base_text_end.to_point(self.base_text())
             } else {
                 hunk.diff_base_byte_range.start.to_point(self.base_text())
             };
@@ -366,13 +360,16 @@ impl BufferDiffSnapshot {
             cursor.next();
             unclipped_point
         } else {
-            // Position is before the added region for the first hunk.
+            // Target is before the added region for the first hunk.
             debug_assert!(self.inner.hunks.first().is_none_or(|first_hunk| {
-                position.cmp(&first_hunk.buffer_range.start, buffer).is_le()
+                target.cmp(&first_hunk.buffer_range.start, buffer).is_le()
             }));
             Point::new(row, 0)
         };
 
+        // If the target falls in the region between two hunks, we added an overshoot above.
+        // There may be changes in the main buffer that are not reflected in the hunks,
+        // so we need to ensure this overshoot keeps us in the corresponding base text region.
         let max_point = if let Some(next_hunk) = cursor.item() {
             next_hunk
                 .diff_base_byte_range

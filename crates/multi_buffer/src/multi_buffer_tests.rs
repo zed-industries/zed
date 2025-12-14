@@ -2295,6 +2295,7 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
     diffs: HashMap<BufferId, Entity<BufferDiff>>,
+    invert_diffs: bool,
 }
 
 #[derive(Debug)]
@@ -2424,11 +2425,7 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn expected_content(
-        &self,
-        all_diff_hunks_expanded: bool,
-        cx: &App,
-    ) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
+    fn expected_content(&self, cx: &App) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
         let mut text = String::new();
         let mut regions = Vec::<ReferenceRegion>::new();
         let mut excerpt_boundary_rows = HashSet::default();
@@ -2459,12 +2456,10 @@ impl ReferenceMultibuffer {
                     continue;
                 }
 
-                if !all_diff_hunks_expanded
-                    && !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
-                        expanded_anchor.to_offset(buffer).max(buffer_range.start)
-                            == hunk_range.start.max(buffer_range.start)
-                    })
-                {
+                if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
+                    expanded_anchor.to_offset(buffer).max(buffer_range.start)
+                        == hunk_range.start.max(buffer_range.start)
+                }) {
                     log::trace!("skipping a hunk that's not marked as expanded");
                     continue;
                 }
@@ -2750,22 +2745,15 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 
 #[gpui::test(iterations = 100)]
 async fn test_random_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
-    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-    test_random_multibuffer_impl(multibuffer, cx, rng).await;
+    test_random_multibuffer_impl(cx, rng).await;
 }
 
-async fn test_random_multibuffer_impl(
-    multibuffer: Entity<MultiBuffer>,
-    cx: &mut TestAppContext,
-    mut rng: StdRng,
-) {
+async fn test_random_multibuffer_impl(cx: &mut TestAppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    multibuffer.read_with(cx, |multibuffer, _| assert!(multibuffer.is_empty()));
-    let all_diff_hunks_expanded =
-        multibuffer.read_with(cx, |multibuffer, _| multibuffer.all_diff_hunks_expanded());
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
     let mut base_texts: HashMap<BufferId, String> = HashMap::default();
     let mut reference = ReferenceMultibuffer::default();
@@ -2869,7 +2857,7 @@ async fn test_random_multibuffer_impl(
                     assert!(excerpt.contains(anchor));
                 }
             }
-            45..=55 if !reference.excerpts.is_empty() && !all_diff_hunks_expanded => {
+            45..=55 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = multibuffer.snapshot(cx);
                     let excerpt_ix = rng.random_range(0..reference.excerpts.len());
@@ -3022,7 +3010,7 @@ fn check_multibuffer(
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
 
     let (expected_text, expected_row_infos, expected_boundary_rows) =
-        reference.expected_content(snapshot.all_diff_hunks_expanded, cx);
+        reference.expected_content(cx);
 
     let has_diff = actual_row_infos
         .iter()
