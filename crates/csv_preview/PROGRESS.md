@@ -24,7 +24,7 @@ This document outlines the current state of the POC feature. It might not be the
 - [ ] feat: Add multiline cells (variable list) / single line cells (unified list) modes
 - [ ] feat: Add tooltip for truncated values / show full value on selection
 - [ ] feat: Optional headers (c1 c2 c3) toggle
-- [ ] feat: Add performance metrics (time to parse, time to sort, time to filter)
+- [x] feat: Add performance metrics (timings for ordering, parsing, copying, selection, etc)
 - [ ] feat: Horizontal scroll vs fit all columns
 - [ ] feat: Update column resizing behavior (double-click column boundary to fit to content, again to fit to column name, again to reset)
 
