@@ -179,12 +179,15 @@ pub struct ScrollManager {
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
     scroll_animation: Option<ScrollAnimation>,
+    scroll_animation_duration: Duration,
 }
 
 impl ScrollManager {
     pub fn new(cx: &mut App) -> Self {
+        let editor_settings = EditorSettings::get_global(cx);
+
         ScrollManager {
-            vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
+            vertical_scroll_margin: editor_settings.vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
             autoscroll_request: None,
@@ -197,6 +200,9 @@ impl ScrollManager {
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
             scroll_animation: None,
+            scroll_animation_duration: Duration::from_secs_f32(
+                editor_settings.smooth_scroll_duration,
+            ),
         }
     }
 
@@ -483,7 +489,7 @@ impl ScrollManager {
     ) {
         let start_position = if let Some(animation) = &self.scroll_animation {
             let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            let duration = self.scroll_animation_duration.as_secs_f32();
             let progress = (elapsed / duration).min(1.0);
             let easing_fn = gpui::ease_out_cubic();
             let eased = easing_fn(progress);
@@ -519,7 +525,7 @@ impl ScrollManager {
     pub fn animation_progress(&self) -> Option<f32> {
         self.scroll_animation.as_ref().map(|animation| {
             let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            let duration = self.scroll_animation_duration.as_secs_f32();
             (elapsed / duration).min(1.0)
         })
     }

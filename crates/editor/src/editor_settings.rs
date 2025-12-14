@@ -34,6 +34,7 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub fast_scroll_sensitivity: f32,
     pub smooth_scroll: bool,
+    pub smooth_scroll_duration: f32,
     pub sticky_scroll: StickyScroll,
     pub relative_line_numbers: RelativeLineNumbers,
     pub seed_search_query_from_cursor: SeedQuerySetting,
