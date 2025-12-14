@@ -125,7 +125,7 @@ impl ProfilerWindow {
             loop {
                 let data = cx
                     .foreground_executor()
-                    .dispatcher
+                    .dispatcher()
                     .get_current_thread_timings();
 
                 this.update(cx, |this: &mut ProfilerWindow, cx| {

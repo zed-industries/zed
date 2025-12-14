@@ -297,7 +297,7 @@ fn test_block_with_timeout() {
         let foreground = scheduler.foreground();
         let future = future::ready(42);
         let output = foreground.block_with_timeout(Duration::from_millis(100), future);
-        assert_eq!(output.unwrap(), 42);
+        assert_eq!(output.ok(), Some(42));
     });
 
     // Test case: future times out
@@ -305,7 +305,7 @@ fn test_block_with_timeout() {
         let foreground = scheduler.foreground();
         let future = future::pending::<()>();
         let output = foreground.block_with_timeout(Duration::from_millis(50), future);
-        let _ = output.expect_err("future should not have finished");
+        assert!(output.is_err(), "future should not have finished");
     });
 
     // Test case: future makes progress via timer but still times out

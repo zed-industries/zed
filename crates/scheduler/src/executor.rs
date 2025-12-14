@@ -1,5 +1,4 @@
 use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
-use futures::FutureExt as _;
 use std::{
     future::Future,
     marker::PhantomData,
@@ -10,7 +9,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
     thread::{self, ThreadId},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
@@ -27,6 +26,14 @@ impl ForegroundExecutor {
             scheduler,
             not_send: PhantomData,
         }
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
+    pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
+        &self.scheduler
     }
 
     #[track_caller]
@@ -50,31 +57,54 @@ impl ForegroundExecutor {
     }
 
     pub fn block_on<Fut: Future>(&self, future: Fut) -> Fut::Output {
-        let mut output = None;
-        self.scheduler.block(
-            Some(self.session_id),
-            async { output = Some(future.await) }.boxed_local(),
-            None,
-        );
-        output.unwrap()
+        use std::cell::Cell;
+
+        let output = Cell::new(None);
+        let future = async {
+            output.set(Some(future.await));
+        };
+        let mut future = std::pin::pin!(future);
+
+        self.scheduler.block(Some(self.session_id), future.as_mut(), None);
+
+        output.take().expect("block_on future did not complete")
     }
 
-    pub fn block_with_timeout<Fut: Unpin + Future>(
+    /// Block until the future completes or timeout occurs.
+    /// Returns Ok(output) if completed, Err(future) if timed out.
+    pub fn block_with_timeout<Fut: Future>(
         &self,
         timeout: Duration,
-        mut future: Fut,
-    ) -> Result<Fut::Output, Fut> {
-        let mut output = None;
-        self.scheduler.block(
-            Some(self.session_id),
-            async { output = Some((&mut future).await) }.boxed_local(),
-            Some(timeout),
-        );
-        output.ok_or(future)
+        future: Fut,
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
+        use std::cell::Cell;
+
+        let output = Cell::new(None);
+        let mut future = Box::pin(future);
+
+        {
+            let future_ref = &mut future;
+            let wrapper = async {
+                output.set(Some(future_ref.await));
+            };
+            let mut wrapper = std::pin::pin!(wrapper);
+
+            self.scheduler
+                .block(Some(self.session_id), wrapper.as_mut(), Some(timeout));
+        }
+
+        match output.take() {
+            Some(value) => Ok(value),
+            None => Err(future),
+        }
     }
 
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
+    }
+
+    pub fn now(&self) -> Instant {
+        self.scheduler.clock().now()
     }
 }
 
@@ -121,6 +151,10 @@ impl BackgroundExecutor {
         self.scheduler.timer(duration)
     }
 
+    pub fn now(&self) -> Instant {
+        self.scheduler.clock().now()
+    }
+
     pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
         &self.scheduler
     }
@@ -151,6 +185,11 @@ impl<T> Task<T> {
         Task(TaskState::Ready(Some(val)))
     }
 
+    /// Creates a Task from an async_task::Task
+    pub fn from_async_task(task: async_task::Task<T, RunnableMeta>) -> Self {
+        Task(TaskState::Spawned(task))
+    }
+
     pub fn is_ready(&self) -> bool {
         match &self.0 {
             TaskState::Ready(_) => true,
@@ -179,9 +218,6 @@ impl<T> Future for Task<T> {
 }
 
 /// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
-///
-/// Copy-modified from:
-/// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
 fn spawn_local_with_source_location<Fut, S>(
     future: Fut,
@@ -237,7 +273,6 @@ where
         }
     }
 
-    // Wrap the future into one that checks which thread it's on.
     let location = metadata.location;
 
     unsafe {

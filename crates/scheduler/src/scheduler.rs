@@ -9,7 +9,7 @@ pub use executor::*;
 pub use test_scheduler::*;
 
 use async_task::Runnable;
-use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
+use futures::channel::oneshot;
 use std::{
     future::Future,
     panic::Location,
@@ -71,12 +71,18 @@ pub struct RunnableMeta {
 }
 
 pub trait Scheduler: Send + Sync {
+    /// Block until the given future completes or timeout occurs.
+    ///
+    /// Returns `true` if the future completed, `false` if it timed out.
+    /// The future is passed as a pinned mutable reference so the caller
+    /// retains ownership and can continue polling or return it on timeout.
     fn block(
         &self,
         session_id: Option<SessionId>,
-        future: LocalBoxFuture<()>,
+        future: Pin<&mut dyn Future<Output = ()>>,
         timeout: Option<Duration>,
-    );
+    ) -> bool;
+
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>);
 
     /// Schedule a background task with the given priority.
@@ -93,8 +99,9 @@ pub trait Scheduler: Send + Sync {
 
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
-    fn as_test(&self) -> &TestScheduler {
-        panic!("this is not a test scheduler")
+
+    fn as_test(&self) -> Option<&TestScheduler> {
+        None
     }
 }
 
@@ -119,7 +126,7 @@ impl Future for Timer {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
-        match self.0.poll_unpin(cx) {
+        match Pin::new(&mut self.0).poll(cx) {
             Poll::Ready(_) => Poll::Ready(()),
             Poll::Pending => Poll::Pending,
         }

@@ -7210,6 +7210,7 @@ dependencies = [
  "calloop",
  "calloop-wayland-source",
  "cbindgen",
+ "chrono",
  "circular-buffer",
  "cocoa 0.26.0",
  "cocoa-foundation 0.2.0",

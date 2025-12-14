@@ -35,6 +35,10 @@ impl TestDispatcher {
         &self.scheduler
     }
 
+    pub fn session_id(&self) -> SessionId {
+        self.session_id
+    }
+
     pub fn advance_clock(&self, by: Duration) {
         self.scheduler.advance_clock(by);
     }

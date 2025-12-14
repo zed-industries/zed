@@ -78,6 +78,6 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
     }
 
     ZedDispatcher {
-        dispatcher: cx.background_executor().dispatcher.clone(),
+        dispatcher: cx.background_executor().dispatcher().clone(),
     }
 }

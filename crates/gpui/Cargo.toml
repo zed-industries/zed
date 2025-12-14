@@ -107,6 +107,7 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"

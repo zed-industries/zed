@@ -4,7 +4,7 @@ use crate::{
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
-use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
+use futures::channel::oneshot;
 use parking_lot::{Mutex, MutexGuard};
 use rand::{
     distr::{uniform::SampleRange, uniform::SampleUniform, StandardUniform},
@@ -355,9 +355,9 @@ impl Scheduler for TestScheduler {
     fn block(
         &self,
         session_id: Option<SessionId>,
-        mut future: LocalBoxFuture<()>,
+        mut future: Pin<&mut dyn Future<Output = ()>>,
         timeout: Option<Duration>,
-    ) {
+    ) -> bool {
         if let Some(session_id) = session_id {
             self.state.lock().blocked_sessions.push(session_id);
         }
@@ -380,10 +380,15 @@ impl Scheduler for TestScheduler {
         };
         let mut cx = Context::from_waker(&waker);
 
+        let mut completed = false;
         for _ in 0..max_ticks {
-            let Poll::Pending = future.poll_unpin(&mut cx) else {
-                break;
-            };
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(()) => {
+                    completed = true;
+                    break;
+                }
+                Poll::Pending => {}
+            }
 
             let mut stepped = None;
             while self.rng.lock().random() {
@@ -407,6 +412,8 @@ impl Scheduler for TestScheduler {
         if session_id.is_some() {
             self.state.lock().blocked_sessions.pop();
         }
+
+        completed
     }
 
     fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
@@ -473,8 +480,8 @@ impl Scheduler for TestScheduler {
         self.clock.clone()
     }
 
-    fn as_test(&self) -> &TestScheduler {
-        self
+    fn as_test(&self) -> Option<&TestScheduler> {
+        Some(self)
     }
 }
 
