@@ -10,6 +10,7 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
+#[cfg(not(any(test, feature = "test-support")))]
 mod persistence;
 pub mod prettier_store;
 mod project_search;

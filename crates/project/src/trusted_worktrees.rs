@@ -65,11 +65,14 @@ use gpui::{
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
-use util::{ResultExt as _, debug_panic};
+use util::debug_panic;
 
-use crate::{
-    persistence::PROJECT_DB, project_settings::ProjectSettings, worktree_store::WorktreeStore,
-};
+use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
+
+#[cfg(not(any(test, feature = "test-support")))]
+use crate::persistence::PROJECT_DB;
+#[cfg(not(any(test, feature = "test-support")))]
+use util::ResultExt as _;
 
 /// An initialization call to set up trust global for a particular project (remote or local).
 pub fn init_global(
@@ -156,6 +159,7 @@ pub struct TrustedWorktreesStore {
     upstream_client: Option<(AnyProtoClient, u64)>,
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, Option<RemoteHostLocation>>,
     trusted_paths: HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>,
+    #[cfg(not(any(test, feature = "test-support")))]
     serialization_task: Task<()>,
     restricted: HashSet<WorktreeId>,
     remote_host: Option<RemoteHostLocation>,
@@ -257,10 +261,10 @@ impl TrustedWorktreesStore {
         upstream_client: Option<(AnyProtoClient, u64)>,
         cx: &App,
     ) -> Self {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let _ = cx;
 
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let trusted_paths = if downstream_client.is_none() {
             match PROJECT_DB.fetch_trusted_worktrees(
                 worktree_store.clone(),
@@ -276,7 +280,7 @@ impl TrustedWorktreesStore {
         } else {
             HashMap::default()
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let trusted_paths = HashMap::<Option<RemoteHostLocation>, HashSet<PathTrust>>::default();
 
         if let Some((upstream_client, upstream_project_id)) = &upstream_client {
@@ -301,6 +305,7 @@ impl TrustedWorktreesStore {
             remote_host: remote_host.clone(),
             restricted_globals: HashSet::default(),
             restricted: HashSet::default(),
+            #[cfg(not(any(test, feature = "test-support")))]
             serialization_task: Task::ready(()),
             worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
         }
@@ -425,9 +430,9 @@ impl TrustedWorktreesStore {
             }
         }
 
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let mut new_trusted_globals = HashSet::default();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let new_trusted_worktrees = self
             .trusted_paths
             .clone()
@@ -455,7 +460,7 @@ impl TrustedWorktreesStore {
             trusted_paths.clone(),
         ));
 
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         if self.downstream_client.is_none() {
             // Do not persist auto trusted worktrees
             if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
@@ -467,7 +472,7 @@ impl TrustedWorktreesStore {
                 });
             }
         }
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         if let Some((upstream_client, upstream_project_id)) = &self.upstream_client {
             let trusted_paths = trusted_paths
                 .iter()
@@ -518,16 +523,25 @@ impl TrustedWorktreesStore {
     pub fn clear_trusted_paths(&mut self, cx: &App) -> Task<()> {
         if self.downstream_client.is_none() {
             self.trusted_paths.clear();
-            let (tx, rx) = smol::channel::bounded(1);
 
-            self.serialization_task = cx.background_spawn(async move {
-                PROJECT_DB.clear_trusted_worktrees().await.log_err();
-                tx.send(()).await.ok();
-            });
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                let (tx, rx) = smol::channel::bounded(1);
+                self.serialization_task = cx.background_spawn(async move {
+                    PROJECT_DB.clear_trusted_worktrees().await.log_err();
+                    tx.send(()).await.ok();
+                });
 
-            cx.background_spawn(async move {
-                rx.recv().await.ok();
-            })
+                return cx.background_spawn(async move {
+                    rx.recv().await.ok();
+                });
+            }
+
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                let _ = cx;
+                Task::ready(())
+            }
         } else {
             Task::ready(())
         }
