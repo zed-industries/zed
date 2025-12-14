@@ -14,16 +14,18 @@
 - Automatically captures backtraces for ALL pending futures via `PENDING_TRACES=1` env var
 - More comprehensive than manual waiting hints
 
+### 3. Task API Parity (Phase 1 partial) - DONE
+- Added `is_ready()` method to GPUI's `Task<T>` for API parity with scheduler
+- Both Task types now have identical APIs except `detach_and_log_err` (GPUI-specific, needs `App` context)
+- Full unification deferred: both types wrap `async_task::Task<T, RunnableMeta>` identically, re-exporting would require significant refactoring for minimal benefit
+
 ## 🔜 NEXT STEPS FOR FUTURE WORK
 
 ### Near-term (recommended next tasks):
-1. **Unify Task types (Phase 1)** - Make GPUI's `Task<T>` re-export or wrap scheduler's `Task<T>`
-   - Add `is_ready()` method to scheduler's `Task<T>` if needed
-   - Keep `detach_and_log_err` as extension trait in GPUI (needs `App` context)
+1. **Eliminate RunnableVariant::Compat (Phase 2a full)** - Remove `Compat` variant by converting timer callbacks to use `RunnableMeta`
 
 ### Medium-term:
-2. **Eliminate RunnableVariant entirely (Phase 2a full)** - Remove `Compat` variant by converting timer callbacks to use `RunnableMeta`
-3. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
+2. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
 
 ---
 

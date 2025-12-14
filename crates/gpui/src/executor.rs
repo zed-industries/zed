@@ -169,6 +169,14 @@ impl<T> Task<T> {
         Task(TaskState::Ready(Some(val)))
     }
 
+    /// Returns true if the task has completed or was created with `Task::ready`.
+    pub fn is_ready(&self) -> bool {
+        match &self.0 {
+            TaskState::Ready(_) => true,
+            TaskState::Spawned(task) => task.is_finished(),
+        }
+    }
+
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
