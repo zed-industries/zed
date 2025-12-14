@@ -82,6 +82,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
+use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
@@ -1085,6 +1086,18 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::ToggleAgentPane,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                if let Some(panel) = workspace.panel::<AgentsPanel>(cx) {
+                    let position = panel.read(cx).position(window, cx);
+                    let slot = utility_slot_for_dock_position(position);
+                    workspace.toggle_utility_pane(slot, window, cx);
+                }
             },
         )
         .register_action({
