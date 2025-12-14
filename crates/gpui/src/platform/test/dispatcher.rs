@@ -6,12 +6,57 @@ use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
     future::Future,
+    hash::{Hash, Hasher},
     ops::RangeInclusive,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
     time::{Duration, Instant},
 };
+
+static DISPATCHER_LOG_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static DISPATCHER_LOG_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static DISPATCHER_EVENT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Enable detailed dispatcher logging for debugging race conditions
+#[allow(dead_code)]
+pub fn enable_dispatcher_logging() {
+    DISPATCHER_LOG_ENABLED.store(true, Ordering::SeqCst);
+}
+
+/// Disable detailed dispatcher logging
+#[allow(dead_code)]
+pub fn disable_dispatcher_logging() {
+    DISPATCHER_LOG_ENABLED.store(false, Ordering::SeqCst);
+}
+
+fn check_dispatcher_log_init() {
+    if !DISPATCHER_LOG_INITIALIZED.load(Ordering::Relaxed) {
+        let enabled = std::env::var("DEBUG_SCHEDULER").map(|v| v == "1").unwrap_or(false);
+        DISPATCHER_LOG_ENABLED.store(enabled, Ordering::SeqCst);
+        DISPATCHER_LOG_INITIALIZED.store(true, Ordering::SeqCst);
+        if enabled {
+            eprintln!("[DISP] Dispatcher debugging enabled via DEBUG_SCHEDULER=1");
+        }
+    }
+}
+
+macro_rules! dispatcher_log {
+    ($($arg:tt)*) => {
+        {
+            check_dispatcher_log_init();
+            if DISPATCHER_LOG_ENABLED.load(Ordering::Relaxed) {
+                let seq = DISPATCHER_EVENT_SEQ.fetch_add(1, Ordering::SeqCst);
+                eprintln!("[DISP {:>6}] [thread {:?}] {}", seq, std::thread::current().id(), format!($($arg)*));
+            }
+        }
+    };
+}
 use util::post_inc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -39,6 +84,13 @@ struct TestDispatcherState {
     deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
     unparkers: Vec<Unparker>,
+    /// Tracks execution order for determinism verification.
+    /// This hash is updated each time a task is executed, incorporating
+    /// the task's source location. If two runs with the same seed produce
+    /// different hashes, there is non-determinism in the test.
+    execution_hash: u64,
+    /// Count of tasks executed, for debugging.
+    execution_count: u64,
 }
 
 impl TestDispatcher {
@@ -59,6 +111,8 @@ impl TestDispatcher {
             deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
             unparkers: Default::default(),
+            execution_hash: 0,
+            execution_count: 0,
         };
 
         TestDispatcher {
@@ -139,16 +193,29 @@ impl TestDispatcher {
                 .sum()
         };
         let background_len = state.background.len();
+        let deprioritized_len = state.deprioritized_background.len();
+        let delayed_len = state.delayed.len();
+        let unparkers_count = state.unparkers.len();
 
         let runnable;
         let main_thread;
+        let task_source: &str;
         if foreground_len == 0 && background_len == 0 {
             let deprioritized_background_len = state.deprioritized_background.len();
             if deprioritized_background_len == 0 {
+                dispatcher_log!(
+                    "tick() -> false (no tasks) | fg={} bg={} depri={} delayed={} unparkers={}",
+                    foreground_len, background_len, deprioritized_len, delayed_len, unparkers_count
+                );
                 return false;
             }
             let ix = state.random.random_range(0..deprioritized_background_len);
             main_thread = false;
+            task_source = "deprioritized";
+            dispatcher_log!(
+                "tick() selecting deprioritized[{}] of {} | fg={} bg={} delayed={}",
+                ix, deprioritized_background_len, foreground_len, background_len, delayed_len
+            );
             runnable = state.deprioritized_background.swap_remove(ix);
         } else {
             main_thread = state.random.random_ratio(
@@ -156,6 +223,7 @@ impl TestDispatcher {
                 (foreground_len + background_len) as u32,
             );
             if main_thread {
+                task_source = "foreground";
                 let state = &mut *state;
                 runnable = state
                     .foreground
@@ -165,8 +233,19 @@ impl TestDispatcher {
                     .unwrap()
                     .pop_front()
                     .unwrap();
+                dispatcher_log!(
+                    "tick() selecting foreground (ratio {}/{}) | fg={} bg={} delayed={}",
+                    foreground_len, foreground_len + background_len,
+                    foreground_len - 1, background_len, delayed_len
+                );
             } else {
+                task_source = "background";
                 let ix = state.random.random_range(0..background_len);
+                dispatcher_log!(
+                    "tick() selecting background[{}] (ratio {}/{}) | fg={} bg={} delayed={}",
+                    ix, foreground_len, foreground_len + background_len,
+                    foreground_len, background_len - 1, delayed_len
+                );
                 runnable = state.background.swap_remove(ix);
             };
         };
@@ -175,7 +254,34 @@ impl TestDispatcher {
         state.is_main_thread = main_thread;
         drop(state);
 
-        // todo(localcc): add timings to tests
+        // Log task location before running (helps identify which task is executing)
+        // Also update execution hash for determinism tracking
+        let location_str = match &runnable {
+            RunnableVariant::Meta(r) => {
+                let loc = r.metadata().location;
+                format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+            }
+            RunnableVariant::Compat(_) => "compat-task".to_string(),
+        };
+
+        // Update execution hash with task location for determinism verification
+        {
+            let mut state = self.state.lock();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            state.execution_hash.hash(&mut hasher);
+            location_str.hash(&mut hasher);
+            state.execution_count.hash(&mut hasher);
+            state.execution_hash = hasher.finish();
+            state.execution_count += 1;
+        }
+
+        dispatcher_log!(
+            "tick() RUNNING {} task from {} | main_thread={} | exec_count={} exec_hash={:016x}",
+            task_source, location_str, main_thread,
+            self.state.lock().execution_count,
+            self.state.lock().execution_hash
+        );
+
         match runnable {
             RunnableVariant::Meta(runnable) => runnable.run(),
             RunnableVariant::Compat(runnable) => runnable.run(),
@@ -247,12 +353,60 @@ impl TestDispatcher {
     }
 
     pub fn unpark_all(&self) {
-        self.state.lock().unparkers.retain(|parker| parker.unpark());
+        let mut state = self.state.lock();
+        let count = state.unparkers.len();
+        state.unparkers.retain(|parker| parker.unpark());
+        dispatcher_log!("unpark_all() | unparked {} threads", count);
     }
 
     pub fn push_unparker(&self, unparker: Unparker) {
         let mut state = self.state.lock();
+        let count_before = state.unparkers.len();
         state.unparkers.push(unparker);
+        dispatcher_log!(
+            "push_unparker() | unparkers: {} -> {} | fg={} bg={} depri={}",
+            count_before,
+            state.unparkers.len(),
+            state.foreground.values().map(|v| v.len()).sum::<usize>(),
+            state.background.len(),
+            state.deprioritized_background.len()
+        );
+    }
+
+    pub fn unparker_count(&self) -> usize {
+        self.state.lock().unparkers.len()
+    }
+
+    /// Returns a hash of the execution order so far.
+    ///
+    /// This can be used to verify test determinism: if two runs with the same
+    /// seed produce different execution hashes at the same point, there is
+    /// non-determinism in the execution (likely from real OS threads, smol::spawn,
+    /// or other sources outside TestDispatcher's control).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let hash_before = dispatcher.execution_hash();
+    /// // ... do some work ...
+    /// let hash_after = dispatcher.execution_hash();
+    /// eprintln!("Execution hash: {} -> {} (count: {})",
+    ///     hash_before, hash_after, dispatcher.execution_count());
+    /// ```
+    pub fn execution_hash(&self) -> u64 {
+        self.state.lock().execution_hash
+    }
+
+    /// Returns the number of tasks executed so far.
+    pub fn execution_count(&self) -> u64 {
+        self.state.lock().execution_count
+    }
+
+    /// Resets the execution hash and count. Useful for isolating
+    /// determinism checks to specific sections of a test.
+    pub fn reset_execution_tracking(&self) {
+        let mut state = self.state.lock();
+        state.execution_hash = 0;
+        state.execution_count = 0;
     }
 }
 
@@ -285,24 +439,39 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, _priority: Priority) {
-        {
+        let (bg_len, unparkers_before) = {
             let mut state = self.state.lock();
+            let unparkers_before = state.unparkers.len();
             if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
                 state.deprioritized_background.push(runnable);
             } else {
                 state.background.push(runnable);
             }
-        }
+            (state.background.len(), unparkers_before)
+        };
+        dispatcher_log!(
+            "dispatch() | bg_len={} unparkers_at_dispatch={} (about to unpark_all)",
+            bg_len, unparkers_before
+        );
         self.unpark_all();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        self.state
-            .lock()
-            .foreground
-            .entry(self.id)
-            .or_default()
-            .push_back(runnable);
+        let (fg_len, unparkers_before) = {
+            let mut state = self.state.lock();
+            let unparkers_before = state.unparkers.len();
+            state
+                .foreground
+                .entry(self.id)
+                .or_default()
+                .push_back(runnable);
+            let fg_len: usize = state.foreground.values().map(|v| v.len()).sum();
+            (fg_len, unparkers_before)
+        };
+        dispatcher_log!(
+            "dispatch_on_main_thread() | fg_len={} unparkers_at_dispatch={} (about to unpark_all)",
+            fg_len, unparkers_before
+        );
         self.unpark_all();
     }
 
@@ -319,9 +488,12 @@ impl PlatformDispatcher for TestDispatcher {
         Some(self)
     }
 
-    fn spawn_realtime(&self, _priority: crate::RealtimePriority, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            f();
-        });
+    fn spawn_realtime(&self, _priority: crate::RealtimePriority, _f: Box<dyn FnOnce() + Send>) {
+        panic!(
+            "spawn_realtime is not supported in TestDispatcher. \
+            Real OS threads break test determinism - tests would become \
+            flaky and unreproducible even with the same SEED. \
+            Use a different Priority (High, Medium, Low) instead."
+        );
     }
 }

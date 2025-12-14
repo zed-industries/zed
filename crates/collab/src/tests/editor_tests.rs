@@ -378,19 +378,10 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert!(!buffer.completion_triggers().is_empty())
     });
 
-    // Type a completion trigger character as the guest.
-    editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
-        });
-        editor.handle_input(".", window, cx);
-    });
-    cx_b.focus(&editor_b);
-
-    // Receive a completion request as the host's language server.
-    // Return some completions from the host's language server.
-    cx_a.executor().start_waiting();
-    fake_language_server
+    // Set up the completion request handlers BEFORE typing the trigger character.
+    // This is critical - the handlers must be in place when the request arrives,
+    // otherwise the requests will time out waiting for a response.
+    let mut first_completion_request = fake_language_server
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
@@ -429,15 +420,27 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                     ..Default::default()
                 },
             ])))
-        })
-        .next()
-        .await
-        .unwrap();
-    second_fake_language_server
-        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) })
-        .next()
-        .await
-        .unwrap();
+        });
+    let mut second_completion_request = second_fake_language_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) });
+
+    // Type a completion trigger character as the guest.
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(13)..MultiBufferOffset(13)])
+        });
+        editor.handle_input(".", window, cx);
+    });
+    cx_b.focus(&editor_b);
+
+    // Allow the completion request to propagate from guest to host to LSP.
+    cx_b.background_executor.run_until_parked();
+    cx_a.background_executor.run_until_parked();
+
+    // Wait for the completion requests to be received by the fake language servers.
+    cx_a.executor().start_waiting();
+    first_completion_request.next().await.unwrap();
+    second_completion_request.next().await.unwrap();
     cx_a.executor().finish_waiting();
 
     // Open the buffer on the host.
