@@ -1,5 +1,42 @@
 # Scheduler Integration (scheduler-integration branch) — Regression Risk Analysis & Proposed Tests
 
+## Updates from testing / experimentation (scheduler behavior learnings)
+
+### 2) `block_with_timeout` behavior depends on “timeout tick budget” (not just wall-clock duration)
+
+**What happened**
+
+While adding a regression test for `ForegroundExecutor::block_with_timeout`, I initially wrote a test expecting a task that awaits a 100ms timer to reliably time out with a 50ms timeout unless we explicitly advanced time.
+
+That assumption was wrong: depending on the scheduler’s behavior, the task could complete without an explicit `advance_clock()` call.
+
+**Root cause**
+
+In `TestScheduler`, timeouts are implemented as a bounded number of scheduler iterations (“ticks”), controlled by `TestSchedulerConfig::timeout_ticks`. When a timeout is present, `block()` picks a `max_ticks` value from `timeout_ticks` and may:
+- poll the blocked future,
+- step other tasks,
+- and potentially advance timers,
+
+all within that tick budget. This means “timeout” is not purely about elapsed wall-clock time in tests; it’s also about how many ticks were allowed.
+
+**Fix / approach used in the regression test**
+
+To make the timeout portion deterministic, the regression test forces:
+
+- `scheduler.set_timeout_ticks(0..=0)`
+
+This guarantees `block_with_timeout` cannot perform any scheduler stepping/advancing while it is trying to enforce the timeout, making it safe to assert that the call returns `Err(future)` for a timer-based future.
+
+Then, after explicitly calling `advance_clock(...)` and `run()`, the returned future can be polled to completion.
+
+**Takeaway**
+
+- Yielding should *not* advance time, and it doesn’t.
+- If a test needs time to advance, it should do so explicitly via `advance_clock`.
+- If a test needs deterministic timeout behavior, it should control `timeout_ticks` to avoid incidental progress during a timeout.
+
+---
+
 This document captures a review of the `scheduler-integration` branch compared to `main`, with a focus on:
 
 - Problems in the **plan** that could lead to regressions
