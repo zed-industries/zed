@@ -603,7 +603,7 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn supports_streaming_tools(&self) -> bool {
-        false
+        self.model.supports_streaming_tools
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {

@@ -896,6 +896,8 @@
     "default_width": 380,
   },
   "agent": {
+    // Whether the inline assistant should use streaming tools, when available
+    "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
     // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
