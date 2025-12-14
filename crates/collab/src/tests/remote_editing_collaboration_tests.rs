@@ -19,6 +19,7 @@ use project::{
     ProjectPath,
     debugger::session::ThreadId,
     lsp_store::{FormatTrigger, LspFormatTarget},
+    trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use remote::RemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
@@ -837,4 +838,129 @@ async fn test_slow_adapter_startup_retries(
     });
 
     shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    use project::trusted_worktrees::RemoteHostLocation;
+
+    let executor = cx_a.executor();
+    cx_a.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/projects"),
+            json!({
+                "project_a": { "main.rs": "fn main() {}" },
+                "project_b": { "lib.rs": "pub fn lib() {}" }
+            }),
+        )
+        .await;
+
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let (project_a, _) = client_a
+        .build_ssh_project(path!("/projects/project_a"), client_ssh.clone(), cx_a)
+        .await;
+
+    project_a
+        .update(cx_a, |project, cx| {
+            project.find_or_create_worktree(path!("/projects/project_b"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    let worktree_ids: Vec<_> = project_a.read_with(cx_a, |project, cx| {
+        project.worktrees(cx).map(|wt| wt.read(cx).id()).collect()
+    });
+    assert_eq!(worktree_ids.len(), 2);
+
+    let remote_host = project_a.read_with(cx_a, |project, cx| {
+        project
+            .remote_connection_options(cx)
+            .map(RemoteHostLocation::from)
+    });
+
+    let trusted_worktrees =
+        cx_a.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
+
+    let can_trust_a =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
+    let can_trust_b =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    assert!(!can_trust_a, "project_a should be restricted initially");
+    assert!(!can_trust_b, "project_b should be restricted initially");
+
+    let worktree_store = project_a.read_with(cx_a, |project, _| project.worktree_store());
+    let has_restricted = trusted_worktrees.read_with(cx_a, |store, cx| {
+        store.has_restricted_worktrees(&worktree_store, cx)
+    });
+    assert!(has_restricted, "should have restricted worktrees");
+
+    trusted_worktrees.update(cx_a, |store, cx| {
+        store.trust(
+            HashSet::from_iter([PathTrust::Worktree(worktree_ids[0])]),
+            remote_host.clone(),
+            cx,
+        );
+    });
+
+    let can_trust_a =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
+    let can_trust_b =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    assert!(can_trust_a, "project_a should be trusted after trust()");
+    assert!(!can_trust_b, "project_b should still be restricted");
+
+    trusted_worktrees.update(cx_a, |store, cx| {
+        store.trust(
+            HashSet::from_iter([PathTrust::Worktree(worktree_ids[1])]),
+            remote_host.clone(),
+            cx,
+        );
+    });
+
+    let can_trust_a =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[0], cx));
+    let can_trust_b =
+        trusted_worktrees.update(cx_a, |store, cx| store.can_trust(worktree_ids[1], cx));
+    assert!(can_trust_a, "project_a should remain trusted");
+    assert!(can_trust_b, "project_b should now be trusted");
+
+    let has_restricted_after = trusted_worktrees.read_with(cx_a, |store, cx| {
+        store.has_restricted_worktrees(&worktree_store, cx)
+    });
+    assert!(
+        !has_restricted_after,
+        "should have no restricted worktrees after trusting both"
+    );
 }

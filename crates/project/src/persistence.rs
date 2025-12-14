@@ -1,12 +1,10 @@
-use anyhow::Context;
 use collections::{HashMap, HashSet};
 use gpui::{App, Entity, SharedString};
-use itertools::Itertools as _;
 use std::path::PathBuf;
 
 use db::{
     query,
-    sqlez::{domain::Domain, statement::Statement, thread_safe_connection::ThreadSafeConnection},
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
 
@@ -43,6 +41,10 @@ impl ProjectDb {
         trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
         trusted_globals: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        use db::sqlez::statement::Statement;
+        use itertools::Itertools as _;
+
         PROJECT_DB
             .clear_trusted_worktrees()
             .await
@@ -166,5 +168,204 @@ VALUES {placeholders};"#
         pub async fn clear_trusted_worktrees() -> Result<()> {
             DELETE FROM trusted_worktrees
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Mutex};
+
+    use collections::{HashMap, HashSet};
+    use gpui::{SharedString, TestAppContext};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use crate::{
+        FakeFs, Project,
+        persistence::PROJECT_DB,
+        trusted_worktrees::{PathTrust, RemoteHostLocation},
+    };
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[gpui::test]
+    async fn test_save_and_fetch_trusted_worktrees(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        {
+            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
+        }
+        cx.update(|cx| {
+            if cx.try_global::<SettingsStore>().is_none() {
+                let settings = SettingsStore::test(cx);
+                cx.set_global(settings);
+            }
+        });
+
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project_a": { "main.rs": "" },
+                "project_b": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs,
+            [path!("/project_a").as_ref(), path!("/project_b").as_ref()],
+            cx,
+        )
+        .await;
+        let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
+
+        let mut trusted_paths: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> =
+            HashMap::default();
+        trusted_paths.insert(
+            None,
+            HashSet::from_iter([
+                PathBuf::from(path!("/project_a")),
+                PathBuf::from(path!("/project_b")),
+            ]),
+        );
+
+        executor
+            .block(PROJECT_DB.save_trusted_worktrees(trusted_paths, HashSet::default()))
+            .unwrap();
+
+        let fetched =
+            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = fetched.unwrap();
+
+        let local_trust = fetched.get(&None).expect("should have local host entry");
+        assert_eq!(local_trust.len(), 2);
+        assert!(
+            local_trust
+                .iter()
+                .all(|p| matches!(p, PathTrust::Worktree(_)))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_and_fetch_global_trust(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        {
+            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
+        }
+        cx.update(|cx| {
+            if cx.try_global::<SettingsStore>().is_none() {
+                let settings = SettingsStore::test(cx);
+                cx.set_global(settings);
+            }
+        });
+
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
+
+        let trusted_globals = HashSet::from_iter([None]);
+        executor
+            .block(PROJECT_DB.save_trusted_worktrees(HashMap::default(), trusted_globals))
+            .unwrap();
+
+        let fetched =
+            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = fetched.unwrap();
+
+        let local_trust = fetched.get(&None).expect("should have local host entry");
+        assert!(local_trust.contains(&PathTrust::Global));
+    }
+
+    #[gpui::test]
+    async fn test_save_and_fetch_remote_host_trust(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        {
+            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
+        }
+        cx.update(|cx| {
+            if cx.try_global::<SettingsStore>().is_none() {
+                let settings = SettingsStore::test(cx);
+                cx.set_global(settings);
+            }
+        });
+
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
+
+        let remote_host = Some(RemoteHostLocation {
+            user_name: Some(SharedString::from("testuser")),
+            host_identifier: SharedString::from("remote.example.com"),
+        });
+
+        let mut trusted_paths: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>> =
+            HashMap::default();
+        trusted_paths.insert(
+            remote_host.clone(),
+            HashSet::from_iter([PathBuf::from("/home/testuser/project")]),
+        );
+
+        executor
+            .block(PROJECT_DB.save_trusted_worktrees(trusted_paths, HashSet::default()))
+            .unwrap();
+
+        let fetched =
+            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = fetched.unwrap();
+
+        let remote_trust = fetched
+            .get(&remote_host)
+            .expect("should have remote host entry");
+        assert_eq!(remote_trust.len(), 1);
+        assert!(remote_trust
+            .iter()
+            .any(|p| matches!(p, PathTrust::AbsPath(path) if path == &PathBuf::from("/home/testuser/project"))));
+    }
+
+    #[gpui::test]
+    async fn test_clear_trusted_worktrees(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        {
+            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
+        }
+        cx.update(|cx| {
+            if cx.try_global::<SettingsStore>().is_none() {
+                let settings = SettingsStore::test(cx);
+                cx.set_global(settings);
+            }
+        });
+
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
+
+        let trusted_globals = HashSet::from_iter([None]);
+        executor
+            .block(PROJECT_DB.save_trusted_worktrees(HashMap::default(), trusted_globals))
+            .unwrap();
+
+        executor
+            .block(PROJECT_DB.clear_trusted_worktrees())
+            .unwrap();
+
+        let fetched =
+            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = fetched.unwrap();
+
+        assert!(fetched.is_empty(), "should be empty after clear");
     }
 }
