@@ -25,7 +25,7 @@ use gpui::{
     prelude::*,
 };
 use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, File, Point, ToPoint};
+use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
@@ -384,14 +384,17 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 }
 
 struct RegisteredBuffer {
-    snapshot: BufferSnapshot,
+    file: Option<Arc<dyn File>>,
+    snapshot: TextBufferSnapshot,
     last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
 struct LastEvent {
-    old_snapshot: BufferSnapshot,
-    new_snapshot: BufferSnapshot,
+    old_snapshot: TextBufferSnapshot,
+    new_snapshot: TextBufferSnapshot,
+    old_file: Option<Arc<dyn File>>,
+    new_file: Option<Arc<dyn File>>,
     end_edit_anchor: Option<Anchor>,
 }
 
@@ -401,19 +404,19 @@ impl LastEvent {
         license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
         cx: &App,
     ) -> Option<Arc<zeta_prompt::Event>> {
-        let path = buffer_path_with_id_fallback(&self.new_snapshot, cx);
-        let old_path = buffer_path_with_id_fallback(&self.old_snapshot, cx);
+        let path = buffer_path_with_id_fallback(self.new_file.as_ref(), &self.new_snapshot, cx);
+        let old_path = buffer_path_with_id_fallback(self.old_file.as_ref(), &self.old_snapshot, cx);
 
-        let file = self.new_snapshot.file();
-        let old_file = self.old_snapshot.file();
-
-        let in_open_source_repo = [file, old_file].iter().all(|file| {
-            file.is_some_and(|file| {
-                license_detection_watchers
-                    .get(&file.worktree_id(cx))
-                    .is_some_and(|watcher| watcher.is_project_open_source())
-            })
-        });
+        let in_open_source_repo =
+            [self.new_file.as_ref(), self.old_file.as_ref()]
+                .iter()
+                .all(|file| {
+                    file.is_some_and(|file| {
+                        license_detection_watchers
+                            .get(&file.worktree_id(cx))
+                            .is_some_and(|watcher| watcher.is_project_open_source())
+                    })
+                });
 
         let diff = language::unified_diff(&self.old_snapshot.text(), &self.new_snapshot.text());
 
@@ -432,8 +435,12 @@ impl LastEvent {
     }
 }
 
-fn buffer_path_with_id_fallback(snapshot: &BufferSnapshot, cx: &App) -> Arc<Path> {
-    if let Some(file) = snapshot.file() {
+fn buffer_path_with_id_fallback(
+    file: Option<&Arc<dyn File>>,
+    snapshot: &TextBufferSnapshot,
+    cx: &App,
+) -> Arc<Path> {
+    if let Some(file) = file {
         file.full_path(cx).into()
     } else {
         Path::new(&format!("untitled-{}", snapshot.remote_id())).into()
@@ -810,10 +817,13 @@ impl EditPredictionStore {
         match project_state.registered_buffers.entry(buffer_id) {
             hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hash_map::Entry::Vacant(entry) => {
-                let snapshot = buffer.read(cx).snapshot();
+                let buf = buffer.read(cx);
+                let snapshot = buf.text_snapshot();
+                let file = buf.file().cloned();
                 let project_entity_id = project.entity_id();
                 entry.insert(RegisteredBuffer {
                     snapshot,
+                    file,
                     last_position: None,
                     _subscriptions: [
                         cx.subscribe(buffer, {
@@ -848,11 +858,14 @@ impl EditPredictionStore {
         let project_state = self.get_or_init_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
-        let new_snapshot = buffer.read(cx).snapshot();
+        let buf = buffer.read(cx);
+        let new_file = buf.file().cloned();
+        let new_snapshot = buf.text_snapshot();
         if new_snapshot.version == registered_buffer.snapshot.version {
             return;
         }
 
+        let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
         let end_edit_anchor = new_snapshot
             .anchored_edits_since::<Point>(&old_snapshot.version)
@@ -896,6 +909,8 @@ impl EditPredictionStore {
         }
 
         project_state.last_event = Some(LastEvent {
+            old_file,
+            new_file,
             old_snapshot,
             new_snapshot,
             end_edit_anchor,
