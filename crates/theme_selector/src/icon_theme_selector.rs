@@ -56,7 +56,6 @@ pub(crate) struct IconThemeSelectorDelegate {
     matches: Vec<StringMatch>,
     original_theme: IconThemeName,
     selection_completed: bool,
-    selected_theme: Option<IconThemeName>,
     selected_index: usize,
     selector: WeakEntity<IconThemeSelector>,
 }
@@ -92,7 +91,7 @@ impl IconThemeSelectorDelegate {
                 .cmp(&b.appearance.is_light())
                 .then(a.name.cmp(&b.name))
         });
-        let matches = themes
+        let matches: Vec<StringMatch> = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
@@ -101,37 +100,27 @@ impl IconThemeSelectorDelegate {
                 string: meta.name.to_string(),
             })
             .collect();
-        let mut this = Self {
+        let selected_index = matches
+            .iter()
+            .position(|mat| mat.string == original_theme.0.as_ref())
+            .unwrap_or(0);
+
+        Self {
             fs,
             themes,
             matches,
-            original_theme: original_theme.clone(),
-            selected_index: 0,
-            selected_theme: None,
+            original_theme,
+            selected_index,
             selection_completed: false,
             selector,
-        };
-
-        this.select_if_matching(&original_theme.0);
-        this
+        }
     }
 
-    fn show_selected_theme(
-        &mut self,
-        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
-    ) -> Option<IconThemeName> {
-        let mat = self.matches.get(self.selected_index)?;
-        let name = IconThemeName(mat.string.clone().into());
-        Self::set_icon_theme(name.clone(), cx);
-        Some(name)
-    }
-
-    fn select_if_matching(&mut self, theme_name: &str) {
-        self.selected_index = self
-            .matches
-            .iter()
-            .position(|mat| mat.string == theme_name)
-            .unwrap_or(self.selected_index);
+    fn show_selected_theme(&mut self, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
+        if let Some(mat) = self.matches.get(self.selected_index) {
+            let name = IconThemeName(mat.string.clone().into());
+            Self::set_icon_theme(name, cx);
+        }
     }
 
     fn set_icon_theme(name: IconThemeName, cx: &mut App) {
@@ -208,7 +197,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.selected_theme = self.show_selected_theme(cx);
+        self.show_selected_theme(cx);
     }
 
     fn update_matches(
@@ -250,29 +239,19 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .await
             };
 
-            this.update(cx, |this, cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
-                if query.is_empty() && this.delegate.selected_theme.is_none() {
-                    this.delegate.selected_index = this
-                        .delegate
-                        .selected_index
-                        .min(this.delegate.matches.len().saturating_sub(1));
-                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
-                    this.delegate.selected_index = this
-                        .delegate
-                        .matches
-                        .iter()
-                        .enumerate()
-                        .find(|(_, mtch)| mtch.string.as_str() == selected.0.as_ref())
-                        .map(|(ix, _)| ix)
-                        .unwrap_or_default();
-                } else {
-                    this.delegate.selected_index = 0;
-                }
-                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
             })
             .log_err();
         })
+    }
+
+    fn match_stable_id(&self, ix: usize) -> Option<String> {
+        self.matches.get(ix).map(|m| m.string.clone())
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        self.matches.iter().position(|m| m.string == stable_id)
     }
 
     fn render_match(

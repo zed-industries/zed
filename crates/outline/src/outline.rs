@@ -290,6 +290,22 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
+    fn match_stable_id(&self, ix: usize) -> Option<String> {
+        let mat = self.matches.get(ix)?;
+        let outline_item = self.outline.items.get(mat.candidate_id)?;
+        Some(format!("{}:{}", outline_item.text, outline_item.depth))
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        self.matches.iter().position(|mat| {
+            if let Some(outline_item) = self.outline.items.get(mat.candidate_id) {
+                format!("{}:{}", outline_item.text, outline_item.depth) == stable_id
+            } else {
+                false
+            }
+        })
+    }
+
     fn confirm(
         &mut self,
         _: bool,
