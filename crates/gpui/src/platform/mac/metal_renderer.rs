@@ -158,9 +158,7 @@ impl MetalRenderer {
         layer.set_maximum_drawable_count(3);
         // We already present at display sync with the display link
         // This allows to use direct-to-display even in window mode
-        if !transparent {
-            layer.set_display_sync_enabled(false);
-        }
+        layer.set_display_sync_enabled(false);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
@@ -361,10 +359,6 @@ impl MetalRenderer {
 
     pub fn update_transparency(&self, transparent: bool) {
         self.layer.set_opaque(!transparent);
-
-        if !transparent {
-            self.layer.set_display_sync_enabled(false);
-        }
     }
 
     pub fn destroy(&self) {
