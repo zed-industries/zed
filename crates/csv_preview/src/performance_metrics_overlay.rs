@@ -22,6 +22,8 @@ pub struct PerformanceMetrics {
     pub last_selection_took: Option<Duration>,
     /// Duration of the last render preparation (table_with_settings div creation).
     pub last_render_preparation_took: Option<Duration>,
+    /// List of display indices that were rendered in the current frame.
+    pub rendered_indices: Vec<usize>,
 }
 
 impl PerformanceMetrics {
@@ -33,7 +35,7 @@ impl PerformanceMetrics {
             }
         };
 
-        vec![
+        let mut lines = vec![
             format!("- Parse: {}", format_duration(self.last_parse_took)),
             format!("- Order: {}", format_duration(self.last_ordering_took)),
             format!("- Copy: {}", format_duration(self.last_copy_took)),
@@ -42,7 +44,25 @@ impl PerformanceMetrics {
                 "- Render Prep: {}",
                 format_duration(self.last_render_preparation_took)
             ),
-        ]
+        ];
+
+        // Add rendered indices information
+        if self.rendered_indices.is_empty() {
+            lines.push("- Rendered: none".to_string());
+        } else {
+            lines.push(format!("- Rendered: {} rows", self.rendered_indices.len()));
+            if self.rendered_indices.len() <= 20 {
+                // Show indices if not too many
+                lines.push(format!("  {:?}", self.rendered_indices));
+            } else {
+                // Show first/last few if too many
+                let first_few = &self.rendered_indices[..5];
+                let last_few = &self.rendered_indices[self.rendered_indices.len() - 5..];
+                lines.push(format!("  {:?}\n..{:?}", first_few, last_few));
+            }
+        }
+
+        lines
     }
 }
 
@@ -52,12 +72,12 @@ impl CsvPreviewView {
     /// Shows CSV parsing duration for debugging and performance monitoring.
     /// The overlay is positioned absolutely and styled with reduced opacity.
     pub(crate) fn render_performance_metrics_overlay(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
 
-        div()
+        let children = div()
             .absolute()
             .top_24()
             .right_4()
@@ -80,6 +100,9 @@ impl CsvPreviewView {
                     .format_lines()
                     .into_iter()
                     .map(|line| div().child(line)),
-            )
+            );
+        // Clear rendered indices to prepare for next frame
+        self.performance_metrics.rendered_indices.clear();
+        children
     }
 }

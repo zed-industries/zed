@@ -161,6 +161,11 @@ impl CsvPreviewView {
                 match self.settings.rendering_with {
                     RowRenderMechanism::VariableList => table.variable_list(row_count, {
                         cx.processor(move |this, display_index: usize, _window, cx| {
+                            // Record this display index for performance metrics
+                            this.performance_metrics
+                                .rendered_indices
+                                .push(display_index);
+
                             Self::render_table_row_for_variable_list::<COLS>(
                                 this,
                                 display_index,
@@ -173,6 +178,11 @@ impl CsvPreviewView {
                     RowRenderMechanism::UniformList => {
                         table.uniform_list("csv-table", row_count, {
                             cx.processor(move |this, range: Range<usize>, _window, cx| {
+                                // Record all display indices in the range for performance metrics
+                                this.performance_metrics
+                                    .rendered_indices
+                                    .extend(range.clone());
+
                                 Self::render_table_rows_for_uniform_list::<COLS>(
                                     this,
                                     range,
