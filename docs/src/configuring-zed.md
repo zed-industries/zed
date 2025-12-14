@@ -1460,8 +1460,8 @@ or
 ```json
 {
   "session": {
-      "restore_unsaved_buffers": true,
-      "trust_all_worktrees": false
+    "restore_unsaved_buffers": true,
+    "trust_all_worktrees": false
   }
 }
 ```
@@ -1480,7 +1480,7 @@ or
 
 If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
 
-2. Whether or not to skip project trust checks and synchronize project settings from any worktree automatically:
+2. Whether or not to skip worktree trust checks:
 
 ```json [settings]
 {
@@ -1489,6 +1489,8 @@ If this is true, user won't be prompted whether to save/discard dirty files when
   }
 }
 ```
+
+When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
 
 ### Drag And Drop Selection
 
@@ -2887,7 +2889,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
