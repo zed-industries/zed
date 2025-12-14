@@ -50,6 +50,7 @@ use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use scheduler::RunnableMeta as SchedulerRunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -579,6 +580,7 @@ pub struct RunnableMeta {
 pub enum RunnableVariant {
     Meta(Runnable<RunnableMeta>),
     Compat(Runnable),
+    Scheduler(Runnable<SchedulerRunnableMeta>),
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not

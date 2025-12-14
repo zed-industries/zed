@@ -370,3 +370,64 @@ impl Future for Yield {
         }
     }
 }
+
+#[test]
+fn test_background_priority_scheduling() {
+    use parking_lot::Mutex;
+
+    // Run many iterations to get statistical significance
+    let mut high_before_low_count = 0;
+    let iterations = 100;
+
+    for seed in 0..iterations {
+        let config = TestSchedulerConfig::with_seed(seed);
+        let scheduler = Arc::new(TestScheduler::new(config));
+        let background = scheduler.background();
+
+        let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+        // Spawn low priority tasks first
+        for i in 0..3 {
+            let order = execution_order.clone();
+            background
+                .spawn_with_priority(Priority::Low, async move {
+                    order.lock().push(format!("low-{}", i));
+                })
+                .detach();
+        }
+
+        // Spawn high priority tasks second
+        for i in 0..3 {
+            let order = execution_order.clone();
+            background
+                .spawn_with_priority(Priority::High, async move {
+                    order.lock().push(format!("high-{}", i));
+                })
+                .detach();
+        }
+
+        scheduler.run();
+
+        // Count how many high priority tasks ran in the first half
+        let order = execution_order.lock();
+        let high_in_first_half = order
+            .iter()
+            .take(3)
+            .filter(|s| s.starts_with("high"))
+            .count();
+
+        if high_in_first_half >= 2 {
+            high_before_low_count += 1;
+        }
+    }
+
+    // High priority tasks should tend to run before low priority tasks
+    // With weights of 60 vs 10, high priority should dominate early execution
+    assert!(
+        high_before_low_count > iterations / 2,
+        "Expected high priority tasks to run before low priority tasks more often. \
+         Got {} out of {} iterations",
+        high_before_low_count,
+        iterations
+    );
+}

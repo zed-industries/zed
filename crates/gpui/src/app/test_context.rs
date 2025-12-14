@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
-use rand::{SeedableRng, rngs::StdRng};
+
 use std::{
     cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
@@ -154,7 +154,7 @@ impl TestAppContext {
 
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        let dispatcher = TestDispatcher::new(0);
         Self::build(dispatcher, None)
     }
 

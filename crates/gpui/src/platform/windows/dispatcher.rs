@@ -105,6 +105,19 @@ impl WindowsDispatcher {
 
                 timing
             }
+            RunnableVariant::Scheduler(runnable) => {
+                let location = runnable.metadata().location;
+                let timing = TaskTiming {
+                    location,
+                    start,
+                    end: None,
+                };
+                profiler::add_task_timing(timing);
+
+                runnable.run();
+
+                timing
+            }
         };
 
         let end = Instant::now();

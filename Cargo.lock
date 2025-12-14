@@ -7259,6 +7259,7 @@ dependencies = [
  "refineable",
  "reqwest_client",
  "resvg",
+ "scheduler",
  "schemars",
  "seahash",
  "semver",

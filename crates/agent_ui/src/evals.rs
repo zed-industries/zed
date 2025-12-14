@@ -5,7 +5,6 @@ use crate::inline_assistant::test::run_inline_assistant_test;
 use eval_utils::{EvalOutput, NoProcessor};
 use gpui::TestAppContext;
 use language_model::{LanguageModelRegistry, SelectedModel};
-use rand::{SeedableRng as _, rngs::StdRng};
 
 #[test]
 #[cfg_attr(not(feature = "unit-eval"), ignore)]
@@ -56,7 +55,7 @@ fn run_eval(
     input: &EvalInput,
     judge: &dyn Fn(&EvalInput, &str) -> eval_utils::EvalOutput<()>,
 ) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+    let dispatcher = gpui::TestDispatcher::new(rand::random());
     let mut cx = TestAppContext::build(dispatcher, None);
     cx.skip_drawing();
 

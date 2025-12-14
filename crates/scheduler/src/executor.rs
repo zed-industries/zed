@@ -1,4 +1,4 @@
-use crate::{Scheduler, SessionId, Timer};
+use crate::{Priority, RunnableMeta, Scheduler, SessionId, Timer};
 use futures::FutureExt as _;
 use std::{
     future::Future,
@@ -37,9 +37,14 @@ impl ForegroundExecutor {
     {
         let session_id = self.session_id;
         let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-            scheduler.schedule_foreground(session_id, runnable);
-        });
+        let location = Location::caller();
+        let (runnable, task) = spawn_local_with_source_location(
+            future,
+            move |runnable| {
+                scheduler.schedule_foreground(session_id, runnable);
+            },
+            RunnableMeta { location },
+        );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -83,15 +88,31 @@ impl BackgroundExecutor {
         Self { scheduler }
     }
 
+    #[track_caller]
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        self.spawn_with_priority(Priority::default(), future)
+    }
+
+    #[track_caller]
+    pub fn spawn_with_priority<F>(&self, priority: Priority, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
         let scheduler = Arc::clone(&self.scheduler);
-        let (runnable, task) = async_task::spawn(future, move |runnable| {
-            scheduler.schedule_background(runnable);
-        });
+        let location = Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(
+                move |_| future,
+                move |runnable| {
+                    scheduler.schedule_background_with_priority(runnable, priority);
+                },
+            );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -121,7 +142,7 @@ enum TaskState<T> {
     Ready(Option<T>),
 
     /// A task that is currently running.
-    Spawned(async_task::Task<T>),
+    Spawned(async_task::Task<T, RunnableMeta>),
 }
 
 impl<T> Task<T> {
@@ -165,11 +186,15 @@ impl<T> Future for Task<T> {
 fn spawn_local_with_source_location<Fut, S>(
     future: Fut,
     schedule: S,
-) -> (async_task::Runnable, async_task::Task<Fut::Output, ()>)
+    metadata: RunnableMeta,
+) -> (
+    async_task::Runnable<RunnableMeta>,
+    async_task::Task<Fut::Output, RunnableMeta>,
+)
 where
     Fut: Future + 'static,
     Fut::Output: 'static,
-    S: async_task::Schedule + Send + Sync + 'static,
+    S: async_task::Schedule<RunnableMeta> + Send + Sync + 'static,
 {
     #[inline]
     fn thread_id() -> ThreadId {
@@ -213,11 +238,18 @@ where
     }
 
     // Wrap the future into one that checks which thread it's on.
-    let future = Checked {
-        id: thread_id(),
-        inner: ManuallyDrop::new(future),
-        location: Location::caller(),
-    };
+    let location = metadata.location;
 
-    unsafe { async_task::spawn_unchecked(future, schedule) }
+    unsafe {
+        async_task::Builder::new()
+            .metadata(metadata)
+            .spawn_unchecked(
+                move |_| Checked {
+                    id: thread_id(),
+                    inner: ManuallyDrop::new(future),
+                    location,
+                },
+                schedule,
+            )
+    }
 }

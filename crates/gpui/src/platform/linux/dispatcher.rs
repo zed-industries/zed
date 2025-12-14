@@ -71,6 +71,18 @@ impl LinuxDispatcher {
                                     runnable.run();
                                     timing
                                 }
+                                RunnableVariant::Scheduler(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    let timing = TaskTiming {
+                                        location,
+                                        start,
+                                        end: None,
+                                    };
+                                    profiler::add_task_timing(timing);
+
+                                    runnable.run();
+                                    timing
+                                }
                             };
 
                             let end = Instant::now();
@@ -124,6 +136,18 @@ impl LinuxDispatcher {
                                                 RunnableVariant::Compat(runnable) => {
                                                     let timing = TaskTiming {
                                                         location: core::panic::Location::caller(),
+                                                        start,
+                                                        end: None,
+                                                    };
+                                                    profiler::add_task_timing(timing);
+
+                                                    runnable.run();
+                                                    timing
+                                                }
+                                                RunnableVariant::Scheduler(runnable) => {
+                                                    let location = runnable.metadata().location;
+                                                    let timing = TaskTiming {
+                                                        location,
                                                         start,
                                                         end: None,
                                                     };

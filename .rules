@@ -141,3 +141,11 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 ## General guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+
+## Ongoing Work
+
+### Scheduler Integration
+GPUI is being updated to use the `scheduler` crate for its async scheduling infrastructure. See `crates/scheduler/plan.md` for the detailed plan. Key points:
+- The scheduler crate provides `TestScheduler` for deterministic testing with session isolation
+- GPUI wraps scheduler types to maintain API compatibility
+- `TestDispatcher` now uses `TestScheduler` internally for timing/clock/rng

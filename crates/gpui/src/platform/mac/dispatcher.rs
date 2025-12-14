@@ -6,6 +6,7 @@ use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RealtimePriority, RunnableMeta,
     RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
 };
+use scheduler::RunnableMeta as SchedulerRunnableMeta;
 
 use anyhow::Context;
 use async_task::Runnable;
@@ -79,6 +80,10 @@ impl PlatformDispatcher for MacDispatcher {
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
+            RunnableVariant::Scheduler(runnable) => (
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline_scheduler as unsafe extern "C" fn(*mut c_void)),
+            ),
         };
 
         let queue_priority = match priority {
@@ -107,6 +112,10 @@ impl PlatformDispatcher for MacDispatcher {
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
             ),
+            RunnableVariant::Scheduler(runnable) => (
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline_scheduler as unsafe extern "C" fn(*mut c_void)),
+            ),
         };
         unsafe {
             dispatch_async_f(dispatch_get_main_queue(), context, trampoline);
@@ -122,6 +131,10 @@ impl PlatformDispatcher for MacDispatcher {
             RunnableVariant::Compat(runnable) => (
                 runnable.into_raw().as_ptr() as *mut c_void,
                 Some(trampoline_compat as unsafe extern "C" fn(*mut c_void)),
+            ),
+            RunnableVariant::Scheduler(runnable) => (
+                runnable.into_raw().as_ptr() as *mut c_void,
+                Some(trampoline_scheduler as unsafe extern "C" fn(*mut c_void)),
             ),
         };
         unsafe {
@@ -296,6 +309,45 @@ extern "C" fn trampoline_compat(runnable: *mut c_void) {
         start,
         end: None,
     };
+    THREAD_TIMINGS.with(|timings| {
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
+        if let Some(last_timing) = timings.iter_mut().rev().next() {
+            if last_timing.location == timing.location {
+                return;
+            }
+        }
+
+        timings.push_back(timing);
+    });
+
+    task.run();
+    let end = Instant::now();
+
+    THREAD_TIMINGS.with(|timings| {
+        let mut timings = timings.lock();
+        let timings = &mut timings.timings;
+        let Some(last_timing) = timings.iter_mut().rev().next() else {
+            return;
+        };
+        last_timing.end = Some(end);
+    });
+}
+
+extern "C" fn trampoline_scheduler(runnable: *mut c_void) {
+    let task = unsafe {
+        Runnable::<SchedulerRunnableMeta>::from_raw(NonNull::new_unchecked(runnable as *mut ()))
+    };
+
+    let location = task.metadata().location;
+
+    let start = Instant::now();
+    let timing = TaskTiming {
+        location,
+        start,
+        end: None,
+    };
+
     THREAD_TIMINGS.with(|timings| {
         let mut timings = timings.lock();
         let timings = &mut timings.timings;

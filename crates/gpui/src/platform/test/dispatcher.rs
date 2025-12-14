@@ -4,6 +4,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use parking::Unparker;
 use parking_lot::Mutex;
 use rand::prelude::*;
+use scheduler::{Clock, TestScheduler, TestSchedulerConfig};
 use std::{
     future::Future,
     hash::{Hash, Hasher},
@@ -62,23 +63,26 @@ use util::post_inc;
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct TestDispatcherId(usize);
 
+/// TestDispatcher provides deterministic async execution for tests.
+///
+/// This is a hybrid implementation that uses the scheduler crate's `TestScheduler`
+/// for timing, clock, and randomization, while keeping GPUI's own task queues
+/// for handling `RunnableVariant` (which has multiple variants that TestScheduler
+/// cannot process directly).
 #[doc(hidden)]
 pub struct TestDispatcher {
     id: TestDispatcherId,
+    scheduler: Arc<TestScheduler>,
     state: Arc<Mutex<TestDispatcherState>>,
 }
 
 struct TestDispatcherState {
-    random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<RunnableVariant>>,
     background: Vec<RunnableVariant>,
     deprioritized_background: Vec<RunnableVariant>,
-    delayed: Vec<(Duration, RunnableVariant)>,
-    start_time: Instant,
-    time: Duration,
+    delayed: Vec<(Instant, RunnableVariant)>,
     is_main_thread: bool,
     next_id: TestDispatcherId,
-    allow_parking: bool,
     waiting_hint: Option<String>,
     waiting_backtrace: Option<Backtrace>,
     deprioritized_task_labels: HashSet<TaskLabel>,
@@ -94,18 +98,23 @@ struct TestDispatcherState {
 }
 
 impl TestDispatcher {
-    pub fn new(random: StdRng) -> Self {
+    pub fn new(seed: u64) -> Self {
+        let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig {
+            seed,
+            randomize_order: true,
+            allow_parking: false,
+            capture_pending_traces: std::env::var("PENDING_TRACES")
+                .map_or(false, |var| var == "1" || var == "true"),
+            timeout_ticks: 0..=1000,
+        }));
+
         let state = TestDispatcherState {
-            random,
             foreground: HashMap::default(),
             background: Vec::new(),
             deprioritized_background: Vec::new(),
             delayed: Vec::new(),
-            time: Duration::ZERO,
-            start_time: Instant::now(),
             is_main_thread: true,
             next_id: TestDispatcherId(1),
-            allow_parking: false,
             waiting_hint: None,
             waiting_backtrace: None,
             deprioritized_task_labels: Default::default(),
@@ -117,38 +126,48 @@ impl TestDispatcher {
 
         TestDispatcher {
             id: TestDispatcherId(0),
+            scheduler,
             state: Arc::new(Mutex::new(state)),
         }
     }
 
     pub fn advance_clock(&self, by: Duration) {
-        let new_now = self.state.lock().time + by;
+        let target_time = self.scheduler.clock().now() + by;
         loop {
             self.run_until_parked();
-            let state = self.state.lock();
-            let next_due_time = state.delayed.first().map(|(time, _)| *time);
-            drop(state);
-            if let Some(due_time) = next_due_time
-                && due_time <= new_now
-            {
-                self.state.lock().time = due_time;
-                continue;
+            let next_delayed = self.state.lock().delayed.first().map(|(time, _)| *time);
+            if let Some(delayed_time) = next_delayed {
+                if delayed_time <= target_time {
+                    let advance_by = delayed_time - self.scheduler.clock().now();
+                    self.scheduler.advance_clock(advance_by);
+                    continue;
+                }
             }
             break;
         }
-        self.state.lock().time = new_now;
+        let remaining = target_time - self.scheduler.clock().now();
+        if remaining > Duration::ZERO {
+            self.scheduler.advance_clock(remaining);
+        }
     }
 
     pub fn advance_clock_to_next_delayed(&self) -> bool {
-        let next_due_time = self.state.lock().delayed.first().map(|(time, _)| *time);
-        if let Some(next_due_time) = next_due_time {
-            self.state.lock().time = next_due_time;
+        let next_delayed = self.state.lock().delayed.first().map(|(time, _)| *time);
+        if let Some(delayed_time) = next_delayed {
+            let now = self.scheduler.clock().now();
+            if delayed_time > now {
+                self.scheduler.advance_clock(delayed_time - now);
+            }
             return true;
         }
         false
     }
 
     pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
+        // Note: We use a local YieldNow instead of `self.scheduler.yield_random()` because
+        // the scheduler's version uses a different distribution (0..2 with 10% chance of 10..20)
+        // and consumes 2 RNG values per call. GPUI tests rely on the original 0..10 range
+        // with a single RNG consumption for deterministic behavior.
         struct YieldNow {
             pub(crate) count: usize,
         }
@@ -168,15 +187,16 @@ impl TestDispatcher {
         }
 
         YieldNow {
-            count: self.state.lock().random.random_range(0..10),
+            count: self.scheduler.rng().lock().random_range(0..10),
         }
     }
 
     pub fn tick(&self, background_only: bool) -> bool {
         let mut state = self.state.lock();
+        let now = self.scheduler.clock().now();
 
         while let Some((deadline, _)) = state.delayed.first() {
-            if *deadline > state.time {
+            if *deadline > now {
                 break;
             }
             let (_, runnable) = state.delayed.remove(0);
@@ -209,7 +229,11 @@ impl TestDispatcher {
                 );
                 return false;
             }
-            let ix = state.random.random_range(0..deprioritized_background_len);
+            let ix = self
+                .scheduler
+                .rng()
+                .lock()
+                .random_range(0..deprioritized_background_len);
             main_thread = false;
             task_source = "deprioritized";
             dispatcher_log!(
@@ -218,18 +242,19 @@ impl TestDispatcher {
             );
             runnable = state.deprioritized_background.swap_remove(ix);
         } else {
-            main_thread = state.random.random_ratio(
+            main_thread = self.scheduler.rng().lock().random_ratio(
                 foreground_len as u32,
                 (foreground_len + background_len) as u32,
             );
             if main_thread {
                 task_source = "foreground";
-                let state = &mut *state;
+                let rng_arc = self.scheduler.rng();
+                let mut rng = rng_arc.lock();
                 runnable = state
                     .foreground
                     .values_mut()
                     .filter(|runnables| !runnables.is_empty())
-                    .choose(&mut state.random)
+                    .choose(&mut *rng)
                     .unwrap()
                     .pop_front()
                     .unwrap();
@@ -240,7 +265,7 @@ impl TestDispatcher {
                 );
             } else {
                 task_source = "background";
-                let ix = state.random.random_range(0..background_len);
+                let ix = self.scheduler.rng().lock().random_range(0..background_len);
                 dispatcher_log!(
                     "tick() selecting background[{}] (ratio {}/{}) | fg={} bg={} delayed={}",
                     ix, foreground_len, foreground_len + background_len,
@@ -262,6 +287,7 @@ impl TestDispatcher {
                 format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
             }
             RunnableVariant::Compat(_) => "compat-task".to_string(),
+            RunnableVariant::Scheduler(_) => "scheduler-task".to_string(),
         };
 
         // Update execution hash with task location for determinism verification
@@ -285,6 +311,7 @@ impl TestDispatcher {
         match runnable {
             RunnableVariant::Meta(runnable) => runnable.run(),
             RunnableVariant::Compat(runnable) => runnable.run(),
+            RunnableVariant::Scheduler(runnable) => runnable.run(),
         };
 
         self.state.lock().is_main_thread = was_main_thread;
@@ -304,19 +331,19 @@ impl TestDispatcher {
     }
 
     pub fn parking_allowed(&self) -> bool {
-        self.state.lock().allow_parking
+        self.scheduler.parking_allowed()
     }
 
     pub fn allow_parking(&self) {
-        self.state.lock().allow_parking = true
+        self.scheduler.allow_parking();
     }
 
     pub fn forbid_parking(&self) {
-        self.state.lock().allow_parking = false
+        self.scheduler.forbid_parking();
     }
 
     pub fn set_waiting_hint(&self, msg: Option<String>) {
-        self.state.lock().waiting_hint = msg
+        self.state.lock().waiting_hint = msg;
     }
 
     pub fn waiting_hint(&self) -> Option<String> {
@@ -339,17 +366,17 @@ impl TestDispatcher {
     }
 
     pub fn rng(&self) -> StdRng {
-        self.state.lock().random.clone()
+        self.scheduler.rng().lock().clone()
     }
 
-    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.state.lock().block_on_ticks = range;
+    pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
+        self.state.lock().block_on_ticks = range.clone();
+        self.scheduler.set_timeout_ticks(range);
     }
 
     pub fn gen_block_on_ticks(&self) -> usize {
-        let mut lock = self.state.lock();
-        let block_on_ticks = lock.block_on_ticks.clone();
-        lock.random.random_range(block_on_ticks)
+        let block_on_ticks = self.state.lock().block_on_ticks.clone();
+        self.scheduler.rng().lock().random_range(block_on_ticks)
     }
 
     pub fn unpark_all(&self) {
@@ -408,6 +435,12 @@ impl TestDispatcher {
         state.execution_hash = 0;
         state.execution_count = 0;
     }
+
+    /// Returns a reference to the underlying TestScheduler.
+    /// This can be used for advanced testing scenarios that need direct scheduler access.
+    pub fn scheduler(&self) -> &Arc<TestScheduler> {
+        &self.scheduler
+    }
 }
 
 impl Clone for TestDispatcher {
@@ -415,6 +448,7 @@ impl Clone for TestDispatcher {
         let id = post_inc(&mut self.state.lock().next_id.0);
         Self {
             id: TestDispatcherId(id),
+            scheduler: self.scheduler.clone(),
             state: self.state.clone(),
         }
     }
@@ -434,8 +468,7 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn now(&self) -> Instant {
-        let state = self.state.lock();
-        state.start_time + state.time
+        self.scheduler.clock().now()
     }
 
     fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, _priority: Priority) {
@@ -475,13 +508,13 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_after(&self, duration: std::time::Duration, runnable: RunnableVariant) {
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         let mut state = self.state.lock();
-        let next_time = state.time + duration;
-        let ix = match state.delayed.binary_search_by_key(&next_time, |e| e.0) {
+        let deadline = self.scheduler.clock().now() + duration;
+        let ix = match state.delayed.binary_search_by_key(&deadline, |e| e.0) {
             Ok(ix) | Err(ix) => ix,
         };
-        state.delayed.insert(ix, (next_time, runnable));
+        state.delayed.insert(ix, (deadline, runnable));
     }
 
     fn as_test(&self) -> Option<&TestDispatcher> {
