@@ -9,12 +9,7 @@
 - Updated all platform dispatchers (Mac, Linux, Windows, Test) to remove `Scheduler` variant handling
 - Updated `PlatformScheduler` to use `RunnableVariant::Meta` instead of `RunnableVariant::Scheduler`
 
-### 2. Added Execution Tracking to TestScheduler (Phase 3c) - DONE
-- Added `execution_hash: u64` and `execution_count: u64` to `SchedulerState`
-- Added `execution_hash()`, `execution_count()`, `reset_execution_tracking()` methods
-- Execution tracking updates in `step()` after task selection, hashing source location
-
-### 3. Waiting Hints (Phase 3b) - SKIPPED
+### 2. Waiting Hints (Phase 3b) - SKIPPED
 - NOT NEEDED: TestScheduler already has superior `pending_traces` system with `TracingWaker`
 - Automatically captures backtraces for ALL pending futures via `PENDING_TRACES=1` env var
 - More comprehensive than manual waiting hints
@@ -26,11 +21,9 @@
    - Add `is_ready()` method to scheduler's `Task<T>` if needed
    - Keep `detach_and_log_err` as extension trait in GPUI (needs `App` context)
 
-2. **Update TestDispatcher to delegate execution tracking** - Wire TestDispatcher's `execution_hash()` and `execution_count()` to call TestScheduler's new methods (currently TestDispatcher has its own tracking)
-
 ### Medium-term:
-3. **Eliminate RunnableVariant entirely (Phase 2a full)** - Remove `Compat` variant by converting timer callbacks to use `RunnableMeta`
-4. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
+2. **Eliminate RunnableVariant entirely (Phase 2a full)** - Remove `Compat` variant by converting timer callbacks to use `RunnableMeta`
+3. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
 
 ---
 
@@ -219,22 +212,7 @@ Some GPUI features should move to the scheduler crate to reduce duplication.
 
 **Problem**: When tests hang, GPUI captures waiting hints and backtraces for debugging.
 
-**Solution**: Add optional debug info to scheduler's parking mechanism.
-
-**Steps**:
-1. Add `set_waiting_hint(&str)` to `TestScheduler`
-2. Add backtrace capture on park timeout
-3. Wire through from GPUI's `BackgroundExecutor::set_waiting_hint`
-
-#### 3c: Execution Tracking
-
-**Problem**: `TestDispatcher` tracks execution hash/count for determinism verification.
-
-**Solution**: Add to `TestScheduler`.
-
-**Steps**:
-1. Add `execution_hash()` and `execution_count()` to `TestScheduler`
-2. Update on each task execution with source location hash
+**Solution**: NOT NEEDED - TestScheduler already has superior `pending_traces` system with `TracingWaker` that automatically captures backtraces for ALL pending futures via `PENDING_TRACES=1` env var.
 
 ---
 
@@ -320,125 +298,22 @@ pub enum RunnableVariant {
 - Convert to `RunnableVariant::Meta`
 - Update all dispatcher match arms
 
-#### 2. Add execution tracking to TestScheduler (Phase 3c)
+#### 2. Eliminate RunnableVariant::Compat (Phase 2a full)
 
-Add to `TestScheduler` for determinism verification:
-
-```rust
-// scheduler/src/test_scheduler.rs
-
-// Add to SchedulerState:
-struct SchedulerState {
-    // ... existing fields ...
-    execution_hash: u64,
-    execution_count: u64,
-}
-
-impl TestScheduler {
-    pub fn execution_hash(&self) -> u64 {
-        self.state.lock().execution_hash
-    }
-    
-    pub fn execution_count(&self) -> u64 {
-        self.state.lock().execution_count
-    }
-    
-    pub fn reset_execution_tracking(&self) {
-        let mut state = self.state.lock();
-        state.execution_hash = 0;
-        state.execution_count = 0;
-    }
-}
-
-// In step(), after selecting runnable:
-fn step(&self) -> bool {
-    // ... select runnable ...
-    
-    // Update execution tracking
-    let mut state = self.state.lock();
-    let mut hasher = DefaultHasher::new();
-    state.execution_hash.hash(&mut hasher);
-    runnable.metadata().location.file().hash(&mut hasher);
-    runnable.metadata().location.line().hash(&mut hasher);
-    state.execution_count.hash(&mut hasher);
-    state.execution_hash = hasher.finish();
-    state.execution_count += 1;
-    drop(state);
-    
-    runnable.run();
-    true
-}
-```
-
-Then update `TestDispatcher` to delegate:
-```rust
-// gpui/src/platform/test/dispatcher.rs
-impl TestDispatcher {
-    pub fn execution_hash(&self) -> u64 {
-        self.scheduler.execution_hash()
-    }
-    
-    pub fn execution_count(&self) -> u64 {
-        self.scheduler.execution_count()
-    }
-}
-```
-
-#### 3. Add waiting hints to TestScheduler (Phase 3b)
-
-```rust
-// scheduler/src/test_scheduler.rs
-
-// Add to SchedulerState:
-struct SchedulerState {
-    // ... existing fields ...
-    waiting_hint: Option<String>,
-    waiting_backtrace: Option<Backtrace>,
-}
-
-impl TestScheduler {
-    pub fn set_waiting_hint(&self, hint: impl Into<String>) {
-        self.state.lock().waiting_hint = Some(hint.into());
-    }
-    
-    pub fn clear_waiting_hint(&self) {
-        let mut state = self.state.lock();
-        state.waiting_hint = None;
-        state.waiting_backtrace = None;
-    }
-    
-    pub fn waiting_hint(&self) -> Option<String> {
-        self.state.lock().waiting_hint.clone()
-    }
-}
-
-// In park(), include hint in panic message:
-fn park(&self, deadline: Option<Instant>) -> bool {
-    let state = self.state.lock();
-    if !state.allow_parking {
-        let hint = state.waiting_hint.as_deref().unwrap_or("no hint");
-        panic!("test parked unexpectedly. hint: {}", hint);
-    }
-    // ... rest of parking logic ...
-}
-```
+Convert timer callbacks to use `RunnableMeta` instead of plain `Runnable`, eliminating the need for the `Compat` variant entirely.
 
 ### Medium-term (Higher Effort)
 
-4. **Eliminate RunnableVariant** (Phase 2a full)
-   - Requires coordinated changes across all dispatchers
-   - Significant simplification
-
-5. **Unify Task types** (Phase 1)
+3. **Unify Task types** (Phase 1)
    - After RunnableMeta unified, this becomes cleaner
 
 ### Long-term (Optional)
 
-6. **Delegate task queues** (Phase 2b)
+4. **Delegate task queues** (Phase 2b)
    - Most complex change
    - Only if clear benefit emerges
 
-7. **Executor unification** (Phase 4)
+5. **Executor unification** (Phase 4)
    - Defer unless concrete need arises
 
 ## Technical Considerations

@@ -10,11 +10,9 @@ use rand::prelude::*;
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, HashSet, VecDeque},
-    collections::hash_map::DefaultHasher,
     env,
     fmt::Write,
     future::Future,
-    hash::{Hash, Hasher},
     mem,
     ops::RangeInclusive,
     panic::{self, AssertUnwindSafe},
@@ -93,8 +91,6 @@ impl TestScheduler {
                 capture_pending_traces: config.capture_pending_traces,
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
-                execution_hash: 0,
-                execution_count: 0,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
@@ -123,25 +119,6 @@ impl TestScheduler {
 
     pub fn parking_allowed(&self) -> bool {
         self.state.lock().allow_parking
-    }
-
-    /// Returns the current execution hash for determinism verification.
-    /// If two runs with the same seed produce different hashes, there is
-    /// non-determinism in the test.
-    pub fn execution_hash(&self) -> u64 {
-        self.state.lock().execution_hash
-    }
-
-    /// Returns the number of tasks that have been executed.
-    pub fn execution_count(&self) -> u64 {
-        self.state.lock().execution_count
-    }
-
-    /// Resets execution tracking state (hash and count).
-    pub fn reset_execution_tracking(&self) {
-        let mut state = self.state.lock();
-        state.execution_hash = 0;
-        state.execution_count = 0;
     }
 
     /// Create a foreground executor for this scheduler
@@ -255,19 +232,6 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
-            // Update execution tracking with task location for determinism verification
-            {
-                let location = runnable.runnable.metadata().location;
-                let mut state = self.state.lock();
-                let mut hasher = DefaultHasher::new();
-                state.execution_hash.hash(&mut hasher);
-                location.file().hash(&mut hasher);
-                location.line().hash(&mut hasher);
-                state.execution_count.hash(&mut hasher);
-                state.execution_hash = hasher.finish();
-                state.execution_count += 1;
-            }
-
             runnable.run();
             return true;
         }
@@ -519,12 +483,6 @@ struct SchedulerState {
     capture_pending_traces: bool,
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
-    /// Tracks execution order for determinism verification.
-    /// This hash is updated each time a task is executed, incorporating
-    /// the task's source location.
-    execution_hash: u64,
-    /// Count of tasks executed, for debugging.
-    execution_count: u64,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(

@@ -46,15 +46,20 @@ This document outlines the integration of the `scheduler` crate into GPUI, provi
 ### Phase 2: GPUI Adapters ✅
 
 - Created `PlatformScheduler` adapter implementing `Scheduler` trait
-- Added `RunnableVariant::Scheduler` for scheduler crate's runnables
 - Updated all platform dispatchers (Mac, Linux, Windows, Test)
+
+### Phase 2a: Unified RunnableMeta ✅
+
+- Re-exported `RunnableMeta` from scheduler crate (removed GPUI's duplicate definition)
+- Removed `RunnableVariant::Scheduler` variant (now uses `RunnableVariant::Meta` for both)
+- Simplified all dispatcher match arms
 
 ### Phase 3: Hybrid TestDispatcher Integration ✅
 
 `TestDispatcher` uses `TestScheduler` internally for timing/clock/rng while keeping its own task queues for `RunnableVariant` handling.
 
 **Why hybrid approach:**
-- GPUI uses `RunnableVariant` with 3 variants (Meta, Compat, Scheduler)
+- GPUI uses `RunnableVariant` with 2 variants (Meta, Compat)
 - `TestScheduler` expects `Runnable<RunnableMeta>` only
 - Hybrid allows unified timing without breaking existing behavior
 
@@ -124,7 +129,7 @@ Full executor composition (GPUI executors wrapping scheduler executors) is **def
 
 ### GPUI Crate
 - `src/platform/platform_scheduler.rs` - New `PlatformScheduler` adapter
-- `src/platform.rs` - `RunnableVariant::Scheduler`, platform_scheduler module
+- `src/platform.rs` - Re-exports `RunnableMeta` from scheduler, platform_scheduler module
 - `src/platform/test/dispatcher.rs` - `TestScheduler` integration, `new(seed: u64)`
 - `src/platform/mac/dispatcher.rs` - `trampoline_scheduler`, handle new variant
 - `src/platform/linux/dispatcher.rs` - Handle new variant

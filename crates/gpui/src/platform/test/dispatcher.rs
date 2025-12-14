@@ -7,7 +7,7 @@ use rand::prelude::*;
 use scheduler::{Clock, TestScheduler, TestSchedulerConfig};
 use std::{
     future::Future,
-    hash::{Hash, Hasher},
+    hash::Hash,
     ops::RangeInclusive,
     pin::Pin,
     sync::{
@@ -90,13 +90,6 @@ struct TestDispatcherState {
     deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
     unparkers: Vec<Unparker>,
-    /// Tracks execution order for determinism verification.
-    /// This hash is updated each time a task is executed, incorporating
-    /// the task's source location. If two runs with the same seed produce
-    /// different hashes, there is non-determinism in the test.
-    execution_hash: u64,
-    /// Count of tasks executed, for debugging.
-    execution_count: u64,
 }
 
 impl TestDispatcher {
@@ -122,8 +115,6 @@ impl TestDispatcher {
             deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
             unparkers: Default::default(),
-            execution_hash: 0,
-            execution_count: 0,
         };
 
         TestDispatcher {
@@ -297,7 +288,6 @@ impl TestDispatcher {
         drop(state);
 
         // Log task location before running (helps identify which task is executing)
-        // Also update execution hash for determinism tracking
         let location_str = match &runnable {
             RunnableVariant::Meta(r) => {
                 let loc = r.metadata().location;
@@ -306,24 +296,11 @@ impl TestDispatcher {
             RunnableVariant::Compat(_) => "compat-task".to_string(),
         };
 
-        // Update execution hash with task location for determinism verification
-        {
-            let mut state = self.state.lock();
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            state.execution_hash.hash(&mut hasher);
-            location_str.hash(&mut hasher);
-            state.execution_count.hash(&mut hasher);
-            state.execution_hash = hasher.finish();
-            state.execution_count += 1;
-        }
-
         dispatcher_log!(
-            "tick() RUNNING {} task from {} | main_thread={} | exec_count={} exec_hash={:016x}",
+            "tick() RUNNING {} task from {} | main_thread={}",
             task_source,
             location_str,
             main_thread,
-            self.state.lock().execution_count,
-            self.state.lock().execution_hash
         );
 
         match runnable {
@@ -427,32 +404,6 @@ impl TestDispatcher {
     /// seed produce different execution hashes at the same point, there is
     /// non-determinism in the execution (likely from real OS threads, smol::spawn,
     /// or other sources outside TestDispatcher's control).
-    ///
-    /// # Example
-    /// ```ignore
-    /// let hash_before = dispatcher.execution_hash();
-    /// // ... do some work ...
-    /// let hash_after = dispatcher.execution_hash();
-    /// eprintln!("Execution hash: {} -> {} (count: {})",
-    ///     hash_before, hash_after, dispatcher.execution_count());
-    /// ```
-    pub fn execution_hash(&self) -> u64 {
-        self.state.lock().execution_hash
-    }
-
-    /// Returns the number of tasks executed so far.
-    pub fn execution_count(&self) -> u64 {
-        self.state.lock().execution_count
-    }
-
-    /// Resets the execution hash and count. Useful for isolating
-    /// determinism checks to specific sections of a test.
-    pub fn reset_execution_tracking(&self) {
-        let mut state = self.state.lock();
-        state.execution_hash = 0;
-        state.execution_count = 0;
-    }
-
     /// Returns a reference to the underlying TestScheduler.
     /// This can be used for advanced testing scenarios that need direct scheduler access.
     pub fn scheduler(&self) -> &Arc<TestScheduler> {
