@@ -20,6 +20,8 @@ pub struct PerformanceMetrics {
     pub last_ordering_took: Option<Duration>,
     /// Duration of the last copy operation.
     pub last_copy_took: Option<Duration>,
+    /// Duration of the last selection operation (navigation or select_all).
+    pub last_selection_took: Option<Duration>,
 }
 
 impl CsvPreviewView {
@@ -72,6 +74,15 @@ impl CsvPreviewView {
                         div.child(format!("Copy: {:.2}ms", duration.as_secs_f64() * 1000.0))
                     }
                     None => div.child("Copy: --"),
+                }),
+            )
+            .child(
+                div().map(|div| match self.performance_metrics.last_selection_took {
+                    Some(duration) => div.child(format!(
+                        "Selection: {:.2}ms",
+                        duration.as_secs_f64() * 1000.0
+                    )),
+                    None => div.child("Selection: --"),
                 }),
             )
     }

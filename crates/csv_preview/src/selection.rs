@@ -6,7 +6,7 @@
 //!
 //! Selection follows data when sorting - intuitive behavior.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use ui::Context;
 
@@ -609,6 +609,7 @@ impl CsvPreviewView {
         operation: NavigationOperation,
         cx: &mut Context<Self>,
     ) {
+        let start_time = Instant::now();
         let max_rows = self.contents.rows.len();
         let max_cols = self.contents.headers.len();
 
@@ -619,6 +620,9 @@ impl CsvPreviewView {
             max_rows,
             max_cols,
         );
+
+        let selection_duration = start_time.elapsed();
+        self.performance_metrics.last_selection_took = Some(selection_duration);
         cx.notify();
     }
 }
