@@ -39,7 +39,8 @@ impl LinuxDispatcher {
         // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let mut receiver = background_receiver.clone();
+                let mut receiver: PriorityQueueReceiver<RunnableVariant> =
+                    background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
