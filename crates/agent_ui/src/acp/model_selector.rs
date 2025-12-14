@@ -344,6 +344,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     })
                 };
 
+                let model_cost = model_info.cost.clone();
+
                 Some(
                     div()
                         .id(("model-picker-menu-child", ix))
@@ -368,7 +370,8 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .is_favorite(is_favorite)
-                                .on_toggle_favorite(handle_action_click),
+                                .on_toggle_favorite(handle_action_click)
+                                .cost_info(model_cost)
                         )
                         .into_any_element(),
                 )
@@ -552,6 +555,7 @@ mod tests {
                             name: model.to_string().into(),
                             description: None,
                             icon: None,
+                            cost: None,
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -774,12 +778,14 @@ mod tests {
                 name: "Claude".into(),
                 description: None,
                 icon: None,
+                cost: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("zed/gemini".to_string()),
                 name: "Gemini".into(),
                 description: None,
                 icon: None,
+                cost: None,
             },
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
@@ -820,12 +826,14 @@ mod tests {
                 name: "Favorite".into(),
                 description: None,
                 icon: None,
+                cost: None,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("regular-model".to_string()),
                 name: "Regular".into(),
                 description: None,
                 icon: None,
+                cost: None,
             },
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);
