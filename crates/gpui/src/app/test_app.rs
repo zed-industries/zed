@@ -29,8 +29,7 @@ use crate::{
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
     SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds,
-    WindowHandle, WindowOptions,
-    app::GpuiMode,
+    WindowHandle, WindowOptions, app::GpuiMode,
 };
 use rand::{SeedableRng, rngs::StdRng};
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
@@ -114,7 +113,11 @@ impl TestApp {
     }
 
     /// Read an entity.
-    pub fn read_entity<T: 'static, R>(&self, entity: &Entity<T>, f: impl FnOnce(&T, &App) -> R) -> R {
+    pub fn read_entity<T: 'static, R>(
+        &self,
+        entity: &Entity<T>,
+        f: impl FnOnce(&T, &App) -> R,
+    ) -> R {
         self.read(|cx| f(entity.read(cx), cx))
     }
 
@@ -304,9 +307,7 @@ impl<V: 'static + Render> TestWindow<V> {
         let mut app = self.app.borrow_mut();
         let any_handle: AnyWindowHandle = self.handle.into();
         app.update_window(any_handle, |root_view, _, _| {
-            root_view
-                .downcast::<V>()
-                .expect("root view type mismatch")
+            root_view.downcast::<V>().expect("root view type mismatch")
         })
         .expect("window not found")
     }
@@ -318,9 +319,7 @@ impl<V: 'static + Render> TestWindow<V> {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();
             app.update_window(any_handle, |root_view, window, cx| {
-                let view = root_view
-                    .downcast::<V>()
-                    .expect("root view type mismatch");
+                let view = root_view.downcast::<V>().expect("root view type mismatch");
                 view.update(cx, |view, cx| f(view, window, cx))
             })
             .expect("window not found")
@@ -499,7 +498,7 @@ impl<V> Clone for TestWindow<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{div, prelude::*, Focusable, FocusHandle};
+    use crate::{FocusHandle, Focusable, div, prelude::*};
 
     struct Counter {
         count: usize,

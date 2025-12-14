@@ -231,21 +231,25 @@ impl Scene {
     /// Create a snapshot of the scene for testing.
     #[cfg(any(test, feature = "test-support"))]
     pub fn snapshot(&self) -> SceneSnapshot {
-        let quads = self.quads.iter().map(|q| {
-            RenderedQuad {
+        let quads = self
+            .quads
+            .iter()
+            .map(|q| RenderedQuad {
                 bounds: q.bounds,
                 background_color: q.background.as_solid(),
                 border_color: q.border_color,
-            }
-        }).collect();
+            })
+            .collect();
 
-        let glyphs = self.monochrome_sprites.iter().map(|s| {
-            RenderedGlyph {
+        let glyphs = self
+            .monochrome_sprites
+            .iter()
+            .map(|s| RenderedGlyph {
                 origin: s.bounds.origin,
                 size: s.bounds.size,
                 color: s.color,
-            }
-        }).collect();
+            })
+            .collect();
 
         SceneSnapshot {
             quads,
