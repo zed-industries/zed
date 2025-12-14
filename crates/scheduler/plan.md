@@ -54,12 +54,25 @@ This document outlines the integration of the `scheduler` crate into GPUI, provi
 - Removed `RunnableVariant::Scheduler` variant (now uses `RunnableVariant::Meta` for both)
 - Simplified all dispatcher match arms
 
+### Phase 2b: Eliminated RunnableVariant::Compat ✅
+
+- Removed `RunnableVariant::Compat` variant entirely
+- Updated `PlatformScheduler::timer()` to use `async_task::Builder` with `RunnableMeta`
+- Updated REPL's `ZedDispatcher` to wrap external `Runnable` with metadata
+- All tasks now carry source location for debugging/profiling
+- `RunnableVariant` is now single-variant (could be simplified to just `Runnable<RunnableMeta>`)
+
+### Phase 2c: Task API Parity ✅
+
+- Added `is_ready()` method to GPUI's `Task<T>` for API parity with scheduler
+- Both Task types now have identical APIs except `detach_and_log_err` (GPUI-specific)
+
 ### Phase 3: Hybrid TestDispatcher Integration ✅
 
 `TestDispatcher` uses `TestScheduler` internally for timing/clock/rng while keeping its own task queues for `RunnableVariant` handling.
 
 **Why hybrid approach:**
-- GPUI uses `RunnableVariant` with 2 variants (Meta, Compat)
+- GPUI uses `RunnableVariant` (now single-variant, wrapping `Runnable<RunnableMeta>`)
 - `TestScheduler` expects `Runnable<RunnableMeta>` only
 - Hybrid allows unified timing without breaking existing behavior
 
@@ -128,15 +141,20 @@ Full executor composition (GPUI executors wrapping scheduler executors) is **def
 - `src/tests.rs` - `test_background_priority_scheduling`
 
 ### GPUI Crate
-- `src/platform/platform_scheduler.rs` - New `PlatformScheduler` adapter
-- `src/platform.rs` - Re-exports `RunnableMeta` from scheduler, platform_scheduler module
+- `src/platform/platform_scheduler.rs` - New `PlatformScheduler` adapter, timers use `RunnableMeta`
+- `src/platform.rs` - Re-exports `RunnableMeta` from scheduler, single-variant `RunnableVariant`
 - `src/platform/test/dispatcher.rs` - `TestScheduler` integration, `new(seed: u64)`
-- `src/platform/mac/dispatcher.rs` - `trampoline_scheduler`, handle new variant
-- `src/platform/linux/dispatcher.rs` - Handle new variant
-- `src/platform/linux/headless/client.rs` - Handle new variant
-- `src/platform/linux/wayland/client.rs` - Handle new variant
-- `src/platform/linux/x11/client.rs` - Handle new variant
-- `src/platform/windows/dispatcher.rs` - Handle new variant
+- `src/platform/mac/dispatcher.rs` - Simplified to only handle `Meta` variant
+- `src/platform/linux/dispatcher.rs` - Simplified to only handle `Meta` variant
+- `src/platform/linux/headless/client.rs` - Simplified to only handle `Meta` variant
+- `src/platform/linux/wayland/client.rs` - Simplified to only handle `Meta` variant
+- `src/platform/linux/x11/client.rs` - Simplified to only handle `Meta` variant
+- `src/platform/windows/dispatcher.rs` - Simplified to only handle `Meta` variant
+- `src/executor.rs` - Added `is_ready()` to `Task<T>`
+
+### REPL Crate
+- `src/repl.rs` - `ZedDispatcher` wraps external `Runnable` with `RunnableMeta`
+- `Cargo.toml` - Added `async-task` dependency
 - `src/test.rs` - Updated `run_test` to pass seed directly
 - `src/app/test_context.rs` - Updated `TestAppContext::single()`
 - `src/text_system/line_wrapper.rs` - Updated test helper
