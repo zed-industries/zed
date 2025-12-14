@@ -35,19 +35,23 @@ actions!(
         OpenPreview,
         CopySelected,
         ClearSelection,
+        ///// Single cell selection /////
         MoveFocusUp,
         MoveFocusDown,
         MoveFocusLeft,
         MoveFocusRight,
+        ///// Selection extension /////
         SelectUp,
         SelectDown,
         SelectLeft,
         SelectRight,
         SelectAll,
+        ///// Single cell selection at edge /////
         JumpToTopEdge,
         JumpToBottomEdge,
         JumpToLeftEdge,
         JumpToRightEdge,
+        ///// Selection extension to edge /////
         SelectionToTopEdge,
         SelectionToBottomEdge,
         SelectionToLeftEdge,
@@ -98,168 +102,9 @@ impl CsvPreviewView {
             }
         });
     }
+}
 
-    fn clear_selection(
-        &mut self,
-        _: &ClearSelection,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection = TableSelection::new();
-        cx.notify();
-    }
-
-    fn move_focus_up(&mut self, _: &MoveFocusUp, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.move_focus_up(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn move_focus_down(&mut self, _: &MoveFocusDown, _window: &mut Window, cx: &mut Context<Self>) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .move_focus_down(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    fn move_focus_left(&mut self, _: &MoveFocusLeft, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.move_focus_left(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn move_focus_right(
-        &mut self,
-        _: &MoveFocusRight,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .move_focus_right(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    fn select_up(&mut self, _: &SelectUp, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.extend_selection_up(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn select_down(&mut self, _: &SelectDown, _window: &mut Window, cx: &mut Context<Self>) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .extend_selection_down(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    fn select_left(&mut self, _: &SelectLeft, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.extend_selection_left(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn select_right(&mut self, _: &SelectRight, _window: &mut Window, cx: &mut Context<Self>) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .extend_selection_right(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    fn select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let max_rows = self.contents.rows.len();
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .select_all(&self.ordered_indices, max_rows, max_cols);
-        cx.notify();
-    }
-
-    fn jump_to_top_edge(
-        &mut self,
-        _: &JumpToTopEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.jump_to_top_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn jump_to_bottom_edge(
-        &mut self,
-        _: &JumpToBottomEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .jump_to_bottom_edge(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    fn jump_to_left_edge(
-        &mut self,
-        _: &JumpToLeftEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.jump_to_left_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn jump_to_right_edge(
-        &mut self,
-        _: &JumpToRightEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .jump_to_right_edge(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    fn extend_selection_to_top_edge(
-        &mut self,
-        _: &SelectionToTopEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection
-            .extend_selection_to_top_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn extend_selection_to_bottom_edge(
-        &mut self,
-        _: &SelectionToBottomEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .extend_selection_to_bottom_edge(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    fn extend_selection_to_left_edge(
-        &mut self,
-        _: &SelectionToLeftEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection
-            .extend_selection_to_left_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    fn extend_selection_to_right_edge(
-        &mut self,
-        _: &SelectionToRightEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .extend_selection_to_right_edge(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
+impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn update_ordered_indices(&mut self) {
         let start_time = Instant::now();
