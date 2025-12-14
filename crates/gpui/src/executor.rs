@@ -1,5 +1,7 @@
 use crate::{App, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
 
+pub use scheduler::{Priority, RealtimePriority};
+
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::AtomicU64;
 
@@ -98,51 +100,7 @@ pub struct ForegroundExecutor {
     not_send: PhantomData<Rc<()>>,
 }
 
-/// Realtime task priority
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RealtimePriority {
-    /// Audio task
-    Audio,
-    /// Other realtime task
-    #[default]
-    Other,
-}
 
-/// Task priority
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Priority {
-    /// Realtime priority
-    ///
-    /// Spawning a task with this priority will spin it off on a separate thread dedicated just to that task.
-    Realtime(RealtimePriority),
-    /// High priority
-    ///
-    /// Only use for tasks that are critical to the user experience / responsiveness of the editor.
-    High,
-    /// Medium priority, probably suits most of your use cases.
-    #[default]
-    Medium,
-    /// Low priority
-    ///
-    /// Prioritize this for background work that can come in large quantities
-    /// to not starve the executor of resources for high priority tasks
-    Low,
-}
-
-impl Priority {
-    #[allow(dead_code)]
-    pub(crate) const fn probability(&self) -> u32 {
-        match self {
-            // realtime priorities are not considered for probability scheduling
-            Priority::Realtime(_) => 0,
-            Priority::High => 60,
-            Priority::Medium => 30,
-            Priority::Low => 10,
-        }
-    }
-}
 
 /// Task is a primitive that allows work to happen in the background.
 ///
@@ -664,11 +622,7 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
-    /// in tests, indicate that a given task from `spawn_labeled` should run after everything else
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn deprioritize(&self, task_label: TaskLabel) {
-        self.dispatcher.as_test().unwrap().deprioritize(task_label)
-    }
+
 
     /// in tests, move time forward. This does not run any tasks, but does make `timer`s ready.
     #[cfg(any(test, feature = "test-support"))]
@@ -711,7 +665,7 @@ impl BackgroundExecutor {
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
-    pub fn rng(&self) -> StdRng {
+    pub fn rng(&self) -> Arc<parking_lot::Mutex<StdRng>> {
         self.dispatcher.as_test().unwrap().rng()
     }
 

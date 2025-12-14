@@ -35,14 +35,36 @@
 - Removed unused imports from executor.rs and repl.rs
 - Updated TestDispatcher doc comment to remove outdated reference to "multiple variants"
 
+### 6. Delegated Task Queues to TestScheduler (Phase 2b) - DONE
+- TestDispatcher now delegates foreground/background task scheduling to TestScheduler
+- Removed `foreground` and `background` task queues from TestDispatcherState
+- Added `SessionId` mapping: each TestDispatcher instance gets a unique session ID from TestScheduler
+- TestDispatcher's `dispatch()` calls `scheduler.schedule_background_with_priority()`
+- TestDispatcher's `dispatch_on_main_thread()` calls `scheduler.schedule_foreground()`
+- TestDispatcher only maintains local `delayed` queue for `dispatch_after()`
+- Added `allocate_session_id()`, `tick()`, `tick_background_only()`, `has_pending_tasks()`, and `pending_task_counts()` methods to TestScheduler
+
+### 7. Removed Deprioritization Feature - DONE
+- Removed `deprioritized_background` queue from TestDispatcherState
+- Removed `deprioritized_task_labels` set from TestDispatcherState
+- Removed `deprioritize()` method from TestDispatcher
+- Removed `deprioritize()` method from BackgroundExecutor
+- Updated tests in project_tests.rs that used deprioritization
+
+### 8. Unified Priority Types - DONE
+- Added `RealtimePriority` enum to scheduler crate
+- Added `Realtime(RealtimePriority)` variant to scheduler's `Priority` enum
+- GPUI now reexports `Priority` and `RealtimePriority` from scheduler crate
+- Removed duplicate `Priority` and `RealtimePriority` definitions from GPUI's executor.rs
+
 ## 🔜 NEXT STEPS FOR FUTURE WORK
 
 ### Near-term (recommended next tasks):
-1. ~~**Simplify RunnableVariant**~~ - ✅ DONE - Now a type alias to `Runnable<RunnableMeta>`
+1. **Consider removing RunnableVariant type alias entirely** - Could just use `Runnable<RunnableMeta>` directly throughout, but this is low priority as the type alias provides a clear semantic name
 
 ### Medium-term:
-2. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
-3. **Consider removing RunnableVariant type alias entirely** - Could just use `Runnable<RunnableMeta>` directly throughout, but this is low priority as the type alias provides a clear semantic name
+2. **Unify Task types (Phase 1 full)** - Both GPUI and scheduler have `Task<T>` types that wrap `async_task::Task<T, RunnableMeta>`. Consider full unification.
+3. **Delegate delayed tasks to scheduler timer infrastructure** - Currently TestDispatcher maintains its own delayed queue
 
 ---
 
@@ -50,13 +72,17 @@
 
 This document outlines a plan for deeper integration between the `scheduler` crate and GPUI. The current state is a **hybrid integration** where `TestDispatcher` uses `TestScheduler` for timing/clock/rng but maintains its own task queues. This plan describes how to move toward GPUI using the scheduler crate's executors more directly.
 
-## Current State (Hybrid Integration)
+## Current State (Full Integration)
 
 ### What's Already Done
 
 1. **TestScheduler for timing primitives**: `TestDispatcher` delegates `now()`, `advance_clock()`, `rng()`, `allow_parking()`, and `forbid_parking()` to `TestScheduler`.
 
-2. **PlatformScheduler adapter**: A `Scheduler` trait implementation wraps `PlatformDispatcher` for production use.
+2. **TestScheduler for task queues**: `TestDispatcher` delegates foreground and background task scheduling to `TestScheduler`. Each TestDispatcher instance maps to a `SessionId` for foreground task ordering.
+
+3. **Unified Priority types**: GPUI reexports `Priority` and `RealtimePriority` from the scheduler crate.
+
+4. **PlatformScheduler adapter**: A `Scheduler` trait implementation wraps `PlatformDispatcher` for production use.
 
 3. **RunnableVariant enum**: GPUI dispatchers handle three runnable types:
    - `Meta(Runnable<RunnableMeta>)` - GPUI's native tasks with source location

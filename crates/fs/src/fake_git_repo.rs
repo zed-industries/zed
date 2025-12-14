@@ -656,7 +656,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = git::Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut *executor.rng().lock());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })

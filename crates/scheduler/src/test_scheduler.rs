@@ -121,13 +121,17 @@ impl TestScheduler {
         self.state.lock().allow_parking
     }
 
+    /// Allocate a new session ID for foreground task scheduling.
+    /// This is used by GPUI's TestDispatcher to map dispatcher instances to sessions.
+    pub fn allocate_session_id(&self) -> SessionId {
+        let mut state = self.state.lock();
+        state.next_session_id.0 += 1;
+        state.next_session_id
+    }
+
     /// Create a foreground executor for this scheduler
     pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
-        let session_id = {
-            let mut state = self.state.lock();
-            state.next_session_id.0 += 1;
-            state.next_session_id
-        };
+        let session_id = self.allocate_session_id();
         ForegroundExecutor::new(session_id, self.clone())
     }
 
@@ -157,7 +161,40 @@ impl TestScheduler {
         }
     }
 
+    /// Execute one tick of the scheduler, processing expired timers and running
+    /// at most one task. Returns true if any work was done.
+    ///
+    /// This is the public interface for GPUI's TestDispatcher to drive task execution.
+    pub fn tick(&self) -> bool {
+        self.step_filtered(false)
+    }
+
+    /// Execute one tick, but only run background tasks (no foreground/session tasks).
+    /// Returns true if any work was done.
+    pub fn tick_background_only(&self) -> bool {
+        self.step_filtered(true)
+    }
+
+    /// Check if there are any pending tasks or timers that could run.
+    pub fn has_pending_tasks(&self) -> bool {
+        let state = self.state.lock();
+        !state.runnables.is_empty() || !state.timers.is_empty()
+    }
+
+    /// Returns counts of (foreground_tasks, background_tasks) currently queued.
+    /// Foreground tasks are those with a session_id, background tasks have none.
+    pub fn pending_task_counts(&self) -> (usize, usize) {
+        let state = self.state.lock();
+        let foreground = state.runnables.iter().filter(|r| r.session_id.is_some()).count();
+        let background = state.runnables.iter().filter(|r| r.session_id.is_none()).count();
+        (foreground, background)
+    }
+
     fn step(&self) -> bool {
+        self.step_filtered(false)
+    }
+
+    fn step_filtered(&self, background_only: bool) -> bool {
         let elapsed_timers = {
             let mut state = self.state.lock();
             let end_ix = state
@@ -178,6 +215,7 @@ impl TestScheduler {
             //   is a candidate (to preserve intra-session ordering)
             // - For background tasks (no session_id), all are candidates
             // - Tasks from blocked sessions are excluded
+            // - If background_only is true, skip foreground tasks entirely
             let mut seen_sessions = HashSet::new();
             let candidate_indices: Vec<usize> = state
                 .runnables
@@ -185,6 +223,10 @@ impl TestScheduler {
                 .enumerate()
                 .filter(|(_, runnable)| {
                     if let Some(session_id) = runnable.session_id {
+                        // Skip foreground tasks if background_only mode
+                        if background_only {
+                            return false;
+                        }
                         // Exclude tasks from blocked sessions
                         if state.blocked_sessions.contains(&session_id) {
                             return false;

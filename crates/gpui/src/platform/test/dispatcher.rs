@@ -1,13 +1,11 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskLabel};
 use backtrace::Backtrace;
-use collections::{HashMap, HashSet, VecDeque};
 use parking::Unparker;
 use parking_lot::Mutex;
 use rand::prelude::*;
-use scheduler::{Clock, TestScheduler, TestSchedulerConfig};
+use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig};
 use std::{
     future::Future,
-    hash::Hash,
     ops::RangeInclusive,
     pin::Pin,
     sync::{
@@ -60,33 +58,25 @@ macro_rules! dispatcher_log {
         }
     };
 }
-use util::post_inc;
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct TestDispatcherId(usize);
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///
-/// This is a hybrid implementation that uses the scheduler crate's `TestScheduler`
-/// for timing, clock, and randomization, while keeping GPUI's own task queues
-/// for GPUI-specific features like task labels and deprioritization.
+/// This implementation delegates task scheduling to the scheduler crate's `TestScheduler`,
+/// which provides timing, clock, randomization, and task queue management. The dispatcher
+/// maintains only the delayed task queue (for dispatch_after) and state needed for
+/// GPUI-specific behavior like is_main_thread tracking.
 #[doc(hidden)]
 pub struct TestDispatcher {
-    id: TestDispatcherId,
+    session_id: SessionId,
     scheduler: Arc<TestScheduler>,
     state: Arc<Mutex<TestDispatcherState>>,
 }
 
 struct TestDispatcherState {
-    foreground: HashMap<TestDispatcherId, VecDeque<RunnableVariant>>,
-    background: Vec<RunnableVariant>,
-    deprioritized_background: Vec<RunnableVariant>,
     delayed: Vec<(Instant, RunnableVariant)>,
     is_main_thread: bool,
-    next_id: TestDispatcherId,
     waiting_hint: Option<String>,
     waiting_backtrace: Option<Backtrace>,
-    deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
     unparkers: Vec<Unparker>,
 }
@@ -102,22 +92,19 @@ impl TestDispatcher {
             timeout_ticks: 0..=1000,
         }));
 
+        let session_id = scheduler.allocate_session_id();
+
         let state = TestDispatcherState {
-            foreground: HashMap::default(),
-            background: Vec::new(),
-            deprioritized_background: Vec::new(),
             delayed: Vec::new(),
             is_main_thread: true,
-            next_id: TestDispatcherId(1),
             waiting_hint: None,
             waiting_backtrace: None,
-            deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
             unparkers: Default::default(),
         };
 
         TestDispatcher {
-            id: TestDispatcherId(0),
+            session_id,
             scheduler,
             state: Arc::new(Mutex::new(state)),
         }
@@ -156,10 +143,6 @@ impl TestDispatcher {
     }
 
     pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
-        // Note: We use a local YieldNow instead of `self.scheduler.yield_random()` because
-        // the scheduler's version uses a different distribution (0..2 with 10% chance of 10..20)
-        // and consumes 2 RNG values per call. GPUI tests rely on the original 0..10 range
-        // with a single RNG consumption for deterministic behavior.
         struct YieldNow {
             pub(crate) count: usize,
         }
@@ -184,131 +167,68 @@ impl TestDispatcher {
     }
 
     pub fn tick(&self, background_only: bool) -> bool {
-        let mut state = self.state.lock();
         let now = self.scheduler.clock().now();
 
-        while let Some((deadline, _)) = state.delayed.first() {
-            if *deadline > now {
-                break;
+        // Move due delayed tasks to the scheduler's background queue
+        {
+            let mut state = self.state.lock();
+            while let Some((deadline, _)) = state.delayed.first() {
+                if *deadline > now {
+                    break;
+                }
+                let (_, runnable) = state.delayed.remove(0);
+                self.scheduler.schedule_background(runnable);
             }
-            let (_, runnable) = state.delayed.remove(0);
-            state.background.push(runnable);
         }
 
-        let foreground_len: usize = if background_only {
-            0
-        } else {
-            state
-                .foreground
-                .values()
-                .map(|runnables| runnables.len())
-                .sum()
-        };
-        let background_len = state.background.len();
-        let deprioritized_len = state.deprioritized_background.len();
-        let delayed_len = state.delayed.len();
-        let unparkers_count = state.unparkers.len();
+        let (foreground_count, background_count) = self.scheduler.pending_task_counts();
+        let delayed_count = self.state.lock().delayed.len();
 
-        let runnable;
-        let main_thread;
-        let task_source: &str;
-        if foreground_len == 0 && background_len == 0 {
-            let deprioritized_background_len = state.deprioritized_background.len();
-            if deprioritized_background_len == 0 {
-                dispatcher_log!(
-                    "tick() -> false (no tasks) | fg={} bg={} depri={} delayed={} unparkers={}",
-                    foreground_len,
-                    background_len,
-                    deprioritized_len,
-                    delayed_len,
-                    unparkers_count
-                );
-                return false;
-            }
-            let ix = self
-                .scheduler
-                .rng()
-                .lock()
-                .random_range(0..deprioritized_background_len);
-            main_thread = false;
-            task_source = "deprioritized";
+        if foreground_count == 0 && background_count == 0 {
             dispatcher_log!(
-                "tick() selecting deprioritized[{}] of {} | fg={} bg={} delayed={}",
-                ix,
-                deprioritized_background_len,
-                foreground_len,
-                background_len,
-                delayed_len
+                "tick() -> false (no tasks) | fg={} bg={} delayed={}",
+                foreground_count,
+                background_count,
+                delayed_count
             );
-            runnable = state.deprioritized_background.swap_remove(ix);
+            return false;
+        }
+
+        // Determine if we should run a foreground or background task
+        let run_foreground = if background_only || foreground_count == 0 {
+            false
+        } else if background_count == 0 {
+            true
         } else {
-            main_thread = self.scheduler.rng().lock().random_ratio(
-                foreground_len as u32,
-                (foreground_len + background_len) as u32,
-            );
-            if main_thread {
-                task_source = "foreground";
-                let rng_arc = self.scheduler.rng();
-                let mut rng = rng_arc.lock();
-                runnable = state
-                    .foreground
-                    .values_mut()
-                    .filter(|runnables| !runnables.is_empty())
-                    .choose(&mut *rng)
-                    .unwrap()
-                    .pop_front()
-                    .unwrap();
-                dispatcher_log!(
-                    "tick() selecting foreground (ratio {}/{}) | fg={} bg={} delayed={}",
-                    foreground_len,
-                    foreground_len + background_len,
-                    foreground_len - 1,
-                    background_len,
-                    delayed_len
-                );
-            } else {
-                task_source = "background";
-                let ix = self.scheduler.rng().lock().random_range(0..background_len);
-                dispatcher_log!(
-                    "tick() selecting background[{}] (ratio {}/{}) | fg={} bg={} delayed={}",
-                    ix,
-                    foreground_len,
-                    foreground_len + background_len,
-                    foreground_len,
-                    background_len - 1,
-                    delayed_len
-                );
-                runnable = state.background.swap_remove(ix);
-            };
+            self.scheduler.rng().lock().random_ratio(
+                foreground_count as u32,
+                (foreground_count + background_count) as u32,
+            )
         };
 
-        let was_main_thread = state.is_main_thread;
-        state.is_main_thread = main_thread;
-        drop(state);
-
-        // Log task location before running (helps identify which task is executing)
-        let loc = runnable.metadata().location;
-        let location_str = format!("{}:{}:{}", loc.file(), loc.line(), loc.column());
+        // Track is_main_thread based on what type of task we're running
+        let was_main_thread = self.state.lock().is_main_thread;
+        self.state.lock().is_main_thread = run_foreground;
 
         dispatcher_log!(
-            "tick() RUNNING {} task from {} | main_thread={}",
-            task_source,
-            location_str,
-            main_thread,
+            "tick() running {} task | fg={} bg={} delayed={} main_thread={}",
+            if run_foreground { "foreground" } else { "background" },
+            foreground_count,
+            background_count,
+            delayed_count,
+            run_foreground,
         );
 
-        runnable.run();
+        // Run a task through the scheduler
+        let did_work = if background_only {
+            self.scheduler.tick_background_only()
+        } else {
+            self.scheduler.tick()
+        };
 
         self.state.lock().is_main_thread = was_main_thread;
 
-        true
-    }
-
-    pub fn deprioritize(&self, task_label: TaskLabel) {
-        self.state
-            .lock()
-            .deprioritized_task_labels
-            .insert(task_label);
+        did_work
     }
 
     pub fn run_until_parked(&self) {
@@ -344,44 +264,48 @@ impl TestDispatcher {
     }
 
     pub fn waiting_backtrace(&self) -> Option<Backtrace> {
-        self.state.lock().waiting_backtrace.take().map(|mut b| {
-            b.resolve();
-            b
+        self.state.lock().waiting_backtrace.as_ref().map(|trace| {
+            let mut trace = trace.clone();
+            trace.resolve();
+            trace
         })
     }
 
-    pub fn rng(&self) -> StdRng {
-        self.scheduler.rng().lock().clone()
+    pub fn rng(&self) -> Arc<parking_lot::Mutex<StdRng>> {
+        self.scheduler.rng()
     }
 
     pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
-        self.state.lock().block_on_ticks = range.clone();
-        self.scheduler.set_timeout_ticks(range);
+        self.state.lock().block_on_ticks = range;
     }
 
     pub fn gen_block_on_ticks(&self) -> usize {
-        let block_on_ticks = self.state.lock().block_on_ticks.clone();
-        self.scheduler.rng().lock().random_range(block_on_ticks)
+        let range = self.state.lock().block_on_ticks.clone();
+        self.scheduler.rng().lock().random_range(range)
     }
 
     pub fn unpark_all(&self) {
-        let mut state = self.state.lock();
-        let count = state.unparkers.len();
-        state.unparkers.retain(|parker| parker.unpark());
-        dispatcher_log!("unpark_all() | unparked {} threads", count);
+        let unparkers: Vec<_> = self.state.lock().unparkers.drain(..).collect();
+        let count = unparkers.len();
+        if count > 0 {
+            dispatcher_log!("unpark_all() | unparking {} threads", count);
+        }
+        for unparker in unparkers {
+            unparker.unpark();
+        }
     }
 
     pub fn push_unparker(&self, unparker: Unparker) {
         let mut state = self.state.lock();
         let count_before = state.unparkers.len();
         state.unparkers.push(unparker);
+        let (fg, bg) = self.scheduler.pending_task_counts();
         dispatcher_log!(
-            "push_unparker() | unparkers: {} -> {} | fg={} bg={} depri={}",
+            "push_unparker() | unparkers: {} -> {} | fg={} bg={}",
             count_before,
             state.unparkers.len(),
-            state.foreground.values().map(|v| v.len()).sum::<usize>(),
-            state.background.len(),
-            state.deprioritized_background.len()
+            fg,
+            bg
         );
     }
 
@@ -389,12 +313,6 @@ impl TestDispatcher {
         self.state.lock().unparkers.len()
     }
 
-    /// Returns a hash of the execution order so far.
-    ///
-    /// This can be used to verify test determinism: if two runs with the same
-    /// seed produce different execution hashes at the same point, there is
-    /// non-determinism in the execution (likely from real OS threads, smol::spawn,
-    /// or other sources outside TestDispatcher's control).
     /// Returns a reference to the underlying TestScheduler.
     /// This can be used for advanced testing scenarios that need direct scheduler access.
     pub fn scheduler(&self) -> &Arc<TestScheduler> {
@@ -404,9 +322,9 @@ impl TestDispatcher {
 
 impl Clone for TestDispatcher {
     fn clone(&self) -> Self {
-        let id = post_inc(&mut self.state.lock().next_id.0);
+        let session_id = self.scheduler.allocate_session_id();
         Self {
-            id: TestDispatcherId(id),
+            session_id,
             scheduler: self.scheduler.clone(),
             state: self.state.clone(),
         }
@@ -430,40 +348,32 @@ impl PlatformDispatcher for TestDispatcher {
         self.scheduler.clock().now()
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, _priority: Priority) {
-        let (bg_len, unparkers_before) = {
-            let mut state = self.state.lock();
-            let unparkers_before = state.unparkers.len();
-            if label.is_some_and(|label| state.deprioritized_task_labels.contains(&label)) {
-                state.deprioritized_background.push(runnable);
-            } else {
-                state.background.push(runnable);
-            }
-            (state.background.len(), unparkers_before)
-        };
+    fn dispatch(&self, runnable: RunnableVariant, _label: Option<TaskLabel>, priority: Priority) {
+        let (fg, bg) = self.scheduler.pending_task_counts();
+        let unparkers_before = self.state.lock().unparkers.len();
+
+        self.scheduler
+            .schedule_background_with_priority(runnable, priority);
+
         dispatcher_log!(
-            "dispatch() | bg_len={} unparkers_at_dispatch={} (about to unpark_all)",
-            bg_len,
+            "dispatch() | fg={} bg={} unparkers_at_dispatch={} (about to unpark_all)",
+            fg,
+            bg + 1,
             unparkers_before
         );
         self.unpark_all();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        let (fg_len, unparkers_before) = {
-            let mut state = self.state.lock();
-            let unparkers_before = state.unparkers.len();
-            state
-                .foreground
-                .entry(self.id)
-                .or_default()
-                .push_back(runnable);
-            let fg_len: usize = state.foreground.values().map(|v| v.len()).sum();
-            (fg_len, unparkers_before)
-        };
+        let (fg, bg) = self.scheduler.pending_task_counts();
+        let unparkers_before = self.state.lock().unparkers.len();
+
+        self.scheduler.schedule_foreground(self.session_id, runnable);
+
         dispatcher_log!(
-            "dispatch_on_main_thread() | fg_len={} unparkers_at_dispatch={} (about to unpark_all)",
-            fg_len,
+            "dispatch_on_main_thread() | fg={} bg={} unparkers_at_dispatch={} (about to unpark_all)",
+            fg + 1,
+            bg,
             unparkers_before
         );
         self.unpark_all();
