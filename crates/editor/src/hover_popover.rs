@@ -151,7 +151,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, cx);
+            return;
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
