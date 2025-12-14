@@ -361,10 +361,7 @@ impl MetalRenderer {
 
     pub fn update_transparency(&self, transparent: bool) {
         self.layer.set_opaque(!transparent);
-
-        if !transparent {
-            self.layer.set_display_sync_enabled(false);
-        }
+        self.layer.set_display_sync_enabled(transparent);
     }
 
     pub fn destroy(&self) {
