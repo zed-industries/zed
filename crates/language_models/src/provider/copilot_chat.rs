@@ -269,7 +269,7 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
         LanguageModelCostInfo::RequestCost {
-            cost_per_request: self.model.multipler(),
+            cost_per_request: self.model.multiplier(),
         }
         .into()
     }

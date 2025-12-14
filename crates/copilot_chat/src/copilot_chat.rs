@@ -252,7 +252,7 @@ impl Model {
                 .contains(&ModelSupportedEndpoint::Responses)
     }
 
-    pub fn multipler(&self) -> f64 {
+    pub fn multiplier(&self) -> f64 {
         self.billing.multiplier
     }
 }
