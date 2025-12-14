@@ -13491,7 +13491,7 @@ impl From<lsp::Documentation> for CompletionDocumentation {
             lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
                 lsp::MarkupKind::PlainText => {
                     if value.lines().count() <= 1 {
-                        CompletionDocumentation::SingleLine(value.into())
+                        CompletionDocumentation::SingleLine(text.trim().to_string().into())
                     } else {
                         CompletionDocumentation::MultiLinePlainText(value.into())
                     }
