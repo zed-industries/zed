@@ -35,6 +35,30 @@ Then, after explicitly calling `advance_clock(...)` and `run()`, the returned fu
 - If a test needs time to advance, it should do so explicitly via `advance_clock`.
 - If a test needs deterministic timeout behavior, it should control `timeout_ticks` to avoid incidental progress during a timeout.
 
+### 3) Realtime priority must be enforced as “not allowed in tests” (determinism contract)
+
+**What happened**
+
+`Priority::Realtime(_)` is implemented in GPUI by spawning a dedicated OS thread and feeding it runnables. That is appropriate for production realtime workloads (e.g. audio), but it breaks determinism.
+
+Because GPUI tests rely on `TestDispatcher` + `TestScheduler` for deterministic execution, allowing realtime spawns inside tests would introduce:
+- nondeterministic scheduling (real threads outside the test scheduler)
+- hangs/flakes that vary by platform and timing
+- unreproducible failures even with the same seed
+
+**What we want**
+
+In test mode, attempting to spawn a realtime task should fail fast and loudly, so misuse is caught immediately.
+
+**Enforcement**
+
+The test dispatcher’s `spawn_realtime` implementation panics with a clear message explaining that realtime threads are not supported in tests. A regression test should assert this behavior so it can’t be accidentally weakened by future refactors.
+
+**Takeaway**
+
+- Treat “no realtime threads in tests” as an invariant, not an implementation detail.
+- The most valuable test here is not “does realtime work”, but “does realtime misuse fail deterministically”.
+
 ---
 
 This document captures a review of the `scheduler-integration` branch compared to `main`, with a focus on:
