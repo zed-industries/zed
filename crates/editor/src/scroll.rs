@@ -27,6 +27,8 @@ use workspace::{ItemId, WorkspaceId};
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+// TODO: move to settings
+const SMOOTH_SCROLL_DURATION: Duration = Duration::from_millis(250);
 
 pub struct WasScrolled(pub(crate) bool);
 
@@ -148,6 +150,13 @@ impl ActiveScrollbarState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollAnimation {
+    pub start_position: gpui::Point<ScrollOffset>,
+    pub target_position: gpui::Point<ScrollOffset>,
+    pub start_time: Instant,
+}
+
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: ScrollAnchor,
@@ -169,6 +178,7 @@ pub struct ScrollManager {
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
+    scroll_animation: Option<ScrollAnimation>,
 }
 
 impl ScrollManager {
@@ -186,6 +196,7 @@ impl ScrollManager {
             visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
+            scroll_animation: None,
         }
     }
 
@@ -459,6 +470,57 @@ impl ScrollManager {
 
     pub fn forbid_vertical_scroll(&self) -> bool {
         self.forbid_vertical_scroll
+    }
+
+    pub fn scroll_animation(&self) -> Option<&ScrollAnimation> {
+        self.scroll_animation.as_ref()
+    }
+
+    pub fn start_animation(
+        &mut self,
+        current_position: gpui::Point<ScrollOffset>,
+        target_position: gpui::Point<ScrollOffset>,
+    ) {
+        let start_position = if let Some(animation) = &self.scroll_animation {
+            let elapsed = animation.start_time.elapsed().as_secs_f32();
+            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            let progress = (elapsed / duration).min(1.0);
+            let eased = ease_out_cubic(progress);
+
+            gpui::Point::new(
+                animation.start_position.x
+                    + (animation.target_position.x - animation.start_position.x) * eased as f64,
+                animation.start_position.y
+                    + (animation.target_position.y - animation.start_position.y) * eased as f64,
+            )
+        } else {
+            current_position
+        };
+
+        self.scroll_animation = Some(ScrollAnimation {
+            start_position,
+            target_position,
+            start_time: Instant::now(),
+        });
+    }
+
+    pub fn update_animation(&mut self, delta: gpui::Point<ScrollOffset>) {
+        if let Some(animation) = &mut self.scroll_animation {
+            animation.target_position.x += delta.x;
+            animation.target_position.y += delta.y;
+        }
+    }
+
+    pub fn cancel_animation(&mut self) {
+        self.scroll_animation = None;
+    }
+
+    pub fn animation_progress(&self) -> Option<f32> {
+        self.scroll_animation.as_ref().map(|animation| {
+            let elapsed = animation.start_time.elapsed().as_secs_f32();
+            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            (elapsed / duration).min(1.0)
+        })
     }
 }
 
@@ -779,4 +841,64 @@ impl Editor {
             self.set_scroll_anchor(scroll_anchor, window, cx);
         }
     }
+
+    pub fn animate_scroll_to(
+        &mut self,
+        target_position: gpui::Point<ScrollOffset>,
+        axis: Option<Axis>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let smooth_scroll_enabled = EditorSettings::get_global(cx).smooth_scroll;
+        if !smooth_scroll_enabled {
+            self.scroll_manager.update_ongoing_scroll(axis);
+            self.set_scroll_position(target_position, window, cx);
+            return;
+        }
+
+        let current_position = self.scroll_position(cx);
+        self.scroll_manager.update_ongoing_scroll(axis);
+        self.scroll_manager
+            .start_animation(current_position, target_position);
+        cx.notify();
+    }
+
+    pub fn update_scroll_animation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(animation) = self.scroll_manager.scroll_animation() else {
+            return false;
+        };
+
+        let progress = {
+            let elapsed = animation.start_time.elapsed().as_secs_f32();
+            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            (elapsed / duration).min(1.0)
+        };
+
+        let eased_progress = ease_out_cubic(progress);
+
+        let start = animation.start_position;
+        let target = animation.target_position;
+
+        let current_x = start.x + (target.x - start.x) * eased_progress as f64;
+        let current_y = start.y + (target.y - start.y) * eased_progress as f64;
+        let interpolated_position = point(current_x, current_y);
+
+        if progress >= 1.0 {
+            self.scroll_manager.cancel_animation();
+            self.set_scroll_position(target, window, cx);
+            false
+        } else {
+            self.set_scroll_position(interpolated_position, window, cx);
+            window.request_animation_frame();
+            true
+        }
+    }
+
+    pub fn has_animated_scroll(&self) -> bool {
+        self.scroll_manager.scroll_animation().is_some()
+    }
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
 }
