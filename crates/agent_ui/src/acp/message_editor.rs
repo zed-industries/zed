@@ -584,7 +584,6 @@ impl MessageEditor {
                     }
                 }
 
-                cx.stop_propagation();
                 let insertion_target = self
                     .editor
                     .read(cx)
@@ -594,10 +593,40 @@ impl MessageEditor {
                     .text_anchor;
 
                 let project = workspace.read(cx).project().clone();
+                let mut has_multi_line_selections = false;
+
+                // First pass: check if there are any multi-line selections
+                for selection in &selections {
+                    if let (Some(_file_path), Some(line_range)) =
+                        (selection.file_path.as_ref(), selection.line_range.as_ref())
+                    {
+                        if line_range.start() != line_range.end() {
+                            has_multi_line_selections = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Only stop propagation if we have multi-line selections
+                // For single-line selections, let the normal paste behavior handle it
+                if has_multi_line_selections {
+                    cx.stop_propagation();
+                } else {
+                    // No multi-line selections, let normal paste handle it
+                    return;
+                }
+
                 for selection in selections {
                     if let (Some(file_path), Some(line_range)) =
                         (selection.file_path, selection.line_range)
                     {
+                        // Only create mentions for multi-line selections
+                        if line_range.start() == line_range.end() {
+                            // For single-line selections, skip creating a mention
+                            // The text will be inserted by the normal paste behavior below
+                            continue;
+                        }
+
                         let crease_text =
                             acp_thread::selection_name(Some(file_path.as_ref()), &line_range);
 

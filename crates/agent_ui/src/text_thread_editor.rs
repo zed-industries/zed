@@ -5,6 +5,7 @@ use crate::{
 use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
+
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
@@ -1525,26 +1526,32 @@ impl TextThreadEditor {
 
                 editor.insert(&text, window, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let anchor_before = snapshot.anchor_after(point);
-                let anchor_after = editor
-                    .selections
-                    .newest_anchor()
-                    .head()
-                    .bias_left(&snapshot);
+                // Only create a fold if there's a title (for multi-line selections)
+                // Skip folds for single line selections with empty titles
+                if !crease_title.is_empty() {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let anchor_before = snapshot.anchor_after(point);
+                    let anchor_after = editor
+                        .selections
+                        .newest_anchor()
+                        .head()
+                        .bias_left(&snapshot);
 
-                editor.insert("\n", window, cx);
+                    editor.insert("\n", window, cx);
 
-                let fold_placeholder =
-                    quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
-                let crease = Crease::inline(
-                    anchor_before..anchor_after,
-                    fold_placeholder,
-                    render_quote_selection_output_toggle,
-                    |_, _, _, _| Empty.into_any(),
-                );
-                editor.insert_creases(vec![crease], cx);
-                editor.fold_at(start_row, window, cx);
+                    let fold_placeholder =
+                        quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
+                    let crease = Crease::inline(
+                        anchor_before..anchor_after,
+                        fold_placeholder,
+                        render_quote_selection_output_toggle,
+                        |_row, _folded, _window, _cx| div().into_any_element(),
+                    );
+                    editor.insert_creases(vec![crease], cx);
+                    editor.fold_at(start_row, window, cx);
+                } else {
+                    editor.insert("\n", window, cx);
+                }
             }
         })
     }
@@ -1761,7 +1768,7 @@ impl TextThreadEditor {
                                         anchor_before..anchor_after,
                                         fold_placeholder,
                                         render_quote_selection_output_toggle,
-                                        |_, _, _, _| Empty.into_any(),
+                                        |_row, _folded, _window, _cx| div().into_any_element(),
                                     );
                                     editor.insert_creases(vec![crease], cx);
                                     editor.fold_at(start_row, window, cx);

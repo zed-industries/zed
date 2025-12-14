@@ -172,10 +172,14 @@ pub fn selections_creases(
             let line_comment_prefix = start_language
                 .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
 
-            let fence = codeblock_fence_for_path(
-                filename.as_deref(),
-                Some(range.start.row..=range.end.row),
-            );
+            // Only include line numbers for multi-line selections
+            let row_range = if range.start.row == range.end.row {
+                None
+            } else {
+                Some(range.start.row..=range.end.row)
+            };
+
+            let fence = codeblock_fence_for_path(filename.as_deref(), row_range);
 
             if let Some((line_comment_prefix, outline_text)) = line_comment_prefix.zip(outline_text)
             {
@@ -189,18 +193,18 @@ pub fn selections_creases(
             let start_line = range.start.row + 1;
             let end_line = range.end.row + 1;
 
-            // For short selections (like keywords), show the text in the title
-            // For longer selections, show line numbers as before
-            if selected_text.len() < 50 && !selected_text.contains('\n') {
-                let trimmed_text = selected_text.trim();
-                if start_line == end_line {
-                    format!("{path}, Line {start_line}: {trimmed_text}")
-                } else {
-                    format!("{path}, Lines {start_line} to {end_line}: {trimmed_text}")
-                }
+            // For single line selections, don't show any title
+            // For multi-line selections, show line numbers
+            if start_line == end_line {
+                // For single line selections, we don't want any title/context
+                // So return an empty string which will result in no fold button
+                String::new()
             } else {
-                if start_line == end_line {
-                    format!("{path}, Line {start_line}")
+                // For short selections (like keywords), show the text in the title
+                // For longer selections, show line numbers as before
+                if selected_text.len() < 50 && !selected_text.contains('\n') {
+                    let trimmed_text = selected_text.trim();
+                    format!("{path}, Lines {start_line} to {end_line}: {trimmed_text}")
                 } else {
                     format!("{path}, Lines {start_line} to {end_line}")
                 }

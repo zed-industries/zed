@@ -6,14 +6,14 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
+    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset, ToPoint,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Empty, Entity, EntityId,
-    Image, ImageFormat, Img, SharedString, Task, WeakEntity, pulsating_between,
+    Image, ImageFormat, Img, SharedString, Task, WeakEntity, Window, div, pulsating_between,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -732,12 +732,29 @@ pub(crate) fn crease_for_mention(
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), editor_entity),
+        render: render_fold_icon_button(icon_path.clone(), label.clone(), editor_entity.clone()),
         merge_adjacent: false,
         ..Default::default()
     };
 
-    let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
+    let render_trailer = move |_row, _unfold, _window: &mut Window, cx: &mut App| {
+        // Get the editor entity and extract the text content for the fold
+        if let Some(editor) = editor_entity.upgrade() {
+            editor.update(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx);
+                let snapshot = buffer.snapshot(cx);
+                let start_point = range.start.to_point(&snapshot);
+                let end_point = range.end.to_point(&snapshot);
+                let text_range = start_point..end_point;
+                let text = snapshot.text_for_range(text_range).collect::<String>();
+
+                // Create a div element to display the text content
+                div().px_3().py_1().child(text).into_any_element()
+            })
+        } else {
+            Empty.into_any()
+        }
+    };
 
     Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
         .with_metadata(CreaseMetadata { icon_path, label })

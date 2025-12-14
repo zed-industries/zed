@@ -317,14 +317,24 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
 }
 
 pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
-    format!(
-        "{} ({}:{})",
-        path.and_then(|path| path.file_name())
-            .unwrap_or("Untitled".as_ref())
-            .display(),
-        *line_range.start() + 1,
-        *line_range.end() + 1
-    )
+    // Only show line numbers for multi-line selections
+    if line_range.start() == line_range.end() {
+        format!(
+            "{}",
+            path.and_then(|path| path.file_name())
+                .unwrap_or("Untitled".as_ref())
+                .display()
+        )
+    } else {
+        format!(
+            "{} ({}:{})",
+            path.and_then(|path| path.file_name())
+                .unwrap_or("Untitled".as_ref())
+                .display(),
+            *line_range.start() + 1,
+            *line_range.end() + 1
+        )
+    }
 }
 
 #[cfg(test)]
