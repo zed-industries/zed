@@ -20,6 +20,110 @@ pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 pub(crate) type DrawOrder = u32;
 
+/// Test-only scene snapshot for inspecting rendered content.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_scene {
+    use crate::{Bounds, Hsla, Point, ScaledPixels};
+
+    /// A rendered quad (background, border, cursor, selection, etc.)
+    #[derive(Debug, Clone)]
+    pub struct RenderedQuad {
+        /// Bounds in scaled pixels.
+        pub bounds: Bounds<ScaledPixels>,
+        /// Background color (if solid).
+        pub background_color: Option<Hsla>,
+        /// Border color.
+        pub border_color: Hsla,
+    }
+
+    /// A rendered text glyph.
+    #[derive(Debug, Clone)]
+    pub struct RenderedGlyph {
+        /// Origin position in scaled pixels.
+        pub origin: Point<ScaledPixels>,
+        /// Size in scaled pixels.
+        pub size: crate::Size<ScaledPixels>,
+        /// Color of the glyph.
+        pub color: Hsla,
+    }
+
+    /// Snapshot of scene contents for testing.
+    #[derive(Debug, Default)]
+    pub struct SceneSnapshot {
+        /// All rendered quads.
+        pub quads: Vec<RenderedQuad>,
+        /// All rendered text glyphs.
+        pub glyphs: Vec<RenderedGlyph>,
+        /// Number of shadow primitives.
+        pub shadow_count: usize,
+        /// Number of path primitives.
+        pub path_count: usize,
+        /// Number of underline primitives.
+        pub underline_count: usize,
+        /// Number of polychrome sprites (images, emoji).
+        pub polychrome_sprite_count: usize,
+        /// Number of surface primitives.
+        pub surface_count: usize,
+    }
+
+    impl SceneSnapshot {
+        /// Get unique Y positions of quads, sorted.
+        pub fn quad_y_positions(&self) -> Vec<f32> {
+            let mut positions: Vec<f32> = self.quads.iter().map(|q| q.bounds.origin.y.0).collect();
+            positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            positions.dedup();
+            positions
+        }
+
+        /// Get unique Y positions of glyphs, sorted.
+        pub fn glyph_y_positions(&self) -> Vec<f32> {
+            let mut positions: Vec<f32> = self.glyphs.iter().map(|g| g.origin.y.0).collect();
+            positions.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            positions.dedup();
+            positions
+        }
+
+        /// Find quads within a Y range.
+        pub fn quads_in_y_range(&self, min_y: f32, max_y: f32) -> Vec<&RenderedQuad> {
+            self.quads
+                .iter()
+                .filter(|q| {
+                    let y = q.bounds.origin.y.0;
+                    y >= min_y && y < max_y
+                })
+                .collect()
+        }
+
+        /// Find glyphs within a Y range.
+        pub fn glyphs_in_y_range(&self, min_y: f32, max_y: f32) -> Vec<&RenderedGlyph> {
+            self.glyphs
+                .iter()
+                .filter(|g| {
+                    let y = g.origin.y.0;
+                    y >= min_y && y < max_y
+                })
+                .collect()
+        }
+
+        /// Debug summary string.
+        pub fn summary(&self) -> String {
+            format!(
+                "quads: {}, glyphs: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
+                self.quads.len(),
+                self.glyphs.len(),
+                self.shadow_count,
+                self.path_count,
+                self.underline_count,
+                self.polychrome_sprite_count,
+                self.surface_count,
+            )
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub use test_scene::*;
+
 #[derive(Default)]
 pub(crate) struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
@@ -121,6 +225,36 @@ impl Scene {
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
+        }
+    }
+
+    /// Create a snapshot of the scene for testing.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn snapshot(&self) -> SceneSnapshot {
+        let quads = self.quads.iter().map(|q| {
+            RenderedQuad {
+                bounds: q.bounds,
+                background_color: q.background.as_solid(),
+                border_color: q.border_color,
+            }
+        }).collect();
+
+        let glyphs = self.monochrome_sprites.iter().map(|s| {
+            RenderedGlyph {
+                origin: s.bounds.origin,
+                size: s.bounds.size,
+                color: s.color,
+            }
+        }).collect();
+
+        SceneSnapshot {
+            quads,
+            glyphs,
+            shadow_count: self.shadows.len(),
+            path_count: self.paths.len(),
+            underline_count: self.underlines.len(),
+            polychrome_sprite_count: self.polychrome_sprites.len(),
+            surface_count: self.surfaces.len(),
         }
     }
 
@@ -620,7 +754,7 @@ impl Default for TransformationMatrix {
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub pad: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -638,7 +772,7 @@ impl From<MonochromeSprite> for Primitive {
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub pad: u32,
     pub grayscale: bool,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,

@@ -28,8 +28,8 @@ use crate::{
     AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render,
-    Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds, WindowHandle,
-    WindowOptions,
+    SceneSnapshot, Size, Task, TestDispatcher, TestPlatform, TextSystem, Window, WindowBounds,
+    WindowHandle, WindowOptions,
     app::GpuiMode,
 };
 use rand::{SeedableRng, rngs::StdRng};
@@ -312,6 +312,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
     }
 
     /// Update the root view.
+    /// Automatically draws the window after the update to ensure the scene is current.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R) -> R {
         let result = {
             let mut app = self.app.borrow_mut();
@@ -325,6 +326,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .expect("window not found")
         };
         self.background_executor.run_until_parked();
+        self.draw();
         result
     }
 
@@ -340,7 +342,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .and_then(|w| w.root.clone())
             .and_then(|r| r.downcast::<V>().ok())
             .expect("window or root view not found");
-        f(view.read(&*app), &*app)
+        f(view.read(&app), &app)
     }
 
     /// Get the window title.
@@ -354,6 +356,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
     }
 
     /// Simulate a keystroke.
+    /// Automatically draws the window after the keystroke.
     pub fn simulate_keystroke(&mut self, keystroke: &str) {
         let keystroke = Keystroke::parse(keystroke).unwrap();
         {
@@ -365,6 +368,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .unwrap();
         }
         self.background_executor.run_until_parked();
+        self.draw();
     }
 
     /// Simulate multiple keystrokes (space-separated).
@@ -428,6 +432,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
     }
 
     /// Simulate an input event.
+    /// Automatically draws the window after the event.
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         let platform_input = event.to_platform_input();
         {
@@ -439,9 +444,11 @@ impl<V: 'static + Render> TestAppWindow<V> {
             .unwrap();
         }
         self.background_executor.run_until_parked();
+        self.draw();
     }
 
     /// Simulate resizing the window.
+    /// Automatically draws the window after the resize.
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let window_id = self.handle.window_id();
         let mut app = self.app.borrow_mut();
@@ -452,6 +459,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
         }
         drop(app);
         self.background_executor.run_until_parked();
+        self.draw();
     }
 
     /// Force a redraw of the window.
@@ -462,6 +470,18 @@ impl<V: 'static + Render> TestAppWindow<V> {
             window.draw(cx).clear();
         })
         .unwrap();
+    }
+
+    /// Get a snapshot of the rendered scene for inspection.
+    /// The scene is automatically kept up to date after `update()` and `simulate_*()` calls.
+    pub fn scene_snapshot(&self) -> SceneSnapshot {
+        let app = self.app.borrow();
+        let window = app
+            .windows
+            .get(self.handle.window_id())
+            .and_then(|w| w.as_ref())
+            .expect("window not found");
+        window.rendered_frame.scene.snapshot()
     }
 }
 
