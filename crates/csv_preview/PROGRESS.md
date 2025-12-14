@@ -10,14 +10,6 @@ This document outlines the current state of the POC feature. It might not be the
 
 ## Progress
 
-### Table: Minor UI Tweaks
-
-**Features:**
-- [ ] feat: Make uniform background + add horizontal lines between cells
-- [x] feat: Monospace font (with toggle)
-
-**Fixes:**
-
 ### Table: UI/Behavior
 
 **Features:**
@@ -27,9 +19,20 @@ This document outlines the current state of the POC feature. It might not be the
 - [x] feat: Add performance metrics (timings for ordering, parsing, copying, selection, etc)
 - [ ] feat: Horizontal scroll vs fit all columns
 - [ ] feat: Update column resizing behavior (double-click column boundary to fit to content, again to fit to column name, again to reset)
+- [ ] feat: Add persisting of the state of opened previews on editor restart
+- [ ] feat: Add `CsvPreviewView` settings persistence (probably need to add them to settings.json)
+- [ ] feat: Generalize the preview to support .tsv files (maybe even all files, and prompt user to select format if it's not .csv/.tsv)
 
 **Fixes:**
 - [ ] fix: Horizontal scrolling doesn't work in variable list rendering mode
+
+### Table: Minor UI Tweaks
+
+**Features:**
+- [ ] feat: Make uniform background + add horizontal lines between cells
+- [x] feat: Monospace font (with toggle)
+
+**Fixes:**
 
 ### Row Identifiers (Line Numbers)
 
