@@ -4,7 +4,7 @@
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RealtimePriority, RunnableMeta,
-    RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming, ThreadTaskTimings,
+    RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
 };
 
 use anyhow::Context;
@@ -69,7 +69,7 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
 

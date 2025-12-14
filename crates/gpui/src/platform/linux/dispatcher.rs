@@ -1,6 +1,6 @@
 use crate::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    PriorityQueueSender, RealtimePriority, RunnableVariant, THREAD_TIMINGS, TaskTiming,
     ThreadTaskTimings, profiler,
 };
 use calloop::{
@@ -153,7 +153,7 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));

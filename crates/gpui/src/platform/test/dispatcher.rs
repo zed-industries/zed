@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskLabel};
+use crate::{PlatformDispatcher, Priority, RunnableVariant};
 use parking::Unparker;
 use parking_lot::Mutex;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
@@ -115,7 +115,7 @@ impl PlatformDispatcher for TestDispatcher {
         self.scheduler.clock().now()
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _label: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.scheduler
             .schedule_background_with_priority(runnable, priority);
         self.unpark_all();

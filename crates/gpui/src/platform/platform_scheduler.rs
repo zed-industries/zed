@@ -74,7 +74,7 @@ impl Scheduler for PlatformScheduler {
             Priority::Medium => GpuiPriority::Medium,
             Priority::Low => GpuiPriority::Low,
         };
-        self.dispatcher.dispatch(runnable, None, gpui_priority);
+        self.dispatcher.dispatch(runnable, gpui_priority);
     }
 
     #[track_caller]

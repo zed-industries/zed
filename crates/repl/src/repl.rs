@@ -53,7 +53,7 @@ fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
                     |_| async move { runnable.run() },
                     {
                         let dispatcher = self.dispatcher.clone();
-                        move |r| dispatcher.dispatch(r, None, Priority::default())
+                        move |r| dispatcher.dispatch(r, Priority::default())
                     },
                 );
             wrapper.schedule();

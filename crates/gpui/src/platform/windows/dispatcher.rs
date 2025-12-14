@@ -22,7 +22,7 @@ use windows::{
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
-    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskLabel, TaskTiming,
+    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming,
     ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
@@ -120,7 +120,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         let priority = match priority {
             Priority::Realtime(_) => unreachable!(),
             Priority::High => WorkItemPriority::High,
@@ -128,10 +128,6 @@ impl PlatformDispatcher for WindowsDispatcher {
             Priority::Low => WorkItemPriority::Low,
         };
         self.dispatch_on_threadpool(priority, runnable);
-
-        if let Some(label) = label {
-            log::debug!("TaskLabel: {label:?}");
-        }
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {

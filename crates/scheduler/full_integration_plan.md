@@ -64,6 +64,15 @@ Created `SharedRng` wrapper type that handles locking internally.
 
 `TestDispatcher::simulate_random_delay()` now delegates directly to `TestScheduler::yield_random()`.
 
+### ✅ Phase 4: Remove TaskLabel
+
+Removed the unused `TaskLabel` infrastructure:
+- Removed `TaskLabel` struct and its impl from `gpui/src/executor.rs`
+- Removed `spawn_labeled` method from `BackgroundExecutor`
+- Updated callers to use regular `spawn`
+- Removed `label` parameter from `PlatformDispatcher::dispatch()` trait method
+- Updated all dispatcher implementations (Mac, Linux, Windows, Test, PlatformScheduler)
+
 ---
 
 ## Blocked Phase
@@ -83,20 +92,7 @@ Created `SharedRng` wrapper type that handles locking internally.
 
 ## Next Steps
 
-### 🎯 Phase 4: Remove TaskLabel (Easy cleanup)
-
-`TaskLabel` is defined but unused after removing deprioritization. It can be removed entirely:
-
-1. Remove `TaskLabel` struct from `gpui/src/executor.rs`
-2. Remove `spawn_labeled` method from `BackgroundExecutor`
-3. Update callers to use regular `spawn`:
-   - `crates/buffer_diff/src/buffer_diff.rs` - remove `CALCULATE_DIFF_TASK` usage
-   - `crates/fs/src/fake_git_repo.rs` - remove `LOAD_INDEX_TEXT_TASK`, `LOAD_HEAD_TEXT_TASK` usage
-   - `crates/language/src/buffer.rs` - remove `BUFFER_DIFF_TASK` usage
-4. Remove `label` parameter from `PlatformDispatcher::dispatch()` trait method
-5. Update all dispatcher implementations (Mac, Linux, Windows, Test)
-
-### Phase 5: Create Thin PlatformDispatcher Wrapper for TestScheduler
+### 🎯 Phase 5: Create Thin PlatformDispatcher Wrapper for TestScheduler
 
 Move the `unparkers` mechanism into the scheduler crate, then create a minimal wrapper:
 

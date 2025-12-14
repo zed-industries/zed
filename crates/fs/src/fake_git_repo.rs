@@ -14,20 +14,14 @@ use git::{
         UnmergedStatus,
     },
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
-use std::{
-    path::PathBuf,
-    sync::{Arc, LazyLock},
-};
+use std::{path::PathBuf, sync::Arc};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
-
-pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
-pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -105,7 +99,7 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor
-            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
+            .spawn(async move { fut.await.ok() })
             .boxed()
     }
 
@@ -118,7 +112,7 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor
-            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
+            .spawn(async move { fut.await.ok() })
             .boxed()
     }
 

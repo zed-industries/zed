@@ -62,13 +62,12 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
-    num::NonZeroUsize,
     panic::Location,
     pin::Pin,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::Ordering,
     },
     task::{Context, Poll},
     thread::{self, ThreadId},
@@ -170,30 +169,6 @@ impl<T> Future for Task<T> {
     }
 }
 
-/// A task label is an opaque identifier that you can use to
-/// refer to a task in tests.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TaskLabel(NonZeroUsize);
-
-impl Default for TaskLabel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TaskLabel {
-    /// Construct a new task label.
-    pub fn new() -> Self {
-        static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(
-            NEXT_TASK_LABEL
-                .fetch_add(1, Ordering::SeqCst)
-                .try_into()
-                .unwrap(),
-        )
-    }
-}
-
 type AnyLocalFuture<R> = Pin<Box<dyn 'static + Future<Output = R>>>;
 
 type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
@@ -227,7 +202,7 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        self.spawn_internal::<R>(Box::pin(future), None, priority)
+        self.spawn_internal::<R>(Box::pin(future), priority)
     }
 
     /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.
@@ -275,7 +250,7 @@ impl BackgroundExecutor {
                         future.await
                     },
                     move |runnable| {
-                        dispatcher.dispatch(runnable, None, Priority::default())
+                        dispatcher.dispatch(runnable, Priority::default())
                     },
                 )
         };
@@ -283,25 +258,10 @@ impl BackgroundExecutor {
         task.await
     }
 
-    /// Enqueues the given future to be run to completion on a background thread.
-    /// The given label can be used to control the priority of the task in tests.
-    #[track_caller]
-    pub fn spawn_labeled<R>(
-        &self,
-        label: TaskLabel,
-        future: impl Future<Output = R> + Send + 'static,
-    ) -> Task<R>
-    where
-        R: Send + 'static,
-    {
-        self.spawn_internal::<R>(Box::pin(future), Some(label), Priority::default())
-    }
-
     #[track_caller]
     fn spawn_internal<R: Send + 'static>(
         &self,
         future: AnyFuture<R>,
-        label: Option<TaskLabel>,
         priority: Priority,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
@@ -345,7 +305,7 @@ impl BackgroundExecutor {
                 .metadata(RunnableMeta { location })
                 .spawn(
                     move |_| future,
-                    move |runnable| dispatcher.dispatch(runnable, label, priority),
+                    move |runnable| dispatcher.dispatch(runnable, priority),
                 )
         };
 
