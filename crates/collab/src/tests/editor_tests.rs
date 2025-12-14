@@ -151,7 +151,7 @@ async fn test_host_disconnect(
 
     // Allow client A to reconnect to the server.
     server.allow_connections();
-    cx_a.background_executor.advance_clock(RECEIVE_TIMEOUT);
+    cx_a.background_executor.advance_clock(RECONNECT_TIMEOUT);
 
     // Client B calls client A again after they reconnected.
     let active_call_b = cx_b.read(ActiveCall::global);
