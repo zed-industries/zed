@@ -72,6 +72,7 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 
@@ -536,22 +537,12 @@ impl EditPredictionStore {
         self.edit_prediction_model = model;
     }
 
-    pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
+        self.sweep_ai.api_token.read(cx).has_key()
     }
 
-    pub fn has_mercury_api_token(&self) -> bool {
-        self.mercury
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_mercury_api_token(&self, cx: &App) -> bool {
+        self.mercury.api_token.read(cx).has_key()
     }
 
     #[cfg(feature = "cli-support")]
@@ -586,10 +577,11 @@ impl EditPredictionStore {
     pub fn edit_history_for_project(
         &self,
         project: &Entity<Project>,
+        cx: &App,
     ) -> Vec<Arc<zeta_prompt::Event>> {
         self.projects
             .get(&project.entity_id())
-            .map(|project_state| project_state.events.iter().cloned().collect())
+            .map(|project_state| project_state.events(cx))
             .unwrap_or_default()
     }
 

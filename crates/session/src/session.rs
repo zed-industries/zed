@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{
-    App, AppContext as _, Context, Subscription, Task,
-    WindowId,
-};
+use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
 
 pub struct Session {
