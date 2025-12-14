@@ -571,6 +571,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
+                let model_cost = model_info
+                    .model
+                    .model_cost_info()
+                    .clone()
+                    .map(|cost| cost.to_shared_string());
+
                 let is_favorite = model_info.is_favorite;
                 let handle_action_click = {
                     let model = model_info.model.clone();
@@ -590,6 +596,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .is_selected(is_selected)
                         .is_focused(selected)
                         .is_favorite(is_favorite)
+                        .cost_info(model_cost)
                         .on_toggle_favorite(handle_action_click)
                         .into_any_element(),
                 )
