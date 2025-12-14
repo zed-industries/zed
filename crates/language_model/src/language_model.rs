@@ -612,6 +612,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Returns whether this model or provider supports streaming tool calls;
+    fn supports_streaming_tools(&self) -> bool {
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
@@ -765,6 +770,21 @@ pub trait LanguageModelExt: LanguageModel {
     }
 }
 impl LanguageModelExt for dyn LanguageModel {}
+
+impl std::fmt::Debug for dyn LanguageModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("<dyn LanguageModel>")
+            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("provider_id", &self.provider_id())
+            .field("provider_name", &self.provider_name())
+            .field("upstream_provider_name", &self.upstream_provider_name())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("supports_streaming_tools", &self.supports_streaming_tools())
+            .finish()
+    }
+}
 
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
