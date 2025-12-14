@@ -38,7 +38,9 @@ pub fn disable_dispatcher_logging() {
 
 fn check_dispatcher_log_init() {
     if !DISPATCHER_LOG_INITIALIZED.load(Ordering::Relaxed) {
-        let enabled = std::env::var("DEBUG_SCHEDULER").map(|v| v == "1").unwrap_or(false);
+        let enabled = std::env::var("DEBUG_SCHEDULER")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         DISPATCHER_LOG_ENABLED.store(enabled, Ordering::SeqCst);
         DISPATCHER_LOG_INITIALIZED.store(true, Ordering::SeqCst);
         if enabled {
@@ -225,7 +227,11 @@ impl TestDispatcher {
             if deprioritized_background_len == 0 {
                 dispatcher_log!(
                     "tick() -> false (no tasks) | fg={} bg={} depri={} delayed={} unparkers={}",
-                    foreground_len, background_len, deprioritized_len, delayed_len, unparkers_count
+                    foreground_len,
+                    background_len,
+                    deprioritized_len,
+                    delayed_len,
+                    unparkers_count
                 );
                 return false;
             }
@@ -238,7 +244,11 @@ impl TestDispatcher {
             task_source = "deprioritized";
             dispatcher_log!(
                 "tick() selecting deprioritized[{}] of {} | fg={} bg={} delayed={}",
-                ix, deprioritized_background_len, foreground_len, background_len, delayed_len
+                ix,
+                deprioritized_background_len,
+                foreground_len,
+                background_len,
+                delayed_len
             );
             runnable = state.deprioritized_background.swap_remove(ix);
         } else {
@@ -260,16 +270,23 @@ impl TestDispatcher {
                     .unwrap();
                 dispatcher_log!(
                     "tick() selecting foreground (ratio {}/{}) | fg={} bg={} delayed={}",
-                    foreground_len, foreground_len + background_len,
-                    foreground_len - 1, background_len, delayed_len
+                    foreground_len,
+                    foreground_len + background_len,
+                    foreground_len - 1,
+                    background_len,
+                    delayed_len
                 );
             } else {
                 task_source = "background";
                 let ix = self.scheduler.rng().lock().random_range(0..background_len);
                 dispatcher_log!(
                     "tick() selecting background[{}] (ratio {}/{}) | fg={} bg={} delayed={}",
-                    ix, foreground_len, foreground_len + background_len,
-                    foreground_len, background_len - 1, delayed_len
+                    ix,
+                    foreground_len,
+                    foreground_len + background_len,
+                    foreground_len,
+                    background_len - 1,
+                    delayed_len
                 );
                 runnable = state.background.swap_remove(ix);
             };
@@ -303,7 +320,9 @@ impl TestDispatcher {
 
         dispatcher_log!(
             "tick() RUNNING {} task from {} | main_thread={} | exec_count={} exec_hash={:016x}",
-            task_source, location_str, main_thread,
+            task_source,
+            location_str,
+            main_thread,
             self.state.lock().execution_count,
             self.state.lock().execution_hash
         );
@@ -484,7 +503,8 @@ impl PlatformDispatcher for TestDispatcher {
         };
         dispatcher_log!(
             "dispatch() | bg_len={} unparkers_at_dispatch={} (about to unpark_all)",
-            bg_len, unparkers_before
+            bg_len,
+            unparkers_before
         );
         self.unpark_all();
     }
@@ -503,7 +523,8 @@ impl PlatformDispatcher for TestDispatcher {
         };
         dispatcher_log!(
             "dispatch_on_main_thread() | fg_len={} unparkers_at_dispatch={} (about to unpark_all)",
-            fg_len, unparkers_before
+            fg_len,
+            unparkers_before
         );
         self.unpark_all();
     }

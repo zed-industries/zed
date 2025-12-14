@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicU64;
 static DEBUG_SCHEDULER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(any(test, feature = "test-support"))]
-static DEBUG_SCHEDULER_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DEBUG_SCHEDULER_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(any(test, feature = "test-support"))]
 static THREAD_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -33,7 +34,9 @@ pub fn disable_scheduler_debugging() {
 fn debug_log(msg: &str) {
     // Initialize from environment variable on first call
     if !DEBUG_SCHEDULER_INITIALIZED.load(std::sync::atomic::Ordering::Relaxed) {
-        let enabled = std::env::var("DEBUG_SCHEDULER").map(|v| v == "1").unwrap_or(false);
+        let enabled = std::env::var("DEBUG_SCHEDULER")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         DEBUG_SCHEDULER.store(enabled, std::sync::atomic::Ordering::SeqCst);
         DEBUG_SCHEDULER_INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
         if enabled {
@@ -523,7 +526,10 @@ impl BackgroundExecutor {
                         if !dispatcher.parking_allowed() {
                             debug_log("parking NOT allowed, checking delayed tasks");
                             let advanced = dispatcher.advance_clock_to_next_delayed();
-                            debug_log(&format!("advance_clock_to_next_delayed() returned {}", advanced));
+                            debug_log(&format!(
+                                "advance_clock_to_next_delayed() returned {}",
+                                advanced
+                            ));
                             if advanced {
                                 continue;
                             }
@@ -542,10 +548,16 @@ impl BackgroundExecutor {
                         }
 
                         let unparker_count_before = dispatcher.unparker_count();
-                        debug_log(&format!("pushing unparker (count before: {})", unparker_count_before));
+                        debug_log(&format!(
+                            "pushing unparker (count before: {})",
+                            unparker_count_before
+                        ));
                         dispatcher.push_unparker(unparker.clone());
                         let unparker_count_after = dispatcher.unparker_count();
-                        debug_log(&format!("pushed unparker (count after: {}), about to park_timeout(1ms)", unparker_count_after));
+                        debug_log(&format!(
+                            "pushed unparker (count after: {}), about to park_timeout(1ms)",
+                            unparker_count_after
+                        ));
 
                         let park_start = Instant::now();
                         parker.park_timeout(Duration::from_millis(1));

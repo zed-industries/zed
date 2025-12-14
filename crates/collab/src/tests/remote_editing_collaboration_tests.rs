@@ -671,7 +671,9 @@ async fn test_remote_server_debugger(
 
     eprintln!("[DEBUG] test_remote_server_debugger: calling start_debug_session");
     let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
-    eprintln!("[DEBUG] test_remote_server_debugger: start_debug_session returned, calling run_until_parked (2)");
+    eprintln!(
+        "[DEBUG] test_remote_server_debugger: start_debug_session returned, calling run_until_parked (2)"
+    );
     cx_a.run_until_parked();
     eprintln!("[DEBUG] test_remote_server_debugger: run_until_parked (2) done");
     debug_panel.update(cx_a, |debug_panel, cx| {
