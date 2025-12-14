@@ -5157,6 +5157,36 @@ impl Editor {
             return;
         }
 
+        // Collect linked ranges for deletion when selections are non-empty
+        // This handles vim commands like ciw, diw that select text and then delete it
+        let mut linked_ranges_for_deletion =
+            HashMap::<Entity<language::Buffer>, Vec<Range<text::Anchor>>>::default();
+        if !self.linked_edit_ranges.is_empty() {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let selections = self.selections.all::<multi_buffer::MultiBufferPoint>(&display_map);
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+
+            for selection in selections.iter() {
+                if !selection.is_empty() {
+                    let selection_start = snapshot.anchor_before(selection.start).text_anchor;
+                    let selection_end = snapshot.anchor_after(selection.end).text_anchor;
+                    if selection_start.buffer_id != selection_end.buffer_id {
+                        continue;
+                    }
+                    if let Some(ranges) =
+                        self.linked_editing_ranges_for(selection_start..selection_end, cx)
+                    {
+                        for (buffer, entries) in ranges {
+                            linked_ranges_for_deletion
+                                .entry(buffer)
+                                .or_default()
+                                .extend(entries);
+                        }
+                    }
+                }
+            }
+        }
+
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
@@ -5184,6 +5214,25 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select_anchors(selection_anchors);
             });
+
+            // Apply deletion to linked ranges
+            let empty_str: Arc<str> = Arc::from("");
+            for (buffer, edits) in linked_ranges_for_deletion {
+                let snapshot = buffer.read(cx).snapshot();
+                use text::ToPoint as TP;
+
+                let edits = edits
+                    .into_iter()
+                    .map(|range| {
+                        let start_point = TP::to_point(&range.start, &snapshot);
+                        let end_point = TP::to_point(&range.end, &snapshot);
+                        (start_point..end_point, empty_str.clone())
+                    })
+                    .collect::<Vec<_>>();
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+            }
 
             cx.notify();
         });
@@ -10283,27 +10332,6 @@ impl Editor {
 
             let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-            let mut linked_ranges = HashMap::<_, Vec<_>>::default();
-            if !this.linked_edit_ranges.is_empty() {
-                let selections = this.selections.all::<MultiBufferPoint>(&display_map);
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-
-                for selection in selections.iter() {
-                    let selection_start = snapshot.anchor_before(selection.start).text_anchor;
-                    let selection_end = snapshot.anchor_after(selection.end).text_anchor;
-                    if selection_start.buffer_id != selection_end.buffer_id {
-                        continue;
-                    }
-                    if let Some(ranges) =
-                        this.linked_editing_ranges_for(selection_start..selection_end, cx)
-                    {
-                        for (buffer, entries) in ranges {
-                            linked_ranges.entry(buffer).or_default().extend(entries);
-                        }
-                    }
-                }
-            }
-
             let mut selections = this.selections.all::<MultiBufferPoint>(&display_map);
             for selection in &mut selections {
                 if selection.is_empty() {
@@ -10340,34 +10368,7 @@ impl Editor {
 
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
-            let empty_str: Arc<str> = Arc::from("");
-            for (buffer, edits) in linked_ranges {
-                let snapshot = buffer.read(cx).snapshot();
-                use text::ToPoint as TP;
-
-                let edits = edits
-                    .into_iter()
-                    .map(|range| {
-                        let end_point = TP::to_point(&range.end, &snapshot);
-                        let mut start_point = TP::to_point(&range.start, &snapshot);
-
-                        if end_point == start_point {
-                            let offset = text::ToOffset::to_offset(&range.start, &snapshot)
-                                .saturating_sub(1);
-                            start_point =
-                                snapshot.clip_point(TP::to_point(&offset, &snapshot), Bias::Left);
-                        };
-
-                        (start_point..end_point, empty_str.clone())
-                    })
-                    .sorted_by_key(|(range, _)| range.start)
-                    .collect::<Vec<_>>();
-                buffer.update(cx, |this, cx| {
-                    this.edit(edits, None, cx);
-                })
-            }
             this.refresh_edit_prediction(true, false, window, cx);
-            refresh_linked_ranges(this, window, cx);
         });
     }
 
