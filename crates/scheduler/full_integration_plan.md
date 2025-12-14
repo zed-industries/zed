@@ -113,19 +113,25 @@ Created `SharedRng` wrapper type that handles locking internally:
 - `SharedRng::lock()` - for cases needing `&mut Rng` (e.g., `slice::choose()`)
 - Updated `TestScheduler::rng()` and `BackgroundExecutor::rng()` to return `SharedRng`
 
-### Phase 2: Move Unparkers to TestScheduler
+### 🔶 Phase 2: Delegate block_internal to scheduler.block() (BLOCKED - needs investigation)
 
-Move the unparker mechanism into TestScheduler to unify blocking between GPUI's `block_internal` and scheduler's `block`:
+**Attempted:** Tried to have GPUI's `block_internal` delegate to `scheduler.block()` instead of maintaining its own polling loop.
 
-```rust
-impl TestScheduler {
-    pub fn push_unparker(&self, unparker: Unparker);
-    pub fn unpark_all(&self);
-    pub fn unparker_count(&self) -> usize;
-}
-```
+**Problem:** The scheduler's `blocked_sessions` mechanism prevents foreground tasks from the blocked session from running during `step_filtered()` calls. This breaks tests that call `run_until_parked()` inside an async test:
 
-Call `unpark_all()` when tasks are scheduled in `schedule_foreground()` and `schedule_background()`.
+1. `block_test` calls `scheduler.block(session_id, future)` 
+2. Scheduler adds `session_id` to `blocked_sessions`
+3. Inside the async test, `cx.executor().run_until_parked()` is called
+4. `run_until_parked` calls `tick()` → `step_filtered()`
+5. `step_filtered` skips tasks from blocked sessions
+6. Foreground tasks for the test's session don't run → test fails
+
+**Current workaround:** GPUI keeps its own `block_internal` implementation that uses `tick()` directly. This works because `tick()` doesn't involve the `blocked_sessions` mechanism - only the scheduler's internal `block()` does.
+
+**Possible solutions to investigate:**
+- Have the scheduler distinguish between "internal stepping during block()" vs "user-initiated tick()" and only apply `blocked_sessions` filtering to the former
+- Temporarily remove session from `blocked_sessions` while polling the user's future, only blocking during internal step() calls
+- Rethink the `blocked_sessions` mechanism entirely
 
 ### Phase 3: Move simulate_random_delay to TestScheduler
 
@@ -176,6 +182,12 @@ For production (Mac/Linux/Windows), either:
 3. No duplicate task queue management between GPUI and scheduler
 4. All existing tests pass
 5. Minimal code in GPUI for test scheduling support
+
+## Notes
+
+- The `blocked_sessions` mechanism in TestScheduler is designed to prevent re-entrancy during the internal stepping of `block()`, but it currently interferes with user code that calls `tick()` from within a blocked future. This needs further investigation.
+- GPUI's `block_internal` has complex requirements around parking, unparking, and timeout handling that need consideration when integrating with the scheduler's `block()` API.
+- The current architecture where GPUI uses `tick()` directly in its polling loop works correctly and avoids the `blocked_sessions` issue, but is not the final desired state.
 
 ---
 
