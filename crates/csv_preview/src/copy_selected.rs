@@ -1,6 +1,6 @@
 use gpui::ClipboardItem;
-use ui::{Context, Window};
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use ui::{Context, SharedString, Window};
+use workspace::{Toast, Workspace, notifications::NotificationId, shared_screen::SharedScreen};
 
 use std::collections::BTreeMap;
 
@@ -18,6 +18,8 @@ impl CsvPreviewView {
         if selected_cells.is_empty() {
             return;
         }
+        let copy_format = self.settings.copy_format;
+        let full_content = &self.contents;
 
         // Group selected cells by row, then by column for proper TSV formatting
         let mut rows_data: BTreeMap<usize, BTreeMap<usize, String>> = BTreeMap::new();
@@ -26,7 +28,7 @@ impl CsvPreviewView {
             let row_idx = cell_id.row.get();
             let col_idx = cell_id.col;
 
-            if let Some(row) = self.contents.rows.get(row_idx) {
+            if let Some(row) = (&full_content.rows).get(row_idx) {
                 let cell_content = row
                     .get(col_idx)
                     .map(|s| s.as_ref().to_string())
@@ -41,43 +43,42 @@ impl CsvPreviewView {
 
         // Calculate rectangle dimensions and empty cells for toast message
         let selected_cell_count = selected_cells.len();
-        let (rectangle_dimensions, empty_cells_count) =
-            if self.settings.copy_format == CopyFormat::Markdown {
-                // For markdown, use the selected columns approach
-                let mut selected_columns: HashSet<usize> = HashSet::new();
-                for columns in rows_data.values() {
-                    selected_columns.extend(columns.keys());
+        let (rectangle_dimensions, empty_cells_count) = if copy_format == CopyFormat::Markdown {
+            // For markdown, use the selected columns approach
+            let mut selected_columns: HashSet<usize> = HashSet::new();
+            for columns in rows_data.values() {
+                selected_columns.extend(columns.keys());
+            }
+            let cols = selected_columns.len();
+            let rows = rows_data.len();
+            let total_cells = rows * cols;
+            let empty_cells = total_cells - selected_cell_count;
+            ((rows, cols), empty_cells)
+        } else {
+            // For CSV/TSV, calculate global column range
+            let mut global_min_col = usize::MAX;
+            let mut global_max_col = 0;
+            for columns in rows_data.values() {
+                if !columns.is_empty() {
+                    let row_min = *columns.keys().next().unwrap();
+                    let row_max = *columns.keys().last().unwrap();
+                    global_min_col = global_min_col.min(row_min);
+                    global_max_col = global_max_col.max(row_max);
                 }
-                let cols = selected_columns.len();
-                let rows = rows_data.len();
-                let total_cells = rows * cols;
-                let empty_cells = total_cells - selected_cell_count;
-                ((rows, cols), empty_cells)
+            }
+            let cols = if global_min_col <= global_max_col {
+                global_max_col - global_min_col + 1
             } else {
-                // For CSV/TSV, calculate global column range
-                let mut global_min_col = usize::MAX;
-                let mut global_max_col = 0;
-                for columns in rows_data.values() {
-                    if !columns.is_empty() {
-                        let row_min = *columns.keys().next().unwrap();
-                        let row_max = *columns.keys().last().unwrap();
-                        global_min_col = global_min_col.min(row_min);
-                        global_max_col = global_max_col.max(row_max);
-                    }
-                }
-                let cols = if global_min_col <= global_max_col {
-                    global_max_col - global_min_col + 1
-                } else {
-                    0
-                };
-                let rows = rows_data.len();
-                let total_cells = rows * cols;
-                let empty_cells = total_cells - selected_cell_count;
-                ((rows, cols), empty_cells)
+                0
             };
+            let rows = rows_data.len();
+            let total_cells = rows * cols;
+            let empty_cells = total_cells - selected_cell_count;
+            ((rows, cols), empty_cells)
+        };
 
-        let content = if self.settings.copy_format == CopyFormat::Markdown {
-            self.format_as_markdown_table(&rows_data)
+        let content = if copy_format == CopyFormat::Markdown {
+            format_as_markdown_table(&full_content.headers, &rows_data)
         } else {
             // Build CSV/TSV format: determine global column range for entire selection
             let mut lines = Vec::new();
@@ -106,7 +107,7 @@ impl CsvPreviewView {
                     row_cells.push(cell_value);
                 }
 
-                let separator = match self.settings.copy_format {
+                let separator = match copy_format {
                     CopyFormat::Tsv => "\t",
                     CopyFormat::Csv => ",",
                     CopyFormat::Semicolon => ";",
@@ -114,7 +115,7 @@ impl CsvPreviewView {
                 };
 
                 // Escape cells if they contain separators, quotes, or newlines
-                let formatted_cells: Vec<String> = match self.settings.copy_format {
+                let formatted_cells: Vec<String> = match copy_format {
                     CopyFormat::Tsv => row_cells
                         .into_iter()
                         .map(|cell| {
@@ -157,7 +158,7 @@ impl CsvPreviewView {
 
         // Show toast notification
         if let Some(Some(workspace)) = window.root() {
-            let format_name = match self.settings.copy_format {
+            let format_name = match copy_format {
                 CopyFormat::Tsv => "TSV",
                 CopyFormat::Csv => "CSV",
                 CopyFormat::Semicolon => "Semicolon",
@@ -188,61 +189,59 @@ impl CsvPreviewView {
             });
         }
     }
+}
 
-    fn format_as_markdown_table(
-        &self,
-        rows_data: &BTreeMap<usize, BTreeMap<usize, String>>,
-    ) -> String {
-        if rows_data.is_empty() {
-            return String::new();
-        }
+fn format_as_markdown_table(
+    all_table_headers: &[SharedString],
+    rows_data: &BTreeMap<usize, BTreeMap<usize, String>>,
+) -> String {
+    if rows_data.is_empty() {
+        return String::new();
+    }
 
-        // Determine which columns are selected
-        let mut selected_columns: HashSet<usize> = HashSet::new();
-        for columns in rows_data.values() {
-            selected_columns.extend(columns.keys());
-        }
-        let mut sorted_columns: Vec<usize> = selected_columns.into_iter().collect();
-        sorted_columns.sort();
+    // Determine which columns are selected
+    let mut selected_columns: HashSet<usize> = HashSet::new();
+    for columns in rows_data.values() {
+        selected_columns.extend(columns.keys());
+    }
+    let mut sorted_columns: Vec<usize> = selected_columns.into_iter().collect();
+    sorted_columns.sort();
 
-        // Build header row with column names
-        let mut markdown_lines = Vec::new();
-        let header_cells: Vec<String> = sorted_columns
+    // Build header row with column names
+    let mut markdown_lines = Vec::new();
+    let header_cells: Vec<String> = sorted_columns
+        .iter()
+        .map(|&col_idx| {
+            all_table_headers
+                .get(col_idx)
+                .map(|h| h.as_ref().replace('\n', "<br>").replace('|', "\\|"))
+                .unwrap_or_else(|| format!("Col {}", col_idx + 1))
+        })
+        .collect();
+
+    // Add header row
+    markdown_lines.push(format!("| {} |", header_cells.join(" | ")));
+
+    // Add separator row
+    let separator_cells: Vec<String> = sorted_columns.iter().map(|_| "---".to_string()).collect();
+    markdown_lines.push(format!("| {} |", separator_cells.join(" | ")));
+
+    // Add data rows
+    for (_row_idx, columns) in rows_data {
+        let data_cells: Vec<String> = sorted_columns
             .iter()
             .map(|&col_idx| {
-                self.contents
-                    .headers
-                    .get(col_idx)
-                    .map(|h| h.as_ref().replace('\n', "<br>").replace('|', "\\|"))
-                    .unwrap_or_else(|| format!("Col {}", col_idx + 1))
+                columns
+                    .get(&col_idx)
+                    .cloned()
+                    .unwrap_or_default()
+                    .replace('\n', "<br>")
+                    .replace('|', "\\|")
             })
             .collect();
 
-        // Add header row
-        markdown_lines.push(format!("| {} |", header_cells.join(" | ")));
-
-        // Add separator row
-        let separator_cells: Vec<String> =
-            sorted_columns.iter().map(|_| "---".to_string()).collect();
-        markdown_lines.push(format!("| {} |", separator_cells.join(" | ")));
-
-        // Add data rows
-        for (_row_idx, columns) in rows_data {
-            let data_cells: Vec<String> = sorted_columns
-                .iter()
-                .map(|&col_idx| {
-                    columns
-                        .get(&col_idx)
-                        .cloned()
-                        .unwrap_or_default()
-                        .replace('\n', "<br>")
-                        .replace('|', "\\|")
-                })
-                .collect();
-
-            markdown_lines.push(format!("| {} |", data_cells.join(" | ")));
-        }
-
-        markdown_lines.join("\n")
+        markdown_lines.push(format!("| {} |", data_cells.join(" | ")));
     }
+
+    markdown_lines.join("\n")
 }
