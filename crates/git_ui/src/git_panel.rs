@@ -3227,11 +3227,6 @@ impl GitPanel {
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
 
-        let mut changed_entries = Vec::new();
-        let mut new_entries = Vec::new();
-        let mut conflict_entries = Vec::new();
-        let mut single_staged_entry = None;
-        let mut staged_count = 0;
         let mut seen_directories = HashSet::default();
         let mut max_width_estimate = 0usize;
         let mut max_width_item_index = None;
@@ -3244,70 +3239,8 @@ impl GitPanel {
 
         let repo = repo.read(cx);
 
-        self.stash_entries = repo.cached_stash();
-
-        for entry in repo.cached_status() {
-            self.changes_count += 1;
-            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
-            let is_new = entry.status.is_created();
-            let staging = entry.status.staging();
-
-            if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
-                && pending
-                    .ops
-                    .iter()
-                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished())
-            {
-                continue;
-            }
-
-            let entry = GitStatusEntry {
-                repo_path: entry.repo_path.clone(),
-                status: entry.status,
-                staging,
-            };
-
-            if staging.has_staged() {
-                staged_count += 1;
-                single_staged_entry = Some(entry.clone());
-            }
-
-            if group_by_status && is_conflict {
-                conflict_entries.push(entry);
-            } else if group_by_status && is_new {
-                new_entries.push(entry);
-            } else {
-                changed_entries.push(entry);
-            }
-        }
-
-        if conflict_entries.is_empty() {
-            if staged_count == 1
-                && let Some(entry) = single_staged_entry.as_ref()
-            {
-                if let Some(ops) = repo.pending_ops_for_path(&entry.repo_path) {
-                    if ops.staged() {
-                        self.single_staged_entry = single_staged_entry;
-                    }
-                } else {
-                    self.single_staged_entry = single_staged_entry;
-                }
-            } else if repo.pending_ops_summary().item_summary.staging_count == 1
-                && let Some(ops) = repo.pending_ops().find(|ops| ops.staging())
-            {
-                self.single_staged_entry =
-                    repo.status_for_path(&ops.repo_path)
-                        .map(|status| GitStatusEntry {
-                            repo_path: ops.repo_path.clone(),
-                            status: status.status,
-                            staging: StageStatus::Staged,
-                        });
-            }
-        }
-
-        if conflict_entries.is_empty() && changed_entries.len() == 1 {
-            self.single_tracked_entry = changed_entries.first().cloned();
-        }
+        let [mut changed_entries, mut new_entries, mut conflict_entries] =
+            self.collect_entries(repo, group_by_status);
 
         let mut push_entry =
             |this: &mut Self,
@@ -3443,6 +3376,85 @@ impl GitPanel {
         });
 
         cx.notify();
+    }
+
+    fn collect_entries(
+        &mut self,
+        repo: &Repository,
+        group_by_status: bool,
+    ) -> [Vec<GitStatusEntry>; 3] {
+        let mut changed_entries = Vec::new();
+        let mut new_entries = Vec::new();
+        let mut conflict_entries = Vec::new();
+        let mut single_staged_entry = None;
+        let mut staged_count = 0;
+
+        self.stash_entries = repo.cached_stash();
+
+        for entry in repo.cached_status() {
+            self.changes_count += 1;
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
+            let is_new = entry.status.is_created();
+            let staging = entry.status.staging();
+
+            if let Some(pending) = repo.pending_ops_for_path(&entry.repo_path)
+                && pending
+                    .ops
+                    .iter()
+                    .any(|op| op.git_status == pending_op::GitStatus::Reverted && op.finished())
+            {
+                continue;
+            }
+
+            let entry = GitStatusEntry {
+                repo_path: entry.repo_path.clone(),
+                status: entry.status,
+                staging,
+            };
+
+            if staging.has_staged() {
+                staged_count += 1;
+                single_staged_entry = Some(entry.clone());
+            }
+
+            if group_by_status && is_conflict {
+                conflict_entries.push(entry);
+            } else if group_by_status && is_new {
+                new_entries.push(entry);
+            } else {
+                changed_entries.push(entry);
+            }
+        }
+
+        if conflict_entries.is_empty() {
+            if staged_count == 1
+                && let Some(entry) = single_staged_entry.as_ref()
+            {
+                if let Some(ops) = repo.pending_ops_for_path(&entry.repo_path) {
+                    if ops.staged() {
+                        self.single_staged_entry = single_staged_entry;
+                    }
+                } else {
+                    self.single_staged_entry = single_staged_entry;
+                }
+            } else if repo.pending_ops_summary().item_summary.staging_count == 1
+                && let Some(ops) = repo.pending_ops().find(|ops| ops.staging())
+            {
+                self.single_staged_entry =
+                    repo.status_for_path(&ops.repo_path)
+                        .map(|status| GitStatusEntry {
+                            repo_path: ops.repo_path.clone(),
+                            status: status.status,
+                            staging: StageStatus::Staged,
+                        });
+            }
+        }
+
+        if conflict_entries.is_empty() && changed_entries.len() == 1 {
+            self.single_tracked_entry = changed_entries.first().cloned();
+        }
+
+        [changed_entries, new_entries, conflict_entries]
     }
 
     fn header_state(&self, header_type: Section) -> ToggleState {
