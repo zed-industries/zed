@@ -71,7 +71,7 @@ impl TableSelection {
     }
 
     /// Start cell selection with option to preserve existing selection (cumulative).
-    pub fn start_selection_with_cumulative(
+    pub fn start_mouse_selection(
         &mut self,
         display_row: DisplayRow,
         col: AnyColumn,
@@ -96,7 +96,7 @@ impl TableSelection {
     }
 
     /// Extend selection rectangle from start to current position.
-    pub fn extend_selection_to(
+    pub fn extend_mouse_selection(
         &mut self,
         display_row: DisplayRow,
         col: AnyColumn,
@@ -131,7 +131,7 @@ impl TableSelection {
     }
 
     /// End cell selection (user stopped dragging)
-    pub fn end_selection(&mut self) {
+    pub fn end_mouse_selection(&mut self) {
         self.is_selecting = false;
     }
 

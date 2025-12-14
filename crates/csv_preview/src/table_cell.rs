@@ -100,7 +100,7 @@ impl CsvPreviewView {
                 view.update(cx, |this, cx| {
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.selection.start_selection_with_cumulative(
+                    this.selection.start_mouse_selection(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
@@ -113,14 +113,24 @@ impl CsvPreviewView {
         // Called when user moves mouse over a cell (for drag selection)
         .on_mouse_move({
             let view = view_entity.clone();
-            move |_event, window, cx| {
+            move |event, window, cx| {
                 view.update(cx, |this, cx| {
                     if !this.selection.is_selecting() {
                         return;
                     }
+                    if !event.dragging() {
+                        // Workaround to stop selection if:
+                        // 1. mouse was dragging,
+                        // 2. went outside of table bounds
+                        // 3. released lmb
+                        // 4. returned back.
+                        // Without this guard, it keeps extending selection despite not dragging anymore
+                        this.selection.end_mouse_selection();
+                        return;
+                    }
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
-                    this.selection.extend_selection_to(
+                    this.selection.extend_mouse_selection(
                         display_cell_id.row,
                         display_cell_id.col,
                         &ordered_indices,
@@ -135,7 +145,7 @@ impl CsvPreviewView {
             let view = view_entity;
             move |_event, _window, cx| {
                 view.update(cx, |this, cx| {
-                    this.selection.end_selection();
+                    this.selection.end_mouse_selection();
                     cx.notify();
                 });
             }
