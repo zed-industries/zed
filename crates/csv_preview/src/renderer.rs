@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use gpui::MouseButton;
 use ui::{div, prelude::*};
 
 use crate::{CsvPreviewView, KEY_CONTEXT_NAME, settings::FontType};
@@ -55,16 +54,6 @@ impl Render for CsvPreviewView {
                         .into_any_element()
                 } else {
                     self.render_table_with_cols(cx)
-                }
-            })
-            // Workaround to be able to `end_selection`, when cursor is not over selectable cell, but within the table
-            .on_mouse_up(MouseButton::Left, {
-                let view = cx.entity();
-                move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.selection.end_selection();
-                        cx.notify();
-                    });
                 }
             });
 
