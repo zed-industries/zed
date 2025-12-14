@@ -6,14 +6,14 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
+    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
     Animation, AnimationExt as _, AppContext, ClipboardEntry, Context, Empty, Entity, EntityId,
-    Image, ImageFormat, Img, SharedString, Subscription, Task, WeakEntity, pulsating_between,
+    Image, ImageFormat, Img, SharedString, Task, WeakEntity, pulsating_between,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -58,40 +58,23 @@ pub struct MentionImage {
 }
 
 pub struct MentionSet {
-    editor: Entity<Editor>,
     project: WeakEntity<Project>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
-    _editor_subscription: Subscription,
 }
 
 impl MentionSet {
     pub fn new(
-        editor: Entity<Editor>,
         project: WeakEntity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
     ) -> Self {
-        let editor_subscription =
-            cx.subscribe_in(&editor, window, move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event
-                    && !editor.read(cx).read_only(cx)
-                {
-                    let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-                    this.remove_invalid(snapshot);
-                }
-            });
-
         Self {
-            editor,
             project,
             history_store,
             prompt_store,
             mentions: HashMap::default(),
-            _editor_subscription: editor_subscription,
         }
     }
 
@@ -122,9 +105,9 @@ impl MentionSet {
         })
     }
 
-    fn remove_invalid(&mut self, snapshot: EditorSnapshot) {
+    pub fn remove_invalid(&mut self, snapshot: &EditorSnapshot) {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-            if !crease.range().start.is_valid(&snapshot.buffer_snapshot()) {
+            if !crease.range().start.is_valid(snapshot.buffer_snapshot()) {
                 self.mentions.remove(&crease_id);
             }
         }
@@ -146,7 +129,11 @@ impl MentionSet {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
-    pub fn remove_all(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
+    pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
+        self.mentions = mentions;
+    }
+
+    pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
         self.mentions.drain()
     }
 
@@ -157,6 +144,7 @@ impl MentionSet {
         content_len: usize,
         mention_uri: MentionUri,
         supports_images: bool,
+        editor: Entity<Editor>,
         workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -165,9 +153,7 @@ impl MentionSet {
             return Task::ready(());
         };
 
-        let snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
         let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
@@ -206,7 +192,7 @@ impl MentionSet {
                 mention_uri.name().into(),
                 IconName::Image.path().into(),
                 Some(image),
-                self.editor.clone(),
+                editor.clone(),
                 window,
                 cx,
             )
@@ -218,7 +204,7 @@ impl MentionSet {
                 crease_text,
                 mention_uri.icon_path(cx),
                 None,
-                self.editor.clone(),
+                editor.clone(),
                 window,
                 cx,
             )
@@ -265,7 +251,7 @@ impl MentionSet {
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
-                    this.editor.update(cx, |editor, cx| {
+                    editor.update(cx, |editor, cx| {
                         // Remove mention
                         editor.edit([(start_anchor..end_anchor, "")], cx);
                     });
@@ -405,6 +391,7 @@ impl MentionSet {
         &mut self,
         source_range: Range<text::Anchor>,
         selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
+        editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -412,7 +399,7 @@ impl MentionSet {
             return;
         };
 
-        let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
@@ -443,10 +430,10 @@ impl MentionSet {
                 selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
                 range,
-                self.editor.downgrade(),
+                editor.downgrade(),
             );
 
-            let crease_id = self.editor.update(cx, |editor, cx| {
+            let crease_id = editor.update(cx, |editor, cx| {
                 let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
                 editor.fold_creases(vec![crease], false, window, cx);
                 crease_ids.first().copied().unwrap()
@@ -471,7 +458,6 @@ impl MentionSet {
         // expected. We're leveraging `cx.on_next_frame` to wait 2 frames and
         // ensure that the layout has been recalculated so that the autoscroll
         // request actually shows the cursor's new position.
-        let editor = self.editor.clone();
         cx.on_next_frame(window, move |_, window, cx| {
             cx.on_next_frame(window, move |_, _, cx| {
                 editor.update(cx, |editor, cx| {

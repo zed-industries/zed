@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use collections::HashMap;
-use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
+use gpui::{AbsoluteLength, FontFeatures, FontWeight, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -96,8 +96,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub font_weight: Option<f32>,
+    pub font_weight: Option<FontWeight>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
@@ -222,10 +221,11 @@ pub enum Shell {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
-    /// Use the current file's project directory.  Will Fallback to the
+    /// Use the current file's project directory. Fallback to the
     /// first project directory strategy if unsuccessful.
     CurrentProjectDirectory,
-    /// Use the first project in this workspace's directory.
+    /// Use the first project in this workspace's directory. Fallback to using
+    /// this platform's home directory.
     FirstProjectDirectory,
     /// Always use this platform's home directory (if it can be found).
     AlwaysHome,

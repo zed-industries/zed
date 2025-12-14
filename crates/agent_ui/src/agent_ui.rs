@@ -7,6 +7,8 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+#[cfg(test)]
+mod evals;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -69,6 +71,8 @@ actions!(
         CycleModeSelector,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Removes all thread history.
+        RemoveHistory,
         /// Opens the conversation history view.
         OpenHistory,
         /// Adds a context server to the configuration.
@@ -156,16 +160,6 @@ pub enum ExternalAgent {
 }
 
 impl ExternalAgent {
-    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
-        match server.telemetry_id() {
-            "gemini-cli" => Some(Self::Gemini),
-            "claude-code" => Some(Self::ClaudeCode),
-            "codex" => Some(Self::Codex),
-            "zed" => Some(Self::NativeAgent),
-            _ => None,
-        }
-    }
-
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
@@ -451,6 +445,7 @@ mod tests {
             default_height: px(600.),
             default_model: None,
             inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],

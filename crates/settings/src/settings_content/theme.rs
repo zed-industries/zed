@@ -570,6 +570,9 @@ pub struct ThemeColorsContent {
     #[serde(rename = "search.match_background")]
     pub search_match_background: Option<String>,
 
+    #[serde(rename = "search.active_match_background")]
+    pub search_active_match_background: Option<String>,
+
     #[serde(rename = "panel.background")]
     pub panel_background: Option<String>,
 
@@ -860,6 +863,14 @@ pub struct ThemeColorsContent {
     /// Ignored version control color.
     #[serde(rename = "version_control.ignored")]
     pub version_control_ignored: Option<String>,
+
+    /// Color for added words in word diffs.
+    #[serde(rename = "version_control.word_added")]
+    pub version_control_word_added: Option<String>,
+
+    /// Color for deleted words in word diffs.
+    #[serde(rename = "version_control.word_deleted")]
+    pub version_control_word_deleted: Option<String>,
 
     /// Background color for row highlights of "ours" regions in merge conflicts.
     #[serde(rename = "version_control.conflict_marker.ours")]

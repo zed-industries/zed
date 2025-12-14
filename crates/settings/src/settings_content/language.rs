@@ -62,6 +62,8 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
+    /// Enables the experimental edit prediction context retrieval system.
+    pub experimental_edit_prediction_context_retrieval: Option<bool>,
 }
 
 /// The provider that supplies edit predictions.
@@ -78,6 +80,8 @@ pub enum EditPredictionProvider {
 }
 
 pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
+pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -101,17 +105,32 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
+            Content::Experimental(name)
+                if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
+            {
+                EditPredictionProvider::Experimental(
+                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
+                )
+            }
             Content::Experimental(name) => {
-                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME {
-                    EditPredictionProvider::Experimental(
-                        EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                    )
-                } else {
-                    return Err(D::Error::custom(format!(
-                        "Unknown experimental edit prediction provider: {}",
-                        name
-                    )));
-                }
+                return Err(D::Error::custom(format!(
+                    "Unknown experimental edit prediction provider: {}",
+                    name
+                )));
             }
         })
     }
@@ -167,22 +186,20 @@ pub struct CopilotSettingsContent {
     pub enterprise_uri: Option<String>,
 }
 
+#[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CodestralSettingsContent {
     /// Model to use for completions.
     ///
     /// Default: "codestral-latest"
-    #[serde(default)]
     pub model: Option<String>,
     /// Maximum tokens to generate.
     ///
     /// Default: 150
-    #[serde(default)]
     pub max_tokens: Option<u32>,
     /// Api URL to use for completions.
     ///
     /// Default: "https://codestral.mistral.ai"
-    #[serde(default)]
     pub api_url: Option<String>,
 }
 
@@ -409,6 +426,13 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     pub debuggers: Option<Vec<String>>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: true
+    pub word_diff_enabled: Option<bool>,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     ///
     /// Default: false

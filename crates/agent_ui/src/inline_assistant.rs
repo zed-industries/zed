@@ -32,7 +32,7 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::FutureExt;
+use futures::{FutureExt, channel::mpsc};
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
@@ -102,6 +102,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    _inline_assistant_completions: Option<mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>>,
 }
 
 impl Global for InlineAssistant {}
@@ -123,7 +124,16 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            _inline_assistant_completions: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_completion_receiver(
+        &mut self,
+        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
+    ) {
+        self._inline_assistant_completions = Some(sender);
     }
 
     pub fn register_workspace(
@@ -287,7 +297,7 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
+                        );
                     })
                 }
                 InlineAssistTarget::Terminal(active_terminal) => {
@@ -301,8 +311,8 @@ impl InlineAssistant {
                             action.prompt.clone(),
                             window,
                             cx,
-                        )
-                    })
+                        );
+                    });
                 }
             };
 
@@ -377,17 +387,9 @@ impl InlineAssistant {
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
         for mut selection in initial_selections {
-            if selection.end > selection.start {
-                selection.start.column = 0;
-                // If the selection ends at the start of the line, we don't want to include it.
-                if selection.end.column == 0 {
-                    selection.end.row -= 1;
-                }
-                selection.end.column = snapshot
-                    .buffer_snapshot()
-                    .line_len(MultiBufferRow(selection.end.row));
-            } else if let Some(fold) =
-                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            if selection.end == selection.start
+                && let Some(fold) =
+                    snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
             {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
@@ -414,6 +416,15 @@ impl InlineAssistant {
                         }
                     }
                 }
+            } else {
+                selection.start.column = 0;
+                // If the selection ends at the start of the line, we don't want to include it.
+                if selection.end.column == 0 && selection.start.row != selection.end.row {
+                    selection.end.row -= 1;
+                }
+                selection.end.column = snapshot
+                    .buffer_snapshot()
+                    .line_len(MultiBufferRow(selection.end.row));
             }
 
             if let Some(prev_selection) = selections.last_mut()
@@ -440,7 +451,6 @@ impl InlineAssistant {
         {
             let anchor_range = Anchor::range_in_buffer(
                 excerpt_id,
-                buffer.remote_id(),
                 buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
             );
 
@@ -535,14 +545,15 @@ impl InlineAssistant {
                 }
             }
 
-            let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
+            let [prompt_block_id, tool_description_block_id, end_block_id] =
+                self.insert_assist_blocks(&editor, &range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
                 range.clone(),
                 prompt_editor,
                 prompt_block_id,
+                tool_description_block_id,
                 end_block_id,
             ));
         }
@@ -561,7 +572,15 @@ impl InlineAssistant {
         };
 
         let mut assist_group = InlineAssistGroup::new();
-        for (assist_id, range, prompt_editor, prompt_block_id, end_block_id) in assists {
+        for (
+            assist_id,
+            range,
+            prompt_editor,
+            prompt_block_id,
+            tool_description_block_id,
+            end_block_id,
+        ) in assists
+        {
             let codegen = prompt_editor.read(cx).codegen().clone();
 
             self.assists.insert(
@@ -572,6 +591,7 @@ impl InlineAssistant {
                     editor,
                     &prompt_editor,
                     prompt_block_id,
+                    tool_description_block_id,
                     end_block_id,
                     range,
                     codegen,
@@ -599,13 +619,13 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Option<InlineAssistId> {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let Some((codegen_ranges, newest_selection)) =
             self.codegen_ranges(editor, &snapshot, window, cx)
         else {
-            return;
+            return None;
         };
 
         let assist_to_focus = self.batch_assist(
@@ -625,6 +645,8 @@ impl InlineAssistant {
         if let Some(assist_id) = assist_to_focus {
             self.focus_assist(assist_id, window, cx);
         }
+
+        assist_to_focus
     }
 
     pub fn suggest_assist(
@@ -678,7 +700,7 @@ impl InlineAssistant {
         range: &Range<Anchor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         cx: &mut App,
-    ) -> [CustomBlockId; 2] {
+    ) -> [CustomBlockId; 3] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
             prompt_editor
                 .editor
@@ -690,6 +712,14 @@ impl InlineAssistant {
                 placement: BlockPlacement::Above(range.start),
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
+                priority: 0,
+            },
+            // Placeholder for tool description - will be updated dynamically
+            BlockProperties {
+                style: BlockStyle::Flex,
+                placement: BlockPlacement::Below(range.end),
+                height: Some(0),
+                render: Arc::new(|_cx| div().into_any_element()),
                 priority: 0,
             },
             BlockProperties {
@@ -710,7 +740,7 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let block_ids = editor.insert_blocks(assist_blocks, None, cx);
-            [block_ids[0], block_ids[1]]
+            [block_ids[0], block_ids[1], block_ids[2]]
         })
     }
 
@@ -1102,6 +1132,9 @@ impl InlineAssistant {
             let mut to_remove = decorations.removed_line_block_ids;
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
+            if let Some(tool_description_block_id) = decorations.model_explanation {
+                to_remove.insert(tool_description_block_id);
+            }
             editor.remove_blocks(to_remove, None, cx);
         });
 
@@ -1445,6 +1478,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
+                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
                             Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
@@ -1456,6 +1490,7 @@ impl InlineAssistant {
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
+                    editor.set_offset_content(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
@@ -1673,6 +1708,7 @@ impl InlineAssist {
         editor: &Entity<Editor>,
         prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         prompt_block_id: CustomBlockId,
+        tool_description_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
         codegen: Entity<BufferCodegen>,
@@ -1687,7 +1723,8 @@ impl InlineAssist {
             decorations: Some(InlineAssistDecorations {
                 prompt_block_id,
                 prompt_editor: prompt_editor.clone(),
-                removed_line_block_ids: HashSet::default(),
+                removed_line_block_ids: Default::default(),
+                model_explanation: Some(tool_description_block_id),
                 end_block_id,
             }),
             range,
@@ -1739,6 +1776,16 @@ impl InlineAssist {
                                 && assist.decorations.is_none()
                                 && let Some(workspace) = assist.workspace.upgrade()
                             {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender
+                                        .unbounded_send(Err(anyhow::anyhow!(
+                                            "Inline assistant error: {}",
+                                            error
+                                        )))
+                                        .ok();
+                                }
+
                                 let error = format!("Inline assistant error: {}", error);
                                 workspace.update(cx, |workspace, cx| {
                                     struct InlineAssistantError;
@@ -1749,6 +1796,11 @@ impl InlineAssist {
 
                                     workspace.show_toast(Toast::new(id, error), cx);
                                 })
+                            } else {
+                                #[cfg(any(test, feature = "test-support"))]
+                                if let Some(sender) = &mut this._inline_assistant_completions {
+                                    sender.unbounded_send(Ok(assist_id)).ok();
+                                }
                             }
 
                             if assist.decorations.is_none() {
@@ -1776,6 +1828,7 @@ struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
     prompt_editor: Entity<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
+    model_explanation: Option<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
 
@@ -1940,5 +1993,162 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
         } else {
             ix += 1;
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test {
+    use std::sync::Arc;
+
+    use agent::HistoryStore;
+    use assistant_text_thread::TextThreadStore;
+    use client::{Client, UserStore};
+    use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use fs::FakeFs;
+    use futures::channel::mpsc;
+    use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
+    use language::Buffer;
+    use language_model::LanguageModelRegistry;
+    use project::Project;
+    use prompt_store::PromptBuilder;
+    use smol::stream::StreamExt as _;
+    use util::test::marked_text_ranges;
+    use workspace::Workspace;
+
+    use crate::InlineAssistant;
+
+    pub fn run_inline_assistant_test<SetupF, TestF>(
+        base_buffer: String,
+        prompt: String,
+        setup: SetupF,
+        test: TestF,
+        cx: &mut TestAppContext,
+    ) -> String
+    where
+        SetupF: FnOnce(&mut gpui::VisualTestContext),
+        TestF: FnOnce(&mut gpui::VisualTestContext),
+    {
+        let fs = FakeFs::new(cx.executor());
+        let app_state = cx.update(|cx| workspace::AppState::test(cx));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let http = Arc::new(reqwest_client::ReqwestClient::user_agent("agent tests").unwrap());
+        let client = cx.update(|cx| {
+            cx.set_http_client(http);
+            Client::production(cx)
+        });
+        let mut inline_assistant =
+            InlineAssistant::new(fs.clone(), prompt_builder, client.telemetry().clone());
+
+        let (tx, mut completion_rx) = mpsc::unbounded();
+        inline_assistant.set_completion_receiver(tx);
+
+        // Initialize settings and client
+        cx.update(|cx| {
+            gpui_tokio::init(cx);
+            settings::init(cx);
+            client::init(&client, cx);
+            workspace::init(app_state.clone(), cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store, client.clone(), cx);
+
+            cx.set_global(inline_assistant);
+        });
+
+        let project = cx
+            .executor()
+            .block_test(async { Project::test(fs.clone(), [], cx).await });
+
+        // Create workspace with window
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            window.activate_window();
+            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+        });
+
+        setup(cx);
+
+        let (_editor, buffer) = cx.update(|window, cx| {
+            let buffer = cx.new(|cx| Buffer::local("", cx));
+            let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+            let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+            editor.update(cx, |editor, cx| {
+                let (unmarked_text, selection_ranges) = marked_text_ranges(&base_buffer, true);
+                editor.set_text(unmarked_text, window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(
+                        selection_ranges.into_iter().map(|range| {
+                            MultiBufferOffset(range.start)..MultiBufferOffset(range.end)
+                        }),
+                    )
+                })
+            });
+
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+
+            // Add editor to workspace
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            });
+
+            // Call assist method
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let assist_id = inline_assistant
+                    .assist(
+                        &editor,
+                        workspace.downgrade(),
+                        project.downgrade(),
+                        history_store, // thread_store
+                        None,          // prompt_store
+                        Some(prompt),
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+
+                inline_assistant.start_assist(assist_id, window, cx);
+            });
+
+            (editor, buffer)
+        });
+
+        cx.run_until_parked();
+
+        test(cx);
+
+        cx.executor()
+            .block_test(async { completion_rx.next().await });
+
+        buffer.read_with(cx, |buffer, _| buffer.text())
+    }
+
+    #[allow(unused)]
+    pub fn test_inline_assistant(
+        base_buffer: &'static str,
+        llm_output: &'static str,
+        cx: &mut TestAppContext,
+    ) -> String {
+        run_inline_assistant_test(
+            base_buffer.to_string(),
+            "Prompt doesn't matter because we're using a fake model".to_string(),
+            |cx| {
+                cx.update(|_, cx| LanguageModelRegistry::test(cx));
+            },
+            |cx| {
+                let fake_model = cx.update(|_, cx| {
+                    LanguageModelRegistry::global(cx)
+                        .update(cx, |registry, _| registry.fake_model())
+                });
+                let fake = fake_model.as_fake();
+
+                // let fake = fake_model;
+                fake.send_last_completion_stream_text_chunk(llm_output.to_string());
+                fake.end_last_completion_stream();
+
+                // Run again to process the model's response
+                cx.run_until_parked();
+            },
+            cx,
+        )
     }
 }

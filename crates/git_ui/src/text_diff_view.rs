@@ -170,7 +170,7 @@ impl TextDiffView {
 
         cx.subscribe(&source_buffer, move |this, _, event, _| match event {
             language::BufferEvent::Edited
-            | language::BufferEvent::LanguageChanged
+            | language::BufferEvent::LanguageChanged(_)
             | language::BufferEvent::Reparsed => {
                 this.buffer_changes_tx.send(()).ok();
             }
@@ -339,7 +339,7 @@ impl Item for TextDiffView {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.diff_editor.clone()))
     }
 

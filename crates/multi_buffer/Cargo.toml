@@ -42,6 +42,8 @@ sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 util.workspace = true
 
 [dev-dependencies]
@@ -56,3 +58,6 @@ settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]
