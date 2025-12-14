@@ -7750,10 +7750,12 @@ fn test_select_line(cx: &mut TestAppContext) {
             ])
         });
         editor.select_line(&SelectLine, window, cx);
+        // Adjacent line selections should NOT merge (only overlapping ones do)
         assert_eq!(
             display_ranges(editor, cx),
             vec![
-                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(2), 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(2), 0),
                 DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 0),
             ]
         );
@@ -7772,9 +7774,13 @@ fn test_select_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.select_line(&SelectLine, window, cx);
+        // Adjacent but not overlapping, so they stay separate
         assert_eq!(
             display_ranges(editor, cx),
-            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(5), 5)]
+            vec![
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(4), 0),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 5),
+            ]
         );
     });
 }
