@@ -2,6 +2,8 @@
 //!
 //! Creates interactive cell elements with mouse event handlers for selection.
 
+use std::time::Instant;
+
 use gpui::{AnyElement, ElementId, Entity, Hsla, MouseButton};
 use ui::{div, prelude::*};
 
@@ -98,6 +100,7 @@ impl CsvPreviewView {
             let view = view_entity.clone();
             move |_event, window, cx| {
                 view.update(cx, |this, cx| {
+                    let start_time = Instant::now();
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.start_mouse_selection(
@@ -106,6 +109,8 @@ impl CsvPreviewView {
                         &ordered_indices,
                         preserve_existing,
                     );
+                    let selection_duration = start_time.elapsed();
+                    this.performance_metrics.last_selection_took = Some(selection_duration);
                     cx.notify();
                 });
             }
@@ -128,6 +133,7 @@ impl CsvPreviewView {
                         this.selection.end_mouse_selection();
                         return;
                     }
+                    let start_time = Instant::now();
                     let ordered_indices = this.get_ordered_indices().clone();
                     let preserve_existing = window.modifiers().secondary(); // cmd/ctrl key
                     this.selection.extend_mouse_selection(
@@ -136,6 +142,8 @@ impl CsvPreviewView {
                         &ordered_indices,
                         preserve_existing,
                     );
+                    let selection_duration = start_time.elapsed();
+                    this.performance_metrics.last_selection_took = Some(selection_duration);
                     cx.notify();
                 });
             }

@@ -34,12 +34,12 @@ impl PerformanceMetrics {
         };
 
         vec![
-            format!("Parse: {}", format_duration(self.last_parse_took)),
-            format!("Order: {}", format_duration(self.last_ordering_took)),
-            format!("Copy: {}", format_duration(self.last_copy_took)),
-            format!("Selection: {}", format_duration(self.last_selection_took)),
+            format!("- Parse: {}", format_duration(self.last_parse_took)),
+            format!("- Order: {}", format_duration(self.last_ordering_took)),
+            format!("- Copy: {}", format_duration(self.last_copy_took)),
+            format!("- Selection: {}", format_duration(self.last_selection_took)),
             format!(
-                "Render Prep: {}",
+                "- Render Prep: {}",
                 format_duration(self.last_render_preparation_took)
             ),
         ]
@@ -74,6 +74,7 @@ impl CsvPreviewView {
             .flex()
             .flex_col()
             .gap_1()
+            .child("Performance metrics:")
             .children(
                 self.performance_metrics
                     .format_lines()
