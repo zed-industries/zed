@@ -211,15 +211,28 @@ impl TestScheduler {
     }
 
     fn step_filtered(&self, background_only: bool) -> bool {
-        let elapsed_timers = {
+        let (elapsed_count, runnables_before) = {
             let mut state = self.state.lock();
             let end_ix = state
                 .timers
                 .partition_point(|timer| timer.expiration <= self.clock.now());
-            state.timers.drain(..end_ix).collect::<Vec<_>>()
+            let elapsed: Vec<_> = state.timers.drain(..end_ix).collect();
+            let count = elapsed.len();
+            let runnables = state.runnables.len();
+            drop(state);
+            // Dropping elapsed timers here wakes the waiting futures
+            drop(elapsed);
+            (count, runnables)
         };
 
-        if !elapsed_timers.is_empty() {
+        if elapsed_count > 0 {
+            let runnables_after = self.state.lock().runnables.len();
+            if std::env::var("DEBUG_SCHEDULER").is_ok() {
+                eprintln!(
+                    "[scheduler] Expired {} timers at {:?}, runnables: {} -> {}",
+                    elapsed_count, self.clock.now(), runnables_before, runnables_after
+                );
+            }
             return true;
         }
 
@@ -311,18 +324,37 @@ impl TestScheduler {
     }
 
     pub fn advance_clock(&self, duration: Duration) {
-        let next_now = self.clock.now() + duration;
+        let debug = std::env::var("DEBUG_SCHEDULER").is_ok();
+        let start = self.clock.now();
+        let next_now = start + duration;
+        if debug {
+            let timer_count = self.state.lock().timers.len();
+            eprintln!(
+                "[scheduler] advance_clock({:?}) from {:?}, {} pending timers",
+                duration, start, timer_count
+            );
+        }
         loop {
             self.run();
             if let Some(timer) = self.state.lock().timers.first()
                 && timer.expiration <= next_now
             {
-                self.clock.advance(timer.expiration - self.clock.now());
+                let advance_to = timer.expiration;
+                if debug {
+                    eprintln!(
+                        "[scheduler] Advancing clock {:?} -> {:?} for timer",
+                        self.clock.now(), advance_to
+                    );
+                }
+                self.clock.advance(advance_to - self.clock.now());
             } else {
                 break;
             }
         }
         self.clock.advance(next_now - self.clock.now());
+        if debug {
+            eprintln!("[scheduler] advance_clock done, now at {:?}", self.clock.now());
+        }
     }
 
     fn park(&self, deadline: Option<Instant>) -> bool {
