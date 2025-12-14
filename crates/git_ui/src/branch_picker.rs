@@ -1237,6 +1237,7 @@ mod tests {
     use git::repository::{CommitSummary, Remote};
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
+    use rand::{Rng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -1820,6 +1821,27 @@ mod tests {
                 // Verify the last entry is the "create new branch" option
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_branch());
+            })
+        });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_empty_query_displays_all_branches(mut rng: StdRng, cx: &mut TestAppContext) {
+        init_test(cx);
+        let branch_count = rng.random_range(13..540);
+
+        let branches: Vec<Branch> = (0..branch_count)
+            .map(|i| create_test_branch(&format!("branch-{:02}", i), i == 0, None, Some(i * 100)))
+            .collect();
+
+        let (mut ctx, branch_list) = init_branch_list_test(cx, None, branches);
+        let cx = &mut ctx;
+
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                assert_eq!(picker.delegate.matches.len(), branch_count as usize);
             })
         });
     }
