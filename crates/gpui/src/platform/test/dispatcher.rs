@@ -304,7 +304,6 @@ impl TestDispatcher {
                 format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
             }
             RunnableVariant::Compat(_) => "compat-task".to_string(),
-            RunnableVariant::Scheduler(_) => "scheduler-task".to_string(),
         };
 
         // Update execution hash with task location for determinism verification
@@ -330,7 +329,6 @@ impl TestDispatcher {
         match runnable {
             RunnableVariant::Meta(runnable) => runnable.run(),
             RunnableVariant::Compat(runnable) => runnable.run(),
-            RunnableVariant::Scheduler(runnable) => runnable.run(),
         };
 
         self.state.lock().is_main_thread = was_main_thread;

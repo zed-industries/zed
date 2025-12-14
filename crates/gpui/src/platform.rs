@@ -50,7 +50,7 @@ use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use scheduler::RunnableMeta as SchedulerRunnableMeta;
+pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -567,20 +567,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
-/// This type is public so that our test macro can generate and use it, but it should not
-/// be considered part of our public API.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct RunnableMeta {
-    /// Location of the runnable
-    pub location: &'static core::panic::Location<'static>,
-}
-
 #[doc(hidden)]
 pub enum RunnableVariant {
     Meta(Runnable<RunnableMeta>),
     Compat(Runnable),
-    Scheduler(Runnable<SchedulerRunnableMeta>),
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not

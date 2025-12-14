@@ -34,7 +34,6 @@ impl HeadlessClient {
                     match runnable {
                         crate::RunnableVariant::Meta(runnable) => runnable.run(),
                         crate::RunnableVariant::Compat(runnable) => runnable.run(),
-                        crate::RunnableVariant::Scheduler(runnable) => runnable.run(),
                     };
                 }
             })

@@ -62,7 +62,7 @@ impl Scheduler for PlatformScheduler {
 
     fn schedule_foreground(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
         self.dispatcher.dispatch_on_main_thread(
-            RunnableVariant::Scheduler(runnable),
+            RunnableVariant::Meta(runnable),
             GpuiPriority::default(),
         );
     }
@@ -78,7 +78,7 @@ impl Scheduler for PlatformScheduler {
             Priority::Low => GpuiPriority::Low,
         };
         self.dispatcher
-            .dispatch(RunnableVariant::Scheduler(runnable), None, gpui_priority);
+            .dispatch(RunnableVariant::Meta(runnable), None, gpui_priority);
     }
 
     fn timer(&self, duration: Duration) -> Timer {
