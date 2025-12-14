@@ -1280,10 +1280,10 @@ mod tests {
     }
 
     fn init_branch_list_test(
-        cx: &mut TestAppContext,
         repository: Option<Entity<Repository>>,
         branches: Vec<Branch>,
-    ) -> (VisualTestContext, Entity<BranchList>) {
+        cx: &mut TestAppContext,
+    ) -> (Entity<BranchList>, VisualTestContext) {
         let window = cx.add_window(|window, cx| {
             let mut delegate =
                 BranchListDelegate::new(None, repository, BranchListStyle::Modal, cx);
@@ -1309,7 +1309,7 @@ mod tests {
         let branch_list = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(*window, cx);
 
-        (cx, branch_list)
+        (branch_list, cx)
     }
 
     async fn init_fake_repository(cx: &mut TestAppContext) -> Entity<Repository> {
@@ -1343,7 +1343,7 @@ mod tests {
         init_test(cx);
 
         let branches = create_test_branches();
-        let (mut ctx, branch_list) = init_branch_list_test(cx, None, branches);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
         let cx = &mut ctx;
 
         branch_list
@@ -1419,7 +1419,7 @@ mod tests {
         .await;
         cx.run_until_parked();
 
-        let (mut ctx, branch_list) = init_branch_list_test(cx, repository.into(), branches);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
@@ -1484,7 +1484,7 @@ mod tests {
         .await;
         cx.run_until_parked();
 
-        let (mut ctx, branch_list) = init_branch_list_test(cx, repository.into(), branches);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
         let cx = &mut ctx;
         // Enable remote filter
         branch_list.update(cx, |branch_list, cx| {
@@ -1542,7 +1542,7 @@ mod tests {
             create_test_branch("develop", false, None, Some(700)),
         ];
 
-        let (mut ctx, branch_list) = init_branch_list_test(cx, None, branches);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
@@ -1637,7 +1637,7 @@ mod tests {
             create_test_branch(FEATURE_BRANCH, false, None, Some(900)),
         ];
 
-        let (mut ctx, branch_list) = init_branch_list_test(test_cx, repository.into(), branches);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, test_cx);
         let cx = &mut ctx;
 
         branch_list
@@ -1696,7 +1696,7 @@ mod tests {
         let repository = init_fake_repository(cx).await;
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
-        let (mut ctx, branch_list) = init_branch_list_test(cx, repository.into(), branches);
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx);
         let cx = &mut ctx;
 
         branch_list
@@ -1774,7 +1774,7 @@ mod tests {
         init_test(cx);
 
         let branches = vec![create_test_branch("main_branch", true, None, Some(1000))];
-        let (mut ctx, branch_list) = init_branch_list_test(cx, None, branches);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
         let cx = &mut ctx;
 
         branch_list
@@ -1837,29 +1837,7 @@ mod tests {
         init_test(cx);
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
-        let window = cx.add_window(|window, cx| {
-            let mut delegate = BranchListDelegate::new(None, None, BranchListStyle::Modal, cx);
-            delegate.all_branches = Some(branches);
-            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
-            let picker_focus_handle = picker.focus_handle(cx);
-            picker.update(cx, |picker, _| {
-                picker.delegate.focus_handle = picker_focus_handle.clone();
-            });
-
-            let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-                cx.emit(DismissEvent);
-            });
-
-            BranchList {
-                picker,
-                picker_focus_handle,
-                width: rems(34.),
-                _subscription,
-            }
-        });
-
-        let branch_list = window.root(cx).unwrap();
-        let mut ctx = VisualTestContext::from_window(*window, cx);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
         let cx = &mut ctx;
 
         let subscription = cx.update(|_, cx| {
@@ -1915,7 +1893,7 @@ mod tests {
             .map(|i| create_test_branch(&format!("branch-{:02}", i), i == 0, None, Some(i * 100)))
             .collect();
 
-        let (mut ctx, branch_list) = init_branch_list_test(cx, None, branches);
+        let (branch_list, mut ctx) = init_branch_list_test(None, branches, cx);
         let cx = &mut ctx;
 
         update_branch_list_matches_with_empty_query(&branch_list, cx).await;
