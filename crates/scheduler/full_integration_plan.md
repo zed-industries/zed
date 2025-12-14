@@ -1,520 +1,294 @@
-# Full GPUI Scheduler Integration Plan
+# GPUI Scheduler Integration Plan
 
-## ✅ COMPLETED WORK (as of this session)
+## Goal
 
-### 1. Unified RunnableMeta (Phase 2a partial) - DONE
-- Re-exported `RunnableMeta` from scheduler crate in `gpui/src/platform.rs`
-- Removed GPUI's duplicate `RunnableMeta` struct definition
-- Removed `RunnableVariant::Scheduler` variant (now uses `RunnableVariant::Meta` for both)
-- Updated all platform dispatchers (Mac, Linux, Windows, Test) to remove `Scheduler` variant handling
-- Updated `PlatformScheduler` to use `RunnableVariant::Meta` instead of `RunnableVariant::Scheduler`
+Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Scheduler` trait from the scheduler crate. This will:
+- Remove the redundant `TestDispatcher` wrapper
+- Unify task scheduling across GPUI and scheduler
+- Simplify the codebase significantly
 
-### 2. Waiting Hints (Phase 3b) - SKIPPED
-- NOT NEEDED: TestScheduler already has superior `pending_traces` system with `TracingWaker`
-- Automatically captures backtraces for ALL pending futures via `PENDING_TRACES=1` env var
-- More comprehensive than manual waiting hints
+## Current State (After Recent Work)
 
-### 3. Task API Parity (Phase 1 partial) - DONE
-- Added `is_ready()` method to GPUI's `Task<T>` for API parity with scheduler
-- Both Task types now have identical APIs except `detach_and_log_err` (GPUI-specific, needs `App` context)
-- Full unification deferred: both types wrap `async_task::Task<T, RunnableMeta>` identically, re-exporting would require significant refactoring for minimal benefit
+### What's Been Completed
 
-### 4. Eliminated RunnableVariant::Compat (Phase 2a full) - DONE
-- Removed `RunnableVariant::Compat` variant entirely
-- Updated `PlatformScheduler::timer()` to use `async_task::Builder` with `RunnableMeta`
-- Updated REPL's `ZedDispatcher` to wrap external `Runnable` in tasks with metadata
-- Simplified all platform dispatchers (Mac, Linux, Windows, Test) - removed Compat match arms
-- Removed unused `trampoline_compat` function from Mac dispatcher
+1. **Task Queue Delegation**: TestDispatcher delegates foreground/background task scheduling to TestScheduler
+   - `dispatch()` → `scheduler.schedule_background_with_priority()`
+   - `dispatch_on_main_thread()` → `scheduler.schedule_foreground(session_id)`
 
-### 5. Simplified RunnableVariant to Type Alias - DONE
-- Changed `RunnableVariant` from single-variant enum to type alias: `pub type RunnableVariant = Runnable<RunnableMeta>`
-- Removed all `RunnableVariant::Meta(...)` wrapping at spawn sites
-- Removed all `let RunnableVariant::Meta(runnable) = runnable;` destructuring at run sites
-- Updated all platform dispatchers (Mac, Linux, Windows, Test, Wayland, X11, Headless)
-- Updated executor.rs, platform_scheduler.rs, and REPL's ZedDispatcher
-- Removed unused imports from executor.rs and repl.rs
-- Updated TestDispatcher doc comment to remove outdated reference to "multiple variants"
+2. **Unified Priority Types**: GPUI reexports `Priority` and `RealtimePriority` from scheduler crate
+   - Removed duplicate definitions from `gpui/src/executor.rs`
+   - Added `Realtime(RealtimePriority)` variant to scheduler's Priority
 
-### 6. Delegated Task Queues to TestScheduler (Phase 2b) - DONE
-- TestDispatcher now delegates foreground/background task scheduling to TestScheduler
-- Removed `foreground` and `background` task queues from TestDispatcherState
-- Added `SessionId` mapping: each TestDispatcher instance gets a unique session ID from TestScheduler
-- TestDispatcher's `dispatch()` calls `scheduler.schedule_background_with_priority()`
-- TestDispatcher's `dispatch_on_main_thread()` calls `scheduler.schedule_foreground()`
-- TestDispatcher only maintains local `delayed` queue for `dispatch_after()`
-- Added `allocate_session_id()`, `tick()`, `tick_background_only()`, `has_pending_tasks()`, and `pending_task_counts()` methods to TestScheduler
+3. **Unified RunnableMeta**: Both GPUI and scheduler use `scheduler::RunnableMeta`
+   - `RunnableVariant` is now just a type alias: `pub type RunnableVariant = Runnable<RunnableMeta>`
 
-### 7. Removed Deprioritization Feature - DONE
-- Removed `deprioritized_background` queue from TestDispatcherState
-- Removed `deprioritized_task_labels` set from TestDispatcherState
-- Removed `deprioritize()` method from TestDispatcher
-- Removed `deprioritize()` method from BackgroundExecutor
-- Updated tests in project_tests.rs that used deprioritization
+4. **Removed Deprioritization**: Removed the `deprioritize()` feature and `TaskLabel` handling
 
-### 8. Unified Priority Types - DONE
-- Added `RealtimePriority` enum to scheduler crate
-- Added `Realtime(RealtimePriority)` variant to scheduler's `Priority` enum
-- GPUI now reexports `Priority` and `RealtimePriority` from scheduler crate
-- Removed duplicate `Priority` and `RealtimePriority` definitions from GPUI's executor.rs
+5. **Removed Debug Infrastructure**: Removed waiting_hint, waiting_backtrace, debug logging from TestDispatcher
 
-## 🔜 NEXT STEPS FOR FUTURE WORK
-
-### Near-term (recommended next tasks):
-1. **Consider removing RunnableVariant type alias entirely** - Could just use `Runnable<RunnableMeta>` directly throughout, but this is low priority as the type alias provides a clear semantic name
-
-### Medium-term:
-2. **Unify Task types (Phase 1 full)** - Both GPUI and scheduler have `Task<T>` types that wrap `async_task::Task<T, RunnableMeta>`. Consider full unification.
-3. **Delegate delayed tasks to scheduler timer infrastructure** - Currently TestDispatcher maintains its own delayed queue
-
----
-
-## Executive Summary
-
-This document outlines a plan for deeper integration between the `scheduler` crate and GPUI. The current state is a **hybrid integration** where `TestDispatcher` uses `TestScheduler` for timing/clock/rng but maintains its own task queues. This plan describes how to move toward GPUI using the scheduler crate's executors more directly.
-
-## Current State (Full Integration)
-
-### What's Already Done
-
-1. **TestScheduler for timing primitives**: `TestDispatcher` delegates `now()`, `advance_clock()`, `rng()`, `allow_parking()`, and `forbid_parking()` to `TestScheduler`.
-
-2. **TestScheduler for task queues**: `TestDispatcher` delegates foreground and background task scheduling to `TestScheduler`. Each TestDispatcher instance maps to a `SessionId` for foreground task ordering.
-
-3. **Unified Priority types**: GPUI reexports `Priority` and `RealtimePriority` from the scheduler crate.
-
-4. **PlatformScheduler adapter**: A `Scheduler` trait implementation wraps `PlatformDispatcher` for production use.
-
-3. **RunnableVariant enum**: GPUI dispatchers handle three runnable types:
-   - `Meta(Runnable<RunnableMeta>)` - GPUI's native tasks with source location
-   - `Compat(Runnable)` - Legacy compatibility tasks
-   - `Scheduler(Runnable<RunnableMeta>)` - Tasks from scheduler crate
-
-4. **Priority support**: Both GPUI and scheduler have `Priority` enums with weighted scheduling.
+6. **Simplified TestDispatcher**: Now 242 lines, mostly just PlatformDispatcher trait impl
 
 ### Current Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                          GPUI                                    │
-├─────────────────────────────────────────────────────────────────┤
-│  BackgroundExecutor              ForegroundExecutor             │
-│  - spawns via PlatformDispatcher - spawns via PlatformDispatcher│
-│  - handles Realtime priority     - handles Priority             │
-│  - labeled tasks                 - spawn_local checks           │
-│  - scoped execution                                             │
-├─────────────────────────────────────────────────────────────────┤
-│  TestDispatcher (HYBRID)         Platform Dispatchers           │
-│  - owns task queues              - Mac/Linux/Windows            │
-│  - delegates timing to           - dispatch to thread pools     │
-│    TestScheduler                 - real time                    │
-│  - GPUI-specific features                                       │
-├─────────────────────────────────────────────────────────────────┤
-│                      Scheduler Crate                             │
-│  TestScheduler: timing/clock/rng                                │
-│  ForegroundExecutor/BackgroundExecutor (unused by GPUI)         │
-│  Task<T>, Timer, Clock                                          │
-└─────────────────────────────────────────────────────────────────┘
+│                         GPUI                                     │
+│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
+│  │ BackgroundExecutor │    │ ForegroundExecutor              │    │
+│  │ - spawn()         │    │ - spawn()                       │    │
+│  │ - block_on()      │    │                                 │    │
+│  └────────┬──────────┘    └────────────────┬────────────────┘    │
+│           │                                │                     │
+│           └────────────────┬───────────────┘                     │
+│                            ▼                                     │
+│              ┌─────────────────────────┐                         │
+│              │ Arc<dyn PlatformDispatcher> │◄─── THE PROBLEM      │
+│              └─────────────┬───────────┘                         │
+│                            │                                     │
+│     ┌──────────────────────┼──────────────────────┐              │
+│     ▼                      ▼                      ▼              │
+│ ┌──────────┐        ┌──────────────┐       ┌─────────────┐       │
+│ │MacDispatcher│      │LinuxDispatcher│       │TestDispatcher│      │
+│ └──────────┘        └──────────────┘       └──────┬──────┘       │
+│                                                   │              │
+└───────────────────────────────────────────────────┼──────────────┘
+                                                    │
+                                                    ▼
+                                    ┌───────────────────────────┐
+                                    │      TestScheduler        │
+                                    │ (scheduler crate)         │
+                                    │ - task queues             │
+                                    │ - clock/timing            │
+                                    │ - rng                     │
+                                    └───────────────────────────┘
 ```
 
-### Why Hybrid?
+### What TestDispatcher Still Does
 
-GPUI's executors have features the scheduler crate doesn't:
-- **Realtime priority**: Spawns dedicated OS threads for audio/realtime work
-- **Task labels**: Allow tests to deprioritize specific tasks
-- **Scoped execution**: `scoped()` and `await_on_background()` for borrowing
-- **Labeled spawn**: `spawn_labeled()` for test control
-- **`detach_and_log_err`**: Convenient error logging on detach
-- **Waiting hints**: Debug info when tests park unexpectedly
+Located at `crates/gpui/src/platform/test/dispatcher.rs` (242 lines):
 
-## Goals for Full Integration
+1. **PlatformDispatcher trait impl** - Required interface for GPUI executors
+2. **`dispatch_after` delayed queue** - Scheduler has `timer()` (returns Future), not `dispatch_after` (stores runnable)
+3. **`is_main_thread` tracking** - Sets flag based on whether running foreground/background task
+4. **`unparkers`** - Thread synchronization for `block_on` when parking is allowed
+5. **`advance_clock`** - Handles both scheduler clock and local delayed queue
+6. **`simulate_random_delay`** - Custom yield future (0..10 range)
 
-### Primary Goals
+### Key Files
 
-1. **Single source of truth for test scheduling**: All test task scheduling goes through scheduler crate's `TestScheduler`
-2. **Unified Task type**: Use scheduler's `Task<T>` throughout, or make them interchangeable
-3. **Simplified dispatcher hierarchy**: Reduce code duplication between GPUI and scheduler
-4. **Session isolation**: Leverage scheduler's session semantics for multi-context tests
+**Scheduler Crate** (`crates/scheduler/`):
+- `src/scheduler.rs` - `Scheduler` trait, `Priority`, `RealtimePriority`, `RunnableMeta`, `SessionId`
+- `src/test_scheduler.rs` - `TestScheduler` implementation
+- `src/executor.rs` - `ForegroundExecutor`, `BackgroundExecutor`, `Task`
+- `src/clock.rs` - `Clock` trait, `TestClock`
 
-### Non-Goals (for now)
-
-- Replacing production dispatchers (Mac/Linux/Windows remain platform-specific)
-- Changing the external GPUI API significantly
-- Breaking existing tests
-
-## Integration Phases
-
-### Phase 1: Unify Task Types ✦ Medium effort
-
-**Problem**: GPUI has its own `Task<T>` wrapper, scheduler has another. They're nearly identical but not interchangeable.
-
-**Solution**: Make GPUI's `Task<T>` a re-export or thin wrapper of scheduler's `Task<T>`.
-
-**Steps**:
-1. Add `is_ready()` method to scheduler's `Task<T>`:
-   ```rust
-   // In scheduler/src/executor.rs
-   impl<T> Task<T> {
-       pub fn is_ready(&self) -> bool {
-           match &self.0 {
-               TaskState::Ready(_) => true,
-               TaskState::Spawned(task) => task.is_finished(),
-           }
-       }
-   }
-   ```
-
-2. `detach_and_log_err` cannot live in scheduler (needs `App` context). Options:
-   - Keep as extension trait in GPUI
-   - Add `detach_with_callback` to scheduler that GPUI wraps
-   
-3. Update GPUI to re-export:
-   ```rust
-   // In gpui/src/executor.rs
-   pub use scheduler::Task;
-   
-   // Extension trait for GPUI-specific functionality
-   pub trait TaskExt<T, E> {
-       fn detach_and_log_err(self, cx: &App);
-   }
-   
-   impl<T: 'static, E: Debug + 'static> TaskExt<T, E> for Task<Result<T, E>> {
-       fn detach_and_log_err(self, cx: &App) {
-           // existing implementation
-       }
-   }
-   ```
-
-4. Ensure `#[must_use]` and `Debug` traits match
-
-**Files affected**:
-- `crates/scheduler/src/executor.rs`
-- `crates/gpui/src/executor.rs`
-
-**Risk**: Low - mostly additive changes
+**GPUI Crate** (`crates/gpui/`):
+- `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task` (duplicates scheduler's!)
+- `src/platform.rs` - `PlatformDispatcher` trait, `RunnableVariant` type alias
+- `src/platform/test/dispatcher.rs` - `TestDispatcher` (the wrapper we want to eliminate)
+- `src/platform/mac/dispatcher.rs` - `MacDispatcher`
+- `src/platform/linux/dispatcher.rs` - `LinuxDispatcher`
+- `src/platform/windows/dispatcher.rs` - `WindowsDispatcher`
 
 ---
 
-### Phase 2: Migrate TestDispatcher Task Queues ✦ High effort
+## Next Steps: Eliminate PlatformDispatcher
 
-**Problem**: `TestDispatcher` maintains its own `foreground`, `background`, `deprioritized_background`, and `delayed` queues, duplicating logic in `TestScheduler`.
+### The Core Problem
 
-**Solution**: Have `TestDispatcher` delegate task scheduling to `TestScheduler` while keeping GPUI-specific features as a layer on top.
+GPUI has two parallel abstractions:
+1. `PlatformDispatcher` trait - used by GPUI's executors
+2. `Scheduler` trait - used by scheduler crate
 
-**Sub-phases**:
+They have different APIs:
+- `PlatformDispatcher::dispatch_after(duration, runnable)` - stores runnable, runs after delay
+- `Scheduler::timer(duration) -> Timer` - returns a future that completes after delay
 
-#### 2a: Eliminate RunnableVariant
+### Strategy: Make Scheduler the Primary Abstraction
 
-Currently, GPUI dispatchers handle three runnable variants. This complexity exists because:
-- `Meta` and `Scheduler` both have `RunnableMeta` but from different crate paths
-- `Compat` exists for timer callbacks that use bare `async_task::spawn`
+#### Phase 1: Add `dispatch_after` Support to Scheduler
 
-**Steps**:
-1. Unify `RunnableMeta` - make GPUI re-export scheduler's version
-2. Convert all task spawning to use the unified metadata type
-3. Remove `RunnableVariant` in favor of single `Runnable<RunnableMeta>` type
-4. Update all platform dispatchers
+Add a method to `Scheduler` trait that matches `PlatformDispatcher::dispatch_after`:
 
-**Files affected**:
-- `crates/gpui/src/platform.rs` (RunnableVariant definition)
-- `crates/gpui/src/platform/mac/dispatcher.rs`
-- `crates/gpui/src/platform/linux/dispatcher.rs`
-- `crates/gpui/src/platform/windows/dispatcher.rs`
-- `crates/gpui/src/platform/test/dispatcher.rs`
-- `crates/gpui/src/executor.rs`
+```rust
+// In scheduler/src/scheduler.rs
+pub trait Scheduler: Send + Sync {
+    // ... existing methods ...
+    
+    /// Schedule a runnable to execute after a delay.
+    /// This is the imperative equivalent of timer().
+    fn schedule_after(&self, duration: Duration, runnable: Runnable<RunnableMeta>);
+}
+```
 
-#### 2b: Delegate Task Queues to TestScheduler
+For `TestScheduler`, implement by adding to the timers list with a callback.
 
-**Steps**:
-1. Remove `foreground`, `background` fields from `TestDispatcherState`
-2. Implement GPUI's `dispatch` by calling `TestScheduler::schedule_background`
-3. Implement GPUI's `dispatch_on_main_thread` by calling `TestScheduler::schedule_foreground`
-4. Keep `deprioritized_background` as GPUI-specific layer
-5. Keep `delayed` or delegate to scheduler's timer infrastructure
+#### Phase 2: Add `is_main_thread` to Scheduler
 
-**Challenges**:
-- `TestScheduler` expects `SessionId` for foreground tasks; need to track session per dispatcher
-- Task labels for deprioritization need custom handling
-- Execution hash tracking for determinism verification needs preservation
+The scheduler needs to track whether we're currently executing a foreground task:
 
----
+```rust
+// In TestScheduler
+pub fn is_main_thread(&self) -> bool {
+    self.state.lock().is_main_thread
+}
+```
 
-### Phase 3: Add GPUI Features to Scheduler ✦ Medium effort
+Update `step()` to set this flag around task execution.
 
-Some GPUI features should move to the scheduler crate to reduce duplication.
+#### Phase 3: Add Parking/Unparker Support to Scheduler
 
-#### 3a: Task Labels / Deprioritization
+Move the unparker mechanism into TestScheduler:
 
-**Problem**: GPUI tests can deprioritize tasks by label. Scheduler has no concept of this.
+```rust
+impl TestScheduler {
+    pub fn push_unparker(&self, unparker: Unparker) { ... }
+    pub fn unpark_all(&self) { ... }
+}
+```
 
-**Options**:
-1. Add `TaskLabel` to scheduler's `RunnableMeta`
-2. Keep deprioritization as GPUI-only layer
-3. Add generic "task tags" to scheduler
+Call `unpark_all()` when tasks are scheduled.
 
-**Recommendation**: Option 2 for now - keep as GPUI layer. Deprioritization is test-specific and not commonly needed.
+#### Phase 4: Implement PlatformDispatcher for TestScheduler
 
-#### 3b: Waiting Hints / Backtraces
+Either:
+- Have `TestScheduler` implement `PlatformDispatcher` directly (couples scheduler to GPUI)
+- Create a trivial newtype wrapper that implements `PlatformDispatcher` for `Arc<TestScheduler>`
 
-**Problem**: When tests hang, GPUI captures waiting hints and backtraces for debugging.
+The wrapper would be ~50 lines, just trait method forwarding.
 
-**Solution**: NOT NEEDED - TestScheduler already has superior `pending_traces` system with `TracingWaker` that automatically captures backtraces for ALL pending futures via `PENDING_TRACES=1` env var.
+#### Phase 5: Unify Executor Types
 
----
+Both GPUI and scheduler have `BackgroundExecutor`, `ForegroundExecutor`, and `Task<T>`.
 
-### Phase 4: Unify Executors ✦ High effort (OPTIONAL)
+Options:
+1. **GPUI reexports scheduler's types** - Cleanest, but requires ensuring API compatibility
+2. **Keep both, share primitives** - More work, less clean
+3. **Scheduler types become the implementation, GPUI wraps** - Current partial state
 
-**Problem**: Both GPUI and scheduler have `BackgroundExecutor` and `ForegroundExecutor` types.
+Recommendation: Have GPUI reexport scheduler's executor types, adding any GPUI-specific methods as extension traits.
 
-**Current State**: GPUI executors wrap `PlatformDispatcher`. Scheduler executors wrap `Arc<dyn Scheduler>`.
+#### Phase 6: Production Dispatchers
 
-**Options**:
+For production (Mac/Linux/Windows), either:
+1. Create a `PlatformScheduler` that wraps `PlatformDispatcher` and implements `Scheduler`
+2. Or keep `PlatformDispatcher` for production, only use `Scheduler` for tests
 
-#### Option A: GPUI wraps scheduler executors
-- GPUI's `BackgroundExecutor` wraps scheduler's `BackgroundExecutor`
-- Adds GPUI-specific methods (labeled spawn, scoped, etc.)
-- **Pro**: Single scheduling implementation
-- **Con**: Complex wrapping, scheduler needs to expose more
-
-#### Option B: Keep separate, share primitives
-- Both use same `Task<T>`, `RunnableMeta`, `Priority`
-- Different executor implementations
-- **Pro**: Simpler, maintains flexibility
-- **Con**: Some code duplication
-
-#### Option C: Scheduler provides core, GPUI extends
-- Scheduler provides trait-based executor interface
-- GPUI implements the traits with additional features
-- **Pro**: Clean separation
-- **Con**: Significant refactoring
-
-**Recommendation**: Option B for now. Full unification has diminishing returns given GPUI's unique requirements (Realtime priority, platform integration, labeled tasks).
-
----
-
-### Phase 5: Production Scheduler Adapter Improvements ✦ Low effort
-
-**Problem**: `PlatformScheduler` is minimal - it just adapts `PlatformDispatcher` to `Scheduler` trait.
-
-**Steps**:
-1. Consider if `Scheduler` trait should live in GPUI instead of scheduler crate
-2. Improve timer implementation (currently spawns a task just to send on channel)
-3. Add session tracking if needed for future features
+Current state: `PlatformScheduler` exists in `gpui/src/platform/platform_scheduler.rs` and wraps `PlatformDispatcher` to implement `Scheduler`. This could be inverted.
 
 ---
 
 ## Recommended Execution Order
 
-### Near-term (High Value, Manageable Risk)
+### Immediate (Do Now)
 
-#### 1. Unify RunnableMeta (Phase 2a partial)
+1. **Add `schedule_after` to Scheduler trait**
+   - Implement in TestScheduler using timer infrastructure
+   - This eliminates the need for TestDispatcher's delayed queue
 
-Make GPUI re-export scheduler's `RunnableMeta`. Currently both define identical structs:
+2. **Move `is_main_thread` tracking into TestScheduler**
+   - Track in `step()` which type of task is running
+   - Expose via `is_main_thread()` method
 
-```rust
-// scheduler/src/scheduler.rs
-#[derive(Clone, Debug)]
-pub struct RunnableMeta {
-    pub location: &'static Location<'static>,
-}
+3. **Move unparker mechanism into TestScheduler**
+   - Add `push_unparker()`, `unpark_all()`, `unparker_count()`
+   - Call `unpark_all()` in `schedule_foreground()` and `schedule_background()`
 
-// gpui/src/platform.rs  
-#[derive(Debug)]
-pub struct RunnableMeta {
-    pub location: &'static core::panic::Location<'static>,
-}
-```
+4. **Create thin PlatformDispatcher impl for TestScheduler**
+   - Either impl directly on TestScheduler or create `TestDispatcherAdapter(Arc<TestScheduler>)`
+   - Should be ~50-80 lines total
 
-**Changes needed**:
+5. **Delete TestDispatcher**
+   - Update all references to use the new adapter
+   - Remove `crates/gpui/src/platform/test/dispatcher.rs`
 
-```rust
-// gpui/src/platform.rs - REMOVE the struct definition, add:
-pub use scheduler::RunnableMeta;
+### Medium Term
 
-// gpui/src/platform.rs - Simplify RunnableVariant:
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),  // Now uses scheduler's RunnableMeta
-    Compat(Runnable),              // Keep for now (timer callbacks)
-    // Remove Scheduler variant - it's now same as Meta
-}
-```
+6. **Unify Task types**
+   - Have GPUI reexport `scheduler::Task<T>`
+   - Or create extension trait for GPUI-specific methods like `detach_and_log_err`
 
-**Migration path for Scheduler variant removal**:
-- Search for `RunnableVariant::Scheduler` uses
-- Convert to `RunnableVariant::Meta`
-- Update all dispatcher match arms
+7. **Unify Executor types**
+   - Evaluate if GPUI's executors can be replaced with scheduler's
+   - Main blocker: GPUI executors take `Arc<dyn PlatformDispatcher>`
 
-#### 2. Simplify RunnableVariant
+### Long Term
 
-Since `RunnableVariant::Compat` has been eliminated, the enum is now single-variant. Consider replacing it entirely with just `Runnable<RunnableMeta>` for simplicity.
-
-### Medium-term (Higher Effort)
-
-3. **Unify Task types** (Phase 1)
-   - After RunnableMeta unified, this becomes cleaner
-
-### Long-term (Optional)
-
-4. **Delegate task queues** (Phase 2b)
-   - Most complex change
-   - Only if clear benefit emerges
-
-5. **Executor unification** (Phase 4)
-   - Defer unless concrete need arises
-
-## Technical Considerations
-
-### Test Determinism
-
-The hybrid approach currently works because:
-- RNG is shared (from TestScheduler)
-- Clock is shared (from TestScheduler) 
-- Task selection uses shared RNG
-
-Moving task queues to scheduler must preserve:
-- Same RNG consumption pattern
-- Same selection algorithm (weighted by priority)
-- Same handling of foreground vs background ratio
-
-**Critical difference to address**: GPUI's `TestDispatcher::tick()` uses a different selection algorithm than `TestScheduler::step()`:
-
-```rust
-// GPUI: Weighted by queue size (foreground vs background)
-let main_thread = rng.random_ratio(
-    foreground_len as u32,
-    (foreground_len + background_len) as u32,
-);
-
-// Scheduler: Weighted by Priority enum weights
-// (and preserves intra-session ordering for foreground)
-```
-
-To migrate, either:
-1. Add GPUI-compatible selection mode to TestScheduler
-2. Accept behavior change (may affect test seeds)
-3. Keep GPUI's tick() implementation, only delegate storage
-
-### Session Isolation
-
-`TestScheduler` has `SessionId` for isolating foreground tasks. Currently unused by GPUI.
-
-For multi-context tests (e.g., `cx_a`, `cx_b`), consider:
-- Each `TestAppContext` gets its own `SessionId`
-- Foreground tasks are isolated per session
-- Background tasks are global (current behavior)
-
-### Backwards Compatibility
-
-Tests use these APIs that must keep working:
-- `cx.executor().run_until_parked()`
-- `cx.executor().advance_clock(duration)`
-- `cx.executor().tick()`
-- `#[gpui::test(iterations = N)]`
-- `SEED=N` environment variable
-
-## Metrics for Success
-
-1. **Reduced code duplication**: Fewer lines handling task scheduling in GPUI
-2. **Simpler mental model**: One place to understand test scheduling
-3. **No test regressions**: All existing tests pass with same seeds
-4. **Better debugging**: Unified tracing/logging across scheduler and GPUI
-
-## First Concrete Task: Unify RunnableMeta
-
-Here's the minimal change to start:
-
-### Step 1: Export RunnableMeta from scheduler
-
-Already done - scheduler exports `RunnableMeta` from `scheduler.rs`.
-
-### Step 2: Update GPUI imports
-
-```rust
-// crates/gpui/src/platform.rs
-
-// BEFORE:
-use scheduler::RunnableMeta as SchedulerRunnableMeta;
-// ...
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct RunnableMeta {
-    pub location: &'static core::panic::Location<'static>,
-}
-
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),
-    Compat(Runnable),
-    Scheduler(Runnable<SchedulerRunnableMeta>),
-}
-
-// AFTER:
-pub use scheduler::RunnableMeta;
-
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),
-    Compat(Runnable),
-    // Scheduler variant removed - now same as Meta
-}
-```
-
-### Step 3: Update all dispatcher match arms
-
-In each platform dispatcher, change:
-```rust
-// BEFORE:
-match runnable {
-    RunnableVariant::Meta(r) => r.run(),
-    RunnableVariant::Compat(r) => r.run(),
-    RunnableVariant::Scheduler(r) => r.run(),
-}
-
-// AFTER:
-match runnable {
-    RunnableVariant::Meta(r) => r.run(),
-    RunnableVariant::Compat(r) => r.run(),
-}
-```
-
-### Step 4: Update PlatformScheduler
-
-```rust
-// crates/gpui/src/platform/platform_scheduler.rs
-
-// BEFORE:
-fn schedule_foreground(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
-    self.dispatcher.dispatch_on_main_thread(
-        RunnableVariant::Scheduler(runnable),  // <-- was Scheduler
-        GpuiPriority::default(),
-    );
-}
-
-// AFTER:
-fn schedule_foreground(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
-    self.dispatcher.dispatch_on_main_thread(
-        RunnableVariant::Meta(runnable),  // <-- now Meta (same type)
-        GpuiPriority::default(),
-    );
-}
-```
-
-**Estimated diff size**: ~50 lines across 6-7 files
+8. **Consider eliminating PlatformDispatcher entirely**
+   - Have production dispatchers implement `Scheduler` directly
+   - Or keep as internal implementation detail
 
 ---
 
-## Appendix: File Inventory
+## API Comparison
 
-### Scheduler Crate
-- `src/scheduler.rs` - Main entry, re-exports, `Priority`, `RunnableMeta`, `Scheduler` trait
-- `src/executor.rs` - `ForegroundExecutor`, `BackgroundExecutor`, `Task<T>`
-- `src/test_scheduler.rs` - `TestScheduler`, `TestSchedulerConfig`
-- `src/clock.rs` - `Clock` trait, `TestClock`, `SystemClock`
+### PlatformDispatcher (current GPUI trait)
+```rust
+pub trait PlatformDispatcher: Send + Sync {
+    fn is_main_thread(&self) -> bool;
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+    fn now(&self) -> Instant;
+    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>);
+    fn as_test(&self) -> Option<&TestDispatcher>;
+    // ... timing methods ...
+}
+```
 
-### GPUI Crate
-- `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task<T>`, `Priority`
-- `src/platform.rs` - `RunnableMeta`, `RunnableVariant`, `PlatformDispatcher` trait
-- `src/platform/platform_scheduler.rs` - `PlatformScheduler` adapter
-- `src/platform/test/dispatcher.rs` - `TestDispatcher` (hybrid)
-- `src/platform/mac/dispatcher.rs` - macOS dispatcher
-- `src/platform/linux/dispatcher.rs` - Linux dispatcher  
-- `src/platform/windows/dispatcher.rs` - Windows dispatcher
-- `src/test.rs` - `run_test` function
-- `src/app/test_context.rs` - `TestAppContext`
+### Scheduler (scheduler crate trait)
+```rust
+pub trait Scheduler: Send + Sync {
+    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>);
+    fn schedule_background_with_priority(&self, runnable: Runnable<RunnableMeta>, priority: Priority);
+    fn schedule_background(&self, runnable: Runnable<RunnableMeta>);
+    fn timer(&self, duration: Duration) -> Timer;
+    fn clock(&self) -> Arc<dyn Clock>;
+    fn block(&self, session_id: Option<SessionId>, future: LocalBoxFuture<()>, timeout: Option<Duration>);
+    fn as_test(&self) -> &TestScheduler;
+}
+```
+
+### Proposed Additions to Scheduler
+```rust
+pub trait Scheduler: Send + Sync {
+    // ... existing ...
+    
+    /// Schedule a runnable to run after a duration (imperative timer API)
+    fn schedule_after(&self, duration: Duration, runnable: Runnable<RunnableMeta>);
+    
+    /// Check if currently executing a foreground task
+    fn is_main_thread(&self) -> bool;
+}
+
+impl TestScheduler {
+    /// For block_on parking support
+    pub fn push_unparker(&self, unparker: Unparker);
+    pub fn unpark_all(&self);
+    pub fn unparker_count(&self) -> usize;
+}
+```
+
+---
+
+## Success Criteria
+
+1. `crates/gpui/src/platform/test/dispatcher.rs` is deleted
+2. TestScheduler (or thin wrapper) implements PlatformDispatcher
+3. No duplicate task queue management between GPUI and scheduler
+4. All existing tests pass
+5. Minimal code in GPUI for test scheduling support
+
+---
+
+## Notes for Implementation
+
+- The `simulate_random_delay()` method uses range 0..10, while scheduler's `yield_random()` uses 0..2 with 10% chance of 10..20. Tests may depend on the exact distribution. Consider making this configurable or accepting the change.
+
+- `spawn_realtime` panics in TestDispatcher - this is correct behavior (real threads break determinism).
+
+- SessionId is allocated per TestDispatcher clone. When eliminating TestDispatcher, ensure the same session allocation happens (probably in the PlatformDispatcher wrapper's Clone impl).
+
+- The `block_on` implementation in `executor.rs` has complex logic for parking, unparking, and timeout handling. This may need adjustment when changing the dispatcher abstraction.
+
+- `TaskLabel` is still defined but unused after removing deprioritization. Can be removed entirely or kept for future use.
