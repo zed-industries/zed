@@ -34,6 +34,45 @@ use std::{
     pin::Pin,
 };
 
+#[test]
+fn test_realtime_priority_background_spawn_panics_in_tests() {
+    // Use the test harness' code path so this reflects how GPUI tests are actually executed.
+    let result = std::panic::catch_unwind(|| {
+        run_test(
+            1,
+            &[],
+            0,
+            &mut |dispatcher: TestDispatcher, _seed| {
+                let mut cx = TestAppContext::build(dispatcher, None);
+                cx.update(|cx| {
+                    let _task = cx.background_executor.spawn_with_priority(
+                        crate::Priority::Realtime(crate::RealtimePriority::Audio),
+                        async { () },
+                    );
+                });
+            },
+            None,
+        );
+    });
+
+    let panic_payload = result
+        .err()
+        .expect("expected realtime priority spawn to panic under TestDispatcher");
+
+    let panic_message = if let Some(message) = panic_payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else if let Some(message) = panic_payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    };
+
+    assert!(
+        panic_message.contains("spawn_realtime is not supported in TestDispatcher"),
+        "unexpected panic message: {panic_message}"
+    );
+}
+
 /// Run the given test function with the configured parameters.
 /// This is intended for use with the `gpui::test` macro
 /// and generally should not be used directly.
