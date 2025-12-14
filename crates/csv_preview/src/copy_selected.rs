@@ -4,7 +4,11 @@ use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use std::collections::BTreeMap;
 
-use crate::{CopySelected, CsvPreviewView, settings::CopyFormat};
+use crate::{
+    CopySelected, CsvPreviewView,
+    settings::CopyFormat,
+    types::{AnyColumn, DataRow},
+};
 use std::collections::HashSet;
 
 impl CsvPreviewView {
@@ -23,15 +27,15 @@ impl CsvPreviewView {
         let full_content = &self.contents;
 
         // Group selected cells by row, then by column for proper TSV formatting
-        let mut rows_data: BTreeMap<usize, BTreeMap<usize, String>> = BTreeMap::new();
+        let mut rows_data: BTreeMap<DataRow, BTreeMap<AnyColumn, String>> = BTreeMap::new();
 
         for cell_id in selected_cells {
-            let row_idx = cell_id.row.get();
-            let col_idx = cell_id.col.get();
+            let row_idx = cell_id.row;
+            let col_idx = cell_id.col;
 
-            if let Some(row) = (&full_content.rows).get(row_idx) {
+            if let Some(row) = (&full_content.rows).get(row_idx.get()) {
                 let cell_content = row
-                    .get(col_idx)
+                    .get(col_idx.get())
                     .map(|s| s.as_ref().to_string())
                     .unwrap_or_default();
 
@@ -55,8 +59,8 @@ impl CsvPreviewView {
             let mut global_max_col = 0;
             for columns in rows_data.values() {
                 if !columns.is_empty() {
-                    let row_min = *columns.keys().next().unwrap();
-                    let row_max = *columns.keys().last().unwrap();
+                    let row_min = columns.keys().next().unwrap().get();
+                    let row_max = columns.keys().last().unwrap().get();
                     global_min_col = global_min_col.min(row_min);
                     global_max_col = global_max_col.max(row_max);
                 }
@@ -70,7 +74,10 @@ impl CsvPreviewView {
                 // Build the row using global column range, filling empty cells
                 let mut row_cells = Vec::new();
                 for col in global_min_col..=global_max_col {
-                    let cell_value = columns.get(&col).cloned().unwrap_or_default();
+                    let cell_value = columns
+                        .get(&AnyColumn::new(col))
+                        .cloned()
+                        .unwrap_or_default();
                     row_cells.push(cell_value);
                 }
 
@@ -132,29 +139,29 @@ impl CsvPreviewView {
 
 fn format_as_markdown_table(
     all_table_headers: &[SharedString],
-    rows_data: &BTreeMap<usize, BTreeMap<usize, String>>,
+    rows_data: &BTreeMap<DataRow, BTreeMap<AnyColumn, String>>,
 ) -> String {
     if rows_data.is_empty() {
         return String::new();
     }
 
     // Determine which columns are selected
-    let mut selected_columns: HashSet<usize> = HashSet::new();
+    let mut selected_columns: HashSet<AnyColumn> = HashSet::new();
     for columns in rows_data.values() {
-        selected_columns.extend(columns.keys());
+        selected_columns.extend(columns.keys().copied());
     }
-    let mut sorted_columns: Vec<usize> = selected_columns.into_iter().collect();
+    let mut sorted_columns: Vec<AnyColumn> = selected_columns.into_iter().collect();
     sorted_columns.sort();
 
     // Build header row with column names
     let mut markdown_lines = Vec::new();
     let header_cells: Vec<String> = sorted_columns
         .iter()
-        .map(|&col_idx| {
+        .map(|col_idx| {
             all_table_headers
-                .get(col_idx)
+                .get(col_idx.get())
                 .map(|h| h.as_ref().replace('\n', "<br>").replace('|', "\\|"))
-                .unwrap_or_else(|| format!("Col {}", col_idx + 1))
+                .unwrap_or_else(|| format!("Col {}", col_idx.get() + 1))
         })
         .collect();
 
@@ -169,9 +176,9 @@ fn format_as_markdown_table(
     for (_row_idx, columns) in rows_data {
         let data_cells: Vec<String> = sorted_columns
             .iter()
-            .map(|&col_idx| {
+            .map(|col_idx| {
                 columns
-                    .get(&col_idx)
+                    .get(col_idx)
                     .cloned()
                     .unwrap_or_default()
                     .replace('\n', "<br>")
@@ -234,14 +241,14 @@ fn show_toast_with_copy_results(
 fn calculate_toast_info(
     selected_cells: &HashSet<crate::types::DataCellId>,
     copy_format: CopyFormat,
-    rows_data: &BTreeMap<usize, BTreeMap<usize, String>>,
+    rows_data: &BTreeMap<DataRow, BTreeMap<AnyColumn, String>>,
 ) -> ToastInfo {
     let selected_cell_count = selected_cells.len();
     let (rectangle_dimensions, empty_cells_count) = if copy_format == CopyFormat::Markdown {
         // For markdown, use the selected columns approach
-        let mut selected_columns: HashSet<usize> = HashSet::new();
+        let mut selected_columns: HashSet<AnyColumn> = HashSet::new();
         for columns in rows_data.values() {
-            selected_columns.extend(columns.keys());
+            selected_columns.extend(columns.keys().copied());
         }
         let cols = selected_columns.len();
         let rows = rows_data.len();
@@ -254,8 +261,8 @@ fn calculate_toast_info(
         let mut global_max_col = 0;
         for columns in rows_data.values() {
             if !columns.is_empty() {
-                let row_min = *columns.keys().next().unwrap();
-                let row_max = *columns.keys().last().unwrap();
+                let row_min = columns.keys().next().unwrap().get();
+                let row_max = columns.keys().last().unwrap().get();
                 global_min_col = global_min_col.min(row_min);
                 global_max_col = global_max_col.max(row_max);
             }
