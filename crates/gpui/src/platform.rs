@@ -570,7 +570,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 #[doc(hidden)]
 pub enum RunnableVariant {
     Meta(Runnable<RunnableMeta>),
-    Compat(Runnable),
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not

@@ -19,10 +19,18 @@
 - Both Task types now have identical APIs except `detach_and_log_err` (GPUI-specific, needs `App` context)
 - Full unification deferred: both types wrap `async_task::Task<T, RunnableMeta>` identically, re-exporting would require significant refactoring for minimal benefit
 
+### 4. Eliminated RunnableVariant::Compat (Phase 2a full) - DONE
+- Removed `RunnableVariant::Compat` variant entirely
+- Updated `PlatformScheduler::timer()` to use `async_task::Builder` with `RunnableMeta`
+- Updated REPL's `ZedDispatcher` to wrap external `Runnable` in tasks with metadata
+- Simplified all platform dispatchers (Mac, Linux, Windows, Test) - removed Compat match arms
+- Removed unused `trampoline_compat` function from Mac dispatcher
+- `RunnableVariant` is now a single-variant enum (could be simplified further to just the inner type)
+
 ## 🔜 NEXT STEPS FOR FUTURE WORK
 
 ### Near-term (recommended next tasks):
-1. **Eliminate RunnableVariant::Compat (Phase 2a full)** - Remove `Compat` variant by converting timer callbacks to use `RunnableMeta`
+1. **Simplify RunnableVariant** - Since it's now single-variant, consider replacing with just `Runnable<RunnableMeta>`
 
 ### Medium-term:
 2. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
@@ -300,9 +308,9 @@ pub enum RunnableVariant {
 - Convert to `RunnableVariant::Meta`
 - Update all dispatcher match arms
 
-#### 2. Eliminate RunnableVariant::Compat (Phase 2a full)
+#### 2. Simplify RunnableVariant
 
-Convert timer callbacks to use `RunnableMeta` instead of plain `Runnable`, eliminating the need for the `Compat` variant entirely.
+Since `RunnableVariant::Compat` has been eliminated, the enum is now single-variant. Consider replacing it entirely with just `Runnable<RunnableMeta>` for simplicity.
 
 ### Medium-term (Higher Effort)
 

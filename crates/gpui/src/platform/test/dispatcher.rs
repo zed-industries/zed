@@ -288,13 +288,9 @@ impl TestDispatcher {
         drop(state);
 
         // Log task location before running (helps identify which task is executing)
-        let location_str = match &runnable {
-            RunnableVariant::Meta(r) => {
-                let loc = r.metadata().location;
-                format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
-            }
-            RunnableVariant::Compat(_) => "compat-task".to_string(),
-        };
+        let RunnableVariant::Meta(ref r) = runnable;
+        let loc = r.metadata().location;
+        let location_str = format!("{}:{}:{}", loc.file(), loc.line(), loc.column());
 
         dispatcher_log!(
             "tick() RUNNING {} task from {} | main_thread={}",
@@ -303,10 +299,8 @@ impl TestDispatcher {
             main_thread,
         );
 
-        match runnable {
-            RunnableVariant::Meta(runnable) => runnable.run(),
-            RunnableVariant::Compat(runnable) => runnable.run(),
-        };
+        let RunnableVariant::Meta(runnable) = runnable;
+        runnable.run();
 
         self.state.lock().is_main_thread = was_main_thread;
 

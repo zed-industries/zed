@@ -81,19 +81,23 @@ impl Scheduler for PlatformScheduler {
             .dispatch(RunnableVariant::Meta(runnable), None, gpui_priority);
     }
 
+    #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
+        let location = core::panic::Location::caller();
         let (tx, rx) = futures::channel::oneshot::channel();
-        let (runnable, task) = async_task::spawn(
-            async move {
-                let _ = tx.send(());
-            },
-            {
-                let dispatcher = self.dispatcher.clone();
-                move |runnable: async_task::Runnable| {
-                    dispatcher.dispatch_after(duration, RunnableVariant::Compat(runnable))
-                }
-            },
-        );
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(
+                |_| async move {
+                    let _ = tx.send(());
+                },
+                {
+                    let dispatcher = self.dispatcher.clone();
+                    move |runnable| {
+                        dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                    }
+                },
+            );
         runnable.schedule();
         task.detach();
         Timer::new(rx)

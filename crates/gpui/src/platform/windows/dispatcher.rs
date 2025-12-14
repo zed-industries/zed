@@ -79,33 +79,16 @@ impl WindowsDispatcher {
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let start = Instant::now();
 
-        let mut timing = match runnable {
-            RunnableVariant::Meta(runnable) => {
-                let location = runnable.metadata().location;
-                let timing = TaskTiming {
-                    location,
-                    start,
-                    end: None,
-                };
-                profiler::add_task_timing(timing);
-
-                runnable.run();
-
-                timing
-            }
-            RunnableVariant::Compat(runnable) => {
-                let timing = TaskTiming {
-                    location: core::panic::Location::caller(),
-                    start,
-                    end: None,
-                };
-                profiler::add_task_timing(timing);
-
-                runnable.run();
-
-                timing
-            }
+        let RunnableVariant::Meta(runnable) = runnable;
+        let location = runnable.metadata().location;
+        let mut timing = TaskTiming {
+            location,
+            start,
+            end: None,
         };
+        profiler::add_task_timing(timing);
+
+        runnable.run();
 
         let end = Instant::now();
         timing.end = Some(end);
