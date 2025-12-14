@@ -20052,6 +20052,7 @@ dependencies = [
  "component",
  "dap",
  "db",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",

@@ -24,6 +24,8 @@ const AGENTS_PANEL_KEY: &str = "agents_panel";
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentsPanel {
     width: Option<Pixels>,
+    #[serde(default)]
+    utility_pane_expanded: bool,
 }
 
 actions!(
@@ -48,6 +50,7 @@ pub struct AgentsPanel {
     utility_pane_view: Entity<AgentsUtilityPane>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
+    utility_pane_expanded: bool,
     pending_serialization: Task<Option<()>>,
 }
 
@@ -75,6 +78,7 @@ impl AgentsPanel {
                     let mut panel = Self::new(fs, cx);
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
+                        panel.utility_pane_expanded = serialized_panel.utility_pane_expanded;
                     }
                     panel
                 })
@@ -84,23 +88,29 @@ impl AgentsPanel {
 
     fn new(fs: Arc<dyn Fs>, cx: &mut ui::Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        let utility_pane_view = cx.new(|cx| AgentsUtilityPane::new(cx)).into();
+        let utility_pane_view = cx.new(|cx| AgentsUtilityPane::new(cx));
         Self {
             focus_handle,
             utility_pane_view,
             fs,
             width: None,
+            utility_pane_expanded: false,
             pending_serialization: Task::ready(None),
         }
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
+        let utility_pane_expanded = self.utility_pane_expanded;
         self.pending_serialization = cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
                     AGENTS_PANEL_KEY.into(),
-                    serde_json::to_string(&SerializedAgentsPanel { width }).unwrap(),
+                    serde_json::to_string(&SerializedAgentsPanel {
+                        width,
+                        utility_pane_expanded,
+                    })
+                    .unwrap(),
                 )
                 .await
                 .log_err()
@@ -183,6 +193,16 @@ impl Panel for AgentsPanel {
 
     fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
         Some(self.utility_pane_view.clone().into())
+    }
+
+    fn utility_pane_expanded(&self, _cx: &App) -> bool {
+        self.utility_pane_expanded
+    }
+
+    fn set_utility_pane_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.utility_pane_expanded = expanded;
+        self.serialize(cx);
+        cx.notify();
     }
 }
 

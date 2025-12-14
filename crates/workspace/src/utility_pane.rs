@@ -1,11 +1,13 @@
-use gpui::{AnyView, EntityId, WeakEntity};
+use std::sync::Arc;
+
+use gpui::{AnyView, App, EntityId, WeakEntity};
 use ui::{
     ActiveTheme as _, Clickable, Context, DynamicSpacing, FluentBuilder as _, IconButton, IconName,
     IconSize, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, Styled as _,
     Tab, Window, div, px,
 };
 
-use crate::{DockPosition, Workspace};
+use crate::{DockPosition, PanelHandle, Workspace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UtilityPaneSlot {
@@ -15,13 +17,12 @@ pub enum UtilityPaneSlot {
 
 #[derive(Debug, Default, Clone)]
 pub struct UtilityPaneState {
-    pub left_slot: Option<UtilitySlotState>,
-    pub right_slot: Option<UtilitySlotState>,
+    pub left_slot: Option<EntityId>,
+    pub right_slot: Option<EntityId>,
 }
 
 #[derive(Debug, Clone)]
-pub struct UtilitySlotState {
-    pub provider_panel_id: EntityId,
+pub struct UtilityPane {
     pub view: AnyView,
     pub expanded: bool,
 }
@@ -35,45 +36,62 @@ pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot
 }
 
 impl Workspace {
+    pub fn panel_for_utility_slot(
+        &self,
+        slot: UtilityPaneSlot,
+        cx: &App,
+    ) -> Option<Arc<dyn PanelHandle>> {
+        let panel_id = match slot {
+            UtilityPaneSlot::Left => self.utility_pane_state.left_slot?,
+            UtilityPaneSlot::Right => self.utility_pane_state.right_slot?,
+        };
+
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel) = dock.read(cx).panel_for_id(panel_id) {
+                return Some(panel.clone());
+            }
+        }
+        None
+    }
+
+    pub fn utility_pane_for_slot(
+        &self,
+        slot: UtilityPaneSlot,
+        window: &Window,
+        cx: &App,
+    ) -> Option<UtilityPane> {
+        let panel = self.panel_for_utility_slot(slot, cx)?;
+        let view = panel.utility_pane(window, cx)?;
+        let expanded = panel.utility_pane_expanded(cx);
+        Some(UtilityPane { view, expanded })
+    }
+
     pub fn toggle_utility_pane(
         &mut self,
         slot: UtilityPaneSlot,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match slot {
-            UtilityPaneSlot::Left => {
-                if let Some(slot_state) = &mut self.utility_pane_state.left_slot {
-                    slot_state.expanded = !slot_state.expanded;
-                }
-            }
-            UtilityPaneSlot::Right => {
-                if let Some(slot_state) = &mut self.utility_pane_state.right_slot {
-                    slot_state.expanded = !slot_state.expanded;
-                }
-            }
+        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
+            let current = panel.utility_pane_expanded(cx);
+            panel.set_utility_pane_expanded(!current, cx);
         }
         cx.notify();
+        self.serialize_workspace(window, cx);
     }
 
     pub fn register_utility_pane(
         &mut self,
         slot: UtilityPaneSlot,
         provider_panel_id: EntityId,
-        view: AnyView,
         cx: &mut Context<Self>,
     ) {
-        let slot_state = UtilitySlotState {
-            provider_panel_id,
-            view,
-            expanded: false,
-        };
         match slot {
             UtilityPaneSlot::Left => {
-                self.utility_pane_state.left_slot = Some(slot_state);
+                self.utility_pane_state.left_slot = Some(provider_panel_id);
             }
             UtilityPaneSlot::Right => {
-                self.utility_pane_state.right_slot = Some(slot_state);
+                self.utility_pane_state.right_slot = Some(provider_panel_id);
             }
         }
         cx.notify();
@@ -89,13 +107,11 @@ impl Workspace {
             UtilityPaneSlot::Left => self
                 .utility_pane_state
                 .left_slot
-                .as_ref()
-                .is_some_and(|state| state.provider_panel_id == provider_panel_id),
+                .is_some_and(|id| id == provider_panel_id),
             UtilityPaneSlot::Right => self
                 .utility_pane_state
                 .right_slot
-                .as_ref()
-                .is_some_and(|state| state.provider_panel_id == provider_panel_id),
+                .is_some_and(|id| id == provider_panel_id),
         };
 
         if should_clear {
@@ -113,13 +129,13 @@ impl Workspace {
 }
 
 #[derive(IntoElement)]
-pub struct UtilityPane {
+pub struct UtilityPaneFrame {
     workspace: WeakEntity<Workspace>,
     slot: UtilityPaneSlot,
     view: AnyView,
 }
 
-impl UtilityPane {
+impl UtilityPaneFrame {
     pub fn new(slot: UtilityPaneSlot, view: AnyView, cx: &mut Context<Workspace>) -> Self {
         let workspace = cx.weak_entity();
         Self {
@@ -130,7 +146,7 @@ impl UtilityPane {
     }
 }
 
-impl RenderOnce for UtilityPane {
+impl RenderOnce for UtilityPaneFrame {
     fn render(self, _window: &mut Window, cx: &mut ui::App) -> impl IntoElement {
         let workspace = self.workspace.clone();
         let slot = self.slot;

@@ -21,3 +21,9 @@ impl FeatureFlag for InlineAssistantV2FeatureFlag {
         false
     }
 }
+
+pub struct AgentV2FeatureFlag;
+
+impl FeatureFlag for AgentV2FeatureFlag {
+    const NAME: &'static str = "agent-v2";
+}

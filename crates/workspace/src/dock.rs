@@ -4,6 +4,7 @@ use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
@@ -77,6 +78,10 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
         None
     }
+    fn utility_pane_expanded(&self, _cx: &App) -> bool {
+        false
+    }
+    fn set_utility_pane_expanded(&mut self, _expanded: bool, _cx: &mut Context<Self>) {}
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -102,6 +107,8 @@ pub trait PanelHandle: Send + Sync {
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
     fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView>;
+    fn utility_pane_expanded(&self, cx: &App) -> bool;
+    fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App);
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -209,6 +216,14 @@ where
 
     fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView> {
         self.read(cx).utility_pane(window, cx)
+    }
+
+    fn utility_pane_expanded(&self, cx: &App) -> bool {
+        self.read(cx).utility_pane_expanded(cx)
+    }
+
+    fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_utility_pane_expanded(expanded, cx))
     }
 }
 
@@ -409,6 +424,13 @@ impl Dock {
             .position(|entry| entry.panel.remote_id() == Some(panel_id))
     }
 
+    pub fn panel_for_id(&self, panel_id: EntityId) -> Option<&Arc<dyn PanelHandle>> {
+        self.panel_entries
+            .iter()
+            .find(|entry| entry.panel.panel_id() == panel_id)
+            .map(|entry| &entry.panel)
+    }
+
     pub fn first_enabled_panel_idx(&mut self, cx: &mut Context<Self>) -> anyhow::Result<usize> {
         self.panel_entries
             .iter()
@@ -516,6 +538,9 @@ impl Dock {
 
                     new_dock.update(cx, |new_dock, cx| {
                         new_dock.remove_panel(&panel, window, cx);
+                    });
+
+                    new_dock.update(cx, |new_dock, cx| {
                         let index =
                             new_dock.add_panel(panel.clone(), workspace.clone(), window, cx);
                         if was_visible {
@@ -523,6 +548,12 @@ impl Dock {
                             new_dock.activate_panel(index, window, cx);
                         }
                     });
+
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.serialize_workspace(window, cx);
+                        })
+                        .ok();
                 }
             }),
             cx.subscribe_in(
@@ -612,17 +643,19 @@ impl Dock {
 
         self.restore_state(window, cx);
 
-        if let Some(utility_view) = panel.utility_pane(window, cx) {
-            let slot = utility_slot_for_dock_position(self.position);
-            let workspace = self.workspace.clone();
-            let id = Entity::entity_id(&panel);
-            cx.defer(move |cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.register_utility_pane(slot, id, utility_view, cx);
-                    });
-                }
-            });
+        if cx.has_flag::<AgentV2FeatureFlag>() {
+            if panel.utility_pane(window, cx).is_some() {
+                let slot = utility_slot_for_dock_position(self.position);
+                let workspace = self.workspace.clone();
+                let id = Entity::entity_id(&panel);
+                cx.defer(move |cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.register_utility_pane(slot, id, cx);
+                        });
+                    }
+                });
+            }
         }
 
         if panel.read(cx).starts_open(window, cx) {

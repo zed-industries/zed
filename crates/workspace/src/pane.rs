@@ -16,6 +16,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
@@ -3137,27 +3138,33 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
-        let render_aside_toggle_left = self
-            .is_upper_left
-            .then(|| {
-                self.workspace.upgrade().and_then(|entity| {
-                    let state = &entity.read(cx).utility_pane_state;
-                    state.left_slot.as_ref().map(|slot| !slot.expanded)
+        let render_aside_toggle_left = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_left
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane_for_slot(UtilityPaneSlot::Left, window, cx)
+                            .map(|info| !info.expanded)
+                    })
                 })
-            })
-            .flatten()
-            .unwrap_or(false);
+                .flatten()
+                .unwrap_or(false);
 
-        let render_aside_toggle_right = self
-            .is_upper_right
-            .then(|| {
-                self.workspace.upgrade().and_then(|entity| {
-                    let state = &entity.read(cx).utility_pane_state;
-                    state.right_slot.as_ref().map(|slot| !slot.expanded)
+        let render_aside_toggle_right = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_right
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane_for_slot(UtilityPaneSlot::Right, window, cx)
+                            .map(|info| !info.expanded)
+                    })
                 })
-            })
-            .flatten()
-            .unwrap_or(false);
+                .flatten()
+                .unwrap_or(false);
 
         TabBar::new("tab_bar")
             .when(render_aside_toggle_left, |tab_bar| {
