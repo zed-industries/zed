@@ -31,21 +31,13 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
 
 9. **Random Delay Delegation**: `simulate_random_delay()` delegates to `scheduler.yield_random()`
 
-10. **Simplified TestDispatcher**: Now ~130 lines, mostly just PlatformDispatcher trait impl
-
-### What TestDispatcher Still Does
-
-Located at `crates/gpui/src/platform/test/dispatcher.rs` (~130 lines):
-
-1. **PlatformDispatcher trait impl** - Required interface for GPUI executors
-2. **`unparkers`** - Thread synchronization for GPUI's `block_on` when parking is allowed
-3. **`session_id`** - For foreground task tracking per dispatcher clone
+10. **Simplified TestDispatcher**: Now ~70 lines, removed unparkers mechanism
 
 ### Key Files
 
 **Scheduler Crate** (`crates/scheduler/`):
 - `src/scheduler.rs` - `Scheduler` trait, `Priority`, `RealtimePriority`, `RunnableMeta`, `SessionId`
-- `src/test_scheduler.rs` - `TestScheduler` implementation (timers, clock, rng, is_main_thread)
+- `src/test_scheduler.rs` - `TestScheduler` implementation (timers, clock, rng, is_main_thread, block)
 
 **GPUI Crate** (`crates/gpui/`):
 - `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task`
@@ -75,41 +67,53 @@ Removed the unused `TaskLabel` infrastructure:
 
 ---
 
-## Blocked Phase
+## In Progress / Broken Phase
 
-### 🔶 Phase 2: Delegate block_internal to scheduler.block()
+### 🔴 Phase 5: Simplify block_internal and Remove Unparkers
 
-**Problem:** The scheduler's `blocked_sessions` mechanism prevents foreground tasks from the blocked session from running during `step_filtered()` calls. This breaks tests that call `run_until_parked()` inside an async test.
+**What was attempted:**
+1. Simplified `block_internal` in `gpui/src/executor.rs`:
+   - Removed debug logging infrastructure (`debug_log`, `DEBUG_SCHEDULER`, etc.)
+   - Removed `Parker`/`Unparker` usage - now uses simple `waker_fn` with `AtomicBool`
+   - Simplified parking logic: when parking is allowed, just calls `std::thread::yield_now()`
+   - Removed the complex unparker push/park_timeout dance
 
-**Current workaround:** GPUI keeps its own `block_internal` implementation that uses `tick()` directly.
+2. Simplified `TestDispatcher` in `gpui/src/platform/test/dispatcher.rs`:
+   - Removed `TestDispatcherState` struct entirely
+   - Removed `unparkers: Vec<Unparker>` field
+   - Removed `unpark_all()`, `push_unparker()`, `unparker_count()` methods
+   - Removed `self.unpark_all()` calls from `dispatch()` and `dispatch_on_main_thread()`
+   - TestDispatcher is now just `{ session_id, scheduler }` (~70 lines total)
 
-**Possible solutions to investigate:**
-- Have the scheduler distinguish between "internal stepping during block()" vs "user-initiated tick()"
-- Temporarily remove session from `blocked_sessions` while polling the user's future
-- Rethink the `blocked_sessions` mechanism entirely
+**Failing tests (3 in editor crate):**
+```
+test element::tests::test_soft_wrap_editor_width_auto_height_editor ... FAILED
+test inlays::inlay_hints::tests::test_no_hint_updates_for_unrelated_language_files ... FAILED
+test inlays::inlay_hints::tests::test_inside_char_boundary_range_hints ... FAILED
+```
+
+**Root cause hypothesis:**
+The soft wrapping and inlay hint tests involve async operations that need tasks to run. The issue is likely that:
+1. When `tick()` returns false (no tasks ready), the old code would park with a timeout and wait for new tasks
+2. The old `unparkers` mechanism would wake blocked threads when new tasks were dispatched
+3. The new code just calls `yield_now()` which doesn't actually wait for anything
+
+The tests that fail are ones where async work (like soft wrap calculation) happens in background tasks, and the test needs those tasks to complete before assertions run.
+
+**Possible fixes to investigate:**
+1. **Restore the parker/unparker mechanism** but keep it simpler - the parking is actually needed for some tests
+2. **Use scheduler.block() for parking cases only** - when parking is allowed, delegate to scheduler.block()
+3. **Add a "wait for tasks" primitive** to TestScheduler that the block_internal can use
+
+**Key insight:** The unparkers weren't just dead code - they serve to wake up blocked `block_internal` calls when new tasks are scheduled. Without them, `block_internal` busy-loops with `yield_now()` which may not give tasks time to run properly.
 
 ---
 
-## Next Steps
+## Next Phase (after fixing Phase 5)
 
-### 🎯 Phase 5: Create Thin PlatformDispatcher Wrapper for TestScheduler
+### Phase 6: Further Simplify TestDispatcher
 
-Move the `unparkers` mechanism into the scheduler crate, then create a minimal wrapper:
-
-```rust
-pub struct TestDispatcherAdapter {
-    session_id: SessionId,
-    scheduler: Arc<TestScheduler>,
-}
-
-impl PlatformDispatcher for TestDispatcherAdapter {
-    // ~50 lines of trait method forwarding
-}
-```
-
-### Phase 6: Delete TestDispatcher
-
-Once the adapter is working, delete `crates/gpui/src/platform/test/dispatcher.rs` entirely.
+After Phase 5 works correctly, evaluate if `TestDispatcher` can be reduced further or if `TestScheduler` can directly implement `PlatformDispatcher`.
 
 ### Phase 7: Unify Executor Types (Medium Term)
 
@@ -129,16 +133,17 @@ For production (Mac/Linux/Windows), either:
 
 ## Success Criteria
 
-1. `crates/gpui/src/platform/test/dispatcher.rs` is deleted or reduced to ~50 lines
-2. TestScheduler (or thin wrapper) implements PlatformDispatcher
-3. No duplicate task queue management between GPUI and scheduler
-4. All existing tests pass
-5. Minimal code in GPUI for test scheduling support
+1. `crates/gpui/src/platform/test/dispatcher.rs` reduced to ~50-70 lines (no unparkers) ✅
+2. GPUI's `block_internal` simplified ✅
+3. All existing tests pass ❌ (3 failing)
+4. No duplicate blocking/parking logic between GPUI and scheduler
 
 ---
 
 ## Notes for Implementation
 
-- SessionId is allocated per TestDispatcher clone. Ensure the same session allocation happens in any replacement.
-- The `block_on` implementation in `executor.rs` has complex logic for parking, unparking, and timeout handling.
-- `spawn_realtime` panics in TestDispatcher - this is correct behavior (real threads break determinism).
+- `SessionId` is allocated per `TestDispatcher` clone. This is used for foreground task routing.
+- The scheduler's `block()` uses `thread::park()` which works with the `Thread` handle stored in `TestScheduler`.
+- `spawn_realtime` panics in `TestDispatcher` - this is correct (real threads break determinism).
+- The `#[cfg(not(any(test, feature = "test-support")))]` version of `block_internal` doesn't tick tasks at all - it just parks and waits for the waker. This is correct for production.
+- **Important:** The failing tests involve async operations (soft wrap, inlay hints) that schedule background work. The test framework needs to properly wait for this work to complete.

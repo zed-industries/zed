@@ -4,56 +4,7 @@ use scheduler::Scheduler as _;
 
 pub use scheduler::{Priority, RealtimePriority};
 
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::atomic::AtomicU64;
 
-#[cfg(any(test, feature = "test-support"))]
-static DEBUG_SCHEDULER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(any(test, feature = "test-support"))]
-static DEBUG_SCHEDULER_INITIALIZED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(any(test, feature = "test-support"))]
-static THREAD_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(any(test, feature = "test-support"))]
-thread_local! {
-    static THREAD_ID: u64 = THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
-}
-
-/// Enable debug logging for scheduler investigation
-#[cfg(any(test, feature = "test-support"))]
-pub fn enable_scheduler_debugging() {
-    DEBUG_SCHEDULER.store(true, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// Disable debug logging for scheduler investigation
-#[cfg(any(test, feature = "test-support"))]
-pub fn disable_scheduler_debugging() {
-    DEBUG_SCHEDULER.store(false, std::sync::atomic::Ordering::SeqCst);
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn debug_log(msg: &str) {
-    // Initialize from environment variable on first call
-    if !DEBUG_SCHEDULER_INITIALIZED.load(std::sync::atomic::Ordering::Relaxed) {
-        let enabled = std::env::var("DEBUG_SCHEDULER")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        DEBUG_SCHEDULER.store(enabled, std::sync::atomic::Ordering::SeqCst);
-        DEBUG_SCHEDULER_INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
-        if enabled {
-            eprintln!("[SCHED] Scheduler debugging enabled via DEBUG_SCHEDULER=1");
-        }
-    }
-
-    if DEBUG_SCHEDULER.load(std::sync::atomic::Ordering::Relaxed) {
-        let thread_id = THREAD_ID.with(|id| *id);
-        let now = std::time::Instant::now();
-        eprintln!("[SCHED T{} {:?}] {}", thread_id, now, msg);
-    }
-}
 use async_task::Runnable;
 use futures::channel::mpsc;
 use parking_lot::{Condvar, Mutex};
@@ -65,15 +16,13 @@ use std::{
     panic::Location,
     pin::Pin,
     rc::Rc,
-    sync::{
-        Arc,
-        atomic::Ordering,
-    },
+    sync::Arc,
     task::{Context, Poll},
     thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
+#[cfg(not(any(test, feature = "test-support")))]
 use waker_fn::waker_fn;
 
 /// A pointer to the executor that is currently running,
@@ -384,9 +333,7 @@ impl BackgroundExecutor {
         future: Fut,
         timeout: Option<Duration>,
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
-        use std::sync::atomic::AtomicBool;
-
-        use parking::Parker;
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
         let mut future = Box::pin(future);
         if timeout == Some(Duration::ZERO) {
@@ -396,24 +343,20 @@ impl BackgroundExecutor {
             return Err(future);
         };
 
+        let scheduler = dispatcher.scheduler();
         let mut max_ticks = if timeout.is_some() {
-            dispatcher.scheduler().rng().random_range(0..=1000)
+            scheduler.rng().random_range(0..=1000)
         } else {
             usize::MAX
         };
 
-        let parker = Parker::new();
-        let unparker = parker.unparker();
-
         let awoken = Arc::new(AtomicBool::new(false));
-        let waker = waker_fn({
+        let waker = {
             let awoken = awoken.clone();
-            let unparker = unparker.clone();
-            move || {
-                awoken.store(true, Ordering::SeqCst);
-                unparker.unpark();
-            }
-        });
+            waker_fn::waker_fn(move || {
+                awoken.store(true, SeqCst);
+            })
+        };
         let mut cx = std::task::Context::from_waker(&waker);
 
         let duration = Duration::from_secs(
@@ -421,7 +364,7 @@ impl BackgroundExecutor {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(180),
         );
-        let mut test_should_end_by = Instant::now() + duration;
+        let test_should_end_by = Instant::now() + duration;
 
         loop {
             match future.as_mut().poll(&mut cx) {
@@ -433,45 +376,20 @@ impl BackgroundExecutor {
                     max_ticks -= 1;
 
                     if !dispatcher.tick(background_only) {
-                        debug_log("tick() returned false - no tasks to run");
-
-                        let was_awoken = awoken.swap(false, Ordering::SeqCst);
+                        let was_awoken = awoken.swap(false, SeqCst);
                         if was_awoken {
-                            debug_log("awoken flag was true, continuing");
                             continue;
                         }
-                        debug_log("awoken flag was false");
 
-                        if !dispatcher.scheduler().parking_allowed() {
-                            debug_log("parking NOT allowed, checking timers");
-                            let advanced = dispatcher.advance_clock_to_next_timer();
-                            debug_log(&format!(
-                                "advance_clock_to_next_timer() returned {}",
-                                advanced
-                            ));
-                            if advanced {
+                        if !scheduler.parking_allowed() {
+                            if dispatcher.advance_clock_to_next_timer() {
                                 continue;
                             }
                             panic!("parked with nothing left to run")
                         }
 
-                        let unparker_count_before = dispatcher.unparker_count();
-                        debug_log(&format!(
-                            "pushing unparker (count before: {})",
-                            unparker_count_before
-                        ));
-                        dispatcher.push_unparker(unparker.clone());
-                        let unparker_count_after = dispatcher.unparker_count();
-                        debug_log(&format!(
-                            "pushed unparker (count after: {}), about to park_timeout(1ms)",
-                            unparker_count_after
-                        ));
-
-                        let park_start = Instant::now();
-                        parker.park_timeout(Duration::from_millis(1));
-                        let park_duration = park_start.elapsed();
-
-                        debug_log(&format!("woke from park after {:?}", park_duration));
+                        // Parking is allowed - yield and continue polling
+                        std::thread::yield_now();
 
                         if Instant::now() > test_should_end_by {
                             panic!("test timed out after {duration:?} with allow_parking")

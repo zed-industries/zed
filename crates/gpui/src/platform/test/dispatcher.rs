@@ -1,6 +1,4 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
-use parking::Unparker;
-use parking_lot::Mutex;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{sync::Arc, time::{Duration, Instant}};
 
@@ -12,11 +10,6 @@ use std::{sync::Arc, time::{Duration, Instant}};
 pub struct TestDispatcher {
     session_id: SessionId,
     scheduler: Arc<TestScheduler>,
-    state: Arc<Mutex<TestDispatcherState>>,
-}
-
-struct TestDispatcherState {
-    unparkers: Vec<Unparker>,
 }
 
 impl TestDispatcher {
@@ -32,14 +25,9 @@ impl TestDispatcher {
 
         let session_id = scheduler.allocate_session_id();
 
-        let state = TestDispatcherState {
-            unparkers: Vec::new(),
-        };
-
         TestDispatcher {
             session_id,
             scheduler,
-            state: Arc::new(Mutex::new(state)),
         }
     }
 
@@ -70,21 +58,6 @@ impl TestDispatcher {
     pub fn run_until_parked(&self) {
         while self.tick(false) {}
     }
-
-    pub fn unpark_all(&self) {
-        let unparkers: Vec<_> = self.state.lock().unparkers.drain(..).collect();
-        for unparker in unparkers {
-            unparker.unpark();
-        }
-    }
-
-    pub fn push_unparker(&self, unparker: Unparker) {
-        self.state.lock().unparkers.push(unparker);
-    }
-
-    pub fn unparker_count(&self) -> usize {
-        self.state.lock().unparkers.len()
-    }
 }
 
 impl Clone for TestDispatcher {
@@ -93,7 +66,6 @@ impl Clone for TestDispatcher {
         Self {
             session_id,
             scheduler: self.scheduler.clone(),
-            state: self.state.clone(),
         }
     }
 }
@@ -118,12 +90,10 @@ impl PlatformDispatcher for TestDispatcher {
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.scheduler
             .schedule_background_with_priority(runnable, priority);
-        self.unpark_all();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         self.scheduler.schedule_foreground(self.session_id, runnable);
-        self.unpark_all();
     }
 
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
