@@ -1260,6 +1260,10 @@ impl SshConnectionOptions {
     pub fn additional_args(&self) -> Vec<String> {
         let mut args = self.additional_args_for_scp();
 
+        if let Some(timeout) = self.connection_timeout {
+            args.extend(["-o".to_string(), format!("ConnectTimeout={}", timeout)]);
+        }
+
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
                 let local_host = match &pf.local_host {
