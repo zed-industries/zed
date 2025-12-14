@@ -75,9 +75,11 @@ impl CsvPreviewView {
 
             let parsed_csv = parsing_task.await;
 
-            log::debug!("Parsed CSV in {}ms", instant.elapsed().as_millis());
+            let parse_duration = instant.elapsed();
+            log::debug!("Parsed CSV in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
                 view.contents = parsed_csv;
+                view.performance_metrics.last_parse_took = Some(parse_duration);
                 view.update_ordered_indices();
                 cx.notify();
             })

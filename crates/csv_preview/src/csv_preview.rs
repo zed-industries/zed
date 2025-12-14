@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
+use std::time::Instant;
 
 use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
@@ -8,6 +9,7 @@ use crate::{
     data_ordering::{OrderedIndices, Ordering},
     nasty_code_duplication::ColumnWidths,
     parser::EditorState,
+    performance_metrics_overlay::PerformanceMetrics,
     selection::TableSelection,
     settings::CsvPreviewSettings,
     table_like_content::TableLikeContent,
@@ -17,6 +19,7 @@ mod copy_selected;
 mod data_ordering;
 mod nasty_code_duplication;
 mod parser;
+mod performance_metrics_overlay;
 mod render_table;
 mod renderer;
 mod row_identifiers;
@@ -64,6 +67,8 @@ pub struct CsvPreviewView {
     pub(crate) ordered_indices: OrderedIndices,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
+    /// Performance metrics for debugging and monitoring CSV operations.
+    pub(crate) performance_metrics: PerformanceMetrics,
 }
 
 pub fn init(cx: &mut App) {
@@ -257,8 +262,11 @@ impl CsvPreviewView {
 
     /// Update ordered indices when ordering or content changes
     pub(crate) fn update_ordered_indices(&mut self) {
+        let start_time = Instant::now();
         self.ordered_indices =
             crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
+        let ordering_duration = start_time.elapsed();
+        self.performance_metrics.last_ordering_took = Some(ordering_duration);
     }
 
     /// Get reference to current ordered indices
@@ -298,6 +306,7 @@ impl CsvPreviewView {
                 ordered_indices: crate::data_ordering::generate_ordered_indices(None, &contents),
                 selection: TableSelection::new(),
                 settings: CsvPreviewSettings::default(),
+                performance_metrics: PerformanceMetrics::default(),
             };
 
             view.set_editor(editor.clone(), cx);

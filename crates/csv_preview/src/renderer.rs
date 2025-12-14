@@ -7,7 +7,7 @@ impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        v_flex()
+        let table_with_settings = v_flex()
             .w_full()
             .h_full()
             .p_4()
@@ -63,6 +63,13 @@ impl Render for CsvPreviewView {
                         cx.notify();
                     });
                 }
-            })
+            });
+
+        div()
+            .relative()
+            .w_full()
+            .h_full()
+            .child(table_with_settings)
+            .child(self.render_performance_metrics_overlay(cx))
     }
 }

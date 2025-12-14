@@ -3,6 +3,7 @@ use ui::{Context, SharedString, Window};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use crate::{
     CopySelected, CsvPreviewView,
@@ -18,6 +19,7 @@ impl CsvPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let start_time = Instant::now();
         let selected_cells = self.selection.get_selected_cells();
 
         if selected_cells.is_empty() {
@@ -129,6 +131,9 @@ impl CsvPreviewView {
             lines.join("\n")
         };
         cx.write_to_clipboard(ClipboardItem::new_string(content));
+
+        let copy_duration = start_time.elapsed();
+        self.performance_metrics.last_copy_took = Some(copy_duration);
 
         // Show toast notification
         if let Some(Some(workspace)) = window.root() {
