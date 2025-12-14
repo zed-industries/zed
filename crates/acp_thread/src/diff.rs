@@ -213,9 +213,9 @@ impl PendingDiff {
                 })?
                 .await;
             buffer_diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &text_snapshot, false, cx);
+                diff.set_snapshot(update.clone(), &text_snapshot, cx);
                 diff.secondary_diff().unwrap().update(cx, |diff, cx| {
-                    diff.set_snapshot(update, &text_snapshot, false, cx);
+                    diff.set_snapshot(update, &text_snapshot, cx);
                 });
             })?;
             diff.update(cx, |diff, cx| {
@@ -382,13 +382,13 @@ async fn build_buffer_diff(
 
     secondary_diff.update(cx, |secondary_diff, cx| {
         secondary_diff.language_changed(language.clone(), language_registry.clone(), cx);
-        secondary_diff.set_snapshot(update.clone(), &buffer, true, cx);
+        secondary_diff.set_snapshot(update.clone(), &buffer, cx);
     })?;
 
     let diff = cx.new(|cx| BufferDiff::new(&buffer, cx))?;
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update.clone(), &buffer, true, cx);
+        diff.set_snapshot(update.clone(), &buffer, cx);
         diff.set_secondary_diff(secondary_diff);
     })?;
     Ok(diff)

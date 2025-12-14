@@ -28,7 +28,7 @@ pub struct BufferDiff {
 
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
-    inner: BufferDiffInner,
+    inner: BufferDiffInner<language::BufferSnapshot>,
     secondary_diff: Option<Box<BufferDiffSnapshot>>,
 }
 
@@ -41,9 +41,14 @@ impl std::fmt::Debug for BufferDiffSnapshot {
     }
 }
 
-// FIXME figure out how to hide this
 #[derive(Clone)]
-pub struct BufferDiffInner<BaseText = language::BufferSnapshot> {
+pub struct BufferDiffUpdate {
+    base_text_changed: bool,
+    inner: BufferDiffInner<Arc<str>>,
+}
+
+#[derive(Clone)]
+struct BufferDiffInner<BaseText> {
     hunks: SumTree<InternalDiffHunk>,
     pending_hunks: SumTree<PendingHunk>,
     base_text: BaseText,
@@ -183,7 +188,7 @@ impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for Anchor {
     }
 }
 
-impl std::fmt::Debug for BufferDiffInner {
+impl std::fmt::Debug for BufferDiffInner<language::BufferSnapshot> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
             .field("hunks", &self.hunks)
@@ -593,7 +598,7 @@ impl BufferDiffInner<Entity<language::Buffer>> {
     }
 }
 
-impl BufferDiffInner {
+impl BufferDiffInner<language::BufferSnapshot> {
     fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -1139,7 +1144,7 @@ impl BufferDiff {
             None,
             cx,
         ));
-        this.set_snapshot(inner, &buffer, true, cx);
+        this.set_snapshot(inner, &buffer, cx);
         this
     }
 
@@ -1208,7 +1213,7 @@ impl BufferDiff {
         base_text_changed: bool,
         language: Option<Arc<Language>>,
         cx: &App,
-    ) -> Task<BufferDiffInner<Arc<str>>> {
+    ) -> Task<BufferDiffUpdate> {
         let prev_base_text = self.base_text(cx).as_rope().clone();
         let diff_options = build_diff_options(
             None,
@@ -1237,11 +1242,15 @@ impl BufferDiff {
                     diff_options,
                 );
                 let base_text = base_text.unwrap_or_default();
-                BufferDiffInner {
+                let inner = BufferDiffInner {
                     base_text,
                     hunks,
                     base_text_exists,
                     pending_hunks: SumTree::new(&buffer),
+                };
+                BufferDiffUpdate {
+                    inner,
+                    base_text_changed,
                 }
             })
     }
@@ -1261,24 +1270,20 @@ impl BufferDiff {
         cx.emit(BufferDiffEvent::LanguageChanged);
     }
 
-    // FIXME name
     pub fn set_snapshot(
         &mut self,
-        new_state: BufferDiffInner<Arc<str>>,
+        new_state: BufferDiffUpdate,
         buffer: &text::BufferSnapshot,
-        base_text_changed: bool,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
-        self.set_snapshot_with_secondary(new_state, buffer, None, base_text_changed, false, cx)
+        self.set_snapshot_with_secondary(new_state, buffer, None, false, cx)
     }
 
-    // FIXME name
     pub fn set_snapshot_with_secondary(
         &mut self,
-        new_state: BufferDiffInner<Arc<str>>,
+        update: BufferDiffUpdate,
         buffer: &text::BufferSnapshot,
         secondary_diff_change: Option<Range<Anchor>>,
-        base_text_changed: bool,
         clear_pending_hunks: bool,
         cx: &mut Context<Self>,
     ) -> Option<Range<Anchor>> {
@@ -1286,10 +1291,11 @@ impl BufferDiff {
 
         let old_snapshot = self.snapshot(cx);
         let state = &mut self.inner;
+        let new_state = update.inner;
         let (mut changed_range, mut base_text_changed_range) =
             match (state.base_text_exists, new_state.base_text_exists) {
                 (false, false) => (None, None),
-                (true, true) if !base_text_changed => {
+                (true, true) if !update.base_text_changed => {
                     compare_hunks(&new_state.hunks, &old_snapshot.inner.hunks, buffer)
                 }
                 _ => (
@@ -1319,7 +1325,7 @@ impl BufferDiff {
 
         let state = &mut self.inner;
         state.base_text_exists = new_state.base_text_exists;
-        if base_text_changed {
+        if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
@@ -1327,7 +1333,7 @@ impl BufferDiff {
             })
         }
         state.hunks = new_state.hunks;
-        if base_text_changed || clear_pending_hunks {
+        if update.base_text_changed || clear_pending_hunks {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
@@ -1402,7 +1408,7 @@ impl BufferDiff {
             };
             let state = state.await;
             this.update(cx, |this, cx| {
-                this.set_snapshot(state, &buffer, true, cx);
+                this.set_snapshot(state, &buffer, cx);
             })
             .log_err();
             drop(complete_on_drop)
@@ -1423,7 +1429,7 @@ impl BufferDiff {
         let base_text = self.base_text_string(cx).map(|s| s.as_str().into());
         let fut = self.update_diff(buffer.clone(), base_text, false, language, cx);
         let snapshot = cx.background_executor().block(fut);
-        self.set_snapshot(snapshot, &buffer, false, cx);
+        self.set_snapshot(snapshot, &buffer, cx);
     }
 
     pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
@@ -2148,7 +2154,6 @@ mod tests {
 
         let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, cx).snapshot(cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
-        // FIXME assert the other half of the range
         let (range, base_text_range) =
             compare_hunks(&diff_1.inner.hunks, &empty_diff.inner.hunks, &buffer);
         let range = range.unwrap();
@@ -2561,9 +2566,7 @@ mod tests {
                 )
             })
             .await;
-        diff.update(cx, |diff, cx| {
-            diff.set_snapshot(update, &snapshot, false, cx)
-        });
+        diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot, cx));
         cx.run_until_parked();
         drop(subscription);
         let events = rx.into_iter().collect::<Vec<_>>();

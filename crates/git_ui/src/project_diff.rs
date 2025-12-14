@@ -598,10 +598,10 @@ impl ProjectDiff {
                 }
             }
 
-            this.multibuffer.update(cx, |multibuffer, cx| {
+            this.editor.update(cx, |editor, cx| {
                 for path in previous_paths {
                     this.buffer_diff_subscriptions.remove(&path.path);
-                    multibuffer.remove_excerpts_for_path(path, cx);
+                    editor.remove_excerpts_for_path(path, cx);
                 }
             });
             buffers_to_load

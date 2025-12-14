@@ -506,7 +506,6 @@ struct BufferState {
     _subscriptions: [gpui::Subscription; 2],
 }
 
-#[derive(Clone)]
 struct DiffState {
     diff: Entity<BufferDiff>,
     /// Whether the [`MultiBuffer`] this is associated with is inverted (i.e.
@@ -2581,16 +2580,6 @@ impl MultiBuffer {
 
     pub fn diff_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
         self.diffs.get(&buffer_id).map(|state| state.diff.clone())
-    }
-
-    #[cfg(test)]
-    fn inverted_diff_for_main_buffer(&self, buffer: &Entity<Buffer>) -> Option<Entity<BufferDiff>> {
-        let diff = self.diffs.values().find(|diff| {
-            diff.main_buffer
-                .as_ref()
-                .is_some_and(|main_buffer| main_buffer.entity_id() == buffer.entity_id())
-        })?;
-        Some(diff.diff.clone())
     }
 
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {

@@ -3122,7 +3122,7 @@ impl BufferGitState {
                     if language_changed {
                         diff.language_changed(language.clone(), language_registry.clone(), cx);
                     }
-                    diff.set_snapshot(new_unstaged_diff, &buffer, index_changed, cx)
+                    diff.set_snapshot(new_unstaged_diff, &buffer, cx)
                 })?
             } else {
                 None
@@ -3141,7 +3141,6 @@ impl BufferGitState {
                         new_uncommitted_diff,
                         &buffer,
                         unstaged_changed_range,
-                        head_changed,
                         true,
                         cx,
                     );

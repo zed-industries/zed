@@ -191,7 +191,7 @@ async fn build_buffer_diff(
             Some(language_registry),
             cx,
         );
-        diff.set_snapshot(update, &new_buffer_snapshot.text, true, cx);
+        diff.set_snapshot(update, &new_buffer_snapshot.text, cx);
     })?;
 
     Ok(diff)

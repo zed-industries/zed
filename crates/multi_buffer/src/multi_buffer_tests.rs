@@ -2295,7 +2295,6 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
     diffs: HashMap<BufferId, Entity<BufferDiff>>,
-    invert_diffs: bool,
 }
 
 #[derive(Debug)]
@@ -2744,15 +2743,10 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
 }
 
 #[gpui::test(iterations = 100)]
-async fn test_random_multibuffer(cx: &mut TestAppContext, rng: StdRng) {
-    test_random_multibuffer_impl(cx, rng).await;
-}
-
-async fn test_random_multibuffer_impl(cx: &mut TestAppContext, mut rng: StdRng) {
+async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
-
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let mut buffers: Vec<Entity<Buffer>> = Vec::new();
     let mut base_texts: HashMap<BufferId, String> = HashMap::default();
@@ -2760,7 +2754,6 @@ async fn test_random_multibuffer_impl(cx: &mut TestAppContext, mut rng: StdRng) 
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
     let mut needs_diff_calculation = false;
-
     for _ in 0..operations {
         match rng.random_range(0..100) {
             0..=14 if !buffers.is_empty() => {
@@ -2859,23 +2852,23 @@ async fn test_random_multibuffer_impl(cx: &mut TestAppContext, mut rng: StdRng) 
             }
             45..=55 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
-                    let snapshot = multibuffer.snapshot(cx);
-                    let excerpt_ix = rng.random_range(0..reference.excerpts.len());
-                    let excerpt = &reference.excerpts[excerpt_ix];
-                    let start = excerpt.range.start;
-                    let end = excerpt.range.end;
-                    let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
-                        ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
+                            let snapshot = multibuffer.snapshot(cx);
+                            let excerpt_ix = rng.random_range(0..reference.excerpts.len());
+                            let excerpt = &reference.excerpts[excerpt_ix];
+                            let start = excerpt.range.start;
+                            let end = excerpt.range.end;
+                            let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
+                                ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
-                    log::info!(
-                        "expanding diff hunks in range {:?} (excerpt id {:?}, index {excerpt_ix:?}, buffer id {:?})",
-                        range.to_offset(&snapshot),
-                        excerpt.id,
-                        excerpt.buffer.read(cx).remote_id(),
-                    );
-                    reference.expand_diff_hunks(excerpt.id, start..end, cx);
-                    multibuffer.expand_diff_hunks(vec![range], cx);
-                });
+                            log::info!(
+                                "expanding diff hunks in range {:?} (excerpt id {:?}, index {excerpt_ix:?}, buffer id {:?})",
+                                range.to_offset(&snapshot),
+                                excerpt.id,
+                                excerpt.buffer.read(cx).remote_id(),
+                            );
+                            reference.expand_diff_hunks(excerpt.id, start..end, cx);
+                            multibuffer.expand_diff_hunks(vec![range], cx);
+                        });
             }
             56..=85 if needs_diff_calculation => {
                 multibuffer.update(cx, |multibuffer, cx| {
@@ -2987,7 +2980,6 @@ async fn test_random_multibuffer_impl(cx: &mut TestAppContext, mut rng: StdRng) 
             check_multibuffer(multibuffer, &reference, &anchors, cx, &mut rng);
         });
     }
-
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     for (old_snapshot, subscription) in old_versions {
         check_multibuffer_edits(&snapshot, &old_snapshot, subscription);
@@ -3791,7 +3783,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), false, cx);
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
     });
     cx.run_until_parked();
 
@@ -3828,7 +3820,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         })
         .await;
     diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), false, cx);
+        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx);
     });
     cx.run_until_parked();
 

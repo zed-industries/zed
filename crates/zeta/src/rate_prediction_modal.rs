@@ -1,5 +1,5 @@
 use crate::{EditPrediction, EditPredictionRating, Zeta};
-use buffer_diff::{BufferDiff};
+use buffer_diff::BufferDiff;
 use cloud_zeta2_prompt::write_codeblock;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
@@ -332,7 +332,7 @@ impl RatePredictionsModal {
                     cx.spawn(async move |diff, cx| {
                         let update = update.await;
                         diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(update, &new_buffer_snapshot.text, true, cx);
+                            diff.set_snapshot(update, &new_buffer_snapshot.text, cx);
                         })
                     })
                     .detach();

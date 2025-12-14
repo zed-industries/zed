@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use buffer_diff::{BufferDiff};
+use buffer_diff::BufferDiff;
 use editor::{Addon, Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
@@ -816,8 +816,9 @@ async fn build_buffer_diff(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, true, cx)
-    }).ok();
+        diff.set_snapshot(update, &buffer.text, cx)
+    })
+    .ok();
 
     Ok(diff)
 }

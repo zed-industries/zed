@@ -402,7 +402,7 @@ impl ActionLog {
             let update = update.await;
 
             let diff_snapshot = diff.update(cx, |diff, cx| {
-                diff.set_snapshot(update.clone(), &buffer_snapshot, true, cx);
+                diff.set_snapshot(update.clone(), &buffer_snapshot, cx);
                 diff.snapshot(cx)
             })?;
 
