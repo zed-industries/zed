@@ -5,10 +5,10 @@
 use ui::{Context, Window};
 
 use crate::{
-    ClearSelection, CsvPreviewView, JumpToBottomEdge, JumpToLeftEdge, JumpToRightEdge,
-    JumpToTopEdge, MoveFocusDown, MoveFocusLeft, MoveFocusRight, MoveFocusUp, SelectAll,
-    SelectDown, SelectLeft, SelectRight, SelectUp, SelectionToBottomEdge, SelectionToLeftEdge,
-    SelectionToRightEdge, SelectionToTopEdge,
+    ClearSelection, CsvPreviewView, ExtendSelectionDown, ExtendSelectionLeft, ExtendSelectionRight,
+    ExtendSelectionToBottomEdge, ExtendSelectionToLeftEdge, ExtendSelectionToRightEdge,
+    ExtendSelectionToTopEdge, ExtendSelectionUp, SelectAll, SelectAtBottomEdge, SelectAtLeftEdge,
+    SelectAtRightEdge, SelectAtTopEdge, SelectDown, SelectLeft, SelectRight, SelectUp,
     selection::{NavigationDirection as ND, NavigationOperation as NO, TableSelection},
 };
 
@@ -23,65 +23,6 @@ impl CsvPreviewView {
         cx.notify();
     }
 
-    // Movement actions
-    pub(crate) fn move_focus_up(
-        &mut self,
-        _: &MoveFocusUp,
-        _w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_navigation(ND::Up, NO::MoveFocus, cx);
-    }
-
-    pub(crate) fn move_focus_down(
-        &mut self,
-        _: &MoveFocusDown,
-        _w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_navigation(ND::Down, NO::MoveFocus, cx);
-    }
-
-    pub(crate) fn move_focus_left(
-        &mut self,
-        _: &MoveFocusLeft,
-        _w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_navigation(ND::Left, NO::MoveFocus, cx);
-    }
-
-    pub(crate) fn move_focus_right(
-        &mut self,
-        _: &MoveFocusRight,
-        _w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_navigation(ND::Right, NO::MoveFocus, cx);
-    }
-
-    // Selection extension actions
-    pub(crate) fn select_up(&mut self, _: &SelectUp, _w: &mut Window, cx: &mut Context<Self>) {
-        self.handle_navigation(ND::Up, NO::ExtendSelection, cx);
-    }
-
-    pub(crate) fn select_down(&mut self, _: &SelectDown, _w: &mut Window, cx: &mut Context<Self>) {
-        self.handle_navigation(ND::Down, NO::ExtendSelection, cx);
-    }
-
-    pub(crate) fn select_left(&mut self, _: &SelectLeft, _w: &mut Window, cx: &mut Context<Self>) {
-        self.handle_navigation(ND::Left, NO::ExtendSelection, cx);
-    }
-
-    pub(crate) fn select_right(
-        &mut self,
-        _: &SelectRight,
-        _w: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle_navigation(ND::Right, NO::ExtendSelection, cx);
-    }
-
     pub(crate) fn select_all(&mut self, _: &SelectAll, _w: &mut Window, cx: &mut Context<Self>) {
         let max_rows = self.contents.rows.len();
         let max_cols = self.contents.headers.len();
@@ -90,37 +31,96 @@ impl CsvPreviewView {
         cx.notify();
     }
 
-    // Jump to edge actions
-    pub(crate) fn jump_to_top_edge(
+    // Single cell selection actions
+    pub(crate) fn select_up(&mut self, _: &SelectUp, _w: &mut Window, cx: &mut Context<Self>) {
+        self.handle_navigation(ND::Up, NO::MoveFocus, cx);
+    }
+
+    pub(crate) fn select_down(&mut self, _: &SelectDown, _w: &mut Window, cx: &mut Context<Self>) {
+        self.handle_navigation(ND::Down, NO::MoveFocus, cx);
+    }
+
+    pub(crate) fn select_left(&mut self, _: &SelectLeft, _w: &mut Window, cx: &mut Context<Self>) {
+        self.handle_navigation(ND::Left, NO::MoveFocus, cx);
+    }
+
+    pub(crate) fn select_right(
         &mut self,
-        _: &JumpToTopEdge,
+        _: &SelectRight,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_navigation(ND::Right, NO::MoveFocus, cx);
+    }
+
+    // Selection extension actions
+    pub(crate) fn extend_selection_up(
+        &mut self,
+        _: &ExtendSelectionUp,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_navigation(ND::Up, NO::ExtendSelection, cx);
+    }
+
+    pub(crate) fn extend_selection_down(
+        &mut self,
+        _: &ExtendSelectionDown,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_navigation(ND::Down, NO::ExtendSelection, cx);
+    }
+
+    pub(crate) fn extend_selection_left(
+        &mut self,
+        _: &ExtendSelectionLeft,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_navigation(ND::Left, NO::ExtendSelection, cx);
+    }
+
+    pub(crate) fn extend_selection_right(
+        &mut self,
+        _: &ExtendSelectionRight,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_navigation(ND::Right, NO::ExtendSelection, cx);
+    }
+
+    // Select at edge actions
+    pub(crate) fn select_at_top_edge(
+        &mut self,
+        _: &SelectAtTopEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.handle_navigation(ND::Up, NO::JumpToEdge, cx);
     }
 
-    pub(crate) fn jump_to_bottom_edge(
+    pub(crate) fn select_at_bottom_edge(
         &mut self,
-        _: &JumpToBottomEdge,
+        _: &SelectAtBottomEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.handle_navigation(ND::Down, NO::JumpToEdge, cx);
     }
 
-    pub(crate) fn jump_to_left_edge(
+    pub(crate) fn select_at_left_edge(
         &mut self,
-        _: &JumpToLeftEdge,
+        _: &SelectAtLeftEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.handle_navigation(ND::Left, NO::JumpToEdge, cx);
     }
 
-    pub(crate) fn jump_to_right_edge(
+    pub(crate) fn select_at_right_edge(
         &mut self,
-        _: &JumpToRightEdge,
+        _: &SelectAtRightEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -130,7 +130,7 @@ impl CsvPreviewView {
     // Extend selection to edge actions
     pub(crate) fn extend_selection_to_top_edge(
         &mut self,
-        _: &SelectionToTopEdge,
+        _: &ExtendSelectionToTopEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -139,7 +139,7 @@ impl CsvPreviewView {
 
     pub(crate) fn extend_selection_to_bottom_edge(
         &mut self,
-        _: &SelectionToBottomEdge,
+        _: &ExtendSelectionToBottomEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -148,7 +148,7 @@ impl CsvPreviewView {
 
     pub(crate) fn extend_selection_to_left_edge(
         &mut self,
-        _: &SelectionToLeftEdge,
+        _: &ExtendSelectionToLeftEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -157,7 +157,7 @@ impl CsvPreviewView {
 
     pub(crate) fn extend_selection_to_right_edge(
         &mut self,
-        _: &SelectionToRightEdge,
+        _: &ExtendSelectionToRightEdge,
         _w: &mut Window,
         cx: &mut Context<Self>,
     ) {

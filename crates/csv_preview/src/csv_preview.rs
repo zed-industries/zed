@@ -35,28 +35,28 @@ actions!(
     [
         OpenPreview,
         CopySelected,
+        SelectAll,
         ClearSelection,
         ///// Single cell selection /////
-        MoveFocusUp,
-        MoveFocusDown,
-        MoveFocusLeft,
-        MoveFocusRight,
-        ///// Selection extension /////
         SelectUp,
         SelectDown,
         SelectLeft,
         SelectRight,
-        SelectAll,
+        ///// Selection extension /////
+        ExtendSelectionUp,
+        ExtendSelectionDown,
+        ExtendSelectionLeft,
+        ExtendSelectionRight,
         ///// Single cell selection at edge /////
-        JumpToTopEdge,
-        JumpToBottomEdge,
-        JumpToLeftEdge,
-        JumpToRightEdge,
+        SelectAtTopEdge,
+        SelectAtBottomEdge,
+        SelectAtLeftEdge,
+        SelectAtRightEdge,
         ///// Selection extension to edge /////
-        SelectionToTopEdge,
-        SelectionToBottomEdge,
-        SelectionToLeftEdge,
-        SelectionToRightEdge
+        ExtendSelectionToTopEdge,
+        ExtendSelectionToBottomEdge,
+        ExtendSelectionToLeftEdge,
+        ExtendSelectionToRightEdge
     ]
 );
 const KEY_CONTEXT_NAME: &'static str = "CsvPreview";
