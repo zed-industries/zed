@@ -3598,6 +3598,7 @@ impl GitPanel {
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
+                .dismiss_button(true)
             });
             workspace.toggle_status_toast(status_toast, cx)
         });
