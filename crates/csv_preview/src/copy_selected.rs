@@ -1,11 +1,12 @@
 use gpui::ClipboardItem;
 use ui::{Context, SharedString, Window};
-use workspace::{Toast, Workspace, notifications::NotificationId, shared_screen::SharedScreen};
+use workspace::{Toast, Workspace, notifications::NotificationId};
 
 use std::collections::BTreeMap;
 
 use crate::{CopySelected, CsvPreviewView, settings::CopyFormat};
 use std::collections::HashSet;
+
 impl CsvPreviewView {
     pub(crate) fn copy_selected(
         &mut self,
@@ -41,41 +42,7 @@ impl CsvPreviewView {
             }
         }
 
-        // Calculate rectangle dimensions and empty cells for toast message
-        let selected_cell_count = selected_cells.len();
-        let (rectangle_dimensions, empty_cells_count) = if copy_format == CopyFormat::Markdown {
-            // For markdown, use the selected columns approach
-            let mut selected_columns: HashSet<usize> = HashSet::new();
-            for columns in rows_data.values() {
-                selected_columns.extend(columns.keys());
-            }
-            let cols = selected_columns.len();
-            let rows = rows_data.len();
-            let total_cells = rows * cols;
-            let empty_cells = total_cells - selected_cell_count;
-            ((rows, cols), empty_cells)
-        } else {
-            // For CSV/TSV, calculate global column range
-            let mut global_min_col = usize::MAX;
-            let mut global_max_col = 0;
-            for columns in rows_data.values() {
-                if !columns.is_empty() {
-                    let row_min = *columns.keys().next().unwrap();
-                    let row_max = *columns.keys().last().unwrap();
-                    global_min_col = global_min_col.min(row_min);
-                    global_max_col = global_max_col.max(row_max);
-                }
-            }
-            let cols = if global_min_col <= global_max_col {
-                global_max_col - global_min_col + 1
-            } else {
-                0
-            };
-            let rows = rows_data.len();
-            let total_cells = rows * cols;
-            let empty_cells = total_cells - selected_cell_count;
-            ((rows, cols), empty_cells)
-        };
+        let toast_info = calculate_toast_info(selected_cells, copy_format, &rows_data);
 
         let content = if copy_format == CopyFormat::Markdown {
             format_as_markdown_table(&full_content.headers, &rows_data)
@@ -158,35 +125,7 @@ impl CsvPreviewView {
 
         // Show toast notification
         if let Some(Some(workspace)) = window.root() {
-            let format_name = match copy_format {
-                CopyFormat::Tsv => "TSV",
-                CopyFormat::Csv => "CSV",
-                CopyFormat::Semicolon => "Semicolon",
-                CopyFormat::Markdown => "Markdown",
-            };
-
-            let (rows, cols) = rectangle_dimensions;
-            let message = if selected_cell_count == 1 {
-                format!("1 cell copied as {}", format_name)
-            } else if empty_cells_count == 0 {
-                format!(
-                    "{} cells copied as {} ({}×{})",
-                    selected_cell_count, format_name, rows, cols
-                )
-            } else {
-                format!(
-                    "{} cells copied as {} ({}×{}, {} empty)",
-                    selected_cell_count, format_name, rows, cols, empty_cells_count
-                )
-            };
-
-            workspace.update(cx, |workspace: &mut Workspace, cx| {
-                struct CsvCopyToast;
-                workspace.show_toast(
-                    Toast::new(NotificationId::unique::<CsvCopyToast>(), message).autohide(),
-                    cx,
-                );
-            });
+            show_toast_with_copy_results(cx, copy_format, toast_info, workspace);
         }
     }
 }
@@ -244,4 +183,96 @@ fn format_as_markdown_table(
     }
 
     markdown_lines.join("\n")
+}
+
+///// Notifications /////
+
+#[derive(Debug)]
+struct ToastInfo {
+    selected_cell_count: usize,
+    rectangle_dimensions: (usize, usize),
+    empty_cells_count: usize,
+}
+
+fn show_toast_with_copy_results(
+    cx: &mut Context<'_, CsvPreviewView>,
+    copy_format: CopyFormat,
+    toast_info: ToastInfo,
+    workspace: gpui::Entity<Workspace>,
+) {
+    let format_name = match copy_format {
+        CopyFormat::Tsv => "TSV",
+        CopyFormat::Csv => "CSV",
+        CopyFormat::Semicolon => "Semicolon",
+        CopyFormat::Markdown => "Markdown",
+    };
+
+    let (rows, cols) = toast_info.rectangle_dimensions;
+    let message = if toast_info.selected_cell_count == 1 {
+        format!("1 cell copied as {}", format_name)
+    } else if toast_info.empty_cells_count == 0 {
+        format!(
+            "{} cells copied as {} ({}×{})",
+            toast_info.selected_cell_count, format_name, rows, cols
+        )
+    } else {
+        format!(
+            "{} cells copied as {} ({}×{}, {} empty)",
+            toast_info.selected_cell_count, format_name, rows, cols, toast_info.empty_cells_count
+        )
+    };
+
+    workspace.update(cx, |workspace: &mut Workspace, cx| {
+        struct CsvCopyToast;
+        workspace.show_toast(
+            Toast::new(NotificationId::unique::<CsvCopyToast>(), message).autohide(),
+            cx,
+        );
+    });
+}
+
+fn calculate_toast_info(
+    selected_cells: &HashSet<crate::types::DataCellId>,
+    copy_format: CopyFormat,
+    rows_data: &BTreeMap<usize, BTreeMap<usize, String>>,
+) -> ToastInfo {
+    let selected_cell_count = selected_cells.len();
+    let (rectangle_dimensions, empty_cells_count) = if copy_format == CopyFormat::Markdown {
+        // For markdown, use the selected columns approach
+        let mut selected_columns: HashSet<usize> = HashSet::new();
+        for columns in rows_data.values() {
+            selected_columns.extend(columns.keys());
+        }
+        let cols = selected_columns.len();
+        let rows = rows_data.len();
+        let total_cells = rows * cols;
+        let empty_cells = total_cells - selected_cell_count;
+        ((rows, cols), empty_cells)
+    } else {
+        // For CSV/TSV, calculate global column range
+        let mut global_min_col = usize::MAX;
+        let mut global_max_col = 0;
+        for columns in rows_data.values() {
+            if !columns.is_empty() {
+                let row_min = *columns.keys().next().unwrap();
+                let row_max = *columns.keys().last().unwrap();
+                global_min_col = global_min_col.min(row_min);
+                global_max_col = global_max_col.max(row_max);
+            }
+        }
+        let cols = if global_min_col <= global_max_col {
+            global_max_col - global_min_col + 1
+        } else {
+            0
+        };
+        let rows = rows_data.len();
+        let total_cells = rows * cols;
+        let empty_cells = total_cells - selected_cell_count;
+        ((rows, cols), empty_cells)
+    };
+    ToastInfo {
+        selected_cell_count,
+        rectangle_dimensions,
+        empty_cells_count,
+    }
 }
