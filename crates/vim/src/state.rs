@@ -239,6 +239,8 @@ pub struct VimGlobals {
 
     /// Helix-style jump list for Ctrl-s/Ctrl-o/Ctrl-i navigation.
     pub helix_jump_list: JumpList,
+    /// Tracks buffers with jump list entries for lifecycle management.
+    pub helix_watched_buffers: HashMap<EntityId, Subscription>,
 }
 
 pub struct MarksState {

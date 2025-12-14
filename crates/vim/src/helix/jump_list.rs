@@ -1,71 +1,130 @@
 //! Helix-style jump list for position history navigation.
 //!
-//! This module implements Helix's jump list feature which allows users to:
-//! - Save cursor/selection positions with `Ctrl-s` (`save_selection`)
-//! - Navigate backward through saved positions with `Ctrl-o` (`jump_backward`)
-//! - Navigate forward through saved positions with `Ctrl-i` (`jump_forward`)
+//! Implements Helix's jump list: save positions with `Ctrl-s`, navigate back with
+//! `Ctrl-o`, forward with `Ctrl-i`. Stores full selection ranges (not just cursor)
+//! to match Helix's `type Jump = (DocumentId, Selection)`.
 //!
-//! The jump list maintains a history of up to 30 positions (matching Helix's
-//! `JUMP_LIST_CAPACITY`). When navigating backward from the "present" (end of
-//! the list), the current position is automatically saved first.
+//! When a buffer closes, entries convert from anchors to file paths with points,
+//! allowing the file to be reopened on jump.
 
 use editor::Anchor;
 use gpui::EntityId;
+use language::Point;
 use std::collections::VecDeque;
+use std::path::Path;
+use std::sync::Arc;
 
-/// Maximum number of entries in the jump list (matches Helix).
 pub const JUMP_LIST_CAPACITY: usize = 30;
 
-/// A single entry in the jump list, storing the buffer and selection positions.
-///
-/// Uses `Anchor` for position stability - anchors automatically adjust when
-/// text is inserted or deleted before them.
+/// Full selection range with start and end anchors.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectionAnchors {
+    pub start: Anchor,
+    pub end: Anchor,
+}
+
+impl SelectionAnchors {
+    pub fn new(start: Anchor, end: Anchor) -> Self {
+        Self { start, end }
+    }
+}
+
+/// Selection range as static points (for closed buffers).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectionPoints {
+    pub start: Point,
+    pub end: Point,
+}
+
+impl SelectionPoints {
+    pub fn new(start: Point, end: Point) -> Self {
+        Self { start, end }
+    }
+}
+
+/// Location of a jump entry - open buffer or file path.
+#[derive(Clone, Debug)]
+pub enum JumpLocation {
+    Buffer(EntityId),
+    Path(Arc<Path>),
+}
+
+/// Selection data - anchors for open buffers, points for closed files.
+#[derive(Clone, Debug)]
+pub enum JumpSelections {
+    Anchors(Vec<SelectionAnchors>),
+    Points(Vec<SelectionPoints>),
+}
+
+/// A single entry in the jump list.
 #[derive(Clone, Debug)]
 pub struct JumpEntry {
-    /// EntityId of the MultiBuffer containing this position.
-    pub buffer_id: EntityId,
-    /// Selection anchor positions (supports multi-cursor).
-    pub selections: Vec<Anchor>,
+    pub location: JumpLocation,
+    pub selections: JumpSelections,
 }
 
 impl JumpEntry {
-    /// Creates a new jump entry for the given buffer and selection positions.
-    pub fn new(buffer_id: EntityId, selections: Vec<Anchor>) -> Self {
+    pub fn new(buffer_id: EntityId, selections: Vec<SelectionAnchors>) -> Self {
         Self {
-            buffer_id,
-            selections,
+            location: JumpLocation::Buffer(buffer_id),
+            selections: JumpSelections::Anchors(selections),
         }
     }
 
-    /// Checks if this entry is a duplicate of another (same buffer, same positions).
+    pub fn new_path(path: Arc<Path>, selections: Vec<SelectionPoints>) -> Self {
+        Self {
+            location: JumpLocation::Path(path),
+            selections: JumpSelections::Points(selections),
+        }
+    }
+
+    pub fn buffer_id(&self) -> Option<EntityId> {
+        match &self.location {
+            JumpLocation::Buffer(id) => Some(*id),
+            JumpLocation::Path(_) => None,
+        }
+    }
+
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        match &self.location {
+            JumpLocation::Buffer(_) => None,
+            JumpLocation::Path(path) => Some(path),
+        }
+    }
+
+    pub fn is_buffer(&self, buffer_id: EntityId) -> bool {
+        matches!(&self.location, JumpLocation::Buffer(id) if *id == buffer_id)
+    }
+
     fn is_duplicate(&self, other: &JumpEntry) -> bool {
-        self.buffer_id == other.buffer_id
-            && self.selections.len() == other.selections.len()
-            && self
-                .selections
-                .iter()
-                .zip(&other.selections)
-                .all(|(a, b)| a == b)
+        match (&self.location, &other.location) {
+            (JumpLocation::Buffer(a), JumpLocation::Buffer(b)) if a == b => {
+                self.selections_equal(&other.selections)
+            }
+            (JumpLocation::Path(a), JumpLocation::Path(b)) if a == b => {
+                self.selections_equal(&other.selections)
+            }
+            _ => false,
+        }
+    }
+
+    fn selections_equal(&self, other: &JumpSelections) -> bool {
+        match (&self.selections, other) {
+            (JumpSelections::Anchors(a), JumpSelections::Anchors(b)) => a == b,
+            (JumpSelections::Points(a), JumpSelections::Points(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
 /// Helix-style jump list for navigating position history.
 ///
-/// The jump list stores a history of cursor positions that can be navigated
-/// with backward/forward commands. Key behaviors:
-///
-/// - **Push**: Adds a new position, preventing consecutive duplicates. If not
-///   at the end of the list, forward history is truncated.
-/// - **Backward**: Moves backward through history. When at "present" (end of
-///   list), the current position should be saved first by the caller.
-/// - **Forward**: Moves forward through history.
-/// - **Capacity**: Maintains at most `JUMP_LIST_CAPACITY` (30) entries.
+/// The list uses a cursor (`current`) to track position. When `current == jumps.len()`,
+/// we're at "present" - the live editor state, not a stored position. You can only
+/// return to present by pushing a new entry; forward navigation stops at the last entry.
 #[derive(Debug)]
 pub struct JumpList {
-    /// The list of jump entries (newest at back).
     jumps: VecDeque<JumpEntry>,
-    /// Current position in the jump list.
-    /// When `current == jumps.len()`, we're at the "present" (no entry selected).
     current: usize,
 }
 
@@ -76,7 +135,6 @@ impl Default for JumpList {
 }
 
 impl JumpList {
-    /// Creates a new empty jump list.
     pub fn new() -> Self {
         Self {
             jumps: VecDeque::with_capacity(JUMP_LIST_CAPACITY),
@@ -84,14 +142,7 @@ impl JumpList {
         }
     }
 
-    /// Pushes a new entry to the jump list.
-    ///
-    /// Behavior:
-    /// - Prevents consecutive duplicate entries
-    /// - Truncates forward history if not at present
-    /// - Maintains capacity by removing oldest entries
     pub fn push(&mut self, entry: JumpEntry) {
-        // Prevent consecutive duplicates
         if self
             .jumps
             .back()
@@ -100,25 +151,19 @@ impl JumpList {
             return;
         }
 
-        // Truncate forward history if not at present
         if self.current < self.jumps.len() {
             self.jumps.truncate(self.current);
         }
 
         self.jumps.push_back(entry);
 
-        // Maintain capacity by removing oldest entries
         while self.jumps.len() > JUMP_LIST_CAPACITY {
             self.jumps.pop_front();
         }
 
-        // Move to present (end of list)
         self.current = self.jumps.len();
     }
 
-    /// Moves backward in the jump list by `count` positions.
-    ///
-    /// Returns the entry to jump to, or `None` if the list is empty.
     pub fn backward(&mut self, count: usize) -> Option<&JumpEntry> {
         if self.jumps.is_empty() {
             return None;
@@ -127,9 +172,7 @@ impl JumpList {
         self.jumps.get(self.current)
     }
 
-    /// Moves forward in the jump list by `count` positions.
-    ///
-    /// Returns the entry to jump to, or `None` if the list is empty.
+    /// Forward stops at the last entry - cannot navigate past it to "present".
     pub fn forward(&mut self, count: usize) -> Option<&JumpEntry> {
         if self.jumps.is_empty() {
             return None;
@@ -138,52 +181,73 @@ impl JumpList {
         self.jumps.get(self.current)
     }
 
-    /// Returns `true` if at the "present" (end of the list, no entry selected).
     pub fn at_present(&self) -> bool {
         self.current >= self.jumps.len()
     }
 
-    /// Moves the current position back by one without returning an entry.
-    /// Used after auto-saving current position before jumping backward.
     pub fn step_back(&mut self) {
         self.current = self.current.saturating_sub(1);
     }
 
-    /// Removes all entries associated with a closed buffer.
-    ///
-    /// Adjusts the current position to account for removed entries.
-    #[allow(dead_code)]
     pub fn remove_buffer(&mut self, buffer_id: EntityId) {
-        // Count entries before current that will be removed
         let removed_before = self
             .jumps
             .iter()
             .take(self.current)
-            .filter(|e| e.buffer_id == buffer_id)
+            .filter(|e| e.is_buffer(buffer_id))
             .count();
 
-        self.jumps.retain(|e| e.buffer_id != buffer_id);
+        self.jumps.retain(|e| !e.is_buffer(buffer_id));
 
-        // Adjust current position
         self.current = self
             .current
             .saturating_sub(removed_before)
             .min(self.jumps.len());
     }
 
-    /// Returns the current position and total length for debugging/display.
+    pub fn convert_buffer_to_path<F>(&mut self, buffer_id: EntityId, path: Arc<Path>, convert_fn: F)
+    where
+        F: Fn(&SelectionAnchors) -> SelectionPoints,
+    {
+        for entry in &mut self.jumps {
+            if entry.is_buffer(buffer_id) {
+                if let JumpSelections::Anchors(anchors) = &entry.selections {
+                    let points: Vec<SelectionPoints> = anchors.iter().map(&convert_fn).collect();
+                    entry.location = JumpLocation::Path(path.clone());
+                    entry.selections = JumpSelections::Points(points);
+                }
+            }
+        }
+    }
+
+    pub fn convert_path_to_buffer<F>(&mut self, path: &Path, buffer_id: EntityId, convert_fn: F)
+    where
+        F: Fn(&SelectionPoints) -> SelectionAnchors,
+    {
+        for entry in &mut self.jumps {
+            if let JumpLocation::Path(entry_path) = &entry.location {
+                if entry_path.as_ref() == path {
+                    if let JumpSelections::Points(points) = &entry.selections {
+                        let anchors: Vec<SelectionAnchors> =
+                            points.iter().map(&convert_fn).collect();
+                        entry.location = JumpLocation::Buffer(buffer_id);
+                        entry.selections = JumpSelections::Anchors(anchors);
+                    }
+                }
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub fn position(&self) -> (usize, usize) {
         (self.current, self.jumps.len())
     }
 
-    /// Returns the number of entries in the jump list.
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.jumps.len()
     }
 
-    /// Returns true if the jump list is empty.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.jumps.is_empty()
@@ -194,226 +258,179 @@ impl JumpList {
 mod tests {
     use super::*;
 
-    // Helper to create a mock EntityId for testing
-    fn mock_entity_id(id: u64) -> EntityId {
-        // EntityId can be created from u64 for testing purposes
+    fn entity(id: u64) -> EntityId {
         EntityId::from(id)
     }
 
-    // Helper to create a test entry (without real Anchor - just for JumpList logic tests)
-    fn test_entry(buffer_id: u64) -> JumpEntry {
-        JumpEntry {
-            buffer_id: mock_entity_id(buffer_id),
-            selections: vec![], // Empty selections for unit tests
-        }
+    fn entry(buffer_id: u64) -> JumpEntry {
+        JumpEntry::new(entity(buffer_id), vec![])
+    }
+
+    fn path_entry(path: &str) -> JumpEntry {
+        JumpEntry::new_path(Arc::from(Path::new(path)), vec![])
     }
 
     #[test]
-    fn test_new_jump_list() {
+    fn new_list_is_at_present() {
         let list = JumpList::new();
         assert!(list.at_present());
         assert_eq!(list.position(), (0, 0));
     }
 
     #[test]
-    fn test_push_single_entry() {
+    fn push_keeps_at_present() {
         let mut list = JumpList::new();
-        list.push(test_entry(1));
-
+        list.push(entry(1));
         assert!(list.at_present());
-        assert_eq!(list.position(), (1, 1));
+        assert_eq!(list.len(), 1);
     }
 
     #[test]
-    fn test_push_multiple_entries() {
+    fn backward_navigation() {
         let mut list = JumpList::new();
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(3));
-
-        assert!(list.at_present());
-        assert_eq!(list.position(), (3, 3));
-    }
-
-    #[test]
-    fn test_backward_navigation() {
-        let mut list = JumpList::new();
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(3));
-
-        // Move back by 1
-        let entry = list.backward(1);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (2, 3));
-        assert!(!list.at_present());
-
-        // Move back by 1 more
-        let entry = list.backward(1);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (1, 3));
-
-        // Move back by 1 more
-        let entry = list.backward(1);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (0, 3));
-
-        // Move back when already at start (should stay at 0)
-        let entry = list.backward(1);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (0, 3));
-    }
-
-    #[test]
-    fn test_forward_navigation() {
-        let mut list = JumpList::new();
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(3));
-
-        // Move back to start
-        list.backward(3);
-        assert_eq!(list.position(), (0, 3));
-
-        // Move forward by 1
-        let entry = list.forward(1);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (1, 3));
-
-        // Move forward by 2 (should clamp to last entry, index 2)
-        let entry = list.forward(2);
-        assert!(entry.is_some());
-        assert_eq!(list.position(), (2, 3));
-    }
-
-    #[test]
-    fn test_backward_with_count() {
-        let mut list = JumpList::new();
-        for i in 1..=5 {
-            list.push(test_entry(i));
-        }
-
-        // Move back by 3
-        list.backward(3);
-        assert_eq!(list.position(), (2, 5));
-
-        // Move back by 10 (should clamp to 0)
-        list.backward(10);
-        assert_eq!(list.position(), (0, 5));
-    }
-
-    #[test]
-    fn test_prevents_consecutive_duplicates() {
-        let mut list = JumpList::new();
-        let entry = test_entry(1);
-
-        list.push(entry.clone());
-        list.push(entry.clone());
-        list.push(entry.clone());
-
-        // Should only have 1 entry despite 3 pushes
-        assert_eq!(list.position(), (1, 1));
-    }
-
-    #[test]
-    fn test_allows_non_consecutive_duplicates() {
-        let mut list = JumpList::new();
-
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(1)); // Same buffer as first, but not consecutive
-
-        assert_eq!(list.position(), (3, 3));
-    }
-
-    #[test]
-    fn test_truncates_forward_history_on_push() {
-        let mut list = JumpList::new();
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(3));
-
-        // Move back to first entry
-        list.backward(3);
-        assert_eq!(list.position(), (0, 3));
-
-        // Push new entry - should truncate entries 2 and 3
-        list.push(test_entry(4));
-        assert_eq!(list.position(), (1, 1));
-        assert!(list.at_present());
-
-        // Forward should not work - no forward history
-        let entry = list.forward(1);
-        assert!(entry.is_some()); // Returns current entry
-        assert_eq!(list.position(), (0, 1)); // Clamped to last valid index
-    }
-
-    #[test]
-    fn test_capacity_limit() {
-        let mut list = JumpList::new();
-
-        // Push more than capacity
-        for i in 1..=50 {
-            list.push(test_entry(i));
-        }
-
-        // Should only have JUMP_LIST_CAPACITY entries
-        assert_eq!(list.jumps.len(), JUMP_LIST_CAPACITY);
-        assert_eq!(list.position(), (JUMP_LIST_CAPACITY, JUMP_LIST_CAPACITY));
-    }
-
-    #[test]
-    fn test_remove_buffer() {
-        let mut list = JumpList::new();
-        list.push(test_entry(1));
-        list.push(test_entry(2));
-        list.push(test_entry(1));
-        list.push(test_entry(3));
-        list.push(test_entry(1));
-
-        // Move back to position 2
-        list.backward(3);
-        assert_eq!(list.position(), (2, 5));
-
-        // Remove buffer 1 (entries at indices 0, 2, 4)
-        list.remove_buffer(mock_entity_id(1));
-
-        // Should have 2 entries left (buffers 2 and 3)
-        assert_eq!(list.len(), 2);
-
-        // Current position should be adjusted (was 2, entry at 0 removed = 1,
-        // but we were at index 2 which was buffer 1 entry, so adjustment needed)
-        let (current, len) = list.position();
-        assert!(current <= len);
-    }
-
-    #[test]
-    fn test_empty_list_navigation() {
-        let mut list = JumpList::new();
-
-        assert!(list.backward(1).is_none());
-        assert!(list.forward(1).is_none());
-        assert!(list.at_present());
-    }
-
-    #[test]
-    fn test_at_present_behavior() {
-        let mut list = JumpList::new();
-        assert!(list.at_present());
-
-        list.push(test_entry(1));
-        assert!(list.at_present()); // After push, we're at present
+        list.push(entry(1));
+        list.push(entry(2));
+        list.push(entry(3));
 
         list.backward(1);
-        assert!(!list.at_present()); // After backward, not at present
-
-        list.forward(1);
-        // After forward(1) from position 0 with 1 entry, we're at position 0
-        // which is the last entry (len-1), not "present"
+        assert_eq!(list.position(), (2, 3));
         assert!(!list.at_present());
 
-        // Push a new entry to get back to present
-        list.push(test_entry(2));
+        list.backward(2);
+        assert_eq!(list.position(), (0, 3));
+
+        list.backward(1);
+        assert_eq!(list.position(), (0, 3)); // clamped
+    }
+
+    #[test]
+    fn forward_navigation() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(2));
+        list.push(entry(3));
+
+        list.backward(3);
+        assert_eq!(list.position(), (0, 3));
+
+        list.forward(1);
+        assert_eq!(list.position(), (1, 3));
+
+        list.forward(10);
+        assert_eq!(list.position(), (2, 3)); // clamped to last entry
+        assert!(!list.at_present()); // forward never reaches present
+    }
+
+    #[test]
+    fn prevents_consecutive_duplicates() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(1));
+        list.push(entry(1));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn allows_non_consecutive_duplicates() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(2));
+        list.push(entry(1));
+        assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn truncates_forward_history_on_push() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(2));
+        list.push(entry(3));
+
+        list.backward(3);
+        list.push(entry(4));
+
+        assert_eq!(list.len(), 1);
         assert!(list.at_present());
+    }
+
+    #[test]
+    fn respects_capacity() {
+        let mut list = JumpList::new();
+        for i in 1..=50 {
+            list.push(entry(i));
+        }
+        assert_eq!(list.len(), JUMP_LIST_CAPACITY);
+    }
+
+    #[test]
+    fn remove_buffer() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(2));
+        list.push(entry(1));
+
+        list.remove_buffer(entity(1));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn empty_list_navigation() {
+        let mut list = JumpList::new();
+        assert!(list.backward(1).is_none());
+        assert!(list.forward(1).is_none());
+    }
+
+    #[test]
+    fn path_entries() {
+        let mut list = JumpList::new();
+        list.push(path_entry("/file.rs"));
+        list.push(entry(1));
+        list.push(path_entry("/other.rs"));
+
+        let e = list.backward(1).unwrap();
+        assert!(e.path().is_some());
+
+        let e = list.backward(1).unwrap();
+        assert!(e.buffer_id().is_some());
+    }
+
+    #[test]
+    fn convert_buffer_to_path() {
+        let mut list = JumpList::new();
+        list.push(entry(1));
+        list.push(entry(2));
+
+        let path = Arc::from(Path::new("/file.rs"));
+        list.convert_buffer_to_path(entity(1), path, |_| {
+            SelectionPoints::new(Point::new(0, 0), Point::new(0, 0))
+        });
+
+        list.backward(2);
+        assert!(list.jumps.get(0).unwrap().path().is_some());
+        assert!(list.jumps.get(1).unwrap().buffer_id().is_some());
+    }
+
+    #[test]
+    fn convert_path_to_buffer() {
+        let mut list = JumpList::new();
+        list.push(path_entry("/file.rs"));
+
+        list.convert_path_to_buffer(Path::new("/file.rs"), entity(3), |_| SelectionAnchors {
+            start: Anchor::min(),
+            end: Anchor::min(),
+        });
+
+        assert_eq!(list.jumps.get(0).unwrap().buffer_id(), Some(entity(3)));
+    }
+
+    #[test]
+    fn path_duplicate_detection() {
+        let mut list = JumpList::new();
+        list.push(path_entry("/file.rs"));
+        list.push(path_entry("/file.rs"));
+        assert_eq!(list.len(), 1);
+
+        list.push(path_entry("/other.rs"));
+        assert_eq!(list.len(), 2);
     }
 }
