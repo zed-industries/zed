@@ -264,6 +264,19 @@ impl ProjectState {
             .collect()
     }
 
+    pub fn events_split_by_pause(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
+        self.events
+            .iter()
+            .cloned()
+            .chain(self.last_event.as_ref().iter().flat_map(|event| {
+                let (one, two) = event.split_by_pause();
+                let one = one.finalize(&self.license_detection_watchers, cx);
+                let two = two.and_then(|two| two.finalize(&self.license_detection_watchers, cx));
+                one.into_iter().chain(two)
+            }))
+            .collect()
+    }
+
     fn cancel_pending_prediction(
         &mut self,
         pending_prediction: PendingPrediction,
@@ -390,12 +403,21 @@ struct RegisteredBuffer {
     _subscriptions: [gpui::Subscription; 2],
 }
 
+#[derive(Clone)]
 struct LastEvent {
     old_snapshot: TextBufferSnapshot,
     new_snapshot: TextBufferSnapshot,
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
     end_edit_anchor: Option<Anchor>,
+
+    /// Snapshot at the boundary between earlier edits and the last burst of edits (if a pause
+    /// was detected). This is the snapshot *after* the last edit before the pause that precedes
+    /// the last burst.
+    snapshot_before_last_edit_burst: Option<TextBufferSnapshot>,
+
+    /// The timestamp of the most recent edit that contributed to this `LastEvent`.
+    last_edit_time: Option<Instant>,
 }
 
 impl LastEvent {
@@ -432,6 +454,34 @@ impl LastEvent {
                 predicted: false,
             }))
         }
+    }
+
+    pub fn split_by_pause(&self) -> (LastEvent, Option<LastEvent>) {
+        let Some(boundary_snapshot) = self.snapshot_before_last_edit_burst.as_ref() else {
+            return (self.clone(), None);
+        };
+
+        let before = LastEvent {
+            old_snapshot: self.old_snapshot.clone(),
+            new_snapshot: boundary_snapshot.clone(),
+            old_file: self.old_file.clone(),
+            new_file: self.new_file.clone(),
+            end_edit_anchor: self.end_edit_anchor.clone(),
+            snapshot_before_last_edit_burst: None,
+            last_edit_time: self.last_edit_time,
+        };
+
+        let after = LastEvent {
+            old_snapshot: boundary_snapshot.clone(),
+            new_snapshot: self.new_snapshot.clone(),
+            old_file: self.old_file.clone(),
+            new_file: self.new_file.clone(),
+            end_edit_anchor: self.end_edit_anchor.clone(),
+            snapshot_before_last_edit_burst: None,
+            last_edit_time: self.last_edit_time,
+        };
+
+        (before, Some(after))
     }
 }
 
@@ -593,10 +643,22 @@ impl EditPredictionStore {
     pub fn edit_history_for_project(
         &self,
         project: &Entity<Project>,
+        cx: &App,
     ) -> Vec<Arc<zeta_prompt::Event>> {
         self.projects
             .get(&project.entity_id())
-            .map(|project_state| project_state.events.iter().cloned().collect())
+            .map(|project_state| project_state.events(cx))
+            .unwrap_or_default()
+    }
+
+    pub fn edit_history_for_project_with_pause_split_last_event(
+        &self,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Vec<Arc<zeta_prompt::Event>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| project_state.events_split_by_pause(cx))
             .unwrap_or_default()
     }
 
@@ -855,6 +917,8 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
+        const PAUSE_THRESHOLD: Duration = Duration::from_millis(500);
+
         let project_state = self.get_or_init_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
@@ -873,20 +937,16 @@ impl EditPredictionStore {
             .map(|(_, range)| range.end);
         let events = &mut project_state.events;
 
-        if let Some(LastEvent {
-            new_snapshot: last_new_snapshot,
-            end_edit_anchor: last_end_edit_anchor,
-            ..
-        }) = project_state.last_event.as_mut()
-        {
+        let now = cx.background_executor().now();
+        if let Some(last_event) = project_state.last_event.as_mut() {
             let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
-                == last_new_snapshot.remote_id()
-                && old_snapshot.version == last_new_snapshot.version;
+                == last_event.new_snapshot.remote_id()
+                && old_snapshot.version == last_event.new_snapshot.version;
 
             let should_coalesce = is_next_snapshot_of_same_buffer
                 && end_edit_anchor
                     .as_ref()
-                    .zip(last_end_edit_anchor.as_ref())
+                    .zip(last_event.end_edit_anchor.as_ref())
                     .is_some_and(|(a, b)| {
                         let a = a.to_point(&new_snapshot);
                         let b = b.to_point(&new_snapshot);
@@ -894,8 +954,18 @@ impl EditPredictionStore {
                     });
 
             if should_coalesce {
-                *last_end_edit_anchor = end_edit_anchor;
-                *last_new_snapshot = new_snapshot;
+                let pause_elapsed = last_event
+                    .last_edit_time
+                    .map(|t| now.duration_since(t) >= PAUSE_THRESHOLD)
+                    .unwrap_or(false);
+                if pause_elapsed {
+                    last_event.snapshot_before_last_edit_burst =
+                        Some(last_event.new_snapshot.clone());
+                }
+
+                last_event.end_edit_anchor = end_edit_anchor;
+                last_event.new_snapshot = new_snapshot;
+                last_event.last_edit_time = Some(now);
                 return;
             }
         }
@@ -914,6 +984,8 @@ impl EditPredictionStore {
             old_snapshot,
             new_snapshot,
             end_edit_anchor,
+            snapshot_before_last_edit_burst: None,
+            last_edit_time: Some(now),
         });
     }
 
