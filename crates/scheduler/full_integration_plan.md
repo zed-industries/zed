@@ -106,22 +106,12 @@ Located at `crates/gpui/src/platform/test/dispatcher.rs` (~170 lines):
 
 ## Next Steps
 
-### Phase 1: Create SharedRng Wrapper
+### ✅ Phase 1: Create SharedRng Wrapper (DONE)
 
-The `rng()` method currently returns `Arc<Mutex<StdRng>>`, requiring callers to call `.lock()` before using `Rng` methods. This is error-prone. Create a wrapper type that handles locking internally:
-
-```rust
-pub struct SharedRng(Arc<Mutex<StdRng>>);
-
-impl SharedRng {
-    pub fn lock(&self) -> MutexGuard<StdRng> { self.0.lock() }
-    pub fn random_range<T, R>(&self, range: R) -> T { self.0.lock().random_range(range) }
-    pub fn random_bool(&self, p: f64) -> bool { self.0.lock().random_bool(p) }
-    pub fn random<T>(&self) -> T where StandardUniform: Distribution<T> { self.0.lock().random() }
-}
-```
-
-Update `TestScheduler::rng()` and `BackgroundExecutor::rng()` to return `SharedRng` instead of `Arc<Mutex<StdRng>>`.
+Created `SharedRng` wrapper type that handles locking internally:
+- `SharedRng::random_range()`, `random_bool()`, `random()`, `random_ratio()` - lock and call method
+- `SharedRng::lock()` - for cases needing `&mut Rng` (e.g., `slice::choose()`)
+- Updated `TestScheduler::rng()` and `BackgroundExecutor::rng()` to return `SharedRng`
 
 ### Phase 2: Move Unparkers to TestScheduler
 
