@@ -16202,7 +16202,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         fn a() {
             «b();
-            c();
+            ˇ»«c();
             ˇ» d();
         }
     "});
