@@ -106,7 +106,24 @@ Located at `crates/gpui/src/platform/test/dispatcher.rs` (~170 lines):
 
 ## Next Steps
 
-### Phase 1: Move Unparkers to TestScheduler
+### Phase 1: Create SharedRng Wrapper
+
+The `rng()` method currently returns `Arc<Mutex<StdRng>>`, requiring callers to call `.lock()` before using `Rng` methods. This is error-prone. Create a wrapper type that handles locking internally:
+
+```rust
+pub struct SharedRng(Arc<Mutex<StdRng>>);
+
+impl SharedRng {
+    pub fn lock(&self) -> MutexGuard<StdRng> { self.0.lock() }
+    pub fn random_range<T, R>(&self, range: R) -> T { self.0.lock().random_range(range) }
+    pub fn random_bool(&self, p: f64) -> bool { self.0.lock().random_bool(p) }
+    pub fn random<T>(&self) -> T where StandardUniform: Distribution<T> { self.0.lock().random() }
+}
+```
+
+Update `TestScheduler::rng()` and `BackgroundExecutor::rng()` to return `SharedRng` instead of `Arc<Mutex<StdRng>>`.
+
+### Phase 2: Move Unparkers to TestScheduler
 
 Move the unparker mechanism into TestScheduler to unify blocking between GPUI's `block_internal` and scheduler's `block`:
 
@@ -120,13 +137,13 @@ impl TestScheduler {
 
 Call `unpark_all()` when tasks are scheduled in `schedule_foreground()` and `schedule_background()`.
 
-### Phase 2: Move simulate_random_delay to TestScheduler
+### Phase 3: Move simulate_random_delay to TestScheduler
 
 The scheduler already has `yield_random()`. Either:
 - Use scheduler's `yield_random()` directly
 - Or make the range configurable if the 0..10 vs 0..2 difference matters
 
-### Phase 3: Create Thin PlatformDispatcher Wrapper for TestScheduler
+### Phase 4: Create Thin PlatformDispatcher Wrapper for TestScheduler
 
 Create a minimal wrapper that implements `PlatformDispatcher` for `Arc<TestScheduler>`:
 
@@ -141,11 +158,11 @@ impl PlatformDispatcher for TestDispatcherAdapter {
 }
 ```
 
-### Phase 4: Delete TestDispatcher
+### Phase 5: Delete TestDispatcher
 
 Once the adapter is working, delete `crates/gpui/src/platform/test/dispatcher.rs` entirely.
 
-### Phase 5: Unify Executor Types (Medium Term)
+### Phase 6: Unify Executor Types (Medium Term)
 
 Both GPUI and scheduler have `BackgroundExecutor`, `ForegroundExecutor`, and `Task<T>`.
 
@@ -154,7 +171,7 @@ Options:
 2. **Keep both, share primitives** - Current partial state
 3. **Extension traits** - GPUI-specific methods like `detach_and_log_err` as extension traits on scheduler's types
 
-### Phase 6: Consider Eliminating PlatformDispatcher (Long Term)
+### Phase 7: Consider Eliminating PlatformDispatcher (Long Term)
 
 For production (Mac/Linux/Windows), either:
 1. Have production dispatchers implement `Scheduler` directly
