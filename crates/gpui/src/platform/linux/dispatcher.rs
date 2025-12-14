@@ -46,7 +46,6 @@ impl LinuxDispatcher {
                         for runnable in receiver.iter() {
                             let start = Instant::now();
 
-                            let RunnableVariant::Meta(runnable) = runnable;
                             let location = runnable.metadata().location;
                             let mut timing = TaskTiming {
                                 location,
@@ -92,7 +91,6 @@ impl LinuxDispatcher {
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
                                             let start = Instant::now();
-                                            let RunnableVariant::Meta(runnable) = runnable;
                                             let location = runnable.metadata().location;
                                             let mut timing = TaskTiming {
                                                 location,

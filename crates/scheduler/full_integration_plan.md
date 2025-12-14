@@ -25,15 +25,24 @@
 - Updated REPL's `ZedDispatcher` to wrap external `Runnable` in tasks with metadata
 - Simplified all platform dispatchers (Mac, Linux, Windows, Test) - removed Compat match arms
 - Removed unused `trampoline_compat` function from Mac dispatcher
-- `RunnableVariant` is now a single-variant enum (could be simplified further to just the inner type)
+
+### 5. Simplified RunnableVariant to Type Alias - DONE
+- Changed `RunnableVariant` from single-variant enum to type alias: `pub type RunnableVariant = Runnable<RunnableMeta>`
+- Removed all `RunnableVariant::Meta(...)` wrapping at spawn sites
+- Removed all `let RunnableVariant::Meta(runnable) = runnable;` destructuring at run sites
+- Updated all platform dispatchers (Mac, Linux, Windows, Test, Wayland, X11, Headless)
+- Updated executor.rs, platform_scheduler.rs, and REPL's ZedDispatcher
+- Removed unused imports from executor.rs and repl.rs
+- Updated TestDispatcher doc comment to remove outdated reference to "multiple variants"
 
 ## 🔜 NEXT STEPS FOR FUTURE WORK
 
 ### Near-term (recommended next tasks):
-1. **Simplify RunnableVariant** - Since it's now single-variant, consider replacing with just `Runnable<RunnableMeta>`
+1. ~~**Simplify RunnableVariant**~~ - ✅ DONE - Now a type alias to `Runnable<RunnableMeta>`
 
 ### Medium-term:
 2. **Delegate task queues to TestScheduler (Phase 2b)** - Most complex change
+3. **Consider removing RunnableVariant type alias entirely** - Could just use `Runnable<RunnableMeta>` directly throughout, but this is low priority as the type alias provides a clear semantic name
 
 ---
 

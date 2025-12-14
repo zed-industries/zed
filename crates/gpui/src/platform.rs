@@ -567,10 +567,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
+/// Type alias for runnables with metadata.
+/// Previously an enum with a single variant, now simplified to a direct type alias.
 #[doc(hidden)]
-pub enum RunnableVariant {
-    Meta(Runnable<RunnableMeta>),
-}
+pub type RunnableVariant = Runnable<RunnableMeta>;
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.

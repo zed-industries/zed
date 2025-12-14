@@ -79,7 +79,6 @@ impl WindowsDispatcher {
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let start = Instant::now();
 
-        let RunnableVariant::Meta(runnable) = runnable;
         let location = runnable.metadata().location;
         let mut timing = TaskTiming {
             location,

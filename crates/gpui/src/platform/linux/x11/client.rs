@@ -314,7 +314,6 @@ impl X11Client {
                         // callbacks.
                         handle.insert_idle(|_| {
                             let start = Instant::now();
-                            let RunnableVariant::Meta(runnable) = runnable;
                             let location = runnable.metadata().location;
                             let mut timing = TaskTiming {
                                 location,

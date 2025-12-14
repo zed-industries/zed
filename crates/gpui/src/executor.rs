@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant, TaskTiming, profiler};
+use crate::{App, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
 
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::AtomicU64;
@@ -318,11 +318,7 @@ impl BackgroundExecutor {
                         future.await
                     },
                     move |runnable| {
-                        dispatcher.dispatch(
-                            RunnableVariant::Meta(runnable),
-                            None,
-                            Priority::default(),
-                        )
+                        dispatcher.dispatch(runnable, None, Priority::default())
                     },
                 )
         };
@@ -392,9 +388,7 @@ impl BackgroundExecutor {
                 .metadata(RunnableMeta { location })
                 .spawn(
                     move |_| future,
-                    move |runnable| {
-                        dispatcher.dispatch(RunnableVariant::Meta(runnable), label, priority)
-                    },
+                    move |runnable| dispatcher.dispatch(runnable, label, priority),
                 )
         };
 
@@ -646,7 +640,7 @@ impl BackgroundExecutor {
             .metadata(RunnableMeta { location })
             .spawn(move |_| async move {}, {
                 let dispatcher = self.dispatcher.clone();
-                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+                move |runnable| dispatcher.dispatch_after(duration, runnable)
             });
         runnable.schedule();
         Task(TaskState::Spawned(task))
@@ -783,9 +777,7 @@ impl ForegroundExecutor {
         ) -> Task<R> {
             let (runnable, task) = spawn_local_with_source_location(
                 future,
-                move |runnable| {
-                    dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable), priority)
-                },
+                move |runnable| dispatcher.dispatch_on_main_thread(runnable, priority),
                 RunnableMeta { location },
             );
             runnable.schedule();

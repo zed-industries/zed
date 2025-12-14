@@ -31,9 +31,8 @@ impl HeadlessClient {
         handle
             .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(runnable) = event {
-                        let crate::RunnableVariant::Meta(runnable) = runnable;
-                        runnable.run();
-                    }
+                    runnable.run();
+                }
             })
             .ok();
 

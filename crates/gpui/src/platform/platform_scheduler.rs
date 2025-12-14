@@ -1,5 +1,4 @@
-use crate::{PlatformDispatcher, Priority as GpuiPriority, RunnableVariant};
-use async_task::Runnable;
+use crate::{PlatformDispatcher, Priority as GpuiPriority};
 use futures::FutureExt as _;
 use futures::future::LocalBoxFuture;
 use parking::Parker;
@@ -61,10 +60,8 @@ impl Scheduler for PlatformScheduler {
     }
 
     fn schedule_foreground(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
-        self.dispatcher.dispatch_on_main_thread(
-            RunnableVariant::Meta(runnable),
-            GpuiPriority::default(),
-        );
+        self.dispatcher
+            .dispatch_on_main_thread(runnable, GpuiPriority::default());
     }
 
     fn schedule_background_with_priority(
@@ -77,8 +74,7 @@ impl Scheduler for PlatformScheduler {
             Priority::Medium => GpuiPriority::Medium,
             Priority::Low => GpuiPriority::Low,
         };
-        self.dispatcher
-            .dispatch(RunnableVariant::Meta(runnable), None, gpui_priority);
+        self.dispatcher.dispatch(runnable, None, gpui_priority);
     }
 
     #[track_caller]
@@ -93,9 +89,7 @@ impl Scheduler for PlatformScheduler {
                 },
                 {
                     let dispatcher = self.dispatcher.clone();
-                    move |runnable| {
-                        dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
-                    }
+                    move |runnable| dispatcher.dispatch_after(duration, runnable)
                 },
             );
         runnable.schedule();

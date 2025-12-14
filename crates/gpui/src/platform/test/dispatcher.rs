@@ -69,8 +69,7 @@ struct TestDispatcherId(usize);
 ///
 /// This is a hybrid implementation that uses the scheduler crate's `TestScheduler`
 /// for timing, clock, and randomization, while keeping GPUI's own task queues
-/// for handling `RunnableVariant` (which has multiple variants that TestScheduler
-/// cannot process directly).
+/// for GPUI-specific features like task labels and deprioritization.
 #[doc(hidden)]
 pub struct TestDispatcher {
     id: TestDispatcherId,
@@ -288,8 +287,7 @@ impl TestDispatcher {
         drop(state);
 
         // Log task location before running (helps identify which task is executing)
-        let RunnableVariant::Meta(ref r) = runnable;
-        let loc = r.metadata().location;
+        let loc = runnable.metadata().location;
         let location_str = format!("{}:{}:{}", loc.file(), loc.line(), loc.column());
 
         dispatcher_log!(
@@ -299,7 +297,6 @@ impl TestDispatcher {
             main_thread,
         );
 
-        let RunnableVariant::Meta(runnable) = runnable;
         runnable.run();
 
         self.state.lock().is_main_thread = was_main_thread;

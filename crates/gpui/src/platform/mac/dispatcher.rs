@@ -70,7 +70,6 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
-        let RunnableVariant::Meta(runnable) = runnable;
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
 
@@ -91,7 +90,6 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        let RunnableVariant::Meta(runnable) = runnable;
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
         unsafe {
@@ -100,7 +98,6 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        let RunnableVariant::Meta(runnable) = runnable;
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         let trampoline = Some(trampoline as unsafe extern "C" fn(*mut c_void));
         unsafe {
