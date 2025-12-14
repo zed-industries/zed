@@ -136,7 +136,7 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if pending.start < next_selection.end && pending.end > next_selection.start {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -236,7 +236,7 @@ impl SelectionsCollection {
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                    if pending.start < next_selection.end && pending.end > next_selection.start {
                         let next_selection = disjoint.next().unwrap();
                         if next_selection.start < pending.start {
                             pending.start = next_selection.start;
@@ -669,7 +669,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         // Merge overlapping selections.
         let mut i = 1;
         while i < selections.len() {
-            if selections[i].start <= selections[i - 1].end {
+            if selections[i].start < selections[i - 1].end {
                 let removed = selections.remove(i);
                 if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
@@ -1139,7 +1139,7 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
     iter::from_fn(move || {
         let mut selection = selections.next()?;
         while let Some(next_selection) = selections.peek() {
-            if selection.end >= next_selection.start {
+            if selection.end > next_selection.start {
                 if selection.reversed == next_selection.reversed {
                     selection.end = cmp::max(selection.end, next_selection.end);
                     selections.next();
