@@ -88,6 +88,7 @@ actions!(
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 6;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
@@ -917,8 +918,6 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        const PAUSE_THRESHOLD: Duration = Duration::from_millis(500);
-
         let project_state = self.get_or_init_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
@@ -956,7 +955,7 @@ impl EditPredictionStore {
             if should_coalesce {
                 let pause_elapsed = last_event
                     .last_edit_time
-                    .map(|t| now.duration_since(t) >= PAUSE_THRESHOLD)
+                    .map(|t| now.duration_since(t) >= LAST_CHANGE_GROUPING_TIME)
                     .unwrap_or(false);
                 if pause_elapsed {
                     last_event.snapshot_before_last_edit_burst =
