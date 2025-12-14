@@ -110,8 +110,8 @@ use gpui::{
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
     ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, WeakEntity,
-    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, WeakEntity, WeakFocusHandle, Window, div,
+    point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -6447,11 +6447,8 @@ impl Editor {
                 crate::hover_popover::hide_hover(editor, cx);
                 let task_position = resolved_tasks.as_ref().map(|tasks| tasks.position);
                 let task_context_value = task_context.unwrap_or_default();
-                let actions = CodeActionContents::new(
-                    resolved_tasks,
-                    code_actions,
-                    debug_scenarios,
-                );
+                let actions =
+                    CodeActionContents::new(resolved_tasks, code_actions, debug_scenarios);
 
                 // Don't show the menu if there are no actions available
                 if actions.is_empty() {
