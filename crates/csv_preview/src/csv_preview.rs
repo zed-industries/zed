@@ -24,6 +24,7 @@ mod render_table;
 mod renderer;
 mod row_identifiers;
 mod selection;
+mod selection_handlers;
 mod settings;
 mod table_cell;
 mod table_like_content;
