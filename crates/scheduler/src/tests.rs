@@ -1,11 +1,11 @@
 use super::*;
 use futures::{
-    FutureExt,
     channel::{mpsc, oneshot},
     executor::block_on,
     future,
     sink::SinkExt,
     stream::{FuturesUnordered, StreamExt},
+    FutureExt,
 };
 use std::{
     cell::RefCell,
@@ -238,7 +238,7 @@ fn test_block() {
 }
 
 #[test]
-#[should_panic(expected = "futures_channel::oneshot::Inner")]
+#[should_panic(expected = "Parking forbidden. Pending traces:")]
 fn test_parking_panics() {
     let config = TestSchedulerConfig {
         capture_pending_traces: true,

@@ -4,70 +4,54 @@
 
 Unify GPUI's async execution with the scheduler crate, eliminating duplicate blocking/scheduling logic and enabling deterministic testing.
 
-## Current Status: Review Complete, Remaining Work Identified
+## Current Status: ✅ Integration Complete
 
-The integration is mostly complete. Code review identified one regression that must be fixed before merging.
+All phases are complete. The scheduler integration is ready for final review and merge.
 
 ---
 
-## 🚨 Remaining Work
+## ✅ Completed Work
+
+### Phase 7: Delete Dead Code
+
+Deleted the orphaned file `crates/gpui/src/platform/platform_scheduler.rs` - an older version of `PlatformScheduler` with an incompatible `block()` signature (took `LocalBoxFuture<()>` instead of `Pin<&mut dyn Future<Output = ()>>`). The actual implementation at `crates/gpui/src/platform_scheduler.rs` is used via `mod platform_scheduler` in `gpui.rs`.
 
 ### Phase 6: Restore Realtime Priority Support
 
 **Problem**: The old implementation had special handling for `Priority::Realtime(_)` which spawned tasks on dedicated OS threads with elevated priority (critical for audio processing). This was removed during the integration.
 
-Old code in `spawn_internal`:
+**Solution implemented**: Option 2 - Handle in `gpui::BackgroundExecutor::spawn_with_priority`. This was chosen because the channel-based approach for realtime tasks needs to happen at spawn time, not at the `schedule_background_with_priority` level (which only receives a single runnable, not the full spawning context).
+
+The implementation in `crates/gpui/src/executor.rs`:
 ```rust
 if let Priority::Realtime(realtime) = priority {
+    let (tx, rx) = flume::bounded::<Runnable<RunnableMeta>>(1);
     dispatcher.spawn_realtime(realtime, Box::new(move || {
         while let Ok(runnable) = rx.recv() {
+            // Profiler timing integration (matches other dispatchers)
+            let start = Instant::now();
+            let location = runnable.metadata().location;
+            let mut timing = TaskTiming { location, start, end: None };
+            profiler::add_task_timing(timing);
+
             runnable.run();
+
+            timing.end = Some(Instant::now());
+            profiler::add_task_timing(timing);
         }
     }));
-    // ... create task that sends to channel
+    // Create task that sends runnables to the channel
+    let (runnable, task) = async_task::Builder::new()
+        .metadata(RunnableMeta { location })
+        .spawn(move |_| future, move |runnable| { let _ = tx.send(runnable); });
+    runnable.schedule();
+    Task::from_scheduler(scheduler::Task::from_async_task(task))
+} else {
+    // Normal priority path delegates to scheduler
 }
 ```
 
-Current state: If `Priority::Realtime` is passed to `schedule_background_with_priority`, it flows through to `dispatcher.dispatch()` which hits `unreachable!()`:
-
-```rust
-// In mac/dispatcher.rs, linux/dispatcher.rs, windows/dispatcher.rs:
-let queue_priority = match priority {
-    Priority::Realtime(_) => unreachable!(),  // PANIC!
-    Priority::High => ...,
-    ...
-};
-```
-
-**Solution options**:
-
-1. **Handle in PlatformScheduler** (recommended): Add Realtime handling to `PlatformScheduler::schedule_background_with_priority`:
-   ```rust
-   fn schedule_background_with_priority(&self, runnable: Runnable<RunnableMeta>, priority: Priority) {
-       if let Priority::Realtime(realtime) = priority {
-           // Spawn dedicated thread, set up channel, etc.
-           self.dispatcher.spawn_realtime(realtime, ...);
-       } else {
-           self.dispatcher.dispatch(runnable, priority);
-       }
-   }
-   ```
-
-2. **Handle in GPUI executor**: Keep Realtime handling in `gpui::BackgroundExecutor::spawn_with_priority` before delegating to scheduler.
-
-3. **Panic with helpful message**: If we decide Realtime should be accessed differently, at minimum replace `unreachable!()` with a helpful panic message.
-
-**Note**: Currently no code in the codebase spawns with `Priority::Realtime`, so this is not causing test failures. However, the capability must be preserved for audio workloads.
-
-### Phase 7: Delete Dead Code
-
-The file `crates/gpui/src/platform/platform_scheduler.rs` is dead code - it's an older version of `PlatformScheduler` with a different `block()` signature that is no longer compatible with the `Scheduler` trait. The actual implementation used is at `crates/gpui/src/platform_scheduler.rs` (referenced via `mod platform_scheduler` in `gpui.rs`).
-
-**Action**: Delete `crates/gpui/src/platform/platform_scheduler.rs`
-
----
-
-## ✅ Completed Work
+This restores the original behavior where realtime tasks run on dedicated OS threads with elevated priority, suitable for audio workloads. Includes profiler timing integration for consistency with other platform dispatchers.
 
 ### Phase 1: Scheduler Trait and TestScheduler
 
