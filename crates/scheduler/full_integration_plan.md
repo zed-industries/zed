@@ -7,7 +7,7 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
 - Unify task scheduling across GPUI and scheduler
 - Simplify the codebase significantly
 
-## Current State (After Recent Work)
+## Current State
 
 ### What's Been Completed
 
@@ -16,132 +16,89 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
    - `dispatch_on_main_thread()` → `scheduler.schedule_foreground(session_id)`
 
 2. **Unified Priority Types**: GPUI reexports `Priority` and `RealtimePriority` from scheduler crate
-   - Removed duplicate definitions from `gpui/src/executor.rs`
-   - Added `Realtime(RealtimePriority)` variant to scheduler's Priority
 
 3. **Unified RunnableMeta**: Both GPUI and scheduler use `scheduler::RunnableMeta`
-   - `RunnableVariant` is now just a type alias: `pub type RunnableVariant = Runnable<RunnableMeta>`
 
 4. **Removed Deprioritization**: Removed the `deprioritize()` feature and `TaskLabel` handling
 
-5. **Removed Debug Infrastructure**: Removed waiting_hint, waiting_backtrace, debug logging, `start_waiting`/`finish_waiting` from TestDispatcher
+5. **Timer Unification**: `BackgroundExecutor::timer()` uses `Scheduler::timer()` directly in tests
 
-6. **Timer Unification**: `BackgroundExecutor::timer()` now uses `Scheduler::timer()` directly in tests
-   - Eliminated the `delayed` queue from TestDispatcher
-   - `dispatch_after` now panics in tests (should never be called)
+6. **`is_main_thread` Delegation**: TestDispatcher delegates to scheduler
 
-7. **`is_main_thread` Delegation**: TestScheduler now tracks whether we're running a foreground task
-   - TestDispatcher delegates `is_main_thread()` to scheduler
+7. **Clock Delegation**: `advance_clock` and `advance_clock_to_next_timer` delegate to scheduler
 
-8. **Clock Delegation**: `advance_clock` and `advance_clock_to_next_timer` are simple delegations to scheduler
+8. **Tick Delegation**: `tick()` delegates to `scheduler.tick()` / `scheduler.tick_background_only()`
 
-9. **Tick Delegation**: `tick()` is now a simple delegation to `scheduler.tick()` / `scheduler.tick_background_only()`
+9. **Random Delay Delegation**: `simulate_random_delay()` delegates to `scheduler.yield_random()`
 
-10. **Simplified TestDispatcher**: Now ~170 lines, mostly just PlatformDispatcher trait impl
-
-### Current Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         GPUI                                     │
-│  ┌─────────────────┐    ┌──────────────────────────────────┐    │
-│  │ BackgroundExecutor │    │ ForegroundExecutor              │    │
-│  │ - spawn()         │    │ - spawn()                       │    │
-│  │ - timer()         │    │                                 │    │
-│  │ - block_on()      │    │                                 │    │
-│  └────────┬──────────┘    └────────────────┬────────────────┘    │
-│           │                                │                     │
-│           └────────────────┬───────────────┘                     │
-│                            ▼                                     │
-│              ┌─────────────────────────┐                         │
-│              │ Arc<dyn PlatformDispatcher> │                      │
-│              └─────────────┬───────────┘                         │
-│                            │                                     │
-│     ┌──────────────────────┼──────────────────────┐              │
-│     ▼                      ▼                      ▼              │
-│ ┌──────────┐        ┌──────────────┐       ┌─────────────┐       │
-│ │MacDispatcher│      │LinuxDispatcher│       │TestDispatcher│      │
-│ └──────────┘        └──────────────┘       └──────┬──────┘       │
-│                                                   │ (thin wrapper)
-└───────────────────────────────────────────────────┼──────────────┘
-                                                    │
-                                                    ▼
-                                    ┌───────────────────────────┐
-                                    │      TestScheduler        │
-                                    │ (scheduler crate)         │
-                                    │ - task queues             │
-                                    │ - timers                  │
-                                    │ - clock                   │
-                                    │ - rng                     │
-                                    │ - is_main_thread          │
-                                    └───────────────────────────┘
-```
+10. **Simplified TestDispatcher**: Now ~130 lines, mostly just PlatformDispatcher trait impl
 
 ### What TestDispatcher Still Does
 
-Located at `crates/gpui/src/platform/test/dispatcher.rs` (~170 lines):
+Located at `crates/gpui/src/platform/test/dispatcher.rs` (~130 lines):
 
 1. **PlatformDispatcher trait impl** - Required interface for GPUI executors
 2. **`unparkers`** - Thread synchronization for GPUI's `block_on` when parking is allowed
-3. **`simulate_random_delay`** - Custom yield future (0..10 range)
-4. **`session_id`** - For foreground task tracking per dispatcher clone
+3. **`session_id`** - For foreground task tracking per dispatcher clone
 
 ### Key Files
 
 **Scheduler Crate** (`crates/scheduler/`):
 - `src/scheduler.rs` - `Scheduler` trait, `Priority`, `RealtimePriority`, `RunnableMeta`, `SessionId`
 - `src/test_scheduler.rs` - `TestScheduler` implementation (timers, clock, rng, is_main_thread)
-- `src/executor.rs` - `ForegroundExecutor`, `BackgroundExecutor`, `Task`
-- `src/clock.rs` - `Clock` trait, `TestClock`
 
 **GPUI Crate** (`crates/gpui/`):
 - `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task`
-- `src/platform.rs` - `PlatformDispatcher` trait, `RunnableVariant` type alias
+- `src/platform.rs` - `PlatformDispatcher` trait
 - `src/platform/test/dispatcher.rs` - `TestDispatcher` (thin wrapper around TestScheduler)
-- `src/platform/mac/dispatcher.rs` - `MacDispatcher`
-- `src/platform/linux/dispatcher.rs` - `LinuxDispatcher`
-- `src/platform/windows/dispatcher.rs` - `WindowsDispatcher`
+
+---
+
+## Completed Phases
+
+### ✅ Phase 1: Create SharedRng Wrapper
+
+Created `SharedRng` wrapper type that handles locking internally.
+
+### ✅ Phase 3: Move simulate_random_delay to TestScheduler
+
+`TestDispatcher::simulate_random_delay()` now delegates directly to `TestScheduler::yield_random()`.
+
+---
+
+## Blocked Phase
+
+### 🔶 Phase 2: Delegate block_internal to scheduler.block()
+
+**Problem:** The scheduler's `blocked_sessions` mechanism prevents foreground tasks from the blocked session from running during `step_filtered()` calls. This breaks tests that call `run_until_parked()` inside an async test.
+
+**Current workaround:** GPUI keeps its own `block_internal` implementation that uses `tick()` directly.
+
+**Possible solutions to investigate:**
+- Have the scheduler distinguish between "internal stepping during block()" vs "user-initiated tick()"
+- Temporarily remove session from `blocked_sessions` while polling the user's future
+- Rethink the `blocked_sessions` mechanism entirely
 
 ---
 
 ## Next Steps
 
-### ✅ Phase 1: Create SharedRng Wrapper (DONE)
+### 🎯 Phase 4: Remove TaskLabel (Easy cleanup)
 
-Created `SharedRng` wrapper type that handles locking internally:
-- `SharedRng::random_range()`, `random_bool()`, `random()`, `random_ratio()` - lock and call method
-- `SharedRng::lock()` - for cases needing `&mut Rng` (e.g., `slice::choose()`)
-- Updated `TestScheduler::rng()` and `BackgroundExecutor::rng()` to return `SharedRng`
+`TaskLabel` is defined but unused after removing deprioritization. It can be removed entirely:
 
-### 🔶 Phase 2: Delegate block_internal to scheduler.block() (BLOCKED - needs investigation)
+1. Remove `TaskLabel` struct from `gpui/src/executor.rs`
+2. Remove `spawn_labeled` method from `BackgroundExecutor`
+3. Update callers to use regular `spawn`:
+   - `crates/buffer_diff/src/buffer_diff.rs` - remove `CALCULATE_DIFF_TASK` usage
+   - `crates/fs/src/fake_git_repo.rs` - remove `LOAD_INDEX_TEXT_TASK`, `LOAD_HEAD_TEXT_TASK` usage
+   - `crates/language/src/buffer.rs` - remove `BUFFER_DIFF_TASK` usage
+4. Remove `label` parameter from `PlatformDispatcher::dispatch()` trait method
+5. Update all dispatcher implementations (Mac, Linux, Windows, Test)
 
-**Attempted:** Tried to have GPUI's `block_internal` delegate to `scheduler.block()` instead of maintaining its own polling loop.
+### Phase 5: Create Thin PlatformDispatcher Wrapper for TestScheduler
 
-**Problem:** The scheduler's `blocked_sessions` mechanism prevents foreground tasks from the blocked session from running during `step_filtered()` calls. This breaks tests that call `run_until_parked()` inside an async test:
-
-1. `block_test` calls `scheduler.block(session_id, future)` 
-2. Scheduler adds `session_id` to `blocked_sessions`
-3. Inside the async test, `cx.executor().run_until_parked()` is called
-4. `run_until_parked` calls `tick()` → `step_filtered()`
-5. `step_filtered` skips tasks from blocked sessions
-6. Foreground tasks for the test's session don't run → test fails
-
-**Current workaround:** GPUI keeps its own `block_internal` implementation that uses `tick()` directly. This works because `tick()` doesn't involve the `blocked_sessions` mechanism - only the scheduler's internal `block()` does.
-
-**Possible solutions to investigate:**
-- Have the scheduler distinguish between "internal stepping during block()" vs "user-initiated tick()" and only apply `blocked_sessions` filtering to the former
-- Temporarily remove session from `blocked_sessions` while polling the user's future, only blocking during internal step() calls
-- Rethink the `blocked_sessions` mechanism entirely
-
-### Phase 3: Move simulate_random_delay to TestScheduler
-
-The scheduler already has `yield_random()`. Either:
-- Use scheduler's `yield_random()` directly
-- Or make the range configurable if the 0..10 vs 0..2 difference matters
-
-### Phase 4: Create Thin PlatformDispatcher Wrapper for TestScheduler
-
-Create a minimal wrapper that implements `PlatformDispatcher` for `Arc<TestScheduler>`:
+Move the `unparkers` mechanism into the scheduler crate, then create a minimal wrapper:
 
 ```rust
 pub struct TestDispatcherAdapter {
@@ -154,24 +111,23 @@ impl PlatformDispatcher for TestDispatcherAdapter {
 }
 ```
 
-### Phase 5: Delete TestDispatcher
+### Phase 6: Delete TestDispatcher
 
 Once the adapter is working, delete `crates/gpui/src/platform/test/dispatcher.rs` entirely.
 
-### Phase 6: Unify Executor Types (Medium Term)
+### Phase 7: Unify Executor Types (Medium Term)
 
 Both GPUI and scheduler have `BackgroundExecutor`, `ForegroundExecutor`, and `Task<T>`.
 
 Options:
 1. **GPUI reexports scheduler's types** - Cleanest, but requires API compatibility
-2. **Keep both, share primitives** - Current partial state
-3. **Extension traits** - GPUI-specific methods like `detach_and_log_err` as extension traits on scheduler's types
+2. **Extension traits** - GPUI-specific methods like `detach_and_log_err` as extension traits
 
-### Phase 7: Consider Eliminating PlatformDispatcher (Long Term)
+### Phase 8: Consider Eliminating PlatformDispatcher (Long Term)
 
 For production (Mac/Linux/Windows), either:
 1. Have production dispatchers implement `Scheduler` directly
-2. Or keep `PlatformDispatcher` as internal implementation detail, with `PlatformScheduler` wrapper
+2. Or keep `PlatformDispatcher` as internal implementation detail
 
 ---
 
@@ -183,20 +139,10 @@ For production (Mac/Linux/Windows), either:
 4. All existing tests pass
 5. Minimal code in GPUI for test scheduling support
 
-## Notes
-
-- The `blocked_sessions` mechanism in TestScheduler is designed to prevent re-entrancy during the internal stepping of `block()`, but it currently interferes with user code that calls `tick()` from within a blocked future. This needs further investigation.
-- GPUI's `block_internal` has complex requirements around parking, unparking, and timeout handling that need consideration when integrating with the scheduler's `block()` API.
-- The current architecture where GPUI uses `tick()` directly in its polling loop works correctly and avoids the `blocked_sessions` issue, but is not the final desired state.
-
 ---
 
 ## Notes for Implementation
 
 - SessionId is allocated per TestDispatcher clone. Ensure the same session allocation happens in any replacement.
-
-- The `block_on` implementation in `executor.rs` has complex logic for parking, unparking, and timeout handling. This may need adjustment when changing the dispatcher abstraction.
-
-- `TaskLabel` is still defined but unused after removing deprioritization. Can be removed entirely.
-
+- The `block_on` implementation in `executor.rs` has complex logic for parking, unparking, and timeout handling.
 - `spawn_realtime` panics in TestDispatcher - this is correct behavior (real threads break determinism).

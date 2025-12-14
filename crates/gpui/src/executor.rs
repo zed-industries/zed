@@ -1,7 +1,5 @@
 use crate::{App, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
 #[cfg(any(test, feature = "test-support"))]
-use rand::Rng as _;
-#[cfg(any(test, feature = "test-support"))]
 use scheduler::Scheduler as _;
 
 pub use scheduler::{Priority, RealtimePriority};
@@ -78,9 +76,6 @@ use std::{
 };
 use util::TryFutureExt;
 use waker_fn::waker_fn;
-
-#[cfg(any(test, feature = "test-support"))]
-use rand::rngs::StdRng;
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -590,7 +585,7 @@ impl BackgroundExecutor {
         #[cfg(any(test, feature = "test-support"))]
         if let Some(test_dispatcher) = self.dispatcher.as_test() {
             let scheduler_timer = test_dispatcher.scheduler().timer(duration);
-            return self.spawn(async move { scheduler_timer.await });
+            return self.spawn(scheduler_timer);
         }
 
         let location = core::panic::Location::caller();

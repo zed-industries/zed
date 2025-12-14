@@ -1,15 +1,8 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskLabel};
 use parking::Unparker;
 use parking_lot::Mutex;
-use rand::prelude::*;
-use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig};
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::{Duration, Instant},
-};
+use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
+use std::{sync::Arc, time::{Duration, Instant}};
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///
@@ -62,28 +55,8 @@ impl TestDispatcher {
         self.scheduler.advance_clock_to_next_timer()
     }
 
-    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
-        struct YieldNow {
-            count: usize,
-        }
-
-        impl Future for YieldNow {
-            type Output = ();
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-                if self.count > 0 {
-                    self.count -= 1;
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
-                } else {
-                    Poll::Ready(())
-                }
-            }
-        }
-
-        YieldNow {
-            count: self.scheduler.rng().random_range(0..10),
-        }
+    pub fn simulate_random_delay(&self) -> Yield {
+        self.scheduler.yield_random()
     }
 
     pub fn tick(&self, background_only: bool) -> bool {
