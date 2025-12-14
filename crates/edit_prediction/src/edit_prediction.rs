@@ -48,6 +48,7 @@ use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 mod cursor_excerpt;
+pub mod example_spec;
 mod license_detection;
 pub mod mercury;
 mod onboarding_modal;
@@ -467,7 +468,7 @@ impl LastEvent {
             new_snapshot: boundary_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor.clone(),
+            end_edit_anchor: self.end_edit_anchor,
             snapshot_before_last_edit_burst: None,
             last_edit_time: self.last_edit_time,
         };
@@ -477,7 +478,7 @@ impl LastEvent {
             new_snapshot: self.new_snapshot.clone(),
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
-            end_edit_anchor: self.end_edit_anchor.clone(),
+            end_edit_anchor: self.end_edit_anchor,
             snapshot_before_last_edit_burst: None,
             last_edit_time: self.last_edit_time,
         };

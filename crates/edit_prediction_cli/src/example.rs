@@ -1,6 +1,7 @@
 use crate::{PredictionProvider, PromptFormat, metrics::ClassificationMetrics};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use edit_prediction::example_spec::ExampleSpec;
 use edit_prediction::udiff::OpenedBuffers;
 use gpui::Entity;
 use http_client::Url;
@@ -18,16 +19,8 @@ use zeta_prompt::RelatedFile;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
-    #[serde(default)]
-    pub name: String,
-    pub repository_url: String,
-    pub revision: String,
-    #[serde(default)]
-    pub uncommitted_diff: String,
-    pub cursor_path: Arc<Path>,
-    pub cursor_position: String,
-    pub edit_history: String,
-    pub expected_patch: String,
+    #[serde(flatten)]
+    pub spec: ExampleSpec,
 
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
@@ -101,8 +94,9 @@ pub struct ExampleScore {
 impl Example {
     pub fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
-        if self.repository_url.contains('@') {
+        if self.spec.repository_url.contains('@') {
             let (owner, repo) = self
+                .spec
                 .repository_url
                 .split_once(':')
                 .context("expected : in git url")?
@@ -115,7 +109,7 @@ impl Example {
             ))
         // http://github.com/owner/repo.git
         } else {
-            let url = Url::parse(&self.repository_url)?;
+            let url = Url::parse(&self.spec.repository_url)?;
             let mut segments = url.path_segments().context("empty http url")?;
             let owner = segments
                 .next()
@@ -171,8 +165,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                     serde_json::from_str::<Example>(&content).unwrap_or_else(|error| {
                         panic!("Failed to parse example file: {}\n{error}", path.display())
                     });
-                if example.name.is_empty() {
-                    example.name = filename;
+                if example.spec.name.is_empty() {
+                    example.spec.name = filename;
                 }
                 examples.push(example);
             }
@@ -189,8 +183,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                                     line_ix + 1
                                 )
                             });
-                        if example.name.is_empty() {
-                            example.name = format!("{filename}-{line_ix}")
+                        if example.spec.name.is_empty() {
+                            example.spec.name = format!("{filename}-{line_ix}")
                         }
                         example
                     })
@@ -225,9 +219,10 @@ pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
 
 pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
     examples.sort_by(|a, b| {
-        a.repository_url
-            .cmp(&b.repository_url)
-            .then(b.revision.cmp(&a.revision))
+        a.spec
+            .repository_url
+            .cmp(&b.spec.repository_url)
+            .then(b.spec.revision.cmp(&a.spec.revision))
     });
 }
 
@@ -235,7 +230,7 @@ pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>
     let mut examples_by_repo = HashMap::default();
     for example in examples.iter_mut() {
         examples_by_repo
-            .entry(example.repository_url.clone())
+            .entry(example.spec.repository_url.clone())
             .or_insert_with(Vec::new)
             .push(example);
     }
@@ -256,14 +251,16 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
     let parser = Parser::new(input);
 
     let mut example = Example {
-        name: id,
-        repository_url: String::new(),
-        revision: String::new(),
-        uncommitted_diff: String::new(),
-        cursor_path: PathBuf::new().into(),
-        cursor_position: String::new(),
-        edit_history: String::new(),
-        expected_patch: String::new(),
+        spec: ExampleSpec {
+            name: id,
+            repository_url: String::new(),
+            revision: String::new(),
+            uncommitted_diff: String::new(),
+            cursor_path: PathBuf::new().into(),
+            cursor_position: String::new(),
+            edit_history: String::new(),
+            expected_patch: String::new(),
+        },
         buffer: None,
         context: None,
         prompt: None,
@@ -298,10 +295,10 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
                 {
                     match field.trim() {
                         REPOSITORY_URL_FIELD => {
-                            example.repository_url = value.trim().to_string();
+                            example.spec.repository_url = value.trim().to_string();
                         }
                         REVISION_FIELD => {
-                            example.revision = value.trim().to_string();
+                            example.spec.revision = value.trim().to_string();
                         }
                         _ => {}
                     }
@@ -350,20 +347,20 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
                 let block_info = block_info.trim();
                 match current_section {
                     Section::UncommittedDiff => {
-                        example.uncommitted_diff = mem::take(&mut text);
+                        example.spec.uncommitted_diff = mem::take(&mut text);
                     }
                     Section::EditHistory => {
-                        example.edit_history.push_str(&mem::take(&mut text));
+                        example.spec.edit_history.push_str(&mem::take(&mut text));
                     }
                     Section::CursorPosition => {
-                        example.cursor_path = Path::new(block_info).into();
-                        example.cursor_position = mem::take(&mut text);
+                        example.spec.cursor_path = Path::new(block_info).into();
+                        example.spec.cursor_position = mem::take(&mut text);
                     }
                     Section::ExpectedExcerpts => {
                         mem::take(&mut text);
                     }
                     Section::ExpectedPatch => {
-                        example.expected_patch = mem::take(&mut text);
+                        example.spec.expected_patch = mem::take(&mut text);
                     }
                     Section::Start | Section::Other => {}
                 }
@@ -371,7 +368,8 @@ fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
             _ => {}
         }
     }
-    if example.cursor_path.as_ref() == Path::new("") || example.cursor_position.is_empty() {
+    if example.spec.cursor_path.as_ref() == Path::new("") || example.spec.cursor_position.is_empty()
+    {
         anyhow::bail!("Missing cursor position codeblock");
     }
 

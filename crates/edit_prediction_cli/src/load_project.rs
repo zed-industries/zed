@@ -34,7 +34,7 @@ pub async fn run_load_project(
         return Ok(());
     }
 
-    let progress = Progress::global().start(Step::LoadProject, &example.name);
+    let progress = Progress::global().start(Step::LoadProject, &example.spec.name);
 
     let project = setup_project(example, &app_state, &progress, &mut cx).await?;
 
@@ -77,7 +77,7 @@ async fn cursor_position(
 ) -> Result<(Entity<Buffer>, Anchor)> {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
     let result = language_registry
-        .load_language_for_file_path(&example.cursor_path)
+        .load_language_for_file_path(&example.spec.cursor_path)
         .await;
 
     if let Err(error) = result
@@ -93,7 +93,7 @@ async fn cursor_position(
             .context("No visible worktrees")
     })??;
 
-    let cursor_path = RelPath::new(&example.cursor_path, PathStyle::Posix)
+    let cursor_path = RelPath::new(&example.spec.cursor_path, PathStyle::Posix)
         .context("Failed to create RelPath")?
         .into_arc();
     let cursor_buffer = project
@@ -108,10 +108,11 @@ async fn cursor_position(
         })?
         .await?;
     let cursor_offset_within_excerpt = example
+        .spec
         .cursor_position
         .find(CURSOR_MARKER)
         .context("missing cursor marker")?;
-    let mut cursor_excerpt = example.cursor_position.clone();
+    let mut cursor_excerpt = example.spec.cursor_position.clone();
     cursor_excerpt.replace_range(
         cursor_offset_within_excerpt..(cursor_offset_within_excerpt + CURSOR_MARKER.len()),
         "",
@@ -123,10 +124,14 @@ async fn cursor_position(
         let (excerpt_offset, _) = matches.next().with_context(|| {
             format!(
                 "\nExcerpt:\n\n{cursor_excerpt}\nBuffer text:\n{text}\n.Example: {}\nCursor excerpt did not exist in buffer.",
-                example.name
+                example.spec.name
             )
         })?;
-        anyhow::ensure!(matches.next().is_none(), "More than one cursor position match found for {}", &example.name);
+        anyhow::ensure!(
+            matches.next().is_none(),
+            "More than one cursor position match found for {}",
+            &example.spec.name
+        );
         Ok(excerpt_offset)
     })??;
 
@@ -149,7 +154,7 @@ async fn setup_project(
 
     let worktree_path = setup_worktree(example, step_progress).await?;
 
-    if let Some(project) = app_state.project_cache.get(&example.repository_url) {
+    if let Some(project) = app_state.project_cache.get(&example.spec.repository_url) {
         ep_store.update(cx, |ep_store, _| {
             ep_store.clear_history_for_project(&project);
         })?;
@@ -187,7 +192,7 @@ async fn setup_project(
 
     app_state
         .project_cache
-        .insert(example.repository_url.clone(), project.clone());
+        .insert(example.spec.repository_url.clone(), project.clone());
 
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone())?;
     cx.subscribe(&buffer_store, {
@@ -218,7 +223,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         run_git(&repo_dir, &["init"]).await?;
         run_git(
             &repo_dir,
-            &["remote", "add", "origin", &example.repository_url],
+            &["remote", "add", "origin", &example.spec.repository_url],
         )
         .await?;
     }
@@ -226,7 +231,10 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     // Resolve the example to a revision, fetching it if needed.
     let revision = run_git(
         &repo_dir,
-        &["rev-parse", &format!("{}^{{commit}}", example.revision)],
+        &[
+            "rev-parse",
+            &format!("{}^{{commit}}", example.spec.revision),
+        ],
     )
     .await;
     let revision = if let Ok(revision) = revision {
@@ -235,7 +243,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         step_progress.set_substatus("fetching");
         if run_git(
             &repo_dir,
-            &["fetch", "--depth", "1", "origin", &example.revision],
+            &["fetch", "--depth", "1", "origin", &example.spec.revision],
         )
         .await
         .is_err()
@@ -256,7 +264,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         let worktree_path_string = worktree_path.to_string_lossy();
         run_git(
             &repo_dir,
-            &["branch", "-f", &example.name, revision.as_str()],
+            &["branch", "-f", &example.spec.name, revision.as_str()],
         )
         .await?;
         run_git(
@@ -266,7 +274,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
                 "add",
                 "-f",
                 &worktree_path_string,
-                &example.name,
+                &example.spec.name,
             ],
         )
         .await?;
@@ -274,7 +282,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     drop(repo_lock);
 
     // Apply the uncommitted diff for this example.
-    if !example.uncommitted_diff.is_empty() {
+    if !example.spec.uncommitted_diff.is_empty() {
         step_progress.set_substatus("applying diff");
         let mut apply_process = smol::process::Command::new("git")
             .current_dir(&worktree_path)
@@ -283,7 +291,9 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
             .spawn()?;
 
         let mut stdin = apply_process.stdin.take().context("Failed to get stdin")?;
-        stdin.write_all(example.uncommitted_diff.as_bytes()).await?;
+        stdin
+            .write_all(example.spec.uncommitted_diff.as_bytes())
+            .await?;
         stdin.close().await?;
         drop(stdin);
 
@@ -306,7 +316,7 @@ async fn apply_edit_history(
     project: &Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<OpenedBuffers> {
-    edit_prediction::udiff::apply_diff(&example.edit_history, project, cx).await
+    edit_prediction::udiff::apply_diff(&example.spec.edit_history, project, cx).await
 }
 
 thread_local! {
