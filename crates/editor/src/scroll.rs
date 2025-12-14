@@ -875,7 +875,7 @@ impl Editor {
 
         let progress = {
             let elapsed = animation.start_time.elapsed().as_secs_f32();
-            let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
+            let duration = self.scroll_manager.scroll_animation_duration.as_secs_f32();
             (elapsed / duration).min(1.0)
         };
 

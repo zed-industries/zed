@@ -250,6 +250,7 @@ impl Settings for EditorSettings {
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
             smooth_scroll: editor.smooth_scroll.unwrap(),
+            smooth_scroll_duration: editor.smooth_scroll_duration.unwrap(),
             sticky_scroll: StickyScroll {
                 enabled: sticky_scroll.enabled.unwrap(),
             },

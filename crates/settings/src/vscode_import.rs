@@ -283,6 +283,7 @@ impl VsCodeSettings {
             scroll_beyond_last_line: None,
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
             smooth_scroll: self.read_bool("editor.smoothScrolling"),
+            smooth_scroll_duration: None,
             scrollbar: self.scrollbar_content(),
             search: self.search_content(),
             search_wrap: None,
