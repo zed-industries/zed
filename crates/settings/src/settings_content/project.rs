@@ -285,6 +285,7 @@ pub struct GitSettings {
     /// Whether or not to enable git integration.
     ///
     /// Default: true
+    #[serde(flatten)]
     pub enabled: Option<GitEnabledSettings>,
     /// Whether or not to show the git gutter.
     ///
@@ -319,18 +320,18 @@ pub struct GitSettings {
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct GitEnabledSettings {
-    pub global: Option<bool>,
-    pub status: Option<bool>,
-    pub diff: Option<bool>,
+    pub disable_git: Option<bool>,
+    pub enable_status: Option<bool>,
+    pub enable_diff: Option<bool>,
 }
 
 impl GitEnabledSettings {
     pub fn is_git_status_enabled(&self) -> bool {
-        self.global.unwrap_or(true) && self.status.unwrap_or(true)
+        !self.disable_git.unwrap_or(false) && self.enable_status.unwrap_or(true)
     }
 
     pub fn is_git_diff_enabled(&self) -> bool {
-        self.global.unwrap_or(true) && self.diff.unwrap_or(true)
+        !self.disable_git.unwrap_or(false) && self.enable_diff.unwrap_or(true)
     }
 }
 
