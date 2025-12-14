@@ -91,13 +91,14 @@ async fn test_sharing_an_ssh_remote_project(
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            false,
             cx,
         )
     });
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
-        .build_ssh_project(path!("/code/project1"), client_ssh, cx_a)
+        .build_ssh_project(path!("/code/project1"), client_ssh, false, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
@@ -251,13 +252,14 @@ async fn test_ssh_collaboration_git_branches(
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            false,
             cx,
         )
     });
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, _) = client_a
-        .build_ssh_project("/project", client_ssh, cx_a)
+        .build_ssh_project("/project", client_ssh, false, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
@@ -455,13 +457,14 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            false,
             cx,
         )
     });
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
-        .build_ssh_project(path!("/project"), client_ssh, cx_a)
+        .build_ssh_project(path!("/project"), client_ssh, false, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
@@ -616,6 +619,7 @@ async fn test_remote_server_debugger(
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            false,
             cx,
         )
     });
@@ -628,7 +632,7 @@ async fn test_remote_server_debugger(
         command_palette_hooks::init(cx);
     });
     let (project_a, _) = client_a
-        .build_ssh_project(path!("/code"), client_ssh.clone(), cx_a)
+        .build_ssh_project(path!("/code"), client_ssh.clone(), false, cx_a)
         .await;
 
     let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
@@ -724,6 +728,7 @@ async fn test_slow_adapter_startup_retries(
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            false,
             cx,
         )
     });
@@ -736,7 +741,7 @@ async fn test_slow_adapter_startup_retries(
         command_palette_hooks::init(cx);
     });
     let (project_a, _) = client_a
-        .build_ssh_project(path!("/code"), client_ssh.clone(), cx_a)
+        .build_ssh_project(path!("/code"), client_ssh.clone(), false, cx_a)
         .await;
 
     let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
@@ -881,13 +886,14 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
+            true,
             cx,
         )
     });
 
     let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, _) = client_a
-        .build_ssh_project(path!("/projects/project_a"), client_ssh.clone(), cx_a)
+        .build_ssh_project(path!("/projects/project_a"), client_ssh.clone(), true, cx_a)
         .await;
 
     project_a

@@ -468,6 +468,7 @@ pub fn execute_run(
                     languages,
                     extension_host_proxy,
                 },
+                true,
                 cx,
             )
         });

@@ -88,6 +88,7 @@ impl HeadlessProject {
             languages,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
+        init_worktree_trust: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
@@ -99,13 +100,15 @@ impl HeadlessProject {
             store
         });
 
-        project::trusted_worktrees::init_global(
-            worktree_store.clone(),
-            None::<RemoteHostLocation>,
-            Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),
-            None,
-            cx,
-        );
+        if init_worktree_trust {
+            project::trusted_worktrees::init_global(
+                worktree_store.clone(),
+                None::<RemoteHostLocation>,
+                Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),
+                None,
+                cx,
+            );
+        }
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));

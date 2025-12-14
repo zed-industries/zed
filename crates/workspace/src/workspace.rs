@@ -7895,6 +7895,7 @@ pub fn open_remote_project_with_new_connection(
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
                 app_state.fs.clone(),
+                true,
                 cx,
             )
         })?;

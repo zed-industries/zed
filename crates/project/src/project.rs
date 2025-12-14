@@ -1249,6 +1249,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        init_worktree_trust: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1273,19 +1274,22 @@ impl Project {
                     path_style,
                 )
             });
-            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
-                .detach();
-            match &connection_options {
-                RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
-                    trusted_worktrees::init_global(
-                        worktree_store.clone(),
-                        Some(RemoteHostLocation::from(connection_options)),
-                        None,
-                        Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
-                        cx,
-                    );
+
+            if init_worktree_trust {
+                cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                    .detach();
+                match &connection_options {
+                    RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
+                        trusted_worktrees::init_global(
+                            worktree_store.clone(),
+                            Some(RemoteHostLocation::from(connection_options)),
+                            None,
+                            Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                            cx,
+                        );
+                    }
+                    RemoteConnectionOptions::Docker(..) => {}
                 }
-                RemoteConnectionOptions::Docker(..) => {}
             }
 
             let weak_self = cx.weak_entity();
