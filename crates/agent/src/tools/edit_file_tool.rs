@@ -316,9 +316,8 @@ impl AgentTool for EditFileTool {
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
                     anyhow::bail!(
-                        "This file cannot be written to because it has unsaved changes. \
-                         Please end the current conversation immediately by telling the user you want to write to this file (mention its path explicitly) but you can't write to it because it has unsaved changes. \
-                         Ask the user to save that buffer's changes and to inform you when it's ok to proceed."
+                        "This file has unsaved changes. Ask the user if they would like you to save the file. \
+                         If they agree, use the save_file tool to save it, then retry this edit."
                     );
                 }
 
