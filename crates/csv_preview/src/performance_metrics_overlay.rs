@@ -5,9 +5,7 @@
 
 use std::time::Duration;
 
-use ui::{
-    ActiveTheme, Context, FluentBuilder, IntoElement, ParentElement, Styled, StyledTypography, div,
-};
+use ui::{ActiveTheme, Context, IntoElement, ParentElement, Styled, StyledTypography, div};
 
 use crate::CsvPreviewView;
 
@@ -24,6 +22,28 @@ pub struct PerformanceMetrics {
     pub last_selection_took: Option<Duration>,
     /// Duration of the last render preparation (table_with_settings div creation).
     pub last_render_preparation_took: Option<Duration>,
+}
+
+impl PerformanceMetrics {
+    fn format_lines(&self) -> Vec<String> {
+        let format_duration = |duration: Option<Duration>| -> String {
+            match duration {
+                Some(d) => format!("{:.2}ms", d.as_secs_f64() * 1000.0),
+                None => "--".to_string(),
+            }
+        };
+
+        vec![
+            format!("Parse: {}", format_duration(self.last_parse_took)),
+            format!("Order: {}", format_duration(self.last_ordering_took)),
+            format!("Copy: {}", format_duration(self.last_copy_took)),
+            format!("Selection: {}", format_duration(self.last_selection_took)),
+            format!(
+                "Render Prep: {}",
+                format_duration(self.last_render_preparation_took)
+            ),
+        ]
+    }
 }
 
 impl CsvPreviewView {
@@ -54,47 +74,11 @@ impl CsvPreviewView {
             .flex()
             .flex_col()
             .gap_1()
-            .child(
-                div().map(|div| match self.performance_metrics.last_parse_took {
-                    Some(duration) => {
-                        div.child(format!("Parse: {:.2}ms", duration.as_secs_f64() * 1000.0))
-                    }
-                    None => div.child("Parse: --"),
-                }),
+            .children(
+                self.performance_metrics
+                    .format_lines()
+                    .into_iter()
+                    .map(|line| div().child(line)),
             )
-            .child(
-                div().map(|div| match self.performance_metrics.last_ordering_took {
-                    Some(duration) => {
-                        div.child(format!("Order: {:.2}ms", duration.as_secs_f64() * 1000.0))
-                    }
-                    None => div.child("Order: --"),
-                }),
-            )
-            .child(
-                div().map(|div| match self.performance_metrics.last_copy_took {
-                    Some(duration) => {
-                        div.child(format!("Copy: {:.2}ms", duration.as_secs_f64() * 1000.0))
-                    }
-                    None => div.child("Copy: --"),
-                }),
-            )
-            .child(
-                div().map(|div| match self.performance_metrics.last_selection_took {
-                    Some(duration) => div.child(format!(
-                        "Selection: {:.2}ms",
-                        duration.as_secs_f64() * 1000.0
-                    )),
-                    None => div.child("Selection: --"),
-                }),
-            )
-            .child(div().map(
-                |div| match self.performance_metrics.last_render_preparation_took {
-                    Some(duration) => div.child(format!(
-                        "Render Prep: {:.2}ms",
-                        duration.as_secs_f64() * 1000.0
-                    )),
-                    None => div.child("Render Prep: --"),
-                },
-            ))
     }
 }
