@@ -598,6 +598,10 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        None
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -880,6 +884,17 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LanguageModelCostInfo {
+    TokenCost {
+        input_token_cost_per_1m: f64,
+        output_token_cost_per_1m: f64,
+    },
+    RequestCost {
+        cost_per_request: f64,
+    },
+}
 
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {
