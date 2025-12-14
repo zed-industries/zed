@@ -904,6 +904,33 @@ pub enum LanguageModelCostInfo {
     },
 }
 
+impl LanguageModelCostInfo {
+    pub fn to_shared_string(&self) -> SharedString {
+        match self {
+            LanguageModelCostInfo::RequestCost { cost_per_request } => {
+                let cost_str = format!("{}x", Self::cost_value_to_string(cost_per_request));
+                SharedString::from(cost_str)
+            }
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
+                let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
+                SharedString::from(format!("{}$/{}$", input_cost, output_cost))
+            }
+        }
+    }
+
+    fn cost_value_to_string(cost: &f64) -> SharedString {
+        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+            SharedString::from(format!("{:.0}", cost))
+        } else {
+            SharedString::from(format!("{:.2}", cost))
+        }
+    }
+}
+
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {
         Self(SharedString::new_static(id))

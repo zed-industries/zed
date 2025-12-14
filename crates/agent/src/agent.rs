@@ -38,9 +38,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{
-    IconOrSvg, LanguageModel, LanguageModelCostInfo, LanguageModelProvider, LanguageModelRegistry,
-};
+use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
@@ -159,21 +157,6 @@ impl LanguageModels {
         model: &Arc<dyn LanguageModel>,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
-        let cost = match model.model_cost_info() {
-            Some(LanguageModelCostInfo::RequestCost { cost_per_request }) => {
-                let cost_str = format!("{}x", Self::cost_value_to_string(cost_per_request));
-                SharedString::from(cost_str).into()
-            }
-            Some(LanguageModelCostInfo::TokenCost {
-                input_token_cost_per_1m,
-                output_token_cost_per_1m,
-            }) => {
-                let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
-                let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
-                SharedString::from(format!("{}$/{}$", input_cost, output_cost)).into()
-            }
-            None => None,
-        };
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
@@ -183,15 +166,7 @@ impl LanguageModels {
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
             is_latest: model.is_latest(),
-            cost,
-        }
-    }
-
-    fn cost_value_to_string(cost: f64) -> SharedString {
-        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
-            SharedString::from(format!("{:.0}", cost))
-        } else {
-            SharedString::from(format!("{:.2}", cost))
+            cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
         }
     }
 
