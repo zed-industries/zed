@@ -24,9 +24,20 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
 
 4. **Removed Deprioritization**: Removed the `deprioritize()` feature and `TaskLabel` handling
 
-5. **Removed Debug Infrastructure**: Removed waiting_hint, waiting_backtrace, debug logging from TestDispatcher
+5. **Removed Debug Infrastructure**: Removed waiting_hint, waiting_backtrace, debug logging, `start_waiting`/`finish_waiting` from TestDispatcher
 
-6. **Simplified TestDispatcher**: Now 242 lines, mostly just PlatformDispatcher trait impl
+6. **Timer Unification**: `BackgroundExecutor::timer()` now uses `Scheduler::timer()` directly in tests
+   - Eliminated the `delayed` queue from TestDispatcher
+   - `dispatch_after` now panics in tests (should never be called)
+
+7. **`is_main_thread` Delegation**: TestScheduler now tracks whether we're running a foreground task
+   - TestDispatcher delegates `is_main_thread()` to scheduler
+
+8. **Clock Delegation**: `advance_clock` and `advance_clock_to_next_timer` are simple delegations to scheduler
+
+9. **Tick Delegation**: `tick()` is now a simple delegation to `scheduler.tick()` / `scheduler.tick_background_only()`
+
+10. **Simplified TestDispatcher**: Now ~170 lines, mostly just PlatformDispatcher trait impl
 
 ### Current Architecture
 
@@ -36,13 +47,14 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
 │  ┌─────────────────┐    ┌──────────────────────────────────┐    │
 │  │ BackgroundExecutor │    │ ForegroundExecutor              │    │
 │  │ - spawn()         │    │ - spawn()                       │    │
+│  │ - timer()         │    │                                 │    │
 │  │ - block_on()      │    │                                 │    │
 │  └────────┬──────────┘    └────────────────┬────────────────┘    │
 │           │                                │                     │
 │           └────────────────┬───────────────┘                     │
 │                            ▼                                     │
 │              ┌─────────────────────────┐                         │
-│              │ Arc<dyn PlatformDispatcher> │◄─── THE PROBLEM      │
+│              │ Arc<dyn PlatformDispatcher> │                      │
 │              └─────────────┬───────────┘                         │
 │                            │                                     │
 │     ┌──────────────────────┼──────────────────────┐              │
@@ -50,7 +62,7 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
 │ ┌──────────┐        ┌──────────────┐       ┌─────────────┐       │
 │ │MacDispatcher│      │LinuxDispatcher│       │TestDispatcher│      │
 │ └──────────┘        └──────────────┘       └──────┬──────┘       │
-│                                                   │              │
+│                                                   │ (thin wrapper)
 └───────────────────────────────────────────────────┼──────────────┘
                                                     │
                                                     ▼
@@ -58,222 +70,101 @@ Eliminate GPUI's `PlatformDispatcher` abstraction and move entirely to the `Sche
                                     │      TestScheduler        │
                                     │ (scheduler crate)         │
                                     │ - task queues             │
-                                    │ - clock/timing            │
+                                    │ - timers                  │
+                                    │ - clock                   │
                                     │ - rng                     │
+                                    │ - is_main_thread          │
                                     └───────────────────────────┘
 ```
 
 ### What TestDispatcher Still Does
 
-Located at `crates/gpui/src/platform/test/dispatcher.rs` (242 lines):
+Located at `crates/gpui/src/platform/test/dispatcher.rs` (~170 lines):
 
 1. **PlatformDispatcher trait impl** - Required interface for GPUI executors
-2. **`dispatch_after` delayed queue** - Scheduler has `timer()` (returns Future), not `dispatch_after` (stores runnable)
-3. **`is_main_thread` tracking** - Sets flag based on whether running foreground/background task
-4. **`unparkers`** - Thread synchronization for `block_on` when parking is allowed
-5. **`advance_clock`** - Handles both scheduler clock and local delayed queue
-6. **`simulate_random_delay`** - Custom yield future (0..10 range)
+2. **`unparkers`** - Thread synchronization for GPUI's `block_on` when parking is allowed
+3. **`simulate_random_delay`** - Custom yield future (0..10 range)
+4. **`session_id`** - For foreground task tracking per dispatcher clone
 
 ### Key Files
 
 **Scheduler Crate** (`crates/scheduler/`):
 - `src/scheduler.rs` - `Scheduler` trait, `Priority`, `RealtimePriority`, `RunnableMeta`, `SessionId`
-- `src/test_scheduler.rs` - `TestScheduler` implementation
+- `src/test_scheduler.rs` - `TestScheduler` implementation (timers, clock, rng, is_main_thread)
 - `src/executor.rs` - `ForegroundExecutor`, `BackgroundExecutor`, `Task`
 - `src/clock.rs` - `Clock` trait, `TestClock`
 
 **GPUI Crate** (`crates/gpui/`):
-- `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task` (duplicates scheduler's!)
+- `src/executor.rs` - GPUI's `BackgroundExecutor`, `ForegroundExecutor`, `Task`
 - `src/platform.rs` - `PlatformDispatcher` trait, `RunnableVariant` type alias
-- `src/platform/test/dispatcher.rs` - `TestDispatcher` (the wrapper we want to eliminate)
+- `src/platform/test/dispatcher.rs` - `TestDispatcher` (thin wrapper around TestScheduler)
 - `src/platform/mac/dispatcher.rs` - `MacDispatcher`
 - `src/platform/linux/dispatcher.rs` - `LinuxDispatcher`
 - `src/platform/windows/dispatcher.rs` - `WindowsDispatcher`
 
 ---
 
-## Next Steps: Eliminate PlatformDispatcher
+## Next Steps
 
-### The Core Problem
+### Phase 1: Move Unparkers to TestScheduler
 
-GPUI has two parallel abstractions:
-1. `PlatformDispatcher` trait - used by GPUI's executors
-2. `Scheduler` trait - used by scheduler crate
-
-They have different APIs:
-- `PlatformDispatcher::dispatch_after(duration, runnable)` - stores runnable, runs after delay
-- `Scheduler::timer(duration) -> Timer` - returns a future that completes after delay
-
-### Strategy: Make Scheduler the Primary Abstraction
-
-#### Phase 1: Add `dispatch_after` Support to Scheduler
-
-Add a method to `Scheduler` trait that matches `PlatformDispatcher::dispatch_after`:
-
-```rust
-// In scheduler/src/scheduler.rs
-pub trait Scheduler: Send + Sync {
-    // ... existing methods ...
-    
-    /// Schedule a runnable to execute after a delay.
-    /// This is the imperative equivalent of timer().
-    fn schedule_after(&self, duration: Duration, runnable: Runnable<RunnableMeta>);
-}
-```
-
-For `TestScheduler`, implement by adding to the timers list with a callback.
-
-#### Phase 2: Add `is_main_thread` to Scheduler
-
-The scheduler needs to track whether we're currently executing a foreground task:
-
-```rust
-// In TestScheduler
-pub fn is_main_thread(&self) -> bool {
-    self.state.lock().is_main_thread
-}
-```
-
-Update `step()` to set this flag around task execution.
-
-#### Phase 3: Add Parking/Unparker Support to Scheduler
-
-Move the unparker mechanism into TestScheduler:
+Move the unparker mechanism into TestScheduler to unify blocking between GPUI's `block_internal` and scheduler's `block`:
 
 ```rust
 impl TestScheduler {
-    pub fn push_unparker(&self, unparker: Unparker) { ... }
-    pub fn unpark_all(&self) { ... }
-}
-```
-
-Call `unpark_all()` when tasks are scheduled.
-
-#### Phase 4: Implement PlatformDispatcher for TestScheduler
-
-Either:
-- Have `TestScheduler` implement `PlatformDispatcher` directly (couples scheduler to GPUI)
-- Create a trivial newtype wrapper that implements `PlatformDispatcher` for `Arc<TestScheduler>`
-
-The wrapper would be ~50 lines, just trait method forwarding.
-
-#### Phase 5: Unify Executor Types
-
-Both GPUI and scheduler have `BackgroundExecutor`, `ForegroundExecutor`, and `Task<T>`.
-
-Options:
-1. **GPUI reexports scheduler's types** - Cleanest, but requires ensuring API compatibility
-2. **Keep both, share primitives** - More work, less clean
-3. **Scheduler types become the implementation, GPUI wraps** - Current partial state
-
-Recommendation: Have GPUI reexport scheduler's executor types, adding any GPUI-specific methods as extension traits.
-
-#### Phase 6: Production Dispatchers
-
-For production (Mac/Linux/Windows), either:
-1. Create a `PlatformScheduler` that wraps `PlatformDispatcher` and implements `Scheduler`
-2. Or keep `PlatformDispatcher` for production, only use `Scheduler` for tests
-
-Current state: `PlatformScheduler` exists in `gpui/src/platform/platform_scheduler.rs` and wraps `PlatformDispatcher` to implement `Scheduler`. This could be inverted.
-
----
-
-## Recommended Execution Order
-
-### Immediate (Do Now)
-
-1. **Add `schedule_after` to Scheduler trait**
-   - Implement in TestScheduler using timer infrastructure
-   - This eliminates the need for TestDispatcher's delayed queue
-
-2. **Move `is_main_thread` tracking into TestScheduler**
-   - Track in `step()` which type of task is running
-   - Expose via `is_main_thread()` method
-
-3. **Move unparker mechanism into TestScheduler**
-   - Add `push_unparker()`, `unpark_all()`, `unparker_count()`
-   - Call `unpark_all()` in `schedule_foreground()` and `schedule_background()`
-
-4. **Create thin PlatformDispatcher impl for TestScheduler**
-   - Either impl directly on TestScheduler or create `TestDispatcherAdapter(Arc<TestScheduler>)`
-   - Should be ~50-80 lines total
-
-5. **Delete TestDispatcher**
-   - Update all references to use the new adapter
-   - Remove `crates/gpui/src/platform/test/dispatcher.rs`
-
-### Medium Term
-
-6. **Unify Task types**
-   - Have GPUI reexport `scheduler::Task<T>`
-   - Or create extension trait for GPUI-specific methods like `detach_and_log_err`
-
-7. **Unify Executor types**
-   - Evaluate if GPUI's executors can be replaced with scheduler's
-   - Main blocker: GPUI executors take `Arc<dyn PlatformDispatcher>`
-
-### Long Term
-
-8. **Consider eliminating PlatformDispatcher entirely**
-   - Have production dispatchers implement `Scheduler` directly
-   - Or keep as internal implementation detail
-
----
-
-## API Comparison
-
-### PlatformDispatcher (current GPUI trait)
-```rust
-pub trait PlatformDispatcher: Send + Sync {
-    fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>, priority: Priority);
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
-    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
-    fn now(&self) -> Instant;
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>);
-    fn as_test(&self) -> Option<&TestDispatcher>;
-    // ... timing methods ...
-}
-```
-
-### Scheduler (scheduler crate trait)
-```rust
-pub trait Scheduler: Send + Sync {
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>);
-    fn schedule_background_with_priority(&self, runnable: Runnable<RunnableMeta>, priority: Priority);
-    fn schedule_background(&self, runnable: Runnable<RunnableMeta>);
-    fn timer(&self, duration: Duration) -> Timer;
-    fn clock(&self) -> Arc<dyn Clock>;
-    fn block(&self, session_id: Option<SessionId>, future: LocalBoxFuture<()>, timeout: Option<Duration>);
-    fn as_test(&self) -> &TestScheduler;
-}
-```
-
-### Proposed Additions to Scheduler
-```rust
-pub trait Scheduler: Send + Sync {
-    // ... existing ...
-    
-    /// Schedule a runnable to run after a duration (imperative timer API)
-    fn schedule_after(&self, duration: Duration, runnable: Runnable<RunnableMeta>);
-    
-    /// Check if currently executing a foreground task
-    fn is_main_thread(&self) -> bool;
-}
-
-impl TestScheduler {
-    /// For block_on parking support
     pub fn push_unparker(&self, unparker: Unparker);
     pub fn unpark_all(&self);
     pub fn unparker_count(&self) -> usize;
 }
 ```
 
+Call `unpark_all()` when tasks are scheduled in `schedule_foreground()` and `schedule_background()`.
+
+### Phase 2: Move simulate_random_delay to TestScheduler
+
+The scheduler already has `yield_random()`. Either:
+- Use scheduler's `yield_random()` directly
+- Or make the range configurable if the 0..10 vs 0..2 difference matters
+
+### Phase 3: Create Thin PlatformDispatcher Wrapper for TestScheduler
+
+Create a minimal wrapper that implements `PlatformDispatcher` for `Arc<TestScheduler>`:
+
+```rust
+pub struct TestDispatcherAdapter {
+    session_id: SessionId,
+    scheduler: Arc<TestScheduler>,
+}
+
+impl PlatformDispatcher for TestDispatcherAdapter {
+    // ~50 lines of trait method forwarding
+}
+```
+
+### Phase 4: Delete TestDispatcher
+
+Once the adapter is working, delete `crates/gpui/src/platform/test/dispatcher.rs` entirely.
+
+### Phase 5: Unify Executor Types (Medium Term)
+
+Both GPUI and scheduler have `BackgroundExecutor`, `ForegroundExecutor`, and `Task<T>`.
+
+Options:
+1. **GPUI reexports scheduler's types** - Cleanest, but requires API compatibility
+2. **Keep both, share primitives** - Current partial state
+3. **Extension traits** - GPUI-specific methods like `detach_and_log_err` as extension traits on scheduler's types
+
+### Phase 6: Consider Eliminating PlatformDispatcher (Long Term)
+
+For production (Mac/Linux/Windows), either:
+1. Have production dispatchers implement `Scheduler` directly
+2. Or keep `PlatformDispatcher` as internal implementation detail, with `PlatformScheduler` wrapper
+
 ---
 
 ## Success Criteria
 
-1. `crates/gpui/src/platform/test/dispatcher.rs` is deleted
+1. `crates/gpui/src/platform/test/dispatcher.rs` is deleted or reduced to ~50 lines
 2. TestScheduler (or thin wrapper) implements PlatformDispatcher
 3. No duplicate task queue management between GPUI and scheduler
 4. All existing tests pass
@@ -283,12 +174,10 @@ impl TestScheduler {
 
 ## Notes for Implementation
 
-- The `simulate_random_delay()` method uses range 0..10, while scheduler's `yield_random()` uses 0..2 with 10% chance of 10..20. Tests may depend on the exact distribution. Consider making this configurable or accepting the change.
-
-- `spawn_realtime` panics in TestDispatcher - this is correct behavior (real threads break determinism).
-
-- SessionId is allocated per TestDispatcher clone. When eliminating TestDispatcher, ensure the same session allocation happens (probably in the PlatformDispatcher wrapper's Clone impl).
+- SessionId is allocated per TestDispatcher clone. Ensure the same session allocation happens in any replacement.
 
 - The `block_on` implementation in `executor.rs` has complex logic for parking, unparking, and timeout handling. This may need adjustment when changing the dispatcher abstraction.
 
-- `TaskLabel` is still defined but unused after removing deprioritization. Can be removed entirely or kept for future use.
+- `TaskLabel` is still defined but unused after removing deprioritization. Can be removed entirely.
+
+- `spawn_realtime` panics in TestDispatcher - this is correct behavior (real threads break determinism).

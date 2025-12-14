@@ -23,8 +23,6 @@ pub struct TestDispatcher {
 }
 
 struct TestDispatcherState {
-    delayed: Vec<(Instant, RunnableVariant)>,
-    is_main_thread: bool,
     unparkers: Vec<Unparker>,
 }
 
@@ -42,8 +40,6 @@ impl TestDispatcher {
         let session_id = scheduler.allocate_session_id();
 
         let state = TestDispatcherState {
-            delayed: Vec::new(),
-            is_main_thread: true,
             unparkers: Vec::new(),
         };
 
@@ -59,35 +55,11 @@ impl TestDispatcher {
     }
 
     pub fn advance_clock(&self, by: Duration) {
-        let target_time = self.scheduler.clock().now() + by;
-        loop {
-            while self.tick(false) {}
-            let next_delayed = self.state.lock().delayed.first().map(|(time, _)| *time);
-            if let Some(delayed_time) = next_delayed {
-                if delayed_time <= target_time {
-                    let advance_by = delayed_time - self.scheduler.clock().now();
-                    self.scheduler.advance_clock(advance_by);
-                    continue;
-                }
-            }
-            break;
-        }
-        let remaining = target_time - self.scheduler.clock().now();
-        if remaining > Duration::ZERO {
-            self.scheduler.advance_clock(remaining);
-        }
+        self.scheduler.advance_clock(by);
     }
 
-    pub fn advance_clock_to_next_delayed(&self) -> bool {
-        let next_delayed = self.state.lock().delayed.first().map(|(time, _)| *time);
-        if let Some(delayed_time) = next_delayed {
-            let now = self.scheduler.clock().now();
-            if delayed_time > now {
-                self.scheduler.advance_clock(delayed_time - now);
-            }
-            return true;
-        }
-        false
+    pub fn advance_clock_to_next_timer(&self) -> bool {
+        self.scheduler.advance_clock_to_next_timer()
     }
 
     pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
@@ -115,48 +87,11 @@ impl TestDispatcher {
     }
 
     pub fn tick(&self, background_only: bool) -> bool {
-        let now = self.scheduler.clock().now();
-
-        {
-            let mut state = self.state.lock();
-            while let Some((deadline, _)) = state.delayed.first() {
-                if *deadline > now {
-                    break;
-                }
-                let (_, runnable) = state.delayed.remove(0);
-                self.scheduler.schedule_background(runnable);
-            }
-        }
-
-        let (foreground_count, background_count) = self.scheduler.pending_task_counts();
-
-        if foreground_count == 0 && background_count == 0 {
-            return false;
-        }
-
-        let run_foreground = if background_only || foreground_count == 0 {
-            false
-        } else if background_count == 0 {
-            true
-        } else {
-            self.scheduler.rng().lock().random_ratio(
-                foreground_count as u32,
-                (foreground_count + background_count) as u32,
-            )
-        };
-
-        let was_main_thread = self.state.lock().is_main_thread;
-        self.state.lock().is_main_thread = run_foreground;
-
-        let did_work = if background_only {
+        if background_only {
             self.scheduler.tick_background_only()
         } else {
             self.scheduler.tick()
-        };
-
-        self.state.lock().is_main_thread = was_main_thread;
-
-        did_work
+        }
     }
 
     pub fn run_until_parked(&self) {
@@ -200,7 +135,7 @@ impl PlatformDispatcher for TestDispatcher {
     }
 
     fn is_main_thread(&self) -> bool {
-        self.state.lock().is_main_thread
+        self.scheduler.is_main_thread()
     }
 
     fn now(&self) -> Instant {
@@ -218,13 +153,11 @@ impl PlatformDispatcher for TestDispatcher {
         self.unpark_all();
     }
 
-    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
-        let mut state = self.state.lock();
-        let deadline = self.scheduler.clock().now() + duration;
-        let ix = match state.delayed.binary_search_by_key(&deadline, |e| e.0) {
-            Ok(ix) | Err(ix) => ix,
-        };
-        state.delayed.insert(ix, (deadline, runnable));
+    fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
+        panic!(
+            "dispatch_after should not be called in tests. \
+            Use BackgroundExecutor::timer() which uses the scheduler's native timer."
+        );
     }
 
     fn as_test(&self) -> Option<&TestDispatcher> {

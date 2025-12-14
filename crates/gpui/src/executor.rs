@@ -1,5 +1,8 @@
 use crate::{App, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
+#[cfg(any(test, feature = "test-support"))]
 use rand::Rng as _;
+#[cfg(any(test, feature = "test-support"))]
+use scheduler::Scheduler as _;
 
 pub use scheduler::{Priority, RealtimePriority};
 
@@ -485,10 +488,10 @@ impl BackgroundExecutor {
                         debug_log("awoken flag was false");
 
                         if !dispatcher.scheduler().parking_allowed() {
-                            debug_log("parking NOT allowed, checking delayed tasks");
-                            let advanced = dispatcher.advance_clock_to_next_delayed();
+                            debug_log("parking NOT allowed, checking timers");
+                            let advanced = dispatcher.advance_clock_to_next_timer();
                             debug_log(&format!(
-                                "advance_clock_to_next_delayed() returned {}",
+                                "advance_clock_to_next_timer() returned {}",
                                 advanced
                             ));
                             if advanced {
@@ -583,6 +586,13 @@ impl BackgroundExecutor {
         if duration.is_zero() {
             return Task::ready(());
         }
+
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(test_dispatcher) = self.dispatcher.as_test() {
+            let scheduler_timer = test_dispatcher.scheduler().timer(duration);
+            return self.spawn(async move { scheduler_timer.await });
+        }
+
         let location = core::panic::Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta { location })
@@ -630,6 +640,13 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
         self.dispatcher.as_test().unwrap().scheduler().allow_parking();
+    }
+
+    /// Sets the range of ticks to run before timing out in block_on.
+    /// Use `usize::MAX..=usize::MAX` to effectively disable the timeout.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
+        self.dispatcher.as_test().unwrap().scheduler().set_timeout_ticks(range);
     }
 
     /// undoes the effect of [`Self::allow_parking`].

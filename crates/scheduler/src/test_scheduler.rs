@@ -91,6 +91,7 @@ impl TestScheduler {
                 capture_pending_traces: config.capture_pending_traces,
                 pending_traces: BTreeMap::new(),
                 next_trace_id: TraceId(0),
+                is_main_thread: true,
             })),
             clock: Arc::new(TestClock::new()),
             thread: thread::current(),
@@ -119,6 +120,10 @@ impl TestScheduler {
 
     pub fn parking_allowed(&self) -> bool {
         self.state.lock().allow_parking
+    }
+
+    pub fn is_main_thread(&self) -> bool {
+        self.state.lock().is_main_thread
     }
 
     /// Allocate a new session ID for foreground task scheduling.
@@ -274,14 +279,18 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
+            let is_foreground = runnable.session_id.is_some();
+            let was_main_thread = self.state.lock().is_main_thread;
+            self.state.lock().is_main_thread = is_foreground;
             runnable.run();
+            self.state.lock().is_main_thread = was_main_thread;
             return true;
         }
 
         false
     }
 
-    fn advance_clock_to_next_timer(&self) -> bool {
+    pub fn advance_clock_to_next_timer(&self) -> bool {
         if let Some(timer) = self.state.lock().timers.first() {
             self.clock.advance(timer.expiration - self.clock.now());
             true
@@ -525,6 +534,7 @@ struct SchedulerState {
     capture_pending_traces: bool,
     next_trace_id: TraceId,
     pending_traces: BTreeMap<TraceId, Backtrace>,
+    is_main_thread: bool,
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
