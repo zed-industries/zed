@@ -1556,7 +1556,7 @@ impl Workspace {
                     store.workspaces.remove(&window_handle);
                 })
             }),
-            cx.intercept_keystrokes(|event, _, cx| {
+            cx.intercept_keystrokes(|event, window, cx| {
                 if event.keystroke.modifiers.platform
                     || event.keystroke.modifiers.control
                     || event.keystroke.modifiers.alt
@@ -1564,17 +1564,11 @@ impl Workspace {
                     return;
                 }
 
-                cx.active_window()
-                    .and_then(|w| w.downcast::<Workspace>())
-                    .map(|workspace| {
-                        cx.defer(move |cx| {
-                            workspace
-                                .update(cx, |workspace, _window, cx| {
-                                    workspace.hide_mouse_cursor(cx)
-                                })
-                                .log_err();
-                        });
+                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                    cx.defer(move |cx| {
+                        workspace.update(cx, |workspace, cx| workspace.hide_mouse_cursor(cx))
                     });
+                };
             }),
         ];
 
