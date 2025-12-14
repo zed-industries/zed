@@ -255,6 +255,10 @@ impl Model {
                 .supported_endpoints
                 .contains(&ModelSupportedEndpoint::Responses)
     }
+
+    pub fn multipler(&self) -> f64 {
+        self.billing.multiplier
+    }
 }
 
 #[derive(Serialize, Deserialize)]

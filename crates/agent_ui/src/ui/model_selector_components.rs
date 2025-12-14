@@ -3,6 +3,8 @@ use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, p
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::CycleFavoriteModels;
+use gpui::{Action, FocusHandle, prelude::*};
+use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 
 enum ModelIcon {
     Name(IconName),
@@ -53,6 +55,7 @@ pub struct ModelSelectorListItem {
     is_latest: bool,
     is_favorite: bool,
     on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    cost_info: Option<SharedString>,
 }
 
 impl ModelSelectorListItem {
@@ -66,6 +69,7 @@ impl ModelSelectorListItem {
             is_latest: false,
             is_favorite: false,
             on_toggle_favorite: None,
+            cost_info: None,
         }
     }
 
@@ -106,6 +110,11 @@ impl ModelSelectorListItem {
         self.on_toggle_favorite = Some(Box::new(handler));
         self
     }
+
+    pub fn cost_info(mut self, cost_info: Option<SharedString>) -> Self {
+        self.cost_info = cost_info;
+        self
+    }
 }
 
 impl RenderOnce for ModelSelectorListItem {
@@ -139,9 +148,21 @@ impl RenderOnce for ModelSelectorListItem {
                     .child(Label::new(self.title).truncate())
                     .when(self.is_latest, |parent| parent.child(Chip::new("Latest"))),
             )
-            .end_slot(div().pr_2().when(self.is_selected, |this| {
-                this.child(Icon::new(IconName::Check).color(Color::Accent))
-            }))
+            .end_slot(
+                h_flex()
+                    .gap_2()
+                    .pr_1p5()
+                    .when(self.is_selected, |this| {
+                        this.child(Icon::new(IconName::Check).color(Color::Accent))
+                    })
+                    .when_some(self.cost_info, |this, cost_info| {
+                        this.child(
+                            Chip::new(cost_info)
+                                .label_size(LabelSize::XSmall)
+                                .label_color(Color::Muted),
+                        )
+                    }),
+            )
             .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
                 |this, handle_click| {
                     let (icon, color, tooltip) = if is_favorite {

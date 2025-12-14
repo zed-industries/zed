@@ -383,6 +383,7 @@ pub struct AgentModelInfo {
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
     pub is_latest: bool,
+    pub cost: Option<SharedString>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -393,6 +394,7 @@ impl From<acp::ModelInfo> for AgentModelInfo {
             description: info.description.map(|desc| desc.into()),
             icon: None,
             is_latest: false,
+            cost: None,
         }
     }
 }
