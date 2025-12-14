@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use gpui::MouseButton;
 use ui::{div, prelude::*};
 
@@ -7,6 +9,7 @@ impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
+        let render_prep_start = Instant::now();
         let table_with_settings = v_flex()
             .w_full()
             .h_full()
@@ -64,6 +67,9 @@ impl Render for CsvPreviewView {
                     });
                 }
             });
+
+        let render_prep_duration = render_prep_start.elapsed();
+        self.performance_metrics.last_render_preparation_took = Some(render_prep_duration);
 
         div()
             .relative()

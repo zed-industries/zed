@@ -22,6 +22,8 @@ pub struct PerformanceMetrics {
     pub last_copy_took: Option<Duration>,
     /// Duration of the last selection operation (navigation or select_all).
     pub last_selection_took: Option<Duration>,
+    /// Duration of the last render preparation (table_with_settings div creation).
+    pub last_render_preparation_took: Option<Duration>,
 }
 
 impl CsvPreviewView {
@@ -85,5 +87,14 @@ impl CsvPreviewView {
                     None => div.child("Selection: --"),
                 }),
             )
+            .child(div().map(
+                |div| match self.performance_metrics.last_render_preparation_took {
+                    Some(duration) => div.child(format!(
+                        "Render Prep: {:.2}ms",
+                        duration.as_secs_f64() * 1000.0
+                    )),
+                    None => div.child("Render Prep: --"),
+                },
+            ))
     }
 }
