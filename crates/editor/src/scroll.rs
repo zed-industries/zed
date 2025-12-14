@@ -28,7 +28,7 @@ use workspace::{ItemId, WorkspaceId};
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 // TODO: move to settings
-const SMOOTH_SCROLL_DURATION: Duration = Duration::from_millis(250);
+const SMOOTH_SCROLL_DURATION: Duration = Duration::from_millis(120);
 
 pub struct WasScrolled(pub(crate) bool);
 
@@ -874,7 +874,8 @@ impl Editor {
             (elapsed / duration).min(1.0)
         };
 
-        let eased_progress = ease_out_cubic(progress);
+        let easing_fn = gpui::ease_out_cubic();
+        let eased_progress = easing_fn(progress);
 
         let start = animation.start_position;
         let target = animation.target_position;
@@ -897,8 +898,4 @@ impl Editor {
     pub fn has_animated_scroll(&self) -> bool {
         self.scroll_manager.scroll_animation().is_some()
     }
-}
-
-fn ease_out_cubic(t: f32) -> f32 {
-    1.0 - (1.0 - t).powi(3)
 }
