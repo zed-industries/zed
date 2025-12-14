@@ -302,6 +302,11 @@ fn test_block_with_timeout() {
 
     // Test case: future times out
     TestScheduler::once(async |scheduler| {
+        // Make timeout behavior deterministic by forcing the timeout tick budget to be exactly 0.
+        // This prevents `block_with_timeout` from making progress via extra scheduler stepping and
+        // accidentally completing work that we expect to time out.
+        scheduler.set_timeout_ticks(0..=0);
+
         let foreground = scheduler.foreground();
         let future = future::pending::<()>();
         let output = foreground.block_with_timeout(Duration::from_millis(50), future);
@@ -311,6 +316,8 @@ fn test_block_with_timeout() {
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
     TestScheduler::many(100, async |scheduler| {
+        // Keep the existing probabilistic behavior here (do not force 0 ticks), since this subtest
+        // is explicitly checking that some seeds/timeouts can complete while others can time out.
         let task = scheduler.background().spawn(async move {
             Yield { polls: 10 }.await;
             42
@@ -324,6 +331,46 @@ fn test_block_with_timeout() {
         results.into_iter().collect::<Vec<_>>(),
         vec![None, Some(42)]
     );
+
+    // Regression test:
+    // A timed-out future must not be cancelled. The returned future should still be
+    // pollable to completion later. We also want to ensure time only advances when we
+    // explicitly advance it (not by yielding).
+    TestScheduler::once(async |scheduler| {
+        // Force immediate timeout: the timeout tick budget is 0 so we will not step or
+        // advance timers inside `block_with_timeout`.
+        scheduler.set_timeout_ticks(0..=0);
+
+        let background = scheduler.background();
+
+        // This task should only complete once time is explicitly advanced.
+        let task = background.spawn({
+            let scheduler = scheduler.clone();
+            async move {
+                scheduler.timer(Duration::from_millis(100)).await;
+                123
+            }
+        });
+
+        // This should time out before we advance time enough for the timer to fire.
+        let timed_out = scheduler
+            .foreground()
+            .block_with_timeout(Duration::from_millis(50), task);
+        assert!(
+            timed_out.is_err(),
+            "expected timeout before advancing the clock enough for the timer"
+        );
+
+        // Now explicitly advance time and ensure the returned future can complete.
+        let mut task = timed_out.err().unwrap();
+        scheduler.advance_clock(Duration::from_millis(100));
+        scheduler.run();
+
+        let output = scheduler
+            .foreground()
+            .block_on(async move { (&mut task).await });
+        assert_eq!(output, 123);
+    });
 }
 
 // When calling block, we shouldn't make progress on foreground-spawned futures with the same session id.
