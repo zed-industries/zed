@@ -485,7 +485,8 @@ impl ScrollManager {
             let elapsed = animation.start_time.elapsed().as_secs_f32();
             let duration = SMOOTH_SCROLL_DURATION.as_secs_f32();
             let progress = (elapsed / duration).min(1.0);
-            let eased = ease_out_cubic(progress);
+            let easing_fn = gpui::ease_out_cubic();
+            let eased = easing_fn(progress);
 
             gpui::Point::new(
                 animation.start_position.x
