@@ -1123,31 +1123,32 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             .discriminant() as usize])
                                 },
                                 write: |settings_content, value| {
-                                    let Some(value) = value else {
-                                        settings_content.workspace.autosave = None;
-                                        return;
-                                    };
-                                    let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
-                                        settings::AutosaveSetting::Off
-                                    });
-                                    *settings_value = match value {
-                                        settings::AutosaveSettingDiscriminants::Off => {
-                                            settings::AutosaveSetting::Off
-                                        },
-                                        settings::AutosaveSettingDiscriminants::AfterDelay => {
-                                            let milliseconds = match settings_value {
-                                                settings::AutosaveSetting::AfterDelay { milliseconds } => *milliseconds,
+                                    match value {
+                                        None | Some(settings::AutosaveSettingDiscriminants::Off) => {
+                                            settings_content.workspace.autosave = None;
+                                        }
+                                        Some(settings::AutosaveSettingDiscriminants::AfterDelay) => {
+                                            let milliseconds = match settings_content
+                                                .workspace
+                                                .autosave
+                                                .as_ref()
+                                            {
+                                                Some(settings::AutosaveSetting::AfterDelay { milliseconds }) => *milliseconds,
                                                 _ => settings::DelayMs(1000),
                                             };
-                                            settings::AutosaveSetting::AfterDelay { milliseconds }
-                                        },
-                                        settings::AutosaveSettingDiscriminants::OnFocusChange => {
-                                            settings::AutosaveSetting::OnFocusChange
-                                        },
-                                        settings::AutosaveSettingDiscriminants::OnWindowChange => {
-                                            settings::AutosaveSetting::OnWindowChange
-                                        },
-                                    };
+                                            settings_content.workspace.autosave = Some(settings::AutosaveSetting::AfterDelay {
+                                                milliseconds,
+                                            });
+                                        }
+                                        Some(settings::AutosaveSettingDiscriminants::OnFocusChange) => {
+                                            settings_content.workspace.autosave =
+                                                Some(settings::AutosaveSetting::OnFocusChange);
+                                        }
+                                        Some(settings::AutosaveSettingDiscriminants::OnWindowChange) => {
+                                            settings_content.workspace.autosave =
+                                                Some(settings::AutosaveSetting::OnWindowChange);
+                                        }
+                                    }
                                 },
                             }),
                             metadata: None,
