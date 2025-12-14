@@ -198,6 +198,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.background_spawn(async move {
+            // todo! Ask cole about this
             let dir = paths::debug_adapters_dir().join("js-debug-companion");
 
             let mut children = fs.read_dir(&dir).await?.try_collect::<Vec<_>>().await?;

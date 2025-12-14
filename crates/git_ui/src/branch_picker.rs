@@ -1830,6 +1830,82 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_confirm_remote_url_does_not_dismiss(cx: &mut TestAppContext) {
+        const REMOTE_URL: &str = "https://github.com/user/repo.git";
+
+        init_test(cx);
+        let branches = vec![create_test_branch("main", true, None, Some(1000))];
+
+        let window = cx.add_window(|window, cx| {
+            let mut delegate = BranchListDelegate::new(None, None, BranchListStyle::Modal, cx);
+            delegate.all_branches = Some(branches);
+            let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+            let picker_focus_handle = picker.focus_handle(cx);
+            picker.update(cx, |picker, _| {
+                picker.delegate.focus_handle = picker_focus_handle.clone();
+            });
+
+            let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            });
+
+            BranchList {
+                picker,
+                picker_focus_handle,
+                width: rems(34.),
+                _subscription,
+            }
+        });
+
+        let branch_list = window.root(cx).unwrap();
+        let mut ctx = VisualTestContext::from_window(*window, cx);
+        let cx = &mut ctx;
+
+        let subscription = cx.update(|_, cx| {
+            cx.subscribe(&branch_list, |_, _: &DismissEvent, _| {
+                panic!("DismissEvent should not be emitted when confirming a remote URL");
+            })
+        });
+
+        branch_list
+            .update_in(cx, |branch_list, window, cx| {
+                window.focus(&branch_list.picker_focus_handle);
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .update_matches(REMOTE_URL.to_string(), window, cx)
+                })
+            })
+            .await;
+
+        cx.run_until_parked();
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                let last_match = picker.delegate.matches.last().unwrap();
+                assert!(last_match.is_new_url());
+                assert!(matches!(picker.delegate.state, PickerState::NewRemote));
+
+                picker.delegate.confirm(false, window, cx);
+
+                assert!(
+                    matches!(picker.delegate.state, PickerState::CreateRemote(ref url) if url.as_ref() == REMOTE_URL),
+                    "State should transition to CreateRemote with the URL"
+                );
+            });
+
+            assert!(
+                branch_list.picker_focus_handle.is_focused(window),
+                "Branch list picker should still be focused after confirming remote URL"
+            );
+        });
+
+        cx.run_until_parked();
+
+        drop(subscription);
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_empty_query_displays_all_branches(mut rng: StdRng, cx: &mut TestAppContext) {
         init_test(cx);
