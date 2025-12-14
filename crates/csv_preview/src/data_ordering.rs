@@ -1,6 +1,6 @@
 use crate::{
     table_like_content::TableLikeContent,
-    types::{DataRow, DisplayRow},
+    types::{AnyColumn, DataRow, DisplayRow},
 };
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ pub enum OrderingDirection {
 #[derive(Clone, Copy)]
 pub struct Ordering {
     /// 0-based column index
-    pub col_idx: usize,
+    pub col_idx: AnyColumn,
     /// Direction of ordering
     pub direction: OrderingDirection,
 }
@@ -51,7 +51,7 @@ pub fn generate_ordered_indices(
     let mapping: HashMap<DisplayRow, DataRow> = ordered_indices
         .iter()
         .enumerate()
-        .map(|(display_idx, &data_idx)| (DisplayRow::new(display_idx), DataRow::new(data_idx)))
+        .map(|(display_idx, &data_idx)| (DisplayRow::from(display_idx), DataRow::from(data_idx)))
         .collect();
 
     OrderedIndices { mapping }
@@ -67,11 +67,11 @@ fn order_indices(
         let row_b = &contents.rows[b];
 
         let val_a = row_a
-            .get(ordering.col_idx)
+            .get(ordering.col_idx.get())
             .map(|s| s.as_ref())
             .unwrap_or("");
         let val_b = row_b
-            .get(ordering.col_idx)
+            .get(ordering.col_idx.get())
             .map(|s| s.as_ref())
             .unwrap_or("");
 

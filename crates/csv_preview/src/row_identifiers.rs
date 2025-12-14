@@ -4,7 +4,7 @@ use ui::{
     SharedString, Styled as _, StyledTypography as _, Tooltip, div,
 };
 
-use crate::{CsvPreviewView, settings::FontType, settings::RowIdentifiers};
+use crate::{CsvPreviewView, settings::FontType, settings::RowIdentifiers, types::DisplayRow};
 
 /// Line number information for CSV rows
 #[derive(Debug, Clone, Copy)]
@@ -146,7 +146,7 @@ impl CsvPreviewView {
         // Check if this row has focus to highlight the line number
         let is_focused = self
             .selection
-            .is_row_focused(crate::types::DisplayRow::new(display_index));
+            .is_row_focused(DisplayRow::from(display_index));
 
         // Use normal text color for focused row, muted color otherwise
         let text_color = if is_focused {

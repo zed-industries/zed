@@ -10,7 +10,7 @@ use crate::{
     data_ordering::OrderingDirection,
     settings::FontType,
     settings::RowRenderMechanism,
-    types::{DisplayCellId, DisplayRow},
+    types::{AnyColumn, DisplayCellId, DisplayRow},
 };
 
 impl CsvPreviewView {
@@ -19,7 +19,7 @@ impl CsvPreviewView {
         &self,
         header_text: String,
         cx: &mut Context<'_, CsvPreviewView>,
-        col_idx: usize,
+        col_idx: AnyColumn,
     ) -> AnyElement {
         // CSV data columns: text + sort button
         h_flex()
@@ -35,9 +35,13 @@ impl CsvPreviewView {
             .into_any_element()
     }
 
-    fn create_sort_button(&self, cx: &mut Context<'_, CsvPreviewView>, col_idx: usize) -> Button {
+    fn create_sort_button(
+        &self,
+        cx: &mut Context<'_, CsvPreviewView>,
+        col_idx: AnyColumn,
+    ) -> Button {
         let sort_btn = Button::new(
-            ElementId::NamedInteger("sort-button".into(), col_idx as u64),
+            ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.ordering {
                 Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
                     OrderingDirection::Asc => "↑",
@@ -131,7 +135,11 @@ impl CsvPreviewView {
                 .map(|h| h.as_ref().to_string())
                 .unwrap_or_else(|| format!("Col {}", i + 1));
 
-            headers.push(self.create_header_element_for_orderables(header_text, cx, i));
+            headers.push(self.create_header_element_for_orderables(
+                header_text,
+                cx,
+                AnyColumn::from(i),
+            ));
         }
 
         // Manually construct array to avoid Debug trait requirement
@@ -191,7 +199,7 @@ impl CsvPreviewView {
         let ordered_indices = this.get_ordered_indices();
 
         // Get the actual row index from our ordered indices
-        let data_row = ordered_indices.get_data_row(DisplayRow::new(display_index))?;
+        let data_row = ordered_indices.get_data_row(DisplayRow::from(display_index))?;
         let row_index = data_row.get();
         let row = this.contents.rows.get(row_index)?;
 
@@ -209,18 +217,24 @@ impl CsvPreviewView {
             let cell_content: SharedString = row.get(col).cloned().unwrap_or_else(|| "".into());
 
             // Check if this cell is selected using display coordinates
-            let is_selected =
-                this.selection
-                    .is_cell_selected(display_index.into(), col, &ordered_indices);
+            let is_selected = this.selection.is_cell_selected(
+                DisplayRow::from(display_index),
+                AnyColumn::from(col),
+                &ordered_indices,
+            );
 
             // Check if this cell is focused using display coordinates
-            let is_focused = this.selection.is_cell_focused(display_index.into(), col);
+            let is_focused = this
+                .selection
+                .is_cell_focused(DisplayRow::from(display_index), AnyColumn::from(col));
 
             // Check if this cell is the selection anchor using display coordinates
-            let is_anchor = this.selection.is_cell_anchor(display_index.into(), col);
+            let is_anchor = this
+                .selection
+                .is_cell_anchor(DisplayRow::from(display_index), AnyColumn::from(col));
 
             elements.push(CsvPreviewView::create_selectable_cell(
-                DisplayCellId::new(display_index.into(), col),
+                DisplayCellId::new(display_index, col),
                 cell_content,
                 cx.entity(),
                 selected_bg,

@@ -48,24 +48,45 @@ impl From<usize> for DataRow {
     }
 }
 
+/// Column position in CSV table.
+///
+/// Currently represents both display and data coordinate systems since
+/// column reordering is not yet implemented. When column reordering is added,
+/// this will need to be split into `DisplayColumn` and `DataColumn` types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AnyColumn(pub usize);
+
+impl AnyColumn {
+    /// Create a new column ID
+    pub fn new(col: usize) -> Self {
+        Self(col)
+    }
+
+    /// Get the inner column value
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for AnyColumn {
+    fn from(col: usize) -> Self {
+        AnyColumn::new(col)
+    }
+}
+
 /// Visual cell position in rendered table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DisplayCellId {
     pub row: DisplayRow,
-    pub col: usize,
+    pub col: AnyColumn,
 }
 
 impl DisplayCellId {
     /// Create a new display cell ID
-    pub fn new(row: DisplayRow, col: usize) -> Self {
-        Self { row, col }
-    }
-
-    /// Create a new display cell ID from raw values
-    pub fn from_raw(row: usize, col: usize) -> Self {
+    pub fn new(row: impl Into<DisplayRow>, col: impl Into<AnyColumn>) -> Self {
         Self {
-            row: DisplayRow::new(row),
-            col,
+            row: row.into(),
+            col: col.into(),
         }
     }
 }
@@ -74,12 +95,15 @@ impl DisplayCellId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataCellId {
     pub row: DataRow,
-    pub col: usize,
+    pub col: AnyColumn,
 }
 
 impl DataCellId {
     /// Create a new data cell ID
-    pub fn new(row: DataRow, col: usize) -> Self {
-        Self { row, col }
+    pub fn new(row: impl Into<DataRow>, col: impl Into<AnyColumn>) -> Self {
+        Self {
+            row: row.into(),
+            col: col.into(),
+        }
     }
 }

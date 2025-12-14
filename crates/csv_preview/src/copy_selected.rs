@@ -27,7 +27,7 @@ impl CsvPreviewView {
 
         for cell_id in selected_cells {
             let row_idx = cell_id.row.get();
-            let col_idx = cell_id.col;
+            let col_idx = cell_id.col.get();
 
             if let Some(row) = (&full_content.rows).get(row_idx) {
                 let cell_content = row
