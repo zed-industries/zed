@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use ui::{SharedString, TableInteractionState, prelude::*};
 use workspace::{Item, Workspace};
@@ -64,7 +64,7 @@ pub struct CsvPreviewView {
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     pub(crate) ordering: Option<Ordering>,
-    pub(crate) ordered_indices: OrderedIndices,
+    pub(crate) ordered_indices: Arc<OrderedIndices>,
     pub(crate) selection: TableSelection,
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
@@ -263,14 +263,16 @@ impl CsvPreviewView {
     /// Update ordered indices when ordering or content changes
     pub(crate) fn update_ordered_indices(&mut self) {
         let start_time = Instant::now();
-        self.ordered_indices =
-            crate::data_ordering::generate_ordered_indices(self.ordering, &self.contents);
+        self.ordered_indices = Arc::new(crate::data_ordering::generate_ordered_indices(
+            self.ordering,
+            &self.contents,
+        ));
         let ordering_duration = start_time.elapsed();
         self.performance_metrics.last_ordering_took = Some(ordering_duration);
     }
 
     /// Get reference to current ordered indices
-    pub(crate) fn get_ordered_indices(&self) -> &OrderedIndices {
+    pub(crate) fn get_ordered_indices(&self) -> &Arc<OrderedIndices> {
         &self.ordered_indices
     }
 
@@ -303,7 +305,9 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx),
                 parsing_task: None,
                 ordering: None,
-                ordered_indices: crate::data_ordering::generate_ordered_indices(None, &contents),
+                ordered_indices: Arc::new(crate::data_ordering::generate_ordered_indices(
+                    None, &contents,
+                )),
                 selection: TableSelection::new(),
                 settings: CsvPreviewSettings::default(),
                 performance_metrics: PerformanceMetrics::default(),
