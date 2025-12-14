@@ -574,7 +574,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let model_cost = model_info
                     .model
                     .model_cost_info()
-                    .clone()
                     .map(|cost| cost.to_shared_string());
 
                 let is_favorite = model_info.is_favorite;
