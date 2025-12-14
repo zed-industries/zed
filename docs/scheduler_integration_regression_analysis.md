@@ -11,6 +11,46 @@ The branch integrates GPUI’s async execution with the `scheduler` crate and up
 
 ---
 
+## Updates from testing / experimentation (learned weak points)
+
+### 1) Caching `Entity<T>` in process-wide statics breaks across `App` contexts (causes panics and test flakiness)
+
+**What happened**
+
+While running `zed` tests, multiple failures showed up with panics like:
+
+- `used a entity with the wrong context`
+- `called Option::unwrap() on a None value` during `Entity` clone paths
+
+The backtraces pointed at a `OnceLock<Entity<ApiKeyState>>` used by the Mistral provider for the Codestral API key entity (a process-wide singleton).
+
+**Root cause**
+
+`gpui::Entity<T>` is **not** a plain owned value; it is a handle tied to a particular `App`’s entity-map/context. If you store an `Entity<T>` in a process-wide static and then create a *different* `App` instance later (very common in tests, but also plausible in multi-app contexts), reusing that cached `Entity<T>` will reference the wrong entity-map.
+
+This manifests as:
+- context assertion failures (`wrong context`)
+- weak `entity_map` upgrades failing (leading to `unwrap()` panics in leak-detection-only clone paths)
+- nondeterministic behavior depending on test ordering (because the first `App` that initializes the static “wins”)
+
+**Fix applied**
+
+Avoid caching `Entity<T>` in process-wide statics. Instead:
+- cache plain data (env var name, URL, etc.), and
+- create the `Entity<T>` per-`App`.
+
+In this case, the `OnceLock<Entity<ApiKeyState>>` was removed and `codestral_api_key(cx)` now constructs the entity per call / per `App`.
+
+**Takeaway / design guideline**
+
+> Never store `gpui::Entity<T>` (or other `App`-context-bound handles) in process-wide statics (`static`, `OnceLock`, `LazyLock`), unless the value is explicitly per-`App` or keyed by an `App` identity.
+
+**Test recommendation**
+
+Add (or keep) at least one regression test that creates two distinct `App` instances sequentially in the same process and exercises any global/singleton initialization paths, asserting no “wrong context” panics occur.
+
+---
+
 ## Scope reviewed (high-level)
 
 Major surfaces touched by this branch include:
