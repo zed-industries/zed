@@ -98,9 +98,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in index")
                 .cloned()
         });
-        self.executor
-            .spawn(async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
@@ -111,9 +109,7 @@ impl GitRepository for FakeGitRepository {
                 .context("not present in HEAD")
                 .cloned()
         });
-        self.executor
-            .spawn(async move { fut.await.ok() })
-            .boxed()
+        self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {

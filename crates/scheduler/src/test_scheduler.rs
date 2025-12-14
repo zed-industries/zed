@@ -7,7 +7,7 @@ use backtrace::{Backtrace, BacktraceFrame};
 use futures::channel::oneshot;
 use parking_lot::{Mutex, MutexGuard};
 use rand::{
-    distr::{uniform::SampleRange, uniform::SampleUniform, StandardUniform},
+    distr::{StandardUniform, uniform::SampleRange, uniform::SampleUniform},
     prelude::*,
 };
 use std::{
@@ -193,8 +193,16 @@ impl TestScheduler {
     /// Foreground tasks are those with a session_id, background tasks have none.
     pub fn pending_task_counts(&self) -> (usize, usize) {
         let state = self.state.lock();
-        let foreground = state.runnables.iter().filter(|r| r.session_id.is_some()).count();
-        let background = state.runnables.iter().filter(|r| r.session_id.is_none()).count();
+        let foreground = state
+            .runnables
+            .iter()
+            .filter(|r| r.session_id.is_some())
+            .count();
+        let background = state
+            .runnables
+            .iter()
+            .filter(|r| r.session_id.is_none())
+            .count();
         (foreground, background)
     }
 

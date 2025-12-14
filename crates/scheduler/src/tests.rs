@@ -1,11 +1,11 @@
 use super::*;
 use futures::{
+    FutureExt,
     channel::{mpsc, oneshot},
     executor::block_on,
     future,
     sink::SinkExt,
     stream::{FuturesUnordered, StreamExt},
-    FutureExt,
 };
 use std::{
     cell::RefCell,

@@ -1,4 +1,4 @@
-use crate::{profiler, App, PlatformDispatcher, PlatformScheduler, RunnableMeta, TaskTiming};
+use crate::{App, PlatformDispatcher, PlatformScheduler, RunnableMeta, TaskTiming, profiler};
 use futures::channel::mpsc;
 use scheduler::Scheduler;
 use smol::prelude::*;
@@ -199,8 +199,8 @@ impl BackgroundExecutor {
 
         impl Drop for NotifyOnDrop<'_> {
             fn drop(&mut self) {
-                *self.0 .1.lock() = true;
-                self.0 .0.notify_all();
+                *self.0.1.lock() = true;
+                self.0.0.notify_all();
             }
         }
 
@@ -208,9 +208,9 @@ impl BackgroundExecutor {
 
         impl Drop for WaitOnDrop<'_> {
             fn drop(&mut self) {
-                let mut done = self.0 .1.lock();
+                let mut done = self.0.1.lock();
                 if !*done {
-                    self.0 .0.wait(&mut done);
+                    self.0.0.wait(&mut done);
                 }
             }
         }

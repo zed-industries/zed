@@ -22,8 +22,8 @@ use windows::{
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
-    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming,
-    ThreadTaskTimings, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
+    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
+    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
 pub(crate) struct WindowsDispatcher {

@@ -41,8 +41,8 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, Priority, RealtimePriority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, TaskTiming, ThreadTaskTimings, Window, WindowControlArea,
-    hash, point, px, size,
+    SystemWindowTab, Task, TaskTiming, ThreadTaskTimings, Window, WindowControlArea, hash, point,
+    px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;

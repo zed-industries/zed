@@ -12641,7 +12641,6 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
 
-
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
         move |_params, _| async move {

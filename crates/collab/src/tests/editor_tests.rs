@@ -2236,7 +2236,6 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
             workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)

@@ -7,8 +7,8 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicU16, Ordering},
         Arc,
+        atomic::{AtomicU16, Ordering},
     },
     task::{Context, Poll},
     time::{Duration, Instant},

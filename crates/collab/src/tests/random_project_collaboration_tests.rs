@@ -1139,7 +1139,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let mut highlights = Vec::new();
                                     let background = cx.background_executor();
                                     let rng = background.rng();
-                                let mut rng = rng.lock();
+                                    let mut rng = rng.lock();
 
                                     let highlight_count = rng.random_range(1..=5);
                                     for _ in 0..highlight_count {

@@ -65,7 +65,8 @@ impl ForegroundExecutor {
         };
         let mut future = std::pin::pin!(future);
 
-        self.scheduler.block(Some(self.session_id), future.as_mut(), None);
+        self.scheduler
+            .block(Some(self.session_id), future.as_mut(), None);
 
         output.take().expect("block_on future did not complete")
     }
