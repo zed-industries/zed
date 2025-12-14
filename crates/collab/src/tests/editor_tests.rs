@@ -312,6 +312,48 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             "Rust",
             FakeLspAdapter {
                 capabilities: capabilities.clone(),
+                initializer: Some(Box::new(|fake_language_server| {
+                    fake_language_server
+                        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
+                            assert_eq!(
+                                params.text_document_position.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            assert_eq!(
+                                params.text_document_position.position,
+                                lsp::Position::new(0, 14),
+                            );
+
+                            Ok(Some(lsp::CompletionResponse::Array(vec![
+                                lsp::CompletionItem {
+                                    label: "first_method(…)".into(),
+                                    detail: Some("fn(&mut self, B) -> C".into()),
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        new_text: "first_method($1)".to_string(),
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 14),
+                                            lsp::Position::new(0, 14),
+                                        ),
+                                    })),
+                                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                                    ..Default::default()
+                                },
+                                lsp::CompletionItem {
+                                    label: "second_method(…)".into(),
+                                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                        new_text: "second_method()".to_string(),
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 14),
+                                            lsp::Position::new(0, 14),
+                                        ),
+                                    })),
+                                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                                    ..Default::default()
+                                },
+                            ])))
+                        });
+                })),
                 ..FakeLspAdapter::default()
             },
         ),
@@ -320,6 +362,12 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
             FakeLspAdapter {
                 name: "fake-analyzer",
                 capabilities: capabilities.clone(),
+                initializer: Some(Box::new(|fake_language_server| {
+                    fake_language_server
+                        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+                            Ok(None)
+                        });
+                })),
                 ..FakeLspAdapter::default()
             },
         ),
@@ -387,58 +435,8 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     });
     cx_b.focus(&editor_b);
 
-    // Receive a completion request as the host's language server.
-    // Return some completions from the host's language server.
-    cx_a.executor().start_waiting();
-    fake_language_server
-        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
-
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            ])))
-        })
-        .next()
-        .await
-        .unwrap();
-    second_fake_language_server
-        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move { Ok(None) })
-        .next()
-        .await
-        .unwrap();
-    cx_a.executor().finish_waiting();
+    // Wait for completion request to propagate from guest to host to LSP.
+    cx_a.executor().run_until_parked();
 
     // Open the buffer on the host.
     let buffer_a = project_a
