@@ -5,8 +5,10 @@ mod worktree_tests;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
+use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use encoding_rs::Encoding;
 use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -102,6 +104,7 @@ pub enum CreatedEntry {
 pub struct LoadedFile {
     pub file: Arc<File>,
     pub text: String,
+    pub encoding: &'static Encoding,
 }
 
 pub struct LoadedBinaryFile {
@@ -734,10 +737,11 @@ impl Worktree {
         path: Arc<RelPath>,
         text: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
         cx: &Context<Worktree>,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => this.write_file(path, text, line_ending, encoding, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -1344,7 +1348,9 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
-            let text = fs.load(&abs_path).await?;
+
+            let content = fs.load_bytes(&abs_path).await?;
+            let (text, encoding) = decode_byte(content);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1372,7 +1378,11 @@ impl LocalWorktree {
                 }
             };
 
-            Ok(LoadedFile { file, text })
+            Ok(LoadedFile {
+                file,
+                text,
+                encoding,
+            })
         })
     }
 
@@ -1455,6 +1465,7 @@ impl LocalWorktree {
         path: Arc<RelPath>,
         text: Rope,
         line_ending: LineEnding,
+        encoding: &'static Encoding,
         cx: &Context<Worktree>,
     ) -> Task<Result<Arc<File>>> {
         let fs = self.fs.clone();
@@ -1464,7 +1475,29 @@ impl LocalWorktree {
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text, line_ending).await }
+            async move {
+                // For UTF-8, use the optimized `fs.save` which writes Rope chunks directly to disk
+                // without allocating a contiguous string.
+                if encoding == encoding_rs::UTF_8 {
+                    return fs.save(&abs_path, &text, line_ending).await;
+                }
+                // For legacy encodings (e.g. Shift-JIS), we fall back to converting the entire Rope
+                // to a String/Bytes in memory before writing.
+                //
+                // Note: This is inefficient for very large files compared to the streaming approach above,
+                // but supporting streaming writes for arbitrary encodings would require a significant
+                // refactor of the `fs` crate to expose a Writer interface.
+                let text_string = text.to_string();
+                let normalized_text = match line_ending {
+                    LineEnding::Unix => text_string,
+                    LineEnding::Windows => text_string.replace('\n', "\r\n"),
+                };
+
+                let (cow, _, _) = encoding.encode(&normalized_text);
+                let bytes = cow;
+
+                fs.write(&abs_path, &bytes).await
+            }
         });
 
         cx.spawn(async move |this, cx| {
@@ -5673,5 +5706,32 @@ impl fs::Watcher for NullWatcher {
 
     fn remove(&self, _path: &Path) -> Result<()> {
         Ok(())
+    }
+}
+
+fn decode_byte(bytes: Vec<u8>) -> (String, &'static Encoding) {
+    fn detect_encoding(bytes: Vec<u8>) -> (String, &'static Encoding) {
+        let mut detector = EncodingDetector::new();
+        detector.feed(&bytes, true);
+
+        let encoding = detector.guess(None, true); // Use None for TLD hint to ensure neutral detection logic.
+
+        let (cow, _, _) = encoding.decode(&bytes);
+        (cow.into_owned(), encoding)
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(text) => {
+            // ISO-2022-JP (and other ISO-2022 variants) consists entirely of 7-bit ASCII bytes,
+            // so it is valid UTF-8. However, it contains escape sequences starting with '\x1b'.
+            // If we find an escape character, we double-check the encoding to prevent
+            // displaying raw escape sequences instead of the correct characters.
+            if text.contains('\x1b') {
+                detect_encoding(text.into_bytes())
+            } else {
+                (text, encoding_rs::UTF_8)
+            }
+        }
+        Err(e) => detect_encoding(e.into_bytes()),
     }
 }

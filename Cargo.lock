@@ -2885,6 +2885,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8755,6 +8766,7 @@ dependencies = [
  "ctor",
  "diffy",
  "ec4rs",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12420,6 +12432,7 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
+ "encoding_rs",
  "extension",
  "fancy-regex",
  "fs",
@@ -18125,6 +18138,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "encoding_rs",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "fuzzy",
@@ -20135,8 +20149,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-lock 2.8.0",
+ "chardetng",
  "clock",
  "collections",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",

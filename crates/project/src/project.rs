@@ -63,6 +63,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
+use encoding_rs;
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -5342,7 +5343,13 @@ impl Project {
             worktree
                 .update(cx, |worktree, cx| {
                     let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                    worktree.write_file(
+                        rel_path.clone(),
+                        new_text.into(),
+                        line_ending,
+                        encoding_rs::UTF_8,
+                        cx,
+                    )
                 })?
                 .await
                 .context("Failed to write settings file")?;

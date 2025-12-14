@@ -6,6 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
+use encoding_rs;
 use futures::AsyncWriteExt as _;
 use gpui::{
     Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
@@ -429,7 +430,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                                     return;
                                 };
                                 worktree
-                                    .write_file(path.into_arc(), text.clone(), line_ending, cx)
+                                    .write_file(path.into_arc(), text.clone(), line_ending, encoding_rs::UTF_8, cx)
                                     .detach_and_prompt_err("Failed to write lines", window, cx, |_, _, _| None);
                             });
                         })
