@@ -8,13 +8,10 @@
 
 use std::collections::HashSet;
 
-use ui::{Context, Window};
+use ui::Context;
 
 use crate::{
-    ClearSelection, CsvPreviewView, JumpToBottomEdge, JumpToLeftEdge, JumpToRightEdge,
-    JumpToTopEdge, MoveFocusDown, MoveFocusLeft, MoveFocusRight, MoveFocusUp, SelectAll,
-    SelectDown, SelectLeft, SelectRight, SelectUp, SelectionToBottomEdge, SelectionToLeftEdge,
-    SelectionToRightEdge, SelectionToTopEdge,
+    CsvPreviewView,
     data_ordering::OrderedIndices,
     types::{AnyColumn, DataCellId, DisplayCellId, DisplayRow},
 };
@@ -26,6 +23,19 @@ pub enum NavigationDirection {
     Down,
     Left,
     Right,
+}
+
+/// Navigation operation type determining how focus/selection should change
+#[derive(Debug, Clone, Copy)]
+pub enum NavigationOperation {
+    /// Move focus only (single cell selection)
+    MoveFocus,
+    /// Extend current selection from anchor
+    ExtendSelection,
+    /// Jump focus to table edge
+    JumpToEdge,
+    /// Extend selection to table edge
+    ExtendToEdge,
 }
 
 /// Selected cells stored in data coordinates (not display coordinates).
@@ -248,46 +258,6 @@ impl TableSelection {
         }
     }
 
-    /// Move focus up by one row.
-    pub fn move_focus_up(&mut self, ordered_indices: &OrderedIndices) {
-        self.move_focus_direction(
-            NavigationDirection::Up,
-            ordered_indices,
-            usize::MAX,
-            usize::MAX,
-        );
-    }
-
-    /// Move focus down by one row.
-    pub fn move_focus_down(&mut self, ordered_indices: &OrderedIndices, max_rows: usize) {
-        self.move_focus_direction(
-            NavigationDirection::Down,
-            ordered_indices,
-            max_rows,
-            usize::MAX,
-        );
-    }
-
-    /// Move focus left by one column.
-    pub fn move_focus_left(&mut self, ordered_indices: &OrderedIndices) {
-        self.move_focus_direction(
-            NavigationDirection::Left,
-            ordered_indices,
-            usize::MAX,
-            usize::MAX,
-        );
-    }
-
-    /// Move focus right by one column.
-    pub fn move_focus_right(&mut self, ordered_indices: &OrderedIndices, max_cols: usize) {
-        self.move_focus_direction(
-            NavigationDirection::Right,
-            ordered_indices,
-            usize::MAX,
-            max_cols,
-        );
-    }
-
     /// Set selection anchor for range selection. Called when starting range selection.
     fn set_selection_anchor(&mut self) {
         if let Some(focused) = self.focused_cell {
@@ -378,46 +348,6 @@ impl TableSelection {
             self.focused_cell = Some(new_cell);
             self.update_range_selection(ordered_indices);
         }
-    }
-
-    /// Extend selection up by one row (shift+up).
-    pub fn extend_selection_up(&mut self, ordered_indices: &OrderedIndices) {
-        self.extend_selection_direction(
-            NavigationDirection::Up,
-            ordered_indices,
-            usize::MAX,
-            usize::MAX,
-        );
-    }
-
-    /// Extend selection down by one row (shift+down).
-    pub fn extend_selection_down(&mut self, ordered_indices: &OrderedIndices, max_rows: usize) {
-        self.extend_selection_direction(
-            NavigationDirection::Down,
-            ordered_indices,
-            max_rows,
-            usize::MAX,
-        );
-    }
-
-    /// Extend selection left by one column (shift+left).
-    pub fn extend_selection_left(&mut self, ordered_indices: &OrderedIndices) {
-        self.extend_selection_direction(
-            NavigationDirection::Left,
-            ordered_indices,
-            usize::MAX,
-            usize::MAX,
-        );
-    }
-
-    /// Extend selection right by one column (shift+right).
-    pub fn extend_selection_right(&mut self, ordered_indices: &OrderedIndices, max_cols: usize) {
-        self.extend_selection_direction(
-            NavigationDirection::Right,
-            ordered_indices,
-            usize::MAX,
-            max_cols,
-        );
     }
 
     /// Select all visible cells in the table (cmd+a / ctrl+a).
@@ -607,203 +537,88 @@ impl TableSelection {
             self.update_range_selection(ordered_indices);
         }
     }
+
+    /// Unified navigation method that handles all direction + operation combinations
+    pub fn navigate(
+        &mut self,
+        direction: NavigationDirection,
+        operation: NavigationOperation,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) {
+        match operation {
+            NavigationOperation::MoveFocus => {
+                self.move_focus_direction(direction, ordered_indices, max_rows, max_cols)
+            }
+            NavigationOperation::ExtendSelection => {
+                self.extend_selection_direction(direction, ordered_indices, max_rows, max_cols)
+            }
+            NavigationOperation::JumpToEdge => {
+                self.jump_to_edge_direction(direction, ordered_indices, max_rows, max_cols)
+            }
+            NavigationOperation::ExtendToEdge => {
+                self.extend_to_edge_direction(direction, ordered_indices, max_rows, max_cols)
+            }
+        }
+    }
+
+    /// Helper method for jump to edge operations
+    fn jump_to_edge_direction(
+        &mut self,
+        direction: NavigationDirection,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) {
+        match direction {
+            NavigationDirection::Up => self.jump_to_top_edge(ordered_indices),
+            NavigationDirection::Down => self.jump_to_bottom_edge(ordered_indices, max_rows),
+            NavigationDirection::Left => self.jump_to_left_edge(ordered_indices),
+            NavigationDirection::Right => self.jump_to_right_edge(ordered_indices, max_cols),
+        }
+    }
+
+    /// Helper method for extend to edge operations
+    fn extend_to_edge_direction(
+        &mut self,
+        direction: NavigationDirection,
+        ordered_indices: &OrderedIndices,
+        max_rows: usize,
+        max_cols: usize,
+    ) {
+        match direction {
+            NavigationDirection::Up => self.extend_selection_to_top_edge(ordered_indices),
+            NavigationDirection::Down => {
+                self.extend_selection_to_bottom_edge(ordered_indices, max_rows)
+            }
+            NavigationDirection::Left => self.extend_selection_to_left_edge(ordered_indices),
+            NavigationDirection::Right => {
+                self.extend_selection_to_right_edge(ordered_indices, max_cols)
+            }
+        }
+    }
 }
 
 ///// Selection related CsvPreviewView methods /////
 impl CsvPreviewView {
-    pub(crate) fn clear_selection(
+    /// Unified navigation handler - eliminates code duplication
+    pub(crate) fn handle_navigation(
         &mut self,
-        _: &ClearSelection,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection = TableSelection::new();
-        cx.notify();
-    }
-
-    pub(crate) fn move_focus_up(
-        &mut self,
-        _: &MoveFocusUp,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.move_focus_up(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn move_focus_down(
-        &mut self,
-        _: &MoveFocusDown,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .move_focus_down(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    pub(crate) fn move_focus_left(
-        &mut self,
-        _: &MoveFocusLeft,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.move_focus_left(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn move_focus_right(
-        &mut self,
-        _: &MoveFocusRight,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .move_focus_right(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    pub(crate) fn select_up(&mut self, _: &SelectUp, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selection.extend_selection_up(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn select_down(
-        &mut self,
-        _: &SelectDown,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .extend_selection_down(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    pub(crate) fn select_left(
-        &mut self,
-        _: &SelectLeft,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.extend_selection_left(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn select_right(
-        &mut self,
-        _: &SelectRight,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .extend_selection_right(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    pub(crate) fn select_all(
-        &mut self,
-        _: &SelectAll,
-        _window: &mut Window,
+        direction: NavigationDirection,
+        operation: NavigationOperation,
         cx: &mut Context<Self>,
     ) {
         let max_rows = self.contents.rows.len();
         let max_cols = self.contents.headers.len();
-        self.selection
-            .select_all(&self.ordered_indices, max_rows, max_cols);
-        cx.notify();
-    }
 
-    pub(crate) fn jump_to_top_edge(
-        &mut self,
-        _: &JumpToTopEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.jump_to_top_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn jump_to_bottom_edge(
-        &mut self,
-        _: &JumpToBottomEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .jump_to_bottom_edge(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    pub(crate) fn jump_to_left_edge(
-        &mut self,
-        _: &JumpToLeftEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection.jump_to_left_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn jump_to_right_edge(
-        &mut self,
-        _: &JumpToRightEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .jump_to_right_edge(&self.ordered_indices, max_cols);
-        cx.notify();
-    }
-
-    pub(crate) fn extend_selection_to_top_edge(
-        &mut self,
-        _: &SelectionToTopEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection
-            .extend_selection_to_top_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn extend_selection_to_bottom_edge(
-        &mut self,
-        _: &SelectionToBottomEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_rows = self.contents.rows.len();
-        self.selection
-            .extend_selection_to_bottom_edge(&self.ordered_indices, max_rows);
-        cx.notify();
-    }
-
-    pub(crate) fn extend_selection_to_left_edge(
-        &mut self,
-        _: &SelectionToLeftEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.selection
-            .extend_selection_to_left_edge(&self.ordered_indices);
-        cx.notify();
-    }
-
-    pub(crate) fn extend_selection_to_right_edge(
-        &mut self,
-        _: &SelectionToRightEdge,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let max_cols = self.contents.headers.len();
-        self.selection
-            .extend_selection_to_right_edge(&self.ordered_indices, max_cols);
+        self.selection.navigate(
+            direction,
+            operation,
+            &self.ordered_indices,
+            max_rows,
+            max_cols,
+        );
         cx.notify();
     }
 }
