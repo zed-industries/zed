@@ -122,7 +122,7 @@ impl TestApp {
     pub fn open_window<V: Render + 'static>(
         &mut self,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> TestAppWindow<V> {
+    ) -> TestWindow<V> {
         let bounds = self.read(|cx| Bounds::maximized(None, cx));
         let handle = self.update(|cx| {
             cx.open_window(
@@ -135,7 +135,7 @@ impl TestApp {
             .unwrap()
         });
 
-        TestAppWindow {
+        TestWindow {
             handle,
             app: self.app.clone(),
             platform: self.platform.clone(),
@@ -148,13 +148,13 @@ impl TestApp {
         &mut self,
         options: WindowOptions,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> TestAppWindow<V> {
+    ) -> TestWindow<V> {
         let handle = self.update(|cx| {
             cx.open_window(options, |window, cx| cx.new(|cx| build_view(window, cx)))
                 .unwrap()
         });
 
-        TestAppWindow {
+        TestWindow {
             handle,
             app: self.app.clone(),
             platform: self.platform.clone(),
@@ -286,14 +286,14 @@ impl Default for TestApp {
 }
 
 /// A test window with inspection and simulation capabilities.
-pub struct TestAppWindow<V> {
+pub struct TestWindow<V> {
     handle: WindowHandle<V>,
     app: Rc<AppCell>,
     platform: Rc<TestPlatform>,
     background_executor: BackgroundExecutor,
 }
 
-impl<V: 'static + Render> TestAppWindow<V> {
+impl<V: 'static + Render> TestWindow<V> {
     /// Get the window handle.
     pub fn handle(&self) -> WindowHandle<V> {
         self.handle
@@ -485,7 +485,7 @@ impl<V: 'static + Render> TestAppWindow<V> {
     }
 }
 
-impl<V> Clone for TestAppWindow<V> {
+impl<V> Clone for TestWindow<V> {
     fn clone(&self) -> Self {
         Self {
             handle: self.handle,

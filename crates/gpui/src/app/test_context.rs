@@ -4,7 +4,7 @@ use crate::{
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    TestScreenCaptureSource, TestPlatformWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::{anyhow, bail};
@@ -220,7 +220,7 @@ impl TestAppContext {
         f(&cx)
     }
 
-    /// Adds a new window. The Window will always be backed by a `TestWindow` which
+    /// Adds a new window. The Window will always be backed by a `TestPlatformWindow` which
     /// can be retrieved with `self.test_window(handle)`
     pub fn add_window<F, V>(&mut self, build_window: F) -> WindowHandle<V>
     where
@@ -465,8 +465,8 @@ impl TestAppContext {
         .unwrap();
     }
 
-    /// Returns the `TestWindow` backing the given handle.
-    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
+    /// Returns the `TestPlatformWindow` backing the given handle.
+    pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestPlatformWindow {
         self.app
             .borrow_mut()
             .windows

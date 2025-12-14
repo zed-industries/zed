@@ -561,7 +561,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_test(&mut self) -> Option<&mut TestWindow> {
+    fn as_test(&mut self) -> Option<&mut TestPlatformWindow> {
         None
     }
 }
