@@ -442,7 +442,7 @@ impl BackgroundExecutor {
         };
 
         let mut max_ticks = if timeout.is_some() {
-            dispatcher.scheduler().rng().lock().random_range(0..=1000)
+            dispatcher.scheduler().rng().random_range(0..=1000)
         } else {
             usize::MAX
         };
@@ -659,7 +659,7 @@ impl BackgroundExecutor {
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
-    pub fn rng(&self) -> Arc<parking_lot::Mutex<StdRng>> {
+    pub fn rng(&self) -> scheduler::SharedRng {
         self.dispatcher.as_test().unwrap().scheduler().rng()
     }
 

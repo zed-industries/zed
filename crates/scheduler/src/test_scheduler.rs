@@ -5,8 +5,11 @@ use crate::{
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
 use futures::{FutureExt as _, channel::oneshot, future::LocalBoxFuture};
-use parking_lot::Mutex;
-use rand::prelude::*;
+use parking_lot::{Mutex, MutexGuard};
+use rand::{
+    distr::{uniform::SampleRange, uniform::SampleUniform, StandardUniform},
+    prelude::*,
+};
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, HashSet, VecDeque},
@@ -102,8 +105,8 @@ impl TestScheduler {
         self.clock.clone()
     }
 
-    pub fn rng(&self) -> Arc<Mutex<StdRng>> {
-        self.rng.clone()
+    pub fn rng(&self) -> SharedRng {
+        SharedRng(self.rng.clone())
     }
 
     pub fn set_timeout_ticks(&self, timeout_ticks: RangeInclusive<usize>) {
@@ -622,6 +625,46 @@ impl TracingWaker {
 }
 
 pub struct Yield(usize);
+
+/// A wrapper around `Arc<Mutex<StdRng>>` that provides convenient methods
+/// for random number generation without requiring explicit locking.
+#[derive(Clone)]
+pub struct SharedRng(Arc<Mutex<StdRng>>);
+
+impl SharedRng {
+    /// Lock the inner RNG for direct access. Use this when you need multiple
+    /// random operations without re-locking between each one.
+    pub fn lock(&self) -> MutexGuard<'_, StdRng> {
+        self.0.lock()
+    }
+
+    /// Generate a random value in the given range.
+    pub fn random_range<T, R>(&self, range: R) -> T
+    where
+        T: SampleUniform,
+        R: SampleRange<T>,
+    {
+        self.0.lock().random_range(range)
+    }
+
+    /// Generate a random boolean with the given probability of being true.
+    pub fn random_bool(&self, p: f64) -> bool {
+        self.0.lock().random_bool(p)
+    }
+
+    /// Generate a random value of the given type.
+    pub fn random<T>(&self) -> T
+    where
+        StandardUniform: Distribution<T>,
+    {
+        self.0.lock().random()
+    }
+
+    /// Generate a random ratio - true with probability `numerator/denominator`.
+    pub fn random_ratio(&self, numerator: u32, denominator: u32) -> bool {
+        self.0.lock().random_ratio(numerator, denominator)
+    }
+}
 
 impl Future for Yield {
     type Output = ();

@@ -82,7 +82,7 @@ impl TestDispatcher {
         }
 
         YieldNow {
-            count: self.scheduler.rng().lock().random_range(0..10),
+            count: self.scheduler.rng().random_range(0..10),
         }
     }
 
