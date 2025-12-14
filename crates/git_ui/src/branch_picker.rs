@@ -539,13 +539,10 @@ impl PickerDelegate for BranchListDelegate {
     fn render_editor(
         &self,
         editor: &Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let focus_handle = self.focus_handle.clone();
-        editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(self.placeholder_text(window, cx).as_ref(), window, cx);
-        });
 
         v_flex()
             .when(
