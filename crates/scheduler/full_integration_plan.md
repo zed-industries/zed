@@ -4,13 +4,72 @@
 
 Unify GPUI's async execution with the scheduler crate, eliminating duplicate blocking/scheduling logic and enabling deterministic testing.
 
-## ✅ Integration Complete
+## Current Status: Review Complete, Remaining Work Identified
 
-All phases have been completed. GPUI now uses the scheduler crate for all async execution.
+The integration is mostly complete. Code review identified one regression that must be fixed before merging.
 
-## Completed Work
+---
 
-### ✅ Phase 1: Scheduler Trait and TestScheduler
+## 🚨 Remaining Work
+
+### Phase 6: Restore Realtime Priority Support
+
+**Problem**: The old implementation had special handling for `Priority::Realtime(_)` which spawned tasks on dedicated OS threads with elevated priority (critical for audio processing). This was removed during the integration.
+
+Old code in `spawn_internal`:
+```rust
+if let Priority::Realtime(realtime) = priority {
+    dispatcher.spawn_realtime(realtime, Box::new(move || {
+        while let Ok(runnable) = rx.recv() {
+            runnable.run();
+        }
+    }));
+    // ... create task that sends to channel
+}
+```
+
+Current state: If `Priority::Realtime` is passed to `schedule_background_with_priority`, it flows through to `dispatcher.dispatch()` which hits `unreachable!()`:
+
+```rust
+// In mac/dispatcher.rs, linux/dispatcher.rs, windows/dispatcher.rs:
+let queue_priority = match priority {
+    Priority::Realtime(_) => unreachable!(),  // PANIC!
+    Priority::High => ...,
+    ...
+};
+```
+
+**Solution options**:
+
+1. **Handle in PlatformScheduler** (recommended): Add Realtime handling to `PlatformScheduler::schedule_background_with_priority`:
+   ```rust
+   fn schedule_background_with_priority(&self, runnable: Runnable<RunnableMeta>, priority: Priority) {
+       if let Priority::Realtime(realtime) = priority {
+           // Spawn dedicated thread, set up channel, etc.
+           self.dispatcher.spawn_realtime(realtime, ...);
+       } else {
+           self.dispatcher.dispatch(runnable, priority);
+       }
+   }
+   ```
+
+2. **Handle in GPUI executor**: Keep Realtime handling in `gpui::BackgroundExecutor::spawn_with_priority` before delegating to scheduler.
+
+3. **Panic with helpful message**: If we decide Realtime should be accessed differently, at minimum replace `unreachable!()` with a helpful panic message.
+
+**Note**: Currently no code in the codebase spawns with `Priority::Realtime`, so this is not causing test failures. However, the capability must be preserved for audio workloads.
+
+### Phase 7: Delete Dead Code
+
+The file `crates/gpui/src/platform/platform_scheduler.rs` is dead code - it's an older version of `PlatformScheduler` with a different `block()` signature that is no longer compatible with the `Scheduler` trait. The actual implementation used is at `crates/gpui/src/platform_scheduler.rs` (referenced via `mod platform_scheduler` in `gpui.rs`).
+
+**Action**: Delete `crates/gpui/src/platform/platform_scheduler.rs`
+
+---
+
+## ✅ Completed Work
+
+### Phase 1: Scheduler Trait and TestScheduler
 
 The scheduler crate provides:
 - `Scheduler` trait with `block()`, `schedule_foreground()`, `schedule_background_with_priority()`, `timer()`, `clock()`
@@ -18,7 +77,7 @@ The scheduler crate provides:
 - `ForegroundExecutor` and `BackgroundExecutor` that wrap `Arc<dyn Scheduler>`
 - `Task<T>` type with `ready()`, `is_ready()`, `detach()`, `from_async_task()`
 
-### ✅ Phase 2: PlatformScheduler
+### Phase 2: PlatformScheduler
 
 Created `PlatformScheduler` in GPUI (`crates/gpui/src/platform_scheduler.rs`) that:
 - Implements `Scheduler` trait for production use
@@ -27,23 +86,24 @@ Created `PlatformScheduler` in GPUI (`crates/gpui/src/platform_scheduler.rs`) th
 - Uses `dispatch_after` for timers
 - Provides a `PlatformClock` that delegates to the dispatcher
 
-### ✅ Phase 3: Unified GPUI Executors
+### Phase 3: Unified GPUI Executors
 
 GPUI's executors (`crates/gpui/src/executor.rs`) now:
-- Always use `scheduler::BackgroundExecutor` and `scheduler::ForegroundExecutor` internally
+- `gpui::ForegroundExecutor` wraps `scheduler::ForegroundExecutor` internally
+- `gpui::BackgroundExecutor` holds `Arc<dyn Scheduler>` directly (creates temporary `scheduler::BackgroundExecutor` when spawning)
 - Select `TestScheduler` or `PlatformScheduler` based on dispatcher type (no optional fields)
 - Wrap `scheduler::Task<T>` in a thin `gpui::Task<T>` that adds `detach_and_log_err()`
 - Use `Scheduler::block()` for all blocking operations
 
-### ✅ Phase 4: Removed Duplicate Logic
+### Phase 4: Removed Duplicate Logic
 
 Eliminated from GPUI:
 - Custom blocking loop implementations (now delegated to scheduler)
 - Separate test/production code paths for spawn/block operations
-- `TaskLabel` and deprioritization infrastructure
+- `TaskLabel` and deprioritization infrastructure (see Intentional Removals below)
 - `unparker` mechanism (no longer needed - scheduler handles task coordination)
 
-### ✅ Phase 5: Simplify block_internal and Remove Unparkers
+### Phase 5: Simplify block_internal and Remove Unparkers
 
 Final cleanup:
 - Removed debug logging infrastructure from executor.rs
@@ -51,32 +111,100 @@ Final cleanup:
 - Removed unparkers mechanism from TestDispatcher
 - TestDispatcher now just holds session_id and scheduler (~70 lines)
 
+---
+
+## Intentional Removals
+
+### `spawn_labeled` and `deprioritize` Removed
+
+**What was removed**:
+- `BackgroundExecutor::spawn_labeled(label: TaskLabel, future)` - spawn with a label for test control
+- `BackgroundExecutor::deprioritize(label: TaskLabel)` - deprioritize labeled tasks in tests
+- `TaskLabel` type
+
+**Why**: These were only used in a few places for test ordering control. The new priority-weighted scheduling in `TestScheduler` provides similar functionality through `Priority::High/Medium/Low`.
+
+**Migration**: Use `spawn()` instead of `spawn_labeled()`. For test ordering, use explicit synchronization (channels, etc.) or priority levels.
+
+**Approval**: @as-cii reviewed and approved this removal.
+
+### `start_waiting` / `finish_waiting` Debug Methods Removed
+
+**What was removed**:
+- `BackgroundExecutor::start_waiting()` - mark that code is waiting (for debugging)
+- `BackgroundExecutor::finish_waiting()` - clear the waiting marker
+- Associated `waiting_backtrace` tracking in TestDispatcher
+
+**Why**: The new `TracingWaker` in `TestScheduler` provides better debugging capability. Run tests with `PENDING_TRACES=1` to see backtraces of all pending futures when parking is forbidden.
+
+---
+
+## Code Quality Notes
+
+### Lock Ordering Inconsistency (Low Priority)
+
+In `TestScheduler`, there's inconsistent lock ordering between `rng` and `state` mutexes:
+
+- `block()` line 375-377: locks `rng` first, then `state`
+- `schedule_foreground()` line 428-430: locks `state` first, then `rng`
+
+This could theoretically cause deadlocks with concurrent access, but `TestScheduler` is single-threaded so it's not a practical concern. Worth fixing for code hygiene but not blocking.
+
+### `dispatch_after` Panics in TestDispatcher
+
+`TestDispatcher::dispatch_after` intentionally panics:
+```rust
+fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
+    panic!(
+        "dispatch_after should not be called in tests. \
+        Use BackgroundExecutor::timer() which uses the scheduler's native timer."
+    );
+}
+```
+
+This is correct because:
+- In tests, `TestScheduler` is used (not `PlatformScheduler`)
+- `TestScheduler::timer()` creates native timers without using `dispatch_after`
+- Any code hitting this panic has a bug (should use `executor.timer()`)
+
+---
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                          GPUI                                │
-│  ┌─────────────────────┐   ┌─────────────────────────────┐  │
-│  │ BackgroundExecutor  │   │    ForegroundExecutor       │  │
-│  │  - scheduler: Arc   │   │  - inner: scheduler::Fg     │  │
-│  │  - dispatcher: Arc  │   │  - dispatcher: Arc          │  │
-│  └─────────┬───────────┘   └─────────────┬───────────────┘  │
-│            │                             │                   │
-│  ┌─────────▼─────────────────────────────▼───────────────┐  │
-│  │              scheduler::*Executor                      │  │
-│  │         (spawn, block_on, block_with_timeout)          │  │
-│  └─────────────────────────┬─────────────────────────────┘  │
-│                            │                                 │
-│  ┌─────────────────────────▼─────────────────────────────┐  │
-│  │                  Arc<dyn Scheduler>                    │  │
-│  └───────────┬───────────────────────────┬───────────────┘  │
-│              │                           │                   │
-│  ┌───────────▼───────────┐   ┌───────────▼───────────────┐  │
-│  │   PlatformScheduler   │   │      TestScheduler        │  │
-│  │  (production)         │   │   (deterministic tests)   │  │
-│  └───────────────────────┘   └───────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                            GPUI                                   │
+│                                                                   │
+│  ┌────────────────────────┐    ┌──────────────────────────────┐  │
+│  │  gpui::Background-     │    │  gpui::ForegroundExecutor    │  │
+│  │  Executor              │    │   - inner: scheduler::       │  │
+│  │   - scheduler: Arc<    │    │           ForegroundExecutor │  │
+│  │       dyn Scheduler>   │    │   - dispatcher: Arc          │  │
+│  │   - dispatcher: Arc    │    └──────────────┬───────────────┘  │
+│  └───────────┬────────────┘                   │                   │
+│              │                                │                   │
+│              │  (creates temporary            │ (wraps)           │
+│              │   scheduler::Background-       │                   │
+│              │   Executor when spawning)      │                   │
+│              │                                │                   │
+│              │    ┌───────────────────────────┘                   │
+│              │    │                                               │
+│              ▼    ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                    Arc<dyn Scheduler>                        │ │
+│  └──────────────────────────┬──────────────────────────────────┘ │
+│                             │                                     │
+│            ┌────────────────┴────────────────┐                   │
+│            │                                 │                    │
+│            ▼                                 ▼                    │
+│  ┌───────────────────────┐     ┌───────────────────────────┐    │
+│  │   PlatformScheduler   │     │      TestScheduler        │    │
+│  │   (production)        │     │   (deterministic tests)   │    │
+│  └───────────────────────┘     └───────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Design Decisions
 
@@ -92,11 +220,11 @@ The method is kept for API compatibility but documents that priority is ignored.
 
 ### Profiler Integration Unchanged
 
-The profiler task timing infrastructure (`add_task_timing`) continues to work because:
+The profiler task timing infrastructure continues to work because:
 - `PlatformScheduler::schedule_background_with_priority` calls `dispatcher.dispatch()`
 - `PlatformScheduler::schedule_foreground` calls `dispatcher.dispatch_on_main_thread()`
-- The platform dispatchers (Linux, Windows) wrap task execution with profiler timing
-- macOS doesn't use task-level profiling (uses Instruments instead)
+- All platform dispatchers (Mac, Linux, Windows) wrap task execution with profiler timing
+- Mac writes to `THREAD_TIMINGS` directly in its trampoline; Linux/Windows call `profiler::add_task_timing()`
 
 ### Session IDs for Foreground Isolation
 
@@ -106,6 +234,8 @@ Each `ForegroundExecutor` gets a `SessionId` to prevent reentrancy when blocking
 
 In test builds, we check `dispatcher.as_test()` to choose between `TestScheduler` and `PlatformScheduler`. This allows the same executor types to work in both test and production environments.
 
+---
+
 ## Key Design Principles
 
 1. **No optional fields**: Both test and production paths use the same executor types with different `Scheduler` implementations underneath.
@@ -113,6 +243,8 @@ In test builds, we check `dispatcher.as_test()` to choose between `TestScheduler
 2. **Scheduler owns blocking logic**: The `Scheduler::block()` method handles all blocking, including timeout and task stepping (for tests).
 
 3. **GPUI Task wrapper**: Thin wrapper around `scheduler::Task` that adds `detach_and_log_err()` which requires `&App`.
+
+---
 
 ## Test Helpers
 
@@ -124,6 +256,9 @@ Test-only methods on `BackgroundExecutor`:
 - `allow_parking()` / `forbid_parking()` - control parking behavior
 - `simulate_random_delay()` - yield randomly for fuzzing
 - `rng()` - access seeded RNG
+- `set_block_on_ticks()` - configure timeout tick range for block operations
+
+---
 
 ## Files Changed
 
@@ -133,13 +268,23 @@ Test-only methods on `BackgroundExecutor`:
 - `crates/scheduler/src/tests.rs` - Fixed `block_with_timeout` test assertions
 - `crates/gpui/src/executor.rs` - Rewritten to use scheduler executors
 - `crates/gpui/src/platform_scheduler.rs` - New file implementing `Scheduler` for production
+- `crates/gpui/src/platform/platform_scheduler.rs` - **DEAD CODE, should be deleted** (older incompatible version)
 - `crates/gpui/src/gpui.rs` - Added `platform_scheduler` module
 - `crates/gpui/src/profiler.rs` - Added `#[allow(dead_code)]` to `add_task_timing`
 - `crates/gpui/Cargo.toml` - Added `chrono` dependency
 - `crates/gpui/src/platform/test/dispatcher.rs` - Simplified to ~70 lines, delegates to TestScheduler
+- `crates/gpui/src/platform.rs` - Simplified `RunnableVariant` to type alias, removed `TaskLabel` from dispatch
+- `crates/gpui/src/platform/mac/dispatcher.rs` - Removed `RunnableVariant::Compat` handling
+- `crates/gpui/src/platform/linux/dispatcher.rs` - Removed label parameter from dispatch
+- `crates/gpui/src/platform/windows/dispatcher.rs` - Removed label parameter from dispatch
 - `crates/miniprofiler_ui/src/miniprofiler_ui.rs` - Changed `.dispatcher` to `.dispatcher()`
-- `crates/repl/src/repl.rs` - Changed `.dispatcher` to `.dispatcher()`
+- `crates/repl/src/repl.rs` - Changed `.dispatcher` to `.dispatcher()`, wrap runnables with metadata
 - `crates/zed/src/reliability.rs` - Changed `.dispatcher` to `.dispatcher()`
+- `crates/buffer_diff/src/buffer_diff.rs` - Use `spawn()` instead of `spawn_labeled()`
+- `crates/fs/src/fake_git_repo.rs` - Use `spawn()` instead of `spawn_labeled()`
+- `crates/language/src/buffer.rs` - Use `spawn()` instead of `spawn_labeled()`
+
+---
 
 ## Tests Status
 
@@ -152,6 +297,8 @@ Test-only methods on `BackgroundExecutor`:
 ✅ Clippy passes with no warnings
 ✅ No unused dependencies (cargo-machete passes)
 
+---
+
 ## Future Considerations
 
 ### Potential Improvements
@@ -161,3 +308,5 @@ Test-only methods on `BackgroundExecutor`:
 2. **Profiler integration in scheduler**: Could move task timing into the scheduler crate itself for more consistent profiling across all code paths.
 
 3. **Additional test utilities**: The `TestScheduler` could be extended with more debugging/introspection capabilities.
+
+4. **Fix lock ordering**: Clean up the `rng`/`state` lock ordering inconsistency in `TestScheduler` for better code hygiene.
