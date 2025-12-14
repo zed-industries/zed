@@ -6,7 +6,7 @@ use collections::HashSet;
 use git::repository::Branch;
 use gpui::http_client::Url;
 use gpui::{
-    Action, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
@@ -17,8 +17,8 @@ use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{
-    CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem,
-    ListItemSpacing, Tooltip, prelude::*,
+    Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
 };
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -343,7 +343,6 @@ pub struct BranchListDelegate {
     modifiers: Modifiers,
     branch_filter: BranchFilter,
     state: PickerState,
-    loading: bool,
     focus_handle: FocusHandle,
 }
 
@@ -378,7 +377,6 @@ impl BranchListDelegate {
             modifiers: Default::default(),
             branch_filter: BranchFilter::Local,
             state: PickerState::List,
-            loading: false,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -419,37 +417,13 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        cx.spawn(async move |this, cx| {
-            this.update(cx, |picker, cx| {
-                picker.delegate.loading = true;
-                cx.notify();
-            })
-            .log_err();
 
-            let stop_loader = |this: &WeakEntity<Picker<BranchListDelegate>>, cx: &mut AsyncApp| {
-                this.update(cx, |picker, cx| {
-                    picker.delegate.loading = false;
-                    cx.notify();
-                })
-                .log_err();
-            };
-            repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url))
-                .inspect_err(|_err| {
-                    stop_loader(&this, cx);
-                })?
-                .await
-                .inspect_err(|_err| {
-                    stop_loader(&this, cx);
-                })?
-                .inspect_err(|_err| {
-                    stop_loader(&this, cx);
-                })?;
-            stop_loader(&this, cx);
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _cx| {
-            Some(e.to_string())
-        });
+        let receiver = repo.update(cx, |repo, _| repo.create_remote(remote_name, remote_url));
+
+        cx.background_spawn(async move { receiver.await? })
+            .detach_and_prompt_err("Failed to create remote", window, cx, |e, _, _cx| {
+                Some(e.to_string())
+            });
         cx.emit(DismissEvent);
     }
 
@@ -560,7 +534,6 @@ impl PickerDelegate for BranchListDelegate {
             }
             _ => None,
         }
-        .into()
     }
 
     fn render_editor(
@@ -596,7 +569,6 @@ impl PickerDelegate for BranchListDelegate {
 
                             this.gap_1().justify_between().child({
                                 IconButton::new("filter-remotes", IconName::Filter)
-                                    .disabled(self.loading)
                                     .toggle_state(self.branch_filter == BranchFilter::Remote)
                                     .tooltip(move |_, cx| {
                                         Tooltip::for_action_in(
@@ -764,13 +736,6 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let PickerState::CreateRemote(remote_url) = &self.state {
-            self.create_remote(self.last_query.clone(), remote_url.to_string(), window, cx);
-            self.state = PickerState::List;
-            cx.notify();
-            return;
-        }
-
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
@@ -1086,11 +1051,7 @@ impl PickerDelegate for BranchListDelegate {
         if self.editor_position() == PickerEditorPosition::End {
             return None;
         }
-
         let focus_handle = self.focus_handle.clone();
-        let loading_icon = Icon::new(IconName::LoadCircle)
-            .size(IconSize::Small)
-            .with_rotate_animation(3);
 
         let footer_container = || {
             h_flex()
@@ -1129,7 +1090,6 @@ impl PickerDelegate for BranchListDelegate {
                     .gap_1()
                     .child(
                         Button::new("delete-branch", "Delete")
-                            .disabled(self.loading)
                             .key_binding(
                                 KeyBinding::for_action_in(
                                     &branch_picker::DeleteBranch,
@@ -1177,16 +1137,11 @@ impl PickerDelegate for BranchListDelegate {
                                         )
                                     },
                                 )
-                            } else if self.loading {
-                                this.justify_between()
-                                    .child(loading_icon)
-                                    .child(delete_and_select_btns)
                             } else {
                                 this.justify_between()
                                     .child({
                                         let focus_handle = focus_handle.clone();
                                         Button::new("filter-remotes", "Filter Remotes")
-                                            .disabled(self.loading)
                                             .toggle_state(matches!(
                                                 self.branch_filter,
                                                 BranchFilter::Remote
