@@ -75,8 +75,35 @@ const COMMIT_MESSAGE_SORT_PREFIX: u64 = 0;
 const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
+    pub fn commit_sha(&self) -> &str {
+        &self.commit.sha
+    }
+
     pub fn cached_status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
         self.statuses_by_path.iter().cloned()
+    }
+
+    pub fn focus_repo_path(
+        &mut self,
+        repo_path: &RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key = PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, repo_path.as_ref().clone());
+        let Some(anchor) = self.multibuffer.read(cx).location_for_path(&key, cx) else {
+            return false;
+        };
+
+        self.editor.update(cx, |editor, cx| {
+            editor.change_selections(
+                editor::SelectionEffects::scroll(editor::scroll::Autoscroll::fit()),
+                window,
+                cx,
+                |sels| sels.select_ranges([anchor..anchor]),
+            );
+            editor.focus_handle(cx).focus(window);
+        });
+        true
     }
 
     pub fn open(

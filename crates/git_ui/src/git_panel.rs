@@ -639,6 +639,7 @@ pub struct GitPanel {
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
     optimistic_staging: HashMap<RepoPath, bool>,
+    tracked_commit_sha: Option<String>,
     _settings_subscription: Subscription,
 }
 
@@ -736,6 +737,38 @@ impl GitPanel {
                 }
             });
 
+            let workspace_entity = workspace.weak_handle().upgrade().expect("");
+            cx.subscribe_in(
+                &workspace_entity,
+                window,
+                move |this, workspace_entity, event, window, cx| match event {
+                    workspace::Event::ActiveItemChanged => {
+                        let Some(commit_view) =
+                            workspace_entity.read(cx).active_item_as::<CommitView>(cx)
+                        else {
+                            if this.tracked_commit_sha.take().is_some() {
+                                this.update_visible_entries(window, cx);
+                            }
+
+                            return;
+                        };
+
+                        let commit_sha = commit_view.read(cx).commit_sha();
+                        let Some(old) = this.tracked_commit_sha.replace(commit_sha.to_string())
+                        else {
+                            this.update_visible_entries(window, cx);
+                            return;
+                        };
+
+                        if old != commit_sha {
+                            this.update_visible_entries(window, cx);
+                        }
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+
             cx.subscribe_in(
                 &git_store,
                 window,
@@ -809,6 +842,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 optimistic_staging: HashMap::default(),
+                tracked_commit_sha: None,
                 _settings_subscription,
             };
 
@@ -1055,6 +1089,17 @@ impl GitPanel {
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
+
+            if let Some(ref commit_sha) = self.tracked_commit_sha
+                && let Some(commit_view) = workspace.read(cx).active_item_as::<CommitView>(cx)
+                && commit_view.read(cx).commit_sha() == commit_sha
+            {
+                let repo_path = entry.repo_path.clone();
+                commit_view.update(cx, |commit_view, cx| {
+                    commit_view.focus_repo_path(&repo_path, window, cx);
+                });
+                return None;
+            }
 
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
@@ -3203,6 +3248,7 @@ impl GitPanel {
     }
 
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let from_commit = self.tracked_commit_sha.is_some();
         let path_style = self.project.read(cx).path_style(cx);
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
@@ -3239,8 +3285,26 @@ impl GitPanel {
 
         let repo = repo.read(cx);
 
-        let [mut changed_entries, mut new_entries, mut conflict_entries] =
-            self.collect_entries(repo, group_by_status);
+        let [mut changed_entries, mut new_entries, mut conflict_entries] = if from_commit
+            && let Some(commit_view) = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| ws.read(cx).active_item_as::<CommitView>(cx))
+        {
+            let changed_entries = commit_view
+                .read(cx)
+                .cached_status()
+                .map(|entry| GitStatusEntry {
+                    repo_path: entry.repo_path.clone(),
+                    status: entry.status,
+                    staging: entry.status.staging(),
+                })
+                .collect::<Vec<_>>();
+
+            [changed_entries, Vec::new(), Vec::new()]
+        } else {
+            self.collect_entries(repo, group_by_status)
+        };
 
         let mut push_entry =
             |this: &mut Self,
@@ -3368,12 +3432,15 @@ impl GitPanel {
 
         self.select_first_entry_if_none(cx);
 
-        let suggested_commit_message = self.suggest_commit_message(cx);
-        let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
+        if !from_commit {
+            let suggested_commit_message = self.suggest_commit_message(cx);
+            let placeholder_text =
+                suggested_commit_message.unwrap_or("Enter commit message".into());
 
-        self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(&placeholder_text, window, cx)
-        });
+            self.commit_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(&placeholder_text, window, cx)
+            });
+        }
 
         cx.notify();
     }
