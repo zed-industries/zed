@@ -156,13 +156,44 @@ impl LspAdapter for YamlLspAdapter {
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| replace_absolute_path(delegate, s.settings.clone()))
         });
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);
         }
         Ok(options)
     }
+}
+
+fn replace_absolute_path(
+    delegate: &Arc<dyn LspAdapterDelegate>,
+    settings: Option<Value>,
+) -> Option<Value> {
+    let Some(Value::Object(mut settings_map)) = settings else {
+        return settings;
+    };
+
+    let Some(Value::Object(mut yaml_config)) = settings_map.get_mut("yaml") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let Some(Value::Object(mut schemas)) = yaml_config.remove("schemas") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    for (url, _) in schemas.iter_mut() {
+        if !url.starts_with(".") && !url.starts_with("/") {
+            continue;
+        }
+
+        *url = delegate
+            .resolve_executable_path(url.clone().into())
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    yaml_config.insert("schemas".into(), Value::Object(schemas));
+    Some(Value::Object(settings_map))
 }
 
 async fn get_cached_server_binary(
