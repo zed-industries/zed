@@ -19,6 +19,7 @@ pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
 mod element;
+mod fuzzy_popover;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
@@ -85,8 +86,8 @@ use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::ReplicaId;
 use code_context_menus::{
-    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin,
+    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeContextMenu, CompletionsMenu,
+    ContextMenuOrigin, create_code_actions_popover,
 };
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -109,7 +110,7 @@ use gpui::{
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
     ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, WeakEntity,
     WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
@@ -6335,15 +6336,18 @@ impl Editor {
         let quick_launch = action.quick_launch;
         let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
-            if code_actions.deployed_from == action.deployed_from {
-                // Toggle if we're selecting the same one
+            let action_origin = action.deployed_from.as_ref().map(|source| match source {
+                CodeActionSource::Indicator(row) | CodeActionSource::RunMenu(row) => {
+                    ContextMenuOrigin::GutterIndicator(*row)
+                }
+                CodeActionSource::QuickActionBar => ContextMenuOrigin::QuickActionBar,
+            });
+            if code_actions.origin == action_origin {
                 *context_menu = None;
                 cx.notify();
                 return;
             } else {
-                // Otherwise, clear it and start a new one
                 *context_menu = None;
-                cx.notify();
             }
         }
         drop(context_menu);
@@ -6441,27 +6445,29 @@ impl Editor {
 
             editor.update_in(cx, |editor, window, cx| {
                 crate::hover_popover::hide_hover(editor, cx);
+                let task_position = resolved_tasks.as_ref().map(|tasks| tasks.position);
+                let task_context_value = task_context.unwrap_or_default();
                 let actions = CodeActionContents::new(
                     resolved_tasks,
                     code_actions,
                     debug_scenarios,
-                    task_context.unwrap_or_default(),
                 );
 
                 // Don't show the menu if there are no actions available
                 if actions.is_empty() {
                     cx.notify();
                     return Task::ready(Ok(()));
-                }
+                };
 
-                *editor.context_menu.borrow_mut() =
-                    Some(CodeContextMenu::CodeActions(CodeActionsMenu::new(
-                        actions,
-                        buffer,
-                        Default::default(),
-                        UniformListScrollHandle::default(),
-                        deployed_from,
-                    )));
+                let popover = create_code_actions_popover(
+                    actions,
+                    buffer.clone(),
+                    deployed_from,
+                    task_context_value,
+                    task_position,
+                );
+
+                *editor.context_menu.borrow_mut() = Some(CodeContextMenu::CodeActions(popover));
                 cx.notify();
                 if spawn_straight_away
                     && let Some(task) = editor.confirm_code_action(
@@ -6570,12 +6576,8 @@ impl Editor {
             let menu_borrow = self.context_menu.borrow();
             if let Some(CodeContextMenu::CodeActions(menu)) = menu_borrow.as_ref() {
                 let action_ix = action.item_ix.unwrap_or(menu.selected_item);
-                let selected_action = menu.get_action(action_ix)?;
-                Some((
-                    selected_action,
-                    menu.buffer.clone(),
-                    menu.actions.context.clone(),
-                ))
+                let selected_action = menu.get_item(action_ix)?;
+                Some((selected_action, menu.buffer.clone(), menu.context.clone()))
             } else {
                 None
             }
@@ -6646,7 +6648,7 @@ impl Editor {
                 };
 
             let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-            let action = actions_menu.actions.get(action_ix)?;
+            let action = actions_menu.get_item(action_ix)?;
             let title = action.label();
             let buffer = actions_menu.buffer;
             let workspace = self.workspace()?;
@@ -6686,7 +6688,7 @@ impl Editor {
                     }))
                 }
                 CodeActionsItem::DebugScenario(scenario) => {
-                    let context = actions_menu.actions.context;
+                    let context = actions_menu.context;
 
                     workspace.update(cx, |workspace, cx| {
                         dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
@@ -6841,7 +6843,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(CodeContextMenu::CodeActions(menu)) = self.context_menu.borrow_mut().as_mut() {
-            // Update the filter with the new text
             menu.filter(text, cx);
         }
     }
