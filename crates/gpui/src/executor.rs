@@ -1,4 +1,5 @@
 use crate::{App, PlatformDispatcher, RunnableMeta, TaskTiming, profiler};
+use rand::Rng as _;
 
 pub use scheduler::{Priority, RealtimePriority};
 
@@ -438,7 +439,7 @@ impl BackgroundExecutor {
         };
 
         let mut max_ticks = if timeout.is_some() {
-            dispatcher.gen_block_on_ticks()
+            dispatcher.rng().lock().random_range(0..=1000)
         } else {
             usize::MAX
         };
@@ -493,18 +494,7 @@ impl BackgroundExecutor {
                             if advanced {
                                 continue;
                             }
-                            let mut backtrace_message = String::new();
-                            let mut waiting_message = String::new();
-                            if let Some(backtrace) = dispatcher.waiting_backtrace() {
-                                backtrace_message =
-                                    format!("\nbacktrace of waiting future:\n{:?}", backtrace);
-                            }
-                            if let Some(waiting_hint) = dispatcher.waiting_hint() {
-                                waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
-                            }
-                            panic!(
-                                "parked with nothing left to run{waiting_message}{backtrace_message}",
-                            )
+                            panic!("parked with nothing left to run")
                         }
 
                         let unparker_count_before = dispatcher.unparker_count();
@@ -604,17 +594,7 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
-    /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn start_waiting(&self) {
-        self.dispatcher.as_test().unwrap().start_waiting();
-    }
 
-    /// in tests, removes the debugging data added by start_waiting
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn finish_waiting(&self) {
-        self.dispatcher.as_test().unwrap().finish_waiting();
-    }
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
@@ -657,11 +637,7 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().forbid_parking();
     }
 
-    /// adds detail to the "parked with nothing let to run" message.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_waiting_hint(&self, msg: Option<String>) {
-        self.dispatcher.as_test().unwrap().set_waiting_hint(msg);
-    }
+
 
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
@@ -683,11 +659,7 @@ impl BackgroundExecutor {
         self.dispatcher.is_main_thread()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    /// in tests, control the number of ticks that `block_with_timeout` will run before timing out.
-    pub fn set_block_on_ticks(&self, range: std::ops::RangeInclusive<usize>) {
-        self.dispatcher.as_test().unwrap().set_block_on_ticks(range);
-    }
+
 }
 
 /// ForegroundExecutor runs things on the main thread.
