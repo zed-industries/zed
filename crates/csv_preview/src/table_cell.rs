@@ -161,7 +161,7 @@ fn create_table_cell(
             format!(
                 "csv-display-cell-{}-{}",
                 display_cell_id.row.get(),
-                display_cell_id.col
+                display_cell_id.col.get()
             )
             .into(),
             0,
