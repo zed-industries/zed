@@ -13,9 +13,8 @@ use std::{
 
 /// TestDispatcher provides deterministic async execution for tests.
 ///
-/// This implementation delegates task scheduling to the scheduler crate's `TestScheduler`,
-/// which provides timing, clock, randomization, and task queue management. The dispatcher
-/// maintains only state needed for GPUI's `PlatformDispatcher` API compatibility.
+/// This implementation delegates task scheduling to the scheduler crate's `TestScheduler`.
+/// Access the scheduler directly via `scheduler()` for clock, rng, and parking control.
 #[doc(hidden)]
 pub struct TestDispatcher {
     session_id: SessionId,
@@ -55,10 +54,14 @@ impl TestDispatcher {
         }
     }
 
+    pub fn scheduler(&self) -> &Arc<TestScheduler> {
+        &self.scheduler
+    }
+
     pub fn advance_clock(&self, by: Duration) {
         let target_time = self.scheduler.clock().now() + by;
         loop {
-            self.run_until_parked();
+            while self.tick(false) {}
             let next_delayed = self.state.lock().delayed.first().map(|(time, _)| *time);
             if let Some(delayed_time) = next_delayed {
                 if delayed_time <= target_time {
@@ -114,7 +117,6 @@ impl TestDispatcher {
     pub fn tick(&self, background_only: bool) -> bool {
         let now = self.scheduler.clock().now();
 
-        // Move due delayed tasks to the scheduler's background queue
         {
             let mut state = self.state.lock();
             while let Some((deadline, _)) = state.delayed.first() {
@@ -132,7 +134,6 @@ impl TestDispatcher {
             return false;
         }
 
-        // Determine if we should run a foreground or background task
         let run_foreground = if background_only || foreground_count == 0 {
             false
         } else if background_count == 0 {
@@ -144,7 +145,6 @@ impl TestDispatcher {
             )
         };
 
-        // Track is_main_thread based on what type of task we're running
         let was_main_thread = self.state.lock().is_main_thread;
         self.state.lock().is_main_thread = run_foreground;
 
@@ -163,22 +163,6 @@ impl TestDispatcher {
         while self.tick(false) {}
     }
 
-    pub fn parking_allowed(&self) -> bool {
-        self.scheduler.parking_allowed()
-    }
-
-    pub fn allow_parking(&self) {
-        self.scheduler.allow_parking();
-    }
-
-    pub fn forbid_parking(&self) {
-        self.scheduler.forbid_parking();
-    }
-
-    pub fn rng(&self) -> Arc<parking_lot::Mutex<StdRng>> {
-        self.scheduler.rng()
-    }
-
     pub fn unpark_all(&self) {
         let unparkers: Vec<_> = self.state.lock().unparkers.drain(..).collect();
         for unparker in unparkers {
@@ -192,11 +176,6 @@ impl TestDispatcher {
 
     pub fn unparker_count(&self) -> usize {
         self.state.lock().unparkers.len()
-    }
-
-    /// Returns a reference to the underlying TestScheduler.
-    pub fn scheduler(&self) -> &Arc<TestScheduler> {
-        &self.scheduler
     }
 }
 

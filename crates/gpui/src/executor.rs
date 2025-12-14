@@ -439,7 +439,7 @@ impl BackgroundExecutor {
         };
 
         let mut max_ticks = if timeout.is_some() {
-            dispatcher.rng().lock().random_range(0..=1000)
+            dispatcher.scheduler().rng().lock().random_range(0..=1000)
         } else {
             usize::MAX
         };
@@ -484,7 +484,7 @@ impl BackgroundExecutor {
                         }
                         debug_log("awoken flag was false");
 
-                        if !dispatcher.parking_allowed() {
+                        if !dispatcher.scheduler().parking_allowed() {
                             debug_log("parking NOT allowed, checking delayed tasks");
                             let advanced = dispatcher.advance_clock_to_next_delayed();
                             debug_log(&format!(
@@ -620,7 +620,8 @@ impl BackgroundExecutor {
     /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        self.dispatcher.as_test().unwrap().run_until_parked()
+        let dispatcher = self.dispatcher.as_test().unwrap();
+        while dispatcher.tick(false) {}
     }
 
     /// in tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -628,13 +629,13 @@ impl BackgroundExecutor {
     /// do take real async time to run.
     #[cfg(any(test, feature = "test-support"))]
     pub fn allow_parking(&self) {
-        self.dispatcher.as_test().unwrap().allow_parking();
+        self.dispatcher.as_test().unwrap().scheduler().allow_parking();
     }
 
     /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
-        self.dispatcher.as_test().unwrap().forbid_parking();
+        self.dispatcher.as_test().unwrap().scheduler().forbid_parking();
     }
 
 
@@ -642,7 +643,7 @@ impl BackgroundExecutor {
     /// in tests, returns the rng used by the dispatcher and seeded by the `SEED` environment variable
     #[cfg(any(test, feature = "test-support"))]
     pub fn rng(&self) -> Arc<parking_lot::Mutex<StdRng>> {
-        self.dispatcher.as_test().unwrap().rng()
+        self.dispatcher.as_test().unwrap().scheduler().rng()
     }
 
     /// How many CPUs are available to the dispatcher.
