@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Single Question Quiz</title>
+</head>
+<body>
+
+<h2>Quiz</h2>
+
+<p><strong>Question:</strong> Who of the following is the first woman Chief Minister of Delhi?</p>
+
+<input type="radio" name="q1" onclick="wrong()"> A. Sheila Dixit <br><br>
+<input type="radio" name="q1" onclick="correct()"> B. Sushma Swaraj <br><br>
+<input type="radio" name="q1" onclick="wrong()"> C. Sarojini Naidu <br><br>
+<input type="radio" name="q1" onclick="wrong()"> D. Ashapurna Debi <br><br>
+
+<p id="result"></p>
+
+<script>
+function correct() {
+    document.getElementById("result").innerHTML =
+        "✅ Positive: Correct Answer! <br><strong>Correct Answer:</strong> B. Sushma Swaraj";
+    document.getElementById("result").style.color = "green";
+}
+
+function wrong() {
+    document.getElementById("result").innerHTML =
+        "❌ Negative: Wrong Answer! <br><strong>Correct Answer:</strong> B. Sushma Swaraj";
+    document.getElementById("result").style.color = "red";
+}
+</script>
+
+</body>
+</html>
