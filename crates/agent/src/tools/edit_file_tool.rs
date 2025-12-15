@@ -316,8 +316,9 @@ impl AgentTool for EditFileTool {
                 // Check for unsaved changes first - these indicate modifications we don't know about
                 if is_dirty {
                     anyhow::bail!(
-                        "This file has unsaved changes. Ask the user if they would like you to save the file. \
-                         If they agree, use the save_file tool to save it, then retry this edit."
+                        "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
+                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
+                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
                     );
                 }
 
@@ -2203,6 +2204,21 @@ mod tests {
         assert!(
             error_msg.contains("This file has unsaved changes."),
             "Error should mention unsaved changes, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("keep or discard"),
+            "Error should ask whether to keep or discard changes, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("save_file"),
+            "Error should reference save_file tool, got: {}",
+            error_msg
+        );
+        assert!(
+            error_msg.contains("restore_file_from_disk"),
+            "Error should reference restore_file_from_disk tool, got: {}",
             error_msg
         );
     }
