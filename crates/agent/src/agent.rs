@@ -33,8 +33,8 @@ use gpui::{
 use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
-    RULES_FILE_NAMES,
+    ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
+    WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
