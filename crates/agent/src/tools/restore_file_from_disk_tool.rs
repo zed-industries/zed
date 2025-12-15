@@ -201,3 +201,165 @@ impl AgentTool for RestoreFileFromDiskTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::Fs;
+    use gpui::TestAppContext;
+    use language::LineEnding;
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restore_file_from_disk_output_and_effects(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dirty.txt": "on disk: dirty\n",
+                "clean.txt": "on disk: clean\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let tool = Arc::new(RestoreFileFromDiskTool::new(project.clone()));
+
+        // Make dirty.txt dirty in-memory by saving different content into the buffer without saving to disk.
+        let dirty_project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path("root/dirty.txt", cx)
+                .expect("dirty.txt should exist in project")
+        });
+
+        let dirty_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(dirty_project_path, cx)
+            })
+            .await
+            .unwrap();
+        dirty_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..buffer.len(), "in memory: dirty\n")], None, cx);
+        });
+        assert!(
+            dirty_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+            "dirty.txt buffer should be dirty before restore"
+        );
+
+        // Ensure clean.txt is opened but remains clean.
+        let clean_project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path("root/clean.txt", cx)
+                .expect("clean.txt should exist in project")
+        });
+
+        let clean_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(clean_project_path, cx)
+            })
+            .await
+            .unwrap();
+        assert!(
+            !clean_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+            "clean.txt buffer should start clean"
+        );
+
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    RestoreFileFromDiskToolInput {
+                        paths: vec![
+                            PathBuf::from("root/dirty.txt"),
+                            PathBuf::from("root/clean.txt"),
+                        ],
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Output should mention restored + clean.
+        assert!(
+            output.contains("Restored 1 file(s) from disk (discarded unsaved changes)."),
+            "expected restored count line, got:\n{output}"
+        );
+        assert!(
+            output.contains("1 file(s) had no unsaved changes."),
+            "expected clean count line, got:\n{output}"
+        );
+
+        // Effect: dirty buffer should be restored back to disk content and become clean.
+        let dirty_text = dirty_buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+        assert_eq!(
+            dirty_text, "on disk: dirty\n",
+            "dirty.txt buffer should be restored to disk contents"
+        );
+        assert!(
+            !dirty_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+            "dirty.txt buffer should not be dirty after restore"
+        );
+
+        // Disk contents should be unchanged (restore-from-disk should not write).
+        let disk_dirty = fs.load(path!("/root/dirty.txt").as_ref()).await.unwrap();
+        assert_eq!(disk_dirty, "on disk: dirty\n");
+
+        // Sanity: clean buffer should remain clean and unchanged.
+        let clean_text = clean_buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+        assert_eq!(clean_text, "on disk: clean\n");
+        assert!(
+            !clean_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+            "clean.txt buffer should remain clean"
+        );
+
+        // Test empty paths case.
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    RestoreFileFromDiskToolInput { paths: vec![] },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(output, "No paths provided.");
+
+        // Test not-found path case (path outside the project root).
+        let output = cx
+            .update(|cx| {
+                tool.clone().run(
+                    RestoreFileFromDiskToolInput {
+                        paths: vec![PathBuf::from("nonexistent/path.txt")],
+                    },
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert!(
+            output.contains("1 path(s) were not found in the project:"),
+            "expected not-found header line, got:\n{output}"
+        );
+        assert!(
+            output.contains("- nonexistent/path.txt"),
+            "expected not-found path bullet, got:\n{output}"
+        );
+
+        let _ = LineEnding::Unix; // keep import used if the buffer edit API changes
+    }
+}
