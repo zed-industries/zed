@@ -3598,6 +3598,7 @@ impl GitPanel {
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
+                .dismiss_button(true)
             });
             workspace.toggle_status_toast(status_toast, cx)
         });
@@ -4810,8 +4811,8 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .border_1()
+            .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
@@ -4976,6 +4977,7 @@ impl GitPanel {
             .w_full()
             .items_center()
             .border_1()
+            .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
