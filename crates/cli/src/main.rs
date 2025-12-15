@@ -212,7 +212,10 @@ fn expand_directory_diff_pairs(
     Ok((expanded, labels, temp_dirs))
 }
 
-fn expand_directory_pair(left: &Path, right: &Path) -> anyhow::Result<(Vec<[String; 2]>, Vec<String>, Option<TempDir>)> {
+fn expand_directory_pair(
+    left: &Path,
+    right: &Path,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<String>, Option<TempDir>)> {
     let left_files = collect_files(left)?;
     let right_files = collect_files(right)?;
 
@@ -237,13 +240,19 @@ fn expand_directory_pair(left: &Path, right: &Path) -> anyhow::Result<(Vec<[Stri
             (Some(left_path), None) => {
                 let stub = create_empty_stub(&mut temp_dir, &rel)?;
                 temp_dir_used = true;
-                pairs.push([left_path.to_string_lossy().into_owned(), stub.to_string_lossy().into_owned()]);
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    stub.to_string_lossy().into_owned(),
+                ]);
                 labels.push(rel.to_string_lossy().replace('\\', "/"));
             }
             (None, Some(right_path)) => {
                 let stub = create_empty_stub(&mut temp_dir, &rel)?;
                 temp_dir_used = true;
-                pairs.push([stub.to_string_lossy().into_owned(), right_path.to_string_lossy().into_owned()]);
+                pairs.push([
+                    stub.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
                 labels.push(rel.to_string_lossy().replace('\\', "/"));
             }
             (None, None) => {}

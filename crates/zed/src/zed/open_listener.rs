@@ -371,8 +371,12 @@ fn build_fallback_labels(diff_paths: &[[String; 2]]) -> Vec<String> {
         .map(|pair| {
             let left = Path::new(&pair[0]);
             let right = Path::new(&pair[1]);
-            longest_common_suffix(left, right)
-                .unwrap_or_else(|| left.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string())
+            longest_common_suffix(left, right).unwrap_or_else(|| {
+                left.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+                    .to_string()
+            })
         })
         .collect()
 }
@@ -954,6 +958,8 @@ mod tests {
                 let errored = open_local_workspace(
                     workspace_paths,
                     vec![],
+                    vec![],
+                    false,
                     None,
                     false,
                     true,
@@ -1045,6 +1051,8 @@ mod tests {
                 open_local_workspace(
                     workspace_paths,
                     vec![],
+                    vec![],
+                    false,
                     open_new_workspace,
                     false,
                     false,
@@ -1118,6 +1126,8 @@ mod tests {
                     open_local_workspace(
                         workspace_paths,
                         vec![],
+                        vec![],
+                        false,
                         None,
                         false,
                         false,
@@ -1142,6 +1152,8 @@ mod tests {
                     open_local_workspace(
                         workspace_paths_reuse,
                         vec![],
+                        vec![],
+                        false,
                         None, // open_new_workspace will be overridden by reuse logic
                         true, // reuse = true
                         false,

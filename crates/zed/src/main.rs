@@ -925,6 +925,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
+                        &[],
+                        false,
                         app_state,
                         workspace::OpenOptions::default(),
                         cx,

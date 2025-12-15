@@ -1,13 +1,20 @@
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
-use gpui::{AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString, Task, Window};
-use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use gpui::{
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, SharedString, Task, Window,
+};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::Project;
-use std::{any::{Any, TypeId}, path::{Path, PathBuf}, sync::Arc};
-use ui::{Color, Icon, IconName, Label, LabelCommon as _};
+use std::{
+    any::{Any, TypeId},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme;
+use ui::{Color, Icon, IconName, Label, LabelCommon as _};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
@@ -18,7 +25,18 @@ use workspace::{
 
 pub struct MultiDiffView {
     editor: Entity<Editor>,
+    buffer_labels: collections::HashMap<BufferId, String>,
     file_count: usize,
+}
+
+pub fn open(
+    diff_pairs: Vec<[String; 2]>,
+    diff_labels: Vec<String>,
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Entity<MultiDiffView>>> {
+    MultiDiffView::open(diff_pairs, diff_labels, workspace, window, cx)
 }
 
 struct Entry {
@@ -26,6 +44,7 @@ struct Entry {
     new_buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     display_rel: Arc<RelPath>,
+    display_label: String,
 }
 
 async fn load_entries(
@@ -37,7 +56,11 @@ async fn load_entries(
     let mut entries = Vec::with_capacity(diff_pairs.len());
     let mut all_paths = Vec::with_capacity(diff_pairs.len());
 
-    for (ix, (pair, label)) in diff_pairs.into_iter().zip(diff_labels.into_iter()).enumerate() {
+    for (ix, (pair, label)) in diff_pairs
+        .into_iter()
+        .zip(diff_labels.into_iter())
+        .enumerate()
+    {
         let old_path = PathBuf::from(&pair[0]);
         let new_path = PathBuf::from(&pair[1]);
 
@@ -50,13 +73,18 @@ async fn load_entries(
 
         let diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
-        let display_rel = label_to_rel_path(&label)
-            .unwrap_or_else(|| RelPath::new(Path::new("untitled"), PathStyle::Posix).unwrap().into_owned().into());
+        let display_rel = label_to_rel_path(&label).unwrap_or_else(|| {
+            RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                .unwrap()
+                .into_owned()
+                .into()
+        });
 
         entries.push(Entry {
             index: ix,
             new_buffer: new_buffer.clone(),
             diff,
+            display_label: label,
             display_rel,
         });
         all_paths.push(new_path);
@@ -69,14 +97,40 @@ async fn load_entries(
 fn register_entry(
     multibuffer: &Entity<MultiBuffer>,
     entry: Entry,
-    _common_root: &Option<PathBuf>,
+    common_root: &Option<PathBuf>,
     context_lines: u32,
     cx: &mut Context<Workspace>,
-) {
-    let new_snapshot = entry
-        .new_buffer
-        .read(cx)
-        .snapshot();
+) -> Option<(BufferId, String)> {
+    let (path_for_key, buffer_label) = {
+        let buffer = entry.new_buffer.read(cx);
+        let buffer_path = buffer.file().map(|file| file.path().clone());
+
+        let label = buffer_path
+            .as_ref()
+            .map(|path| path.as_unix_str().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                common_root.as_ref().and_then(|root| {
+                    buffer.file().and_then(|file| {
+                        let full = file.full_path(cx);
+                        full.strip_prefix(root)
+                            .ok()
+                            .and_then(|rel| rel.to_str().map(|s| s.replace('\\', "/")))
+                    })
+                })
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| entry.display_label.clone());
+
+        (
+            buffer_path
+                .filter(|p| !p.as_unix_str().is_empty())
+                .unwrap_or_else(|| entry.display_rel.clone()),
+            label,
+        )
+    };
+
+    let new_snapshot = entry.new_buffer.read(cx).snapshot();
 
     let ranges: Vec<std::ops::Range<Point>> = {
         let diff_read = entry.diff.read(cx);
@@ -90,7 +144,7 @@ fn register_entry(
             .collect()
     };
 
-    let path_key = PathKey::with_sort_prefix(entry.index as u64, entry.display_rel.clone());
+    let path_key = PathKey::with_sort_prefix(entry.index as u64, path_for_key);
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.set_excerpts_for_path(
@@ -102,6 +156,8 @@ fn register_entry(
         );
         multibuffer.add_diff(entry.diff.clone(), cx);
     });
+    let buffer_id = entry.new_buffer.read(cx).remote_id();
+    Some((buffer_id, buffer_label))
 }
 
 fn label_to_rel_path(label: &str) -> Option<Arc<RelPath>> {
@@ -207,6 +263,7 @@ impl MultiDiffView {
 
     fn new(
         multibuffer: Entity<MultiBuffer>,
+        buffer_labels: collections::HashMap<BufferId, String>,
         project: Entity<Project>,
         file_count: usize,
         window: &mut Window,
@@ -224,11 +281,47 @@ impl MultiDiffView {
             );
             editor
         });
+        {
+            let labels = buffer_labels.clone();
+            editor.update(cx, |editor, _cx| {
+                for (buffer_id, label) in labels {
+                    editor.set_path_override(buffer_id, label);
+                }
+            });
+        }
+
+        {
+            cx.subscribe(
+                &editor,
+                move |this: &mut MultiDiffView, _, event, cx| match event {
+                    EditorEvent::SelectionsChanged { .. }
+                    | EditorEvent::Focused
+                    | EditorEvent::FocusedIn => {
+                        this.update_header(cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        }
 
         Self {
             editor,
+            buffer_labels,
             file_count,
         }
+    }
+
+    fn update_header(&self, cx: &mut Context<Self>) {
+        let labels = &self.buffer_labels;
+        self.editor.update(cx, |editor, _cx| {
+            let anchor = editor.selections.newest_anchor().head();
+            if let Some(buffer_id) = anchor.text_anchor.buffer_id {
+                if let Some(label) = labels.get(&buffer_id) {
+                    editor.set_breadcrumb_header(label.clone());
+                }
+            }
+        });
     }
 
     fn title(&self) -> SharedString {
