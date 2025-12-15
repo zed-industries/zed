@@ -186,10 +186,22 @@ fn process_content(
             }
         }
         None => {
-            format!(
-                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
-                content,
-            )
+            // If the output contains a SIGKILL-style message (common when a process is force-killed),
+            // treat it as an exit status of 9 to make the result clearer to the agent/user.
+            if content.contains("Killed: 9") {
+                if is_empty {
+                    format!("Command \"{command}\" was killed with exit status 9.")
+                } else {
+                    format!(
+                        "Command \"{command}\" was killed with exit status 9.\n\n{content}",
+                    )
+                }
+            } else {
+                format!(
+                    "Command failed or was interrupted.\nPartial output captured:\n\n{}",
+                    content,
+                )
+            }
         }
     };
     content
