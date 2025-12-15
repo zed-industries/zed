@@ -59,12 +59,6 @@ You can customize various [formatting options](https://code.visualstudio.com/doc
             // Add an extra newline before <div> and <p>
             "extraLiners": "div,p"
           }
-        },
-        // workaround to prevent html lsp error about validproperties
-        "css": {
-          "lint": {
-            "validProperties": {}
-          }
         }
       }
     }
