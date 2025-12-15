@@ -1495,7 +1495,7 @@ impl ExternalAgentServer for LocalCodex {
                             let digest = asset
                                 .digest
                                 .as_deref()
-                                .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
+                                .map(|d| d.strip_prefix("sha256:").unwrap_or(d));
                             match ::http_client::github_download::download_server_binary(
                                 &*http,
                                 &asset.browser_download_url,
@@ -1727,10 +1727,10 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                                     release.assets.iter().find(|a| a.name == filename)
                                 {
                                     // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().and_then(|d| {
+                                    asset.digest.as_ref().map(|d| {
                                         d.strip_prefix("sha256:")
                                             .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
+                                            .unwrap_or_else(|| d.clone())
                                     })
                                 } else {
                                     None
