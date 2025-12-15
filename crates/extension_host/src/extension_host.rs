@@ -1195,11 +1195,32 @@ impl ExtensionStore {
             fs.create_symlink(output_path, extension_source_path.clone())
                 .await?;
 
-            // Re-load manifest and run migration before reload so settings are updated before providers are registered
+            // Re-load manifest and run migrations before reload so settings are updated before providers are registered
             let manifest_for_migration =
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             this.update(cx, |_this, cx| {
                 migrate_legacy_llm_provider_env_var(&manifest_for_migration, cx);
+                // Also run credential migrations for dev extensions
+                copilot_migration::migrate_copilot_credentials_if_needed(
+                    manifest_for_migration.id.as_ref(),
+                    cx,
+                );
+                anthropic_migration::migrate_anthropic_credentials_if_needed(
+                    manifest_for_migration.id.as_ref(),
+                    cx,
+                );
+                google_ai_migration::migrate_google_ai_credentials_if_needed(
+                    manifest_for_migration.id.as_ref(),
+                    cx,
+                );
+                openai_migration::migrate_openai_credentials_if_needed(
+                    manifest_for_migration.id.as_ref(),
+                    cx,
+                );
+                open_router_migration::migrate_open_router_credentials_if_needed(
+                    manifest_for_migration.id.as_ref(),
+                    cx,
+                );
             })?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
