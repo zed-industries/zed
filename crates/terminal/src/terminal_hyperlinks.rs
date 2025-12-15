@@ -14,6 +14,7 @@ use std::{
     ops::{Index, Range},
     time::{Duration, Instant},
 };
+use url::Url;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
@@ -128,8 +129,19 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         if is_url {
             // Treat "file://" IRIs like file paths to ensure
             // that line numbers at the end of the path are
-            // handled correctly
-            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
+            // handled correctly.
+            // Use Url::to_file_path() to properly handle Windows drive letters
+            // (e.g., file:///C:/path -> C:\path)
+            if maybe_url_or_path.starts_with("file://") {
+                if let Ok(url) = Url::parse(&maybe_url_or_path) {
+                    if let Ok(path) = url.to_file_path() {
+                        return (path.to_string_lossy().into_owned(), false, word_match);
+                    }
+                }
+                // Fallback: strip file:// prefix if URL parsing fails
+                let path = maybe_url_or_path
+                    .strip_prefix("file://")
+                    .unwrap_or(&maybe_url_or_path);
                 (path.to_string(), false, word_match)
             } else {
                 (maybe_url_or_path, true, word_match)
@@ -1042,8 +1054,9 @@ mod tests {
     }
 
     mod file_iri {
-        // File IRIs have a ton of use cases, most of which we currently do not support. A few of
-        // those cases are documented here as tests which are expected to fail.
+        // File IRIs have a ton of use cases. Absolute file URIs are supported on all platforms,
+        // including Windows drive letters (e.g., file:///C:/path) and percent-encoded characters.
+        // Some cases like relative file IRIs are not supported.
         // See https://en.wikipedia.org/wiki/File_URI_scheme
 
         /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
@@ -1063,7 +1076,6 @@ mod tests {
         mod issues {
             #[cfg(not(target_os = "windows"))]
             #[test]
-            #[should_panic(expected = "Path = «/test/Ῥόδος/», at grid cells (0, 0)..=(15, 1)")]
             fn issue_file_iri_with_percent_encoded_characters() {
                 // Non-space characters
                 // file:///test/Ῥόδος/
@@ -1092,18 +1104,12 @@ mod tests {
                 // See https://en.wikipedia.org/wiki/File_URI_scheme
                 // https://github.com/zed-industries/zed/issues/39189
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\cool\\index.rs», at grid cells (0, 0)..=(9, 1)"#
-                )]
                 fn issue_39189() {
                     test_file_iri!("file:///C:/test/cool/index.rs");
                     test_file_iri!("file:///C:/test/cool/");
                 }
 
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\Ῥόδος\\», at grid cells (0, 0)..=(16, 1)"#
-                )]
                 fn issue_file_iri_with_percent_encoded_characters() {
                     // Non-space characters
                     // file:///test/Ῥόδος/
