@@ -54,6 +54,16 @@ async fn check_is_contributor(
 ) -> Result<Json<CheckIsContributorResponse>> {
     let params = params.into_contributor_selector()?;
 
+    if CopilotSweAgentBot::is_copilot_bot(&params) {
+        return Ok(Json(CheckIsContributorResponse {
+            signed_at: Some(
+                CopilotSweAgentBot::created_at()
+                    .and_utc()
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            ),
+        }));
+    }
+
     if Dependabot::is_dependabot(&params) {
         return Ok(Json(CheckIsContributorResponse {
             signed_at: Some(
@@ -91,6 +101,36 @@ async fn check_is_contributor(
             .await?
             .map(|ts| ts.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)),
     }))
+}
+
+/// The Copilot bot GitHub user (`copilot-swe-agent[bot]`).
+///
+/// https://api.github.com/users/copilot-swe-agent[bot]
+struct CopilotSweAgentBot;
+
+impl CopilotSweAgentBot {
+    const LOGIN: &'static str = "copilot-swe-agent[bot]";
+    const USER_ID: i32 = 198982749;
+
+    /// Returns the `created_at` timestamp for the Dependabot bot user.
+    fn created_at() -> &'static NaiveDateTime {
+        static CREATED_AT: OnceLock<NaiveDateTime> = OnceLock::new();
+        CREATED_AT.get_or_init(|| {
+            chrono::DateTime::parse_from_rfc3339("2025-02-12T20:26:08Z")
+                .expect("failed to parse 'created_at' for 'copilot-swe-agent[bot]'")
+                .naive_utc()
+        })
+    }
+
+    /// Returns whether the given contributor selector corresponds to the Copilot bot user.
+    fn is_copilot_bot(contributor: &ContributorSelector) -> bool {
+        match contributor {
+            ContributorSelector::GitHubLogin { github_login } => github_login == Self::LOGIN,
+            ContributorSelector::GitHubUserId { github_user_id } => {
+                github_user_id == &Self::USER_ID
+            }
+        }
+    }
 }
 
 /// The Dependabot bot GitHub user (`dependabot[bot]`).
