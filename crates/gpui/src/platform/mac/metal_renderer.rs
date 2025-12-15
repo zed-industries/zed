@@ -59,6 +59,7 @@ pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: [metal::Buffer; MAXIMUM_DRAWABLE_COUNT],
     current_index: usize,
+    unified_memory: bool,
     // Sync between CPU and GPU work, is a semaphore
     // https://developer.apple.com/documentation/metal/synchronizing-cpu-and-gpu-work#Manage-the-rate-of-CPU-and-GPU-work
     sync: Arc<(Mutex<u8>, Condvar)>,
@@ -73,11 +74,12 @@ impl InstanceBufferPool {
     const MIN_BUFFER_SIZE: usize = 2 * 1024 * 1024;
     const MAX_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
-    pub(crate) fn new(device: &metal::Device) -> Self {
+    pub(crate) fn new(device: &metal::Device, unified_memory: bool) -> Self {
         Self {
             buffer_size: Self::MIN_BUFFER_SIZE,
-            buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device),
+            buffers: Self::build_buffers(Self::MIN_BUFFER_SIZE, device, unified_memory),
             current_index: 0,
+            unified_memory,
             sync: Arc::new((Mutex::new(MAXIMUM_DRAWABLE_COUNT as u8), Condvar::new())),
         }
     }
@@ -88,7 +90,7 @@ impl InstanceBufferPool {
             Err(next_size)
         } else {
             self.buffer_size = next_size;
-            self.buffers = Self::build_buffers(next_size, device);
+            self.buffers = Self::build_buffers(next_size, device, self.unified_memory);
             *self.sync.0.lock() = MAXIMUM_DRAWABLE_COUNT as u8;
             Ok(next_size)
         }
@@ -122,10 +124,18 @@ impl InstanceBufferPool {
     fn build_buffers(
         size: usize,
         device: &metal::Device,
+        unified_memory: bool,
     ) -> [metal::Buffer; MAXIMUM_DRAWABLE_COUNT] {
-        std::array::from_fn(|_| {
-            device.new_buffer(size as u64, MTLResourceOptions::StorageModeManaged)
-        })
+        let options = if unified_memory {
+            MTLResourceOptions::StorageModeShared
+                            // Buffers are write only which can benefit from the combined cache
+                            // https://developer.apple.com/documentation/metal/mtlresourceoptions/cpucachemodewritecombined
+                            | MTLResourceOptions::CPUCacheModeWriteCombined
+        } else {
+            MTLResourceOptions::StorageModeManaged
+        };
+
+        std::array::from_fn(|_| device.new_buffer(size as u64, options))
     }
 }
 
@@ -301,7 +311,7 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
 
-        let instance_buffer_pool = InstanceBufferPool::new(&device);
+        let instance_buffer_pool = InstanceBufferPool::new(&device, unified_memory);
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
         let core_video_texture_cache =
