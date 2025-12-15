@@ -30,6 +30,112 @@ actions!(
     ]
 );
 
+#[derive(IntoElement)]
+struct SectionHeader {
+    title: SharedString,
+}
+
+impl SectionHeader {
+    fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into(),
+        }
+    }
+}
+
+impl RenderOnce for SectionHeader {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        h_flex()
+            .px_1()
+            .mb_2()
+            .gap_2()
+            .child(
+                Label::new(self.title.to_ascii_uppercase())
+                    .buffer_font(cx)
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+            )
+            .child(Divider::horizontal().color(DividerColor::BorderVariant))
+    }
+}
+
+#[derive(IntoElement)]
+struct SectionButton {
+    label: SharedString,
+    icon: IconName,
+    action: Box<dyn Action>,
+    tab_index: usize,
+    focus_handle: FocusHandle,
+}
+
+impl SectionButton {
+    fn new(
+        label: impl Into<SharedString>,
+        icon: IconName,
+        action: &dyn Action,
+        tab_index: usize,
+        focus_handle: FocusHandle,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            icon,
+            action: action.boxed_clone(),
+            tab_index,
+            focus_handle,
+        }
+    }
+}
+
+impl RenderOnce for SectionButton {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let id = format!("onb-button-{}", self.label);
+        let action_ref: &dyn Action = &*self.action;
+
+        ButtonLike::new(id)
+            .tab_index(self.tab_index as isize)
+            .full_width()
+            .size(ButtonSize::Medium)
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Icon::new(self.icon)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
+                            .child(Label::new(self.label)),
+                    )
+                    .child(
+                        KeyBinding::for_action_in(action_ref, &self.focus_handle, cx)
+                            .size(rems_from_px(12.)),
+                    ),
+            )
+            .on_click(move |_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
+    }
+}
+
+struct SectionEntry {
+    icon: IconName,
+    title: &'static str,
+    action: &'static dyn Action,
+}
+
+impl SectionEntry {
+    fn render(&self, button_index: usize, focus: &FocusHandle, _cx: &App) -> impl IntoElement {
+        SectionButton::new(
+            self.title,
+            self.icon,
+            self.action,
+            button_index,
+            focus.clone(),
+        )
+    }
+}
+
 const CONTENT: (Section<4>, Section<3>) = (
     Section {
         title: "Get Started",
@@ -90,59 +196,13 @@ impl<const COLS: usize> Section<COLS> {
     fn render(self, index_offset: usize, focus: &FocusHandle, cx: &App) -> impl IntoElement {
         v_flex()
             .min_w_full()
-            .child(
-                h_flex()
-                    .px_1()
-                    .mb_2()
-                    .gap_2()
-                    .child(
-                        Label::new(self.title.to_ascii_uppercase())
-                            .buffer_font(cx)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    )
-                    .child(Divider::horizontal().color(DividerColor::BorderVariant)),
-            )
+            .child(SectionHeader::new(self.title))
             .children(
                 self.entries
                     .iter()
                     .enumerate()
                     .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
-    }
-}
-
-struct SectionEntry {
-    icon: IconName,
-    title: &'static str,
-    action: &'static dyn Action,
-}
-
-impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, cx: &App) -> impl IntoElement {
-        ButtonLike::new(("onboarding-button-id", button_index))
-            .tab_index(button_index as isize)
-            .full_width()
-            .size(ButtonSize::Medium)
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Icon::new(self.icon)
-                                    .color(Color::Muted)
-                                    .size(IconSize::XSmall),
-                            )
-                            .child(Label::new(self.title)),
-                    )
-                    .child(
-                        KeyBinding::for_action_in(self.action, focus, cx).size(rems_from_px(12.)),
-                    ),
-            )
-            .on_click(|_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
     }
 }
 
@@ -233,49 +293,18 @@ impl WelcomePage {
     fn render_recent_project_section(
         &self,
         recent_projects: Vec<impl IntoElement>,
-        cx: &Context<Self>,
     ) -> impl IntoElement {
         v_flex()
             .w_full()
-            .child(
-                h_flex()
-                    .px_1()
-                    .mb_2()
-                    .gap_2()
-                    .child(
-                        Label::new("RECENT PROJECTS")
-                            .buffer_font(cx)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    )
-                    .child(Divider::horizontal().color(DividerColor::BorderVariant)),
-            )
-            .child(
-                v_flex().children(recent_projects).child(
-                    ButtonLike::new("show-more")
-                        .full_width()
-                        .size(ButtonSize::Medium)
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_center()
-                                .child(Label::new("Show more...").color(Color::Muted)),
-                        )
-                        .on_click(|_, window, cx| {
-                            use zed_actions::OpenRecent;
-                            window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
-                        }),
-                ),
-            )
+            .child(SectionHeader::new("Recent Projects"))
+            .children(recent_projects)
     }
 
     fn render_recent_project(
         &self,
         index: usize,
-        workspace_id: WorkspaceId,
         location: &SerializedWorkspaceLocation,
         paths: &PathList,
-        cx: &Context<Self>,
     ) -> impl IntoElement {
         let (icon, title) = match location {
             SerializedWorkspaceLocation::Local => {
@@ -291,31 +320,13 @@ impl WelcomePage {
             }
         };
 
-        ButtonLike::new(("recent-project", i64::from(workspace_id) as u64))
-            .full_width()
-            .size(ButtonSize::Medium)
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
-                            .child(Label::new(title)),
-                    )
-                    .child(
-                        KeyBinding::for_action_in(
-                            &OpenRecentProject { index },
-                            &self.focus_handle,
-                            cx,
-                        )
-                        .size(rems_from_px(12.)),
-                    ),
-            )
-            .on_click(move |_, window, cx| {
-                window.dispatch_action(OpenRecentProject { index }.boxed_clone(), cx);
-            })
+        SectionButton::new(
+            title,
+            icon,
+            &OpenRecentProject { index },
+            10,
+            self.focus_handle.clone(),
+        )
     }
 }
 
@@ -332,49 +343,51 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (id, loc, paths))| self.render_recent_project(index, *id, loc, paths, cx))
+            .map(|(index, (_, loc, paths))| self.render_recent_project(index, loc, paths))
             .collect::<Vec<_>>();
 
-        let second_section_element =
-            if self.fallback_to_recent_projects && !recent_projects.is_empty() {
-                self.render_recent_project_section(recent_projects, cx)
-                    .into_any_element()
-            } else {
-                second_section
-                    .render(first_section_entries, &self.focus_handle, cx)
-                    .into_any_element()
-            };
+        let second_section = if self.fallback_to_recent_projects && !recent_projects.is_empty() {
+            self.render_recent_project_section(recent_projects)
+                .into_any_element()
+        } else {
+            second_section
+                .render(first_section_entries, &self.focus_handle, cx)
+                .into_any_element()
+        };
 
         h_flex()
-            .size_full()
-            .justify_center()
-            .overflow_hidden()
-            .bg(cx.theme().colors().editor_background)
             .key_context("Welcome")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::open_recent_project))
+            .size_full()
+            .justify_center()
+            .overflow_hidden()
+            .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
+                    .relative()
+                    .size_full()
                     .px_12()
                     .py_40()
-                    .size_full()
-                    .relative()
                     .max_w(px(1100.))
                     .child(
-                        div()
+                        v_flex()
                             .size_full()
                             .max_w_128()
                             .mx_auto()
+                            .gap_6()
+                            .overflow_x_hidden()
                             .child(
                                 h_flex()
                                     .w_full()
                                     .justify_center()
+                                    .mb_4()
                                     .gap_4()
-                                    .child(Vector::square(VectorName::ZedLogo, rems(2.)))
+                                    .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
                                     .child(
-                                        div().child(Headline::new("Welcome to Zed")).child(
+                                        v_flex().child(Headline::new("Welcome to Zed")).child(
                                             Label::new("The editor for what's next")
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted)
@@ -382,44 +395,33 @@ impl Render for WelcomePage {
                                         ),
                                     ),
                             )
-                            .child(
-                                v_flex()
-                                    .mt_10()
-                                    .gap_6()
-                                    .child(first_section.render(
-                                        Default::default(),
-                                        &self.focus_handle,
-                                        cx,
-                                    ))
-                                    .child(second_section_element)
-                                    .when(!self.fallback_to_recent_projects, |this| {
-                                        this.child(
-                                            h_flex()
-                                                .w_full()
-                                                .pt_4()
-                                                .justify_center()
-                                                // We call this a hack
-                                                .rounded_b_xs()
-                                                .border_t_1()
-                                                .border_color(
-                                                    cx.theme().colors().border.opacity(0.6),
-                                                )
-                                                .border_dashed()
-                                                .child(
-                                                    Button::new("welcome-exit", "Return to Setup")
-                                                        .tab_index(last_index as isize)
-                                                        .full_width()
-                                                        .label_size(LabelSize::XSmall)
-                                                        .on_click(|_, window, cx| {
-                                                            window.dispatch_action(
-                                                                OpenOnboarding.boxed_clone(),
-                                                                cx,
-                                                            );
-                                                        }),
-                                                ),
-                                        )
-                                    }),
-                            ),
+                            .child(first_section.render(Default::default(), &self.focus_handle, cx))
+                            .child(second_section)
+                            .when(!self.fallback_to_recent_projects, |this| {
+                                this.child(
+                                    h_flex()
+                                        .w_full()
+                                        .pt_4()
+                                        .justify_center()
+                                        // We call this a hack
+                                        .rounded_b_xs()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border.opacity(0.6))
+                                        // .border_dashed()
+                                        .child(
+                                            Button::new("welcome-exit", "Return to Setup")
+                                                .tab_index(last_index as isize)
+                                                .full_width()
+                                                .label_size(LabelSize::XSmall)
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        OpenOnboarding.boxed_clone(),
+                                                        cx,
+                                                    );
+                                                }),
+                                        ),
+                                )
+                            }),
                     ),
             )
     }
