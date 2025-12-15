@@ -22243,32 +22243,28 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
 
     cx.set_state("ˇnew\nsecond\nthird\n");
     cx.set_head_text("old\nsecond\nthird\n");
-    executor.run_until_parked();
-
-    let hunk_range = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
-            .collect::<Vec<_>>();
-        assert_eq!(hunks.len(), 1);
-
-        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
-        Anchor::range_in_buffer(excerpt_id, hunks[0].buffer_range.clone())
-    });
-
     cx.update_editor(|editor, window, cx| {
         editor.scroll(gpui::Point { x: 0., y: 0. }, None, window, cx);
     });
     executor.run_until_parked();
-    assert_eq!(cx.update_editor(|editor, _, cx| editor.scroll_position(cx)).y, 0.0);
+    assert_eq!(cx.update_editor(|e, _, cx| e.scroll_position(cx)).y, 0.0);
 
-    cx.update_editor(|editor, _, cx| editor.toggle_single_diff_hunk(hunk_range, cx));
+    // Expanding a diff hunk at the first line inserts deleted lines above the first buffer line.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .collect::<Vec<_>>();
+        assert_eq!(hunks.len(), 1);
+        let hunk_range = Anchor::range_in_buffer(excerpt_id, hunks[0].buffer_range.clone());
+        editor.toggle_single_diff_hunk(hunk_range, cx)
+    });
     executor.run_until_parked();
     cx.assert_state_with_diff("- old\n+ ˇnew\n  second\n  third\n".to_string());
 
-    // Expanding a diff hunk at the first line inserts deleted lines above the first buffer line.
     // Keep the editor scrolled to the top so the full hunk remains visible.
-    assert_eq!(cx.update_editor(|editor, _, cx| editor.scroll_position(cx)).y, 0.0);
+    assert_eq!(cx.update_editor(|e, _, cx| e.scroll_position(cx)).y, 0.0);
 }
 
 #[gpui::test]
