@@ -48,11 +48,11 @@ use gpui::{
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -1031,6 +1031,28 @@ impl EditorElement {
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
             editor.selection_drag_state = SelectionDragState::None;
 
+            cx.stop_propagation();
+        }
+    }
+
+    fn pressure_click(
+        editor: &mut Editor,
+        event: &MousePressureEvent,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let text_hitbox = &position_map.text_hitbox;
+        let force_click_possible =
+            matches!(editor.prev_pressure_stage, Some(PressureStage::Normal))
+                && event.stage == PressureStage::Force;
+
+        editor.prev_pressure_stage = Some(event.stage);
+
+        if force_click_possible && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(event.position);
+            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
             cx.stop_propagation();
         }
     }
@@ -7766,6 +7788,19 @@ impl EditorElement {
                         Self::click(editor, &event, &position_map, window, cx);
                     }
                 }),
+            }
+        });
+
+        window.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+
+            move |event: &MousePressureEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    editor.update(cx, |editor, cx| {
+                        Self::pressure_click(editor, &event, &position_map, window, cx);
+                    })
+                }
             }
         });
 
