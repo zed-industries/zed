@@ -1,7 +1,7 @@
 use crate::Editor;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use futures::StreamExt;
+
 use git::{
     GitHostingProviderRegistry, GitRemote, Oid,
     blame::{Blame, BlameEntry, ParsedCommitMessage},
