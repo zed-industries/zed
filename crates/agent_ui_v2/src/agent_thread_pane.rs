@@ -193,7 +193,7 @@ impl AgentThreadPane {
             .flex_none()
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(pane_toggle_button(workspace.clone()))
+            .child(pane_toggle_button(workspace))
             .child(
                 h_flex()
                     .size_full()
@@ -206,7 +206,7 @@ impl AgentThreadPane {
                             this.justify_between()
                         }
                     })
-                    .child(Label::new(title.clone()).truncate())
+                    .child(Label::new(title).truncate())
                     .child(
                         IconButton::new("close_btn", IconName::Close)
                             .icon_size(IconSize::Small)
