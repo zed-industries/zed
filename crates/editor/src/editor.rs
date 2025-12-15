@@ -4343,21 +4343,19 @@ impl Editor {
                                 && bracket_pair.start.len() == 1
                             {
                                 let target = bracket_pair.start.chars().next().unwrap();
+                                let mut byte_offset = 0u32;
                                 let current_line_count = snapshot
                                     .reversed_chars_at(selection.start)
                                     .take_while(|&c| c != '\n')
-                                    .enumerate()
-                                    .filter(|(offset, c)| {
+                                    .filter(|c| {
+                                        byte_offset += c.len_utf8() as u32;
                                         if *c != target {
                                             return false;
                                         }
 
                                         let point = Point::new(
                                             selection.start.row,
-                                            selection
-                                                .start
-                                                .column
-                                                .saturating_sub(*offset as u32 + 1),
+                                            selection.start.column.saturating_sub(byte_offset),
                                         );
 
                                         let is_enabled = snapshot
