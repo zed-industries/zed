@@ -1961,6 +1961,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
@@ -2069,6 +2070,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
         ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
