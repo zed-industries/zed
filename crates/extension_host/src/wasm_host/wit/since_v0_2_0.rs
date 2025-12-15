@@ -6,7 +6,7 @@ use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-use super::latest;
+use super::{latest, since_v0_6_0};
 
 pub const MIN_VERSION: Version = Version::new(0, 2, 0);
 
@@ -18,7 +18,7 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/github": since_v0_6_0::zed::extension::github,
          "zed:extension/http-client": latest::zed::extension::http_client,
          "zed:extension/lsp": latest::zed::extension::lsp,
          "zed:extension/nodejs": latest::zed::extension::nodejs,
