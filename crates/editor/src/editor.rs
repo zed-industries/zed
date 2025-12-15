@@ -11401,21 +11401,6 @@ impl Editor {
         }
     }
 
-    fn get_selections_left_point(&self, cx: &mut App) -> Vec<Point> {
-        let display_snapshot = self.display_snapshot(cx);
-        let selections = self.selections.all_adjusted(&display_snapshot);
-        selections
-            .iter()
-            .map(|selection| {
-                if selection.reversed {
-                    selection.head()
-                } else {
-                    selection.tail()
-                }
-            })
-            .collect()
-    }
-
     pub fn align_selections(
         &mut self,
         _: &crate::actions::AlignSelections,
@@ -11424,10 +11409,21 @@ impl Editor {
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let initial_cursors = self.get_selections_left_point(cx);
+        let display_snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all_adjusted(&display_snapshot);
+        let initial_cursors: Vec<Point> = selections
+            .iter()
+            .map(|selection| {
+                if selection.reversed {
+                    selection.head()
+                } else {
+                    selection.tail()
+                }
+            })
+            .collect();
 
-        // Group cursors by row and track row information
-        let mut rows: Vec<(u32, usize)> = Vec::new(); // (row_number, cursor_count)
+        // Group cursors by row: (row_number, cursor_count, mut column_offset)
+        let mut rows = Vec::new();
         let mut current_row = None;
         let mut current_row_count = 0;
         for cursor in &initial_cursors {
@@ -11438,7 +11434,7 @@ impl Editor {
                 _ => {
                     // Save previous row if any
                     if let Some(row) = current_row {
-                        rows.push((row, current_row_count));
+                        rows.push((row, current_row_count, 0));
                     }
                     // Start new row
                     current_row = Some(cursor.row);
@@ -11446,52 +11442,60 @@ impl Editor {
                 }
             }
         }
+        // Save the last row
         if let Some(row) = current_row {
-            rows.push((row, current_row_count));
+            rows.push((row, current_row_count, 0));
         }
 
-        // For every column of alignments
-        let max_columns = rows.iter().map(|(_, count)| *count).max().unwrap_or(0);
+        let max_columns = rows.iter().map(|(_, count, _)| *count).max().unwrap_or(0);
         for column_idx in 0..max_columns {
-            let cursor_positions = self.get_selections_left_point(cx);
-
             let mut target_column = 0;
             let mut cursor_index = 0;
 
-            // Calculate target_column
-            for (row_num, cursor_count) in &rows {
+            // Calculate target_column => position that the selections will go
+            for (row_num, cursor_count, column_offset) in &rows {
+                // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
                     cursor_index += cursor_count;
-                    // Skip rows that don't have this column
                     continue;
                 }
 
-                let cursor = &cursor_positions[cursor_index + column_idx];
+                let cursor = &initial_cursors[cursor_index + column_idx];
                 if cursor.row == *row_num {
-                    if cursor.column > target_column {
-                        target_column = cursor.column;
+                    let adjusted_column = cursor.column + column_offset;
+                    if adjusted_column > target_column {
+                        target_column = adjusted_column;
                     }
                 }
                 cursor_index += cursor_count;
             }
 
-            // Gather edits for this column
+            // Collect edits for this column
             let mut edits = Vec::new();
             cursor_index = 0;
-            for (row_num, cursor_count) in &rows {
+            for (row_num, cursor_count, column_offset) in &mut rows {
+                // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
-                    cursor_index += cursor_count;
+                    cursor_index += *cursor_count;
                     continue;
                 }
 
-                let cursor = &cursor_positions[cursor_index + column_idx];
+                let cursor = &initial_cursors[cursor_index + column_idx];
                 if cursor.row == *row_num {
-                    let spaces_needed = target_column - cursor.column;
+                    let spaces_needed = target_column - cursor.column - *column_offset;
                     if spaces_needed > 0 {
-                        edits.push((*cursor..*cursor, " ".repeat(spaces_needed as usize)));
+                        let insertion_point = Point {
+                            row: cursor.row,
+                            column: cursor.column + *column_offset,
+                        };
+                        edits.push((
+                            insertion_point..insertion_point,
+                            " ".repeat(spaces_needed as usize),
+                        ));
                     }
+                    *column_offset += spaces_needed;
                 }
-                cursor_index += cursor_count;
+                cursor_index += *cursor_count;
             }
 
             // Apply edits for this column
