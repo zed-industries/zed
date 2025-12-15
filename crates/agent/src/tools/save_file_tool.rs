@@ -81,7 +81,7 @@ impl AgentTool for SaveFileTool {
         cx.spawn(async move |cx| {
             let buffer = open_buffer.await?;
 
-            let is_dirty = buffer.read_with(&cx, |buffer, _| buffer.is_dirty())?;
+            let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty())?;
 
             if !is_dirty {
                 return Ok(format!(
@@ -91,7 +91,7 @@ impl AgentTool for SaveFileTool {
             }
 
             project
-                .update(&cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await?;
 
             Ok(format!("Saved {}.", input.path.display()))

@@ -346,23 +346,7 @@ impl AgentTool for EditFileTool {
                    diff.update(&mut cx, |diff, cx| diff.finalize(cx)).ok();
                }
             });
-            let save_on_cancel = util::defer({
-                let buffer = buffer.clone();
-                let project = project.clone();
-                let mut cx = cx.clone();
-                move || {
-                    let is_dirty = buffer
-                        .read_with(&cx, |buffer, _| buffer.is_dirty())
-                        .unwrap_or(false);
-                    if is_dirty {
-                        if let Ok(task) = project.update(&mut cx, |project, cx| {
-                            project.save_buffer(buffer, cx)
-                        }) {
-                            task.detach();
-                        }
-                    }
-                }
-            });
+
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -455,7 +439,6 @@ impl AgentTool for EditFileTool {
                 format_task.await.log_err();
             }
 
-            save_on_cancel.abort();
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
@@ -1803,102 +1786,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_on_cancel(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "test.txt": "original content"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model.clone()),
-                cx,
-            )
-        });
-        let languages = project.read_with(cx, |project, _| project.languages().clone());
-        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
-
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
-        let edit_tool = Arc::new(EditFileTool::new(
-            project.clone(),
-            thread.downgrade(),
-            languages,
-            Templates::new(),
-        ));
-
-        // Read the file first to record the read time
-        cx.update(|cx| {
-            read_tool.clone().run(
-                crate::ReadFileToolInput {
-                    path: "root/test.txt".to_string(),
-                    start_line: None,
-                    end_line: None,
-                },
-                ToolCallEventStream::test().0,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-        // Start an edit task
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let edit_task = cx.update(|cx| {
-            edit_tool.clone().run(
-                EditFileToolInput {
-                    display_description: "Edit file".into(),
-                    path: "root/test.txt".into(),
-                    mode: EditFileMode::Edit,
-                },
-                stream_tx,
-                cx,
-            )
-        });
-
-        // Wait for the diff to be created (tool has opened buffer and is ready)
-        stream_rx.expect_update_fields().await;
-        let _diff = stream_rx.expect_diff().await;
-
-        // Run until parked to ensure the LLM request has been started
-        cx.executor().run_until_parked();
-
-        // Send an edit chunk and let it be processed
-        model.send_last_completion_stream_text_chunk(
-            "<old_text>original content</old_text><new_text>modified content</new_text>"
-                .to_string(),
-        );
-        cx.executor().run_until_parked();
-
-        // Drop the task to simulate cancellation (before the model stream ends)
-        drop(edit_task);
-        cx.executor().run_until_parked();
-
-        // Verify the file was saved to disk with the modified content
-        let file_content = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
-        assert_eq!(
-            file_content, "modified content",
-            "File should be saved on cancel with the streamed content"
-        );
-    }
-
-    #[gpui::test]
     async fn test_file_read_times_tracking(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2315,7 +2202,7 @@ mod tests {
         assert!(result.is_err(), "Edit should fail when buffer is dirty");
         let error_msg = result.unwrap_err().to_string();
         assert!(
-            error_msg.contains("cannot be written to because it has unsaved changes"),
+            error_msg.contains("This file has unsaved changes."),
             "Error should mention unsaved changes, got: {}",
             error_msg
         );
