@@ -194,7 +194,7 @@ impl SplittableEditor {
         });
         let primary_pane = self.panes.first_pane();
         self.panes
-            .split(&primary_pane, &secondary_pane, SplitDirection::Left)
+            .split(&primary_pane, &secondary_pane, SplitDirection::Left, cx)
             .unwrap();
         cx.notify();
     }
@@ -203,7 +203,7 @@ impl SplittableEditor {
         let Some(secondary) = self.secondary.take() else {
             return;
         };
-        self.panes.remove(&secondary.pane).unwrap();
+        self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, _| {
                 buffer.set_filter_mode(None);
