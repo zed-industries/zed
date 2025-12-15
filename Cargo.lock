@@ -3043,6 +3043,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "util",
+ "walkdir",
  "windows 0.61.3",
 ]
 
@@ -7117,6 +7118,7 @@ dependencies = [
  "multi_buffer",
  "notifications",
  "panel",
+ "pathdiff",
  "picker",
  "pretty_assertions",
  "project",
