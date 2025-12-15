@@ -5,9 +5,13 @@ use edit_prediction::{
 };
 use extension_host::ExtensionStore;
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Entity, ScrollHandle, prelude::*};
+use gpui::{AnyView, Entity, ScrollHandle, Subscription, prelude::*};
+use language_model::{
+    ConfigurationViewTargetAgent, LanguageModelProviderId, LanguageModelRegistry,
+};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
-use ui::{ButtonLink, ConfiguredApiCard, WithScrollbar, prelude::*};
+use std::collections::HashMap;
+use ui::{ButtonLink, ConfiguredApiCard, Icon, WithScrollbar, prelude::*};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -17,14 +21,85 @@ use crate::{
 pub struct EditPredictionSetupPage {
     settings_window: Entity<SettingsWindow>,
     scroll_handle: ScrollHandle,
+    extension_oauth_views: HashMap<LanguageModelProviderId, ExtensionOAuthProviderView>,
+    _registry_subscription: Subscription,
+}
+
+struct ExtensionOAuthProviderView {
+    provider_name: SharedString,
+    provider_icon: IconName,
+    provider_icon_path: Option<SharedString>,
+    configuration_view: AnyView,
 }
 
 impl EditPredictionSetupPage {
-    pub fn new(settings_window: Entity<SettingsWindow>) -> Self {
-        Self {
+    pub fn new(
+        settings_window: Entity<SettingsWindow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let registry_subscription = cx.subscribe_in(
+            &LanguageModelRegistry::global(cx),
+            window,
+            |this, _, event: &language_model::Event, window, cx| match event {
+                language_model::Event::AddedProvider(provider_id) => {
+                    this.maybe_add_extension_oauth_view(provider_id, window, cx);
+                }
+                language_model::Event::RemovedProvider(provider_id) => {
+                    this.extension_oauth_views.remove(provider_id);
+                }
+                _ => {}
+            },
+        );
+
+        let mut this = Self {
             settings_window,
             scroll_handle: ScrollHandle::new(),
+            extension_oauth_views: HashMap::default(),
+            _registry_subscription: registry_subscription,
+        };
+        this.build_extension_oauth_views(window, cx);
+        this
+    }
+
+    fn build_extension_oauth_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let oauth_provider_ids = get_extension_oauth_provider_ids(cx);
+        for provider_id in oauth_provider_ids {
+            self.maybe_add_extension_oauth_view(&provider_id, window, cx);
         }
+    }
+
+    fn maybe_add_extension_oauth_view(
+        &mut self,
+        provider_id: &LanguageModelProviderId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Check if this provider has OAuth configured in the extension manifest
+        if !is_extension_oauth_provider(provider_id, cx) {
+            return;
+        }
+
+        let registry = LanguageModelRegistry::global(cx).read(cx);
+        let Some(provider) = registry.provider(provider_id) else {
+            return;
+        };
+
+        let provider_name = provider.name().0.clone();
+        let provider_icon = provider.icon();
+        let provider_icon_path = provider.icon_path();
+        let configuration_view =
+            provider.configuration_view(ConfigurationViewTargetAgent::ZedAgent, window, cx);
+
+        self.extension_oauth_views.insert(
+            provider_id.clone(),
+            ExtensionOAuthProviderView {
+                provider_name,
+                provider_icon,
+                provider_icon_path,
+                configuration_view,
+            },
+        );
     }
 }
 
@@ -37,10 +112,43 @@ impl Render for EditPredictionSetupPage {
             .installed_extensions()
             .contains_key("copilot-chat");
 
-        let providers = [
-            (!copilot_extension_installed)
-                .then(|| render_github_copilot_provider(window, cx).into_any_element()),
-            cx.has_flag::<Zeta2FeatureFlag>().then(|| {
+        let mut providers: Vec<AnyElement> = Vec::new();
+
+        // Built-in Copilot (hidden if copilot-chat extension is installed)
+        if !copilot_extension_installed {
+            providers.push(render_github_copilot_provider(window, cx).into_any_element());
+        }
+
+        // Extension providers with OAuth support
+        for (provider_id, view) in &self.extension_oauth_views {
+            let icon_element: AnyElement = if let Some(icon_path) = &view.provider_icon_path {
+                Icon::from_external_svg(icon_path.clone())
+                    .size(ui::IconSize::Medium)
+                    .into_any_element()
+            } else {
+                Icon::new(view.provider_icon)
+                    .size(ui::IconSize::Medium)
+                    .into_any_element()
+            };
+
+            providers.push(
+                v_flex()
+                    .id(SharedString::from(provider_id.0.to_string()))
+                    .min_w_0()
+                    .gap_1p5()
+                    .child(
+                        h_flex().gap_2().items_center().child(icon_element).child(
+                            Headline::new(view.provider_name.clone()).size(HeadlineSize::Small),
+                        ),
+                    )
+                    .child(view.configuration_view.clone())
+                    .into_any_element(),
+            );
+        }
+
+        // Mercury (feature flagged)
+        if cx.has_flag::<Zeta2FeatureFlag>() {
+            providers.push(
                 render_api_key_provider(
                     IconName::Inception,
                     "Mercury",
@@ -51,9 +159,13 @@ impl Render for EditPredictionSetupPage {
                     window,
                     cx,
                 )
-                .into_any_element()
-            }),
-            cx.has_flag::<Zeta2FeatureFlag>().then(|| {
+                .into_any_element(),
+            );
+        }
+
+        // Sweep (feature flagged)
+        if cx.has_flag::<Zeta2FeatureFlag>() {
+            providers.push(
                 render_api_key_provider(
                     IconName::SweepAi,
                     "Sweep",
@@ -64,32 +176,34 @@ impl Render for EditPredictionSetupPage {
                     window,
                     cx,
                 )
-                .into_any_element()
-            }),
-            Some(
-                render_api_key_provider(
-                    IconName::AiMistral,
-                    "Codestral",
-                    "https://console.mistral.ai/codestral".into(),
-                    codestral_api_key(cx),
-                    |cx| language_models::MistralLanguageModelProvider::api_url(cx),
-                    Some(settings_window.update(cx, |settings_window, cx| {
-                        let codestral_settings = codestral_settings();
-                        settings_window
-                            .render_sub_page_items_section(
-                                codestral_settings.iter().enumerate(),
-                                None,
-                                window,
-                                cx,
-                            )
-                            .into_any_element()
-                    })),
-                    window,
-                    cx,
-                )
                 .into_any_element(),
-            ),
-        ];
+            );
+        }
+
+        // Codestral
+        providers.push(
+            render_api_key_provider(
+                IconName::AiMistral,
+                "Codestral",
+                "https://console.mistral.ai/codestral".into(),
+                codestral_api_key(cx),
+                |cx| language_models::MistralLanguageModelProvider::api_url(cx),
+                Some(settings_window.update(cx, |settings_window, cx| {
+                    let codestral_settings = codestral_settings();
+                    settings_window
+                        .render_sub_page_items_section(
+                            codestral_settings.iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
+                })),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        );
 
         div()
             .size_full()
@@ -103,9 +217,58 @@ impl Render for EditPredictionSetupPage {
                     .pb_16()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .children(providers.into_iter().flatten()),
+                    .children(providers),
             )
     }
+}
+
+/// Get extension provider IDs that have OAuth configured.
+fn get_extension_oauth_provider_ids(cx: &App) -> Vec<LanguageModelProviderId> {
+    let extension_store = ExtensionStore::global(cx).read(cx);
+
+    extension_store
+        .installed_extensions()
+        .iter()
+        .flat_map(|(extension_id, entry)| {
+            entry.manifest.language_model_providers.iter().filter_map(
+                move |(provider_id, provider_entry)| {
+                    // Check if this provider has OAuth configured
+                    let has_oauth = provider_entry
+                        .auth
+                        .as_ref()
+                        .is_some_and(|auth| auth.oauth.is_some());
+
+                    if has_oauth {
+                        Some(LanguageModelProviderId(
+                            format!("{}:{}", extension_id, provider_id).into(),
+                        ))
+                    } else {
+                        None
+                    }
+                },
+            )
+        })
+        .collect()
+}
+
+/// Check if a provider ID corresponds to an extension with OAuth configured.
+fn is_extension_oauth_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
+    // Extension provider IDs are in the format "extension_id:provider_id"
+    let Some((extension_id, local_provider_id)) = provider_id.0.split_once(':') else {
+        return false;
+    };
+
+    let extension_store = ExtensionStore::global(cx).read(cx);
+    let Some(entry) = extension_store.installed_extensions().get(extension_id) else {
+        return false;
+    };
+
+    entry
+        .manifest
+        .language_model_providers
+        .get(local_provider_id)
+        .and_then(|p| p.auth.as_ref())
+        .is_some_and(|auth| auth.oauth.is_some())
 }
 
 fn render_api_key_provider(

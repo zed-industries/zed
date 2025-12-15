@@ -34,7 +34,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{Label, LabelSize, prelude::*};
+use ui::{ConfiguredApiCard, Label, LabelSize, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::oauth_device_flow_modal::{
@@ -658,17 +658,25 @@ impl ExtensionProviderConfigurationView {
         let icon_path = self.icon_path.clone();
         let this_handle = cx.weak_entity();
 
-        // Get workspace to show modal
-        let Some(workspace) = window.root::<Workspace>().flatten() else {
+        // Get workspace window handle to show modal - try current window first, then find any workspace window
+        log::info!("OAuth: Looking for workspace window");
+        let workspace_window = window.window_handle().downcast::<Workspace>().or_else(|| {
+            log::info!("OAuth: Current window is not a workspace, searching other windows");
+            cx.windows()
+                .into_iter()
+                .find_map(|window_handle| window_handle.downcast::<Workspace>())
+        });
+
+        let Some(workspace_window) = workspace_window else {
+            log::error!("OAuth: Could not find any workspace window");
             self.oauth_in_progress = false;
             self.oauth_error = Some("Could not access workspace to show sign-in modal".to_string());
             cx.notify();
             return;
         };
-
-        let workspace = workspace.downgrade();
+        log::info!("OAuth: Found workspace window");
         let state = state.downgrade();
-        cx.spawn_in(window, async move |_this, cx| {
+        cx.spawn(async move |_this, cx| {
             // Step 1: Start device flow - get prompt info from extension
             let start_result = extension
                 .call({
@@ -683,12 +691,22 @@ impl ExtensionProviderConfigurationView {
                 })
                 .await;
 
+            log::info!(
+                "OAuth: Device flow start result: {:?}",
+                start_result.is_ok()
+            );
             let prompt_info: LlmDeviceFlowPromptInfo = match start_result {
-                Ok(Ok(Ok(info))) => info,
+                Ok(Ok(Ok(info))) => {
+                    log::info!(
+                        "OAuth: Got device flow prompt info, user_code: {}",
+                        info.user_code
+                    );
+                    info
+                }
                 Ok(Ok(Err(e))) => {
-                    log::error!("Device flow start failed: {}", e);
+                    log::error!("OAuth: Device flow start failed: {}", e);
                     this_handle
-                        .update_in(cx, |this, _window, cx| {
+                        .update(cx, |this, cx| {
                             this.oauth_in_progress = false;
                             this.oauth_error = Some(e);
                             cx.notify();
@@ -697,9 +715,9 @@ impl ExtensionProviderConfigurationView {
                     return;
                 }
                 Ok(Err(e)) | Err(e) => {
-                    log::error!("Device flow start error: {}", e);
+                    log::error!("OAuth: Device flow start error: {}", e);
                     this_handle
-                        .update_in(cx, |this, _window, cx| {
+                        .update(cx, |this, cx| {
                             this.oauth_in_progress = false;
                             this.oauth_error = Some(e.to_string());
                             cx.notify();
@@ -721,20 +739,31 @@ impl ExtensionProviderConfigurationView {
                 icon_path,
             };
 
-            let flow_state: Option<Entity<OAuthDeviceFlowState>> = workspace
-                .update_in(cx, |workspace, window, cx| {
+            log::info!("OAuth: Attempting to show modal in workspace window");
+            let flow_state: Option<Entity<OAuthDeviceFlowState>> = workspace_window
+                .update(cx, |workspace, window, cx| {
+                    log::info!("OAuth: Inside workspace.update, creating modal");
+                    window.activate_window();
                     let flow_state = cx.new(|_cx| OAuthDeviceFlowState::new(modal_config));
                     let flow_state_clone = flow_state.clone();
                     workspace.toggle_modal(window, cx, |_window, cx| {
+                        log::info!("OAuth: Inside toggle_modal callback");
                         OAuthDeviceFlowModal::new(flow_state_clone, cx)
                     });
                     flow_state
                 })
                 .ok();
 
+            log::info!(
+                "OAuth: workspace_window.update result: {:?}",
+                flow_state.is_some()
+            );
             let Some(flow_state) = flow_state else {
+                log::error!(
+                    "OAuth: Failed to show sign-in modal - workspace_window.update returned None"
+                );
                 this_handle
-                    .update_in(cx, |this, _window, cx| {
+                    .update(cx, |this, cx| {
                         this.oauth_in_progress = false;
                         this.oauth_error = Some("Failed to show sign-in modal".to_string());
                         cx.notify();
@@ -742,6 +771,7 @@ impl ExtensionProviderConfigurationView {
                     .log_err();
                 return;
             };
+            log::info!("OAuth: Modal shown successfully, starting poll");
 
             // Step 3: Poll for authentication completion
             let poll_result = extension
@@ -778,7 +808,7 @@ impl ExtensionProviderConfigurationView {
                     };
 
                     state
-                        .update_in(cx, |state, _window, cx| {
+                        .update(cx, |state, cx| {
                             state.is_authenticated = true;
                             state.available_models = new_models;
                             cx.notify();
@@ -787,7 +817,7 @@ impl ExtensionProviderConfigurationView {
 
                     // Update flow state to show success
                     flow_state
-                        .update_in(cx, |state, _window, cx| {
+                        .update(cx, |state, cx| {
                             state.set_status(OAuthDeviceFlowStatus::Authorized, cx);
                         })
                         .log_err();
@@ -795,12 +825,12 @@ impl ExtensionProviderConfigurationView {
                 Ok(Ok(Err(e))) => {
                     log::error!("Device flow poll failed: {}", e);
                     flow_state
-                        .update_in(cx, |state, _window, cx| {
+                        .update(cx, |state, cx| {
                             state.set_status(OAuthDeviceFlowStatus::Failed(e.clone()), cx);
                         })
                         .log_err();
                     this_handle
-                        .update_in(cx, |this, _window, cx| {
+                        .update(cx, |this, cx| {
                             this.oauth_error = Some(e);
                             cx.notify();
                         })
@@ -810,7 +840,7 @@ impl ExtensionProviderConfigurationView {
                     log::error!("Device flow poll error: {}", e);
                     let error_string = e.to_string();
                     flow_state
-                        .update_in(cx, |state, _window, cx| {
+                        .update(cx, |state, cx| {
                             state.set_status(
                                 OAuthDeviceFlowStatus::Failed(error_string.clone()),
                                 cx,
@@ -818,7 +848,7 @@ impl ExtensionProviderConfigurationView {
                         })
                         .log_err();
                     this_handle
-                        .update_in(cx, |this, _window, cx| {
+                        .update(cx, |this, cx| {
                             this.oauth_error = Some(error_string);
                             cx.notify();
                         })
@@ -827,7 +857,7 @@ impl ExtensionProviderConfigurationView {
             };
 
             this_handle
-                .update_in(cx, |this, _window, cx| {
+                .update(cx, |this, cx| {
                     this.oauth_in_progress = false;
                     cx.notify();
                 })
@@ -958,46 +988,18 @@ impl gpui::Render for ExtensionProviderConfigurationView {
 
         // If authenticated, show success state with sign out option
         if is_authenticated && env_var_name_used.is_none() {
-            let reset_label = if has_oauth && !has_api_key {
-                "Sign Out"
+            let (status_label, button_label) = if has_oauth && !has_api_key {
+                ("Signed in", "Sign Out")
             } else {
-                "Reset Key"
-            };
-
-            let status_label = if has_oauth && !has_api_key {
-                "Signed in"
-            } else {
-                "API key configured"
+                ("API key configured", "Reset Key")
             };
 
             content = content.child(
-                h_flex()
-                    .mt_0p5()
-                    .p_1()
-                    .justify_between()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().background)
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(ui::Icon::new(ui::IconName::Check).color(Color::Success))
-                            .child(Label::new(status_label).truncate()),
-                    )
-                    .child(
-                        ui::Button::new("reset-key", reset_label)
-                            .label_size(LabelSize::Small)
-                            .icon(ui::IconName::Undo)
-                            .icon_size(ui::IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(ui::IconPosition::Start)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.reset_api_key(window, cx);
-                            })),
-                    ),
+                ConfiguredApiCard::new(status_label)
+                    .button_label(button_label)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.reset_api_key(window, cx);
+                    })),
             );
 
             return content.into_any_element();
