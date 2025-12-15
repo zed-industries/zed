@@ -164,7 +164,7 @@ fn sanitize_url_punctuation<T: EventListener>(
             // These may be part of a URL but not at the end. It's not that the spec
             // doesn't allow them, but they are frequently used in plain text as delimiters
             // where they're not meant to be part of the URL.
-            '?' | '!' | '.' | ',' | ':' | ';' | '*' => true,
+            '.' | ',' | ':' | ';' => true,
             '(' => true,
             ')' if close_parens > open_parens => {
                 close_parens -= 1;
