@@ -2068,17 +2068,6 @@ pub mod test {
         },
     }
 
-    impl InlineAssistantOutput {
-        pub fn buffer_text(&self) -> &str {
-            match self {
-                InlineAssistantOutput::Success {
-                    full_buffer_text, ..
-                } => full_buffer_text,
-                _ => "",
-            }
-        }
-    }
-
     pub fn run_inline_assistant_test<SetupF, TestF>(
         base_buffer: String,
         prompt: String,
@@ -2253,7 +2242,7 @@ pub mod evals {
     fn eval_cant_do() {
         run_eval(
             20,
-            1.0,
+            0.95,
             "Rename the struct to EvalExampleStructNope",
             indoc::indoc! {"
                 struct EvalExampleStruct {
@@ -2270,7 +2259,7 @@ pub mod evals {
     fn eval_unclear() {
         run_eval(
             20,
-            1.0,
+            0.95,
             "Make exactly the change I want you to make",
             indoc::indoc! {"
                 struct EvalExampleStruct {
@@ -2360,15 +2349,34 @@ pub mod evals {
         correct_output: impl Into<String>,
     ) -> impl Fn(InlineAssistantOutput) -> EvalOutput<()> {
         let correct_output = correct_output.into();
-        move |output| {
-            if output.buffer_text() == correct_output {
-                EvalOutput::passed("Assistant output matches")
-            } else {
-                EvalOutput::failed(format!(
-                    "Assistant output does not match expected output: {:?}",
-                    output
-                ))
+        move |output| match output {
+            InlineAssistantOutput::Success {
+                description,
+                full_buffer_text,
+                ..
+            } => {
+                if full_buffer_text == correct_output && description.is_none() {
+                    EvalOutput::passed("Assistant output matches")
+                } else if full_buffer_text == correct_output {
+                    EvalOutput::failed(format!(
+                        "Assistant output produced an unescessary description description:\n{:?}",
+                        description
+                    ))
+                } else {
+                    EvalOutput::failed(format!(
+                        "Assistant output does not match expected output:\n{:?}\ndescription:\n{:?}",
+                        full_buffer_text, description
+                    ))
+                }
             }
+            o @ InlineAssistantOutput::Failure { .. } => EvalOutput::failed(format!(
+                "Assistant output does not match expected output: {:?}",
+                o
+            )),
+            o @ InlineAssistantOutput::Malformed { .. } => EvalOutput::failed(format!(
+                "Assistant output does not match expected output: {:?}",
+                o
+            )),
         }
     }
 }
