@@ -4,7 +4,7 @@ use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
+
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
@@ -126,10 +126,6 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
-
-    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<Box<dyn UtilityPaneHandle>> {
-        None
-    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -154,7 +150,6 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn utility_pane(&self, window: &Window, cx: &App) -> Option<Box<dyn UtilityPaneHandle>>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -258,10 +253,6 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
-    }
-
-    fn utility_pane(&self, window: &Window, cx: &App) -> Option<Box<dyn UtilityPaneHandle>> {
-        self.read(cx).utility_pane(window, cx)
     }
 }
 
@@ -680,21 +671,6 @@ impl Dock {
         );
 
         self.restore_state(window, cx);
-
-        if cx.has_flag::<AgentV2FeatureFlag>() {
-            if let Some(handle) = panel.utility_pane(window, cx) {
-                let slot = utility_slot_for_dock_position(self.position);
-                let workspace = self.workspace.clone();
-                let panel_id = Entity::entity_id(&panel);
-                cx.defer(move |cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.register_utility_pane(slot, panel_id, handle, cx);
-                        });
-                    }
-                });
-            }
-        }
 
         if panel.read(cx).starts_open(window, cx) {
             self.activate_panel(index, window, cx);

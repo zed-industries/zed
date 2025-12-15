@@ -1,13 +1,16 @@
 use gpui::{
-    AppContext as _, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement, WeakEntity,
-    deferred, px,
+    AppContext as _, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement,
+    Subscription, WeakEntity, deferred, px,
 };
 use ui::{
     ActiveTheme as _, Context, FluentBuilder as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Styled as _, Window, div,
 };
 
-use crate::{DockPosition, Workspace, dock::UtilityPaneHandle};
+use crate::{
+    DockPosition, Workspace,
+    dock::{ClosePane, MinimizePane, UtilityPane, UtilityPaneHandle},
+};
 
 pub(crate) const UTILITY_PANE_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 pub(crate) const UTILITY_PANE_MIN_WIDTH: Pixels = px(20.0);
@@ -21,6 +24,7 @@ pub enum UtilityPaneSlot {
 struct UtilityPaneSlotState {
     panel_id: EntityId,
     utility_pane: Box<dyn UtilityPaneHandle>,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Default)]
@@ -76,25 +80,54 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
-    pub fn register_utility_pane(
+    pub fn register_utility_pane<T: UtilityPane>(
         &mut self,
         slot: UtilityPaneSlot,
-        panel: EntityId,
-        handle: Box<dyn UtilityPaneHandle>,
+        panel_id: EntityId,
+        handle: gpui::Entity<T>,
         cx: &mut Context<Self>,
     ) {
+        let minimize_subscription =
+            cx.subscribe(&handle, move |this, _, _event: &MinimizePane, cx| {
+                if let Some(handle) = this.utility_pane(slot) {
+                    handle.set_expanded(false, cx);
+                }
+                cx.notify();
+            });
+
+        let close_subscription = cx.subscribe(&handle, move |this, _, _event: &ClosePane, cx| {
+            this.clear_utility_pane(slot, cx);
+        });
+
+        let subscriptions = vec![minimize_subscription, close_subscription];
+        let boxed_handle: Box<dyn UtilityPaneHandle> = Box::new(handle);
+
         match slot {
             UtilityPaneSlot::Left => {
                 self.utility_panes.left_slot = Some(UtilityPaneSlotState {
-                    panel_id: panel,
-                    utility_pane: handle,
+                    panel_id,
+                    utility_pane: boxed_handle,
+                    _subscriptions: subscriptions,
                 });
             }
             UtilityPaneSlot::Right => {
                 self.utility_panes.right_slot = Some(UtilityPaneSlotState {
-                    panel_id: panel,
-                    utility_pane: handle,
+                    panel_id,
+                    utility_pane: boxed_handle,
+                    _subscriptions: subscriptions,
                 });
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn clear_utility_pane(&mut self, slot: UtilityPaneSlot, cx: &mut Context<Self>) {
+        match slot {
+            UtilityPaneSlot::Left => {
+                self.utility_panes.left_slot = None;
+            }
+            UtilityPaneSlot::Right => {
+                self.utility_panes.right_slot = None;
             }
         }
         cx.notify();
@@ -120,15 +153,7 @@ impl Workspace {
         };
 
         if should_clear {
-            match slot {
-                UtilityPaneSlot::Left => {
-                    self.utility_panes.left_slot = None;
-                }
-                UtilityPaneSlot::Right => {
-                    self.utility_panes.right_slot = None;
-                }
-            }
-            cx.notify();
+            self.clear_utility_pane(slot, cx);
         }
     }
 

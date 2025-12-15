@@ -1,4 +1,4 @@
-use agent::{HistoryEntry, HistoryStore, NativeAgentServer};
+use agent::{HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use agent_ui::acp::AcpThreadView;
@@ -9,6 +9,7 @@ use gpui::{
 use project::Project;
 use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
+use settings::DockSide;
 use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,15 +18,35 @@ use ui::{
     Label, LabelCommon as _, LabelSize, Render, Tab, Window, div,
 };
 use workspace::Workspace;
-use workspace::dock::{ClosePane, DockPosition, MinimizePane, UtilityPane, UtilityPanePosition};
+use workspace::dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition};
 use workspace::utility_pane::UtilityPaneSlot;
 
 pub const DEFAULT_UTILITY_PANE_WIDTH: Pixels = gpui::px(400.0);
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum SerializedHistoryEntryId {
+    AcpThread(String),
+    TextThread(String),
+}
+
+impl From<HistoryEntryId> for SerializedHistoryEntryId {
+    fn from(id: HistoryEntryId) -> Self {
+        match id {
+            HistoryEntryId::AcpThread(session_id) => {
+                SerializedHistoryEntryId::AcpThread(session_id.0.to_string())
+            }
+            HistoryEntryId::TextThread(path) => {
+                SerializedHistoryEntryId::TextThread(path.to_string_lossy().to_string())
+            }
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SerializedAgentThreadPane {
     pub expanded: bool,
     pub width: Option<Pixels>,
+    pub thread_id: Option<SerializedHistoryEntryId>,
 }
 
 pub enum AgentsUtilityPaneEvent {
@@ -38,6 +59,7 @@ impl EventEmitter<ClosePane> for AgentThreadPane {}
 
 struct ActiveThreadView {
     view: Entity<AcpThreadView>,
+    thread_id: HistoryEntryId,
     _notify: Subscription,
 }
 
@@ -61,15 +83,15 @@ impl AgentThreadPane {
         }
     }
 
-    pub fn load(&mut self, serialized_pane: SerializedAgentThreadPane, _cx: &mut Context<Self>) {
-        self.expanded = serialized_pane.expanded;
-        self.width = serialized_pane.width;
+    pub fn thread_id(&self) -> Option<HistoryEntryId> {
+        self.thread_view.as_ref().map(|tv| tv.thread_id.clone())
     }
 
     pub fn serialize(&self) -> SerializedAgentThreadPane {
         SerializedAgentThreadPane {
             expanded: self.expanded,
             width: self.width,
+            thread_id: self.thread_id().map(SerializedHistoryEntryId::from),
         }
     }
 
@@ -84,6 +106,8 @@ impl AgentThreadPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let thread_id = entry.id();
+
         let resume_thread = match &entry {
             HistoryEntry::AcpThread(thread) => Some(thread.clone()),
             HistoryEntry::TextThread(_) => None,
@@ -112,6 +136,7 @@ impl AgentThreadPane {
 
         self.thread_view = Some(ActiveThreadView {
             view: thread_view,
+            thread_id,
             _notify: notify,
         });
 
@@ -158,6 +183,19 @@ impl AgentThreadPane {
             )
         };
 
+        let make_close_button = |id: &'static str, cx: &mut Context<Self>| {
+            let on_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+                cx.emit(ClosePane);
+                this.thread_view = None;
+                cx.notify();
+            });
+            div().px(DynamicSpacing::Base06.rems(cx)).child(
+                IconButton::new(id, IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .on_click(on_click),
+            )
+        };
+
         let make_title_label = |title: SharedString, cx: &App| {
             div()
                 .px(DynamicSpacing::Base06.rems(cx))
@@ -174,9 +212,12 @@ impl AgentThreadPane {
             .when(slot == UtilityPaneSlot::Left, |this| {
                 this.child(make_toggle_button(workspace.clone(), cx))
                     .child(make_title_label(title.clone(), cx))
+                    .child(div().flex_grow())
+                    .child(make_close_button("close_utility_pane_left", cx))
             })
             .when(slot == UtilityPaneSlot::Right, |this| {
-                this.child(make_title_label(title.clone(), cx))
+                this.child(make_close_button("close_utility_pane_right", cx))
+                    .child(make_title_label(title.clone(), cx))
                     .child(div().flex_grow())
                     .child(make_toggle_button(workspace.clone(), cx))
             })
@@ -195,10 +236,9 @@ impl Focusable for AgentThreadPane {
 
 impl UtilityPane for AgentThreadPane {
     fn position(&self, _window: &Window, cx: &App) -> UtilityPanePosition {
-        let dock_position = AgentSettings::get_global(cx).dock.into();
-        match dock_position {
-            DockPosition::Left | DockPosition::Bottom => UtilityPanePosition::Left,
-            DockPosition::Right => UtilityPanePosition::Right,
+        match AgentSettings::get_global(cx).agents_panel_dock {
+            DockSide::Left => UtilityPanePosition::Left,
+            DockSide::Right => UtilityPanePosition::Right,
         }
     }
 

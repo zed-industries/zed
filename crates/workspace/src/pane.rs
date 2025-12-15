@@ -3187,7 +3187,7 @@ impl Pane {
                 if let Some(open_aside_left) = open_aside_left
                     && render_aside_toggle_left
                 {
-                    tab_bar.end_child(open_aside_left)
+                    tab_bar.start_child(open_aside_left)
                 } else {
                     tab_bar
                 }
