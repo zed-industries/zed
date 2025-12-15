@@ -13,7 +13,7 @@ use settings::DockSide;
 use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{Context, DynamicSpacing, Tab, Tooltip, prelude::*};
+use ui::{Tab, Tooltip, prelude::*};
 use workspace::{
     Workspace,
     dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition},
