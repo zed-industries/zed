@@ -41,7 +41,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 fn general_page() -> SettingsPage {
     SettingsPage {
         title: "General",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 files: PROJECT,
@@ -299,14 +299,14 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn appearance_page() -> SettingsPage {
     SettingsPage {
         title: "Appearance",
-        items: vec![
+        items: Box::new([
                 SettingsPageItem::SectionHeader("Theme"),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
@@ -1100,14 +1100,14 @@ fn appearance_page() -> SettingsPage {
                     metadata: None,
                     files: USER | PROJECT,
                 }),
-        ],
+        ]),
     }
 }
 
 fn keymap_page() -> SettingsPage {
     SettingsPage {
         title: "Keymap",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Keybindings"),
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Edit Keybindings".into(),
@@ -1173,7 +1173,7 @@ fn keymap_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
@@ -2238,7 +2238,7 @@ fn editor_page() -> SettingsPage {
                 }),
             ];
             items.extend(language_settings_data());
-            items
+            items.into_boxed_slice()
         },
     }
 }
@@ -2471,21 +2471,16 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     in_json: true,
                     files: USER | PROJECT,
                     render: Arc::new(|this, window, cx| {
-                        this.render_sub_page_items(
-                            language_settings_data()
-                                .iter()
-                                .chain(non_editor_language_settings_data().iter())
-                                .chain(edit_prediction_language_settings_section().iter())
-                                .enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
+                        let items: Vec<_> = language_settings_data()
+                            .chain(non_editor_language_settings_data())
+                            .chain(edit_prediction_language_settings_section())
+                            .collect();
+                        this.render_sub_page_items(items.iter().enumerate(), None, window, cx)
+                            .into_any_element()
                     }),
                 })
             }));
-            items
+            items.into_boxed_slice()
         },
     }
 }
@@ -2493,7 +2488,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 fn search_and_files_page() -> SettingsPage {
     SettingsPage {
         title: "Search & Files",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Whole Word",
@@ -2823,14 +2818,14 @@ fn search_and_files_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn window_and_layout_page() -> SettingsPage {
     SettingsPage {
         title: "Window & Layout",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Button",
@@ -3653,14 +3648,14 @@ fn window_and_layout_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn panels_page() -> SettingsPage {
     SettingsPage {
         title: "Panels",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Panel Dock",
@@ -4748,14 +4743,14 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn debugger_page() -> SettingsPage {
     SettingsPage {
         title: "Debugger",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Stepping Granularity",
@@ -4858,14 +4853,14 @@ fn debugger_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn terminal_page() -> SettingsPage {
     SettingsPage {
         title: "Terminal",
-        items: vec![
+        items: Box::new([
                 SettingsPageItem::SectionHeader("Environment"),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
@@ -5600,14 +5595,14 @@ fn terminal_page() -> SettingsPage {
                     metadata: None,
                     files: USER,
                 }),
-        ],
+        ]),
     }
 }
 
 fn version_control_page() -> SettingsPage {
     SettingsPage {
         title: "Version Control",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Git Integration"),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
@@ -5946,14 +5941,14 @@ fn version_control_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
 fn collaboration_page() -> SettingsPage {
     SettingsPage {
         title: "Collaboration",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Calls"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Mute On Join",
@@ -6076,7 +6071,7 @@ fn collaboration_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
@@ -6338,7 +6333,7 @@ fn ai_page() -> SettingsPage {
                         }),
                     ]
                 );
-            items
+            items.into_boxed_slice()
         },
     }
 }
@@ -6346,7 +6341,7 @@ fn ai_page() -> SettingsPage {
 fn network_page() -> SettingsPage {
     SettingsPage {
         title: "Network",
-        items: vec![
+        items: Box::new([
             SettingsPageItem::SectionHeader("Network"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Proxy",
@@ -6380,7 +6375,7 @@ fn network_page() -> SettingsPage {
                 })),
                 files: USER,
             }),
-        ],
+        ]),
     }
 }
 
@@ -6427,8 +6422,8 @@ fn language_settings_field_mut<T>(
     write(language_content, value);
 }
 
-fn language_settings_data() -> Vec<SettingsPageItem> {
-    let mut items = vec![
+fn language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
+    let indentation_section = [
         SettingsPageItem::SectionHeader("Indentation"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Size",
@@ -6504,6 +6499,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let wrapping_section = [
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Soft Wrap",
@@ -6603,6 +6601,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let indent_guides_section = [
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
@@ -6720,6 +6721,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let formatting_section = [
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Format On Save",
@@ -6844,6 +6848,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let autoclose_section = [
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Autoclose",
@@ -6922,6 +6929,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let whitespace_section = [
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Whitespaces",
@@ -6986,6 +6996,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let completions_section = [
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completions On Input",
@@ -7094,6 +7107,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER,
         }),
+    ];
+
+    let inlay_hints_section = [
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
@@ -7292,22 +7308,22 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
     ];
-    if current_language().is_none() {
-        items.push(SettingsPageItem::SettingItem(SettingItem {
-            title: "LSP Document Colors",
-            description: "How to render LSP color previews in the editor.",
-            field: Box::new(SettingField {
-                json_path: Some("lsp_document_colors"),
-                pick: |settings_content| settings_content.editor.lsp_document_colors.as_ref(),
-                write: |settings_content, value| {
-                    settings_content.editor.lsp_document_colors = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }))
-    }
-    items.extend([
+
+    let lsp_document_colors_item = SettingsPageItem::SettingItem(SettingItem {
+        title: "LSP Document Colors",
+        description: "How to render LSP color previews in the editor.",
+        field: Box::new(SettingField {
+            json_path: Some("lsp_document_colors"),
+            pick: |settings_content| settings_content.editor.lsp_document_colors.as_ref(),
+            write: |settings_content, value| {
+                settings_content.editor.lsp_document_colors = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    });
+
+    let tasks_section = [
         SettingsPageItem::SectionHeader("Tasks"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
@@ -7322,7 +7338,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.tasks.get_or_insert_default().enabled = value;
-
                     })
                 },
             }),
@@ -7343,7 +7358,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.tasks.get_or_insert_default().variables = value;
-
                         })
                     },
                 }
@@ -7365,13 +7379,15 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.tasks.get_or_insert_default().prefer_lsp = value;
-
                     })
                 },
             }),
             metadata: None,
             files: USER | PROJECT,
         }),
+    ];
+
+    let miscellaneous_section = [
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Word Diff Enabled",
@@ -7399,12 +7415,13 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 SettingField {
                     json_path: Some("languages.$(language).debuggers"),
                     pick: |settings_content| {
-                        language_settings_field(settings_content, |language| language.debuggers.as_ref())
+                        language_settings_field(settings_content, |language| {
+                            language.debuggers.as_ref()
+                        })
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.debuggers = value;
-
                         })
                     },
                 }
@@ -7419,7 +7436,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).editor.middle_click_paste"),
                 pick: |settings_content| settings_content.editor.middle_click_paste.as_ref(),
-                write: |settings_content, value| {settings_content.editor.middle_click_paste = value;},
+                write: |settings_content, value| {
+                    settings_content.editor.middle_click_paste = value;
+                },
             }),
             metadata: None,
             files: USER,
@@ -7437,7 +7456,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.extend_comment_on_newline = value;
-
                     })
                 },
             }),
@@ -7463,67 +7481,86 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | PROJECT,
         }),
-    ]);
+    ];
 
-    if current_language().is_none() {
-        items.extend([
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Image Viewer",
-                description: "The unit for image file sizes.",
-                field: Box::new(SettingField {
-                    json_path: Some("image_viewer.unit"),
-                    pick: |settings_content| {
-                        settings_content.image_viewer.as_ref().and_then(|image_viewer| image_viewer.unit.as_ref())
-                    },
-                    write: |settings_content, value| {
-                        settings_content.image_viewer.get_or_insert_default().unit = value;
-
-                    },
-                }),
-                metadata: None,
-                files: USER,
+    let global_only_items = [
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Image Viewer",
+            description: "The unit for image file sizes.",
+            field: Box::new(SettingField {
+                json_path: Some("image_viewer.unit"),
+                pick: |settings_content| {
+                    settings_content
+                        .image_viewer
+                        .as_ref()
+                        .and_then(|image_viewer| image_viewer.unit.as_ref())
+                },
+                write: |settings_content, value| {
+                    settings_content.image_viewer.get_or_insert_default().unit = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Replace Emoji Shortcode",
-                description: "Whether to automatically replace emoji shortcodes with emoji characters.",
-                field: Box::new(SettingField {
-                    json_path: Some("message_editor.auto_replace_emoji_shortcode"),
-                    pick: |settings_content| {
-                        settings_content.message_editor.as_ref().and_then(|message_editor| message_editor.auto_replace_emoji_shortcode.as_ref())
-                    },
-                    write: |settings_content, value| {
-                        settings_content.message_editor.get_or_insert_default().auto_replace_emoji_shortcode = value;
-
-                    },
-                }),
-                metadata: None,
-                files: USER,
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Auto Replace Emoji Shortcode",
+            description: "Whether to automatically replace emoji shortcodes with emoji characters.",
+            field: Box::new(SettingField {
+                json_path: Some("message_editor.auto_replace_emoji_shortcode"),
+                pick: |settings_content| {
+                    settings_content
+                        .message_editor
+                        .as_ref()
+                        .and_then(|message_editor| {
+                            message_editor.auto_replace_emoji_shortcode.as_ref()
+                        })
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .message_editor
+                        .get_or_insert_default()
+                        .auto_replace_emoji_shortcode = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Drop Size Target",
-                description: "Relative size of the drop target in the editor that will open dropped file as a split pane.",
-                field: Box::new(SettingField {
-                    json_path: Some("drop_target_size"),
-                    pick: |settings_content| {
-                        settings_content.workspace.drop_target_size.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content.workspace.drop_target_size = value;
-
-                    },
-                }),
-                metadata: None,
-                files: USER,
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Drop Size Target",
+            description: "Relative size of the drop target in the editor that will open dropped file as a split pane.",
+            field: Box::new(SettingField {
+                json_path: Some("drop_target_size"),
+                pick: |settings_content| settings_content.workspace.drop_target_size.as_ref(),
+                write: |settings_content, value| {
+                    settings_content.workspace.drop_target_size = value;
+                },
             }),
-        ]);
-    }
-    items
+            metadata: None,
+            files: USER,
+        }),
+    ];
+
+    let is_global = current_language().is_none();
+
+    indentation_section
+        .into_iter()
+        .chain(wrapping_section)
+        .chain(indent_guides_section)
+        .chain(formatting_section)
+        .chain(autoclose_section)
+        .chain(whitespace_section)
+        .chain(completions_section)
+        .chain(inlay_hints_section)
+        .chain(is_global.then_some(lsp_document_colors_item))
+        .chain(tasks_section)
+        .chain(miscellaneous_section)
+        .chain(is_global.then(|| global_only_items).into_iter().flatten())
 }
 
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
-fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
-    vec![
+fn non_editor_language_settings_data() -> impl Iterator<Item = SettingsPageItem> {
+    [
         SettingsPageItem::SectionHeader("LSP"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enable Language Server",
@@ -7766,10 +7803,11 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
     ]
+    .into_iter()
 }
 
-fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
-    vec![
+fn edit_prediction_language_settings_section() -> impl Iterator<Item = SettingsPageItem> {
+    [
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Configure Providers".into(),
@@ -7827,6 +7865,7 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
     ]
+    .into_iter()
 }
 
 fn show_scrollbar_or_editor(
