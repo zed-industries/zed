@@ -1057,8 +1057,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Keybindings"),
                 SettingsPageItem::ActionLink(ActionLink {
                     title: "Edit Keybindings".into(),
-                    description: Some("Customize key bindings in the keymap editor.".into()),
-                    button_text: "Open Editor".into(),
+                    description: Some("Customize keybindings in the keymap editor.".into()),
+                    button_text: "Open Keymap".into(),
                     on_click: Arc::new(|settings_window, window, cx| {
                         let Some(original_window) = settings_window.original_window else {
                             return;
