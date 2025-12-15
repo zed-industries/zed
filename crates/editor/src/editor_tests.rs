@@ -7752,10 +7752,12 @@ fn test_select_line(cx: &mut TestAppContext) {
             ])
         });
         editor.select_line(&SelectLine, window, cx);
+        // Adjacent line selections should NOT merge (only overlapping ones do)
         assert_eq!(
             display_ranges(editor, cx),
             vec![
-                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(2), 0),
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(2), 0),
                 DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 0),
             ]
         );
@@ -7774,9 +7776,13 @@ fn test_select_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.select_line(&SelectLine, window, cx);
+        // Adjacent but not overlapping, so they stay separate
         assert_eq!(
             display_ranges(editor, cx),
-            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(5), 5)]
+            vec![
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(4), 0),
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 5),
+            ]
         );
     });
 }
@@ -10863,6 +10869,115 @@ async fn test_autoclose_with_overrides(cx: &mut TestAppContext) {
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Double quote inside single-quoted string
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ['"', ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ['"', "ˇ"]
+    "#});
+
+    // Two double quotes inside single-quoted string
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ['""', ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ['""', "ˇ"]
+    "#});
+
+    // Single quote inside double-quoted string
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ["'", ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("'", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ["'", 'ˇ']
+    "#});
+
+    // Two single quotes inside double-quoted string
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ["''", ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("'", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ["''", 'ˇ']
+    "#});
+
+    // Mixed quotes on same line
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ['"""', "'''''", ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ['"""', "'''''", "ˇ"]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(", ", window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("'", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ['"""', "'''''", "", 'ˇ']
+    "#});
+}
+
+#[gpui::test]
+async fn test_autoclose_quotes_with_multibyte_characters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(indoc! {r#"
+        def main():
+            items = ["🎉", ˇ]
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        def main():
+            items = ["🎉", "ˇ"]
+    "#});
 }
 
 #[gpui::test]
@@ -16198,7 +16313,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         fn a() {
             «b();
-            c();
+            ˇ»«c();
             ˇ» d();
         }
     "});
@@ -16210,8 +16325,8 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         fn a() {
             // «b();
-            // c();
-            ˇ»//  d();
+            ˇ»// «c();
+            ˇ» // d();
         }
     "});
 
@@ -16220,7 +16335,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         fn a() {
             // b();
             «// c();
-        ˇ»    //  d();
+        ˇ»     // d();
         }
     "});
 
@@ -16230,7 +16345,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         fn a() {
             // b();
             «c();
-        ˇ»    //  d();
+        ˇ»     // d();
         }
     "});
 
