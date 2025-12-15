@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn test_url_punctuation_sanitization() {
         // Test URLs with trailing punctuation (sentence/text punctuation)
-        // The sanitize_url_punctuation function removes ?, !, ., ,, :, ;, * from the end
+        // The sanitize_url_punctuation function removes ., ,, :, ;, from the end
         let test_cases = vec![
             ("https://example.com.", "https://example.com"),
             (
@@ -436,12 +436,6 @@ mod tests {
                 "https://en.wikipedia.org/wiki/C.E.O.",
                 "https://en.wikipedia.org/wiki/C.E.O",
             ),
-            ("https://example.com?", "https://example.com"),
-            ("https://example.com/search?", "https://example.com/search"),
-            ("https://example.com??", "https://example.com"),
-            ("https://example.com!", "https://example.com"),
-            ("https://example.com/page!", "https://example.com/page"),
-            ("https://example.com!!", "https://example.com"),
             ("https://example.com,", "https://example.com"),
             ("https://example.com/path,", "https://example.com/path"),
             ("https://example.com,,", "https://example.com"),
@@ -451,16 +445,11 @@ mod tests {
             ("https://example.com;", "https://example.com"),
             ("https://example.com/path;", "https://example.com/path"),
             ("https://example.com;;", "https://example.com"),
-            ("https://example.com*", "https://example.com"),
-            ("https://example.com/path*", "https://example.com/path"),
-            ("https://example.com**", "https://example.com"),
             ("https://example.com.,", "https://example.com"),
-            ("https://example.com!?", "https://example.com"),
             ("https://example.com.:;", "https://example.com"),
-            ("https://example.com!.", "https://example.com"),
+            ("https://example.com!.", "https://example.com!"),
             ("https://example.com/).", "https://example.com/"),
             ("https://example.com/);", "https://example.com/"),
-            ("https://example.com/)!", "https://example.com/"),
             ("https://example.com/;)", "https://example.com/"),
             (
                 "https://example.com/v1.0/api",
