@@ -1323,6 +1323,8 @@ impl ToolchainLister for PythonToolchainProvider {
                         .unwrap_or("conda"),
                 };
 
+                // Activate micromamba shell in the child shell
+                // [required for micromamba]
                 if manager == "micromamba" {
                     let shell = micromamba_shell_name(shell);
                     activation_script
