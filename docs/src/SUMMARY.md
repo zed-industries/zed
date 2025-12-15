@@ -89,6 +89,7 @@
 # Migrate
 
 - [VS Code](./migrate/vs-code.md)
+- [IntelliJ IDEA](./migrate/intellij.md)
 
 # Language Support
 
