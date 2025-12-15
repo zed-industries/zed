@@ -535,7 +535,7 @@ pub trait LspInstaller {
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> {
         async { None }
     }
 
@@ -544,7 +544,7 @@ pub trait LspInstaller {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
-    ) -> impl Future<Output = Result<LanguageServerBinary>>;
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>>;
 
     fn cached_server_binary(
         &self,
@@ -575,6 +575,7 @@ pub trait DynLspInstaller {
 #[async_trait(?Send)]
 impl<LI, BinaryVersion> DynLspInstaller for LI
 where
+    BinaryVersion: Send + Sync,
     LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
 {
     async fn try_fetch_server_binary(
@@ -593,8 +594,13 @@ where
             .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
             .await?;
 
-        if let Some(binary) = self
-            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+        if let Some(binary) = cx
+            .background_executor()
+            .await_on_background(self.check_if_version_installed(
+                &latest_version,
+                &container_dir,
+                delegate.as_ref(),
+            ))
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
@@ -603,8 +609,13 @@ where
         } else {
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
-            let binary = self
-                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            let binary = cx
+                .background_executor()
+                .await_on_background(self.fetch_server_binary(
+                    latest_version,
+                    container_dir,
+                    delegate.as_ref(),
+                ))
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);

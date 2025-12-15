@@ -111,6 +111,7 @@ fn excerpt_for_buffer_updated(
     );
 }
 
+#[ztracing::instrument(skip_all)]
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
     let Some(project) = editor.project() else {
         return;
@@ -166,6 +167,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
     editor.remove_blocks(removed_block_ids, None, cx);
 }
 
+#[ztracing::instrument(skip_all)]
 fn conflicts_updated(
     editor: &mut Editor,
     conflict_set: Entity<ConflictSet>,
@@ -311,6 +313,7 @@ fn conflicts_updated(
     }
 }
 
+#[ztracing::instrument(skip_all)]
 fn update_conflict_highlighting(
     editor: &mut Editor,
     conflict: &ConflictRegion,

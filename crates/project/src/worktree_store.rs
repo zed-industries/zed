@@ -57,6 +57,7 @@ pub struct WorktreeStore {
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
     worktrees_reordered: bool,
+    scanning_enabled: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
@@ -93,6 +94,7 @@ impl WorktreeStore {
             downstream_client: None,
             worktrees: Vec::new(),
             worktrees_reordered: false,
+            scanning_enabled: true,
             retain_worktrees,
             state: WorktreeStoreState::Local { fs },
         }
@@ -110,6 +112,7 @@ impl WorktreeStore {
             downstream_client: None,
             worktrees: Vec::new(),
             worktrees_reordered: false,
+            scanning_enabled: true,
             retain_worktrees,
             state: WorktreeStoreState::Remote {
                 upstream_client,
@@ -117,6 +120,10 @@ impl WorktreeStore {
                 path_style,
             },
         }
+    }
+
+    pub fn disable_scanner(&mut self) {
+        self.scanning_enabled = false;
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -576,6 +583,7 @@ impl WorktreeStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
+        let scanning_enabled = self.scanning_enabled;
 
         cx.spawn(async move |this, cx| {
             let worktree = Worktree::local(
@@ -583,6 +591,7 @@ impl WorktreeStore {
                 visible,
                 fs,
                 next_entry_id,
+                scanning_enabled,
                 cx,
             )
             .await;

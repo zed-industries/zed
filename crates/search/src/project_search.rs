@@ -1147,7 +1147,7 @@ impl ProjectSearchView {
         };
 
         search.update(cx, |search, cx| {
-            search.replace_enabled = action.replace_enabled;
+            search.replace_enabled |= action.replace_enabled;
             if let Some(query) = query {
                 search.set_query(&query, window, cx);
             }
@@ -1545,6 +1545,7 @@ impl ProjectSearchView {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn highlight_matches(
         &self,
         match_ranges: &[Range<Anchor>],

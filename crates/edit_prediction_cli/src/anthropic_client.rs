@@ -5,11 +5,13 @@ use anthropic::{
 use anyhow::Result;
 use http_client::HttpClient;
 use indoc::indoc;
+use reqwest_client::ReqwestClient;
 use sqlez::bindable::Bind;
 use sqlez::bindable::StaticColumnCount;
 use sqlez_macros::sql;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct PlainLlmClient {
@@ -18,7 +20,8 @@ pub struct PlainLlmClient {
 }
 
 impl PlainLlmClient {
-    fn new(http_client: Arc<dyn HttpClient>) -> Result<Self> {
+    fn new() -> Result<Self> {
+        let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
         Ok(Self {
@@ -29,12 +32,12 @@ impl PlainLlmClient {
 
     async fn generate(
         &self,
-        model: String,
+        model: &str,
         max_tokens: u64,
         messages: Vec<Message>,
     ) -> Result<AnthropicResponse> {
         let request = AnthropicRequest {
-            model,
+            model: model.to_string(),
             max_tokens,
             messages,
             tools: Vec::new(),
@@ -105,11 +108,12 @@ struct SerializableMessage {
 }
 
 impl BatchingLlmClient {
-    fn new(cache_path: &str, http_client: Arc<dyn HttpClient>) -> Result<Self> {
+    fn new(cache_path: &Path) -> Result<Self> {
+        let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY environment variable not set"))?;
 
-        let connection = sqlez::connection::Connection::open_file(&cache_path);
+        let connection = sqlez::connection::Connection::open_file(&cache_path.to_str().unwrap());
         let mut statement = sqlez::statement::Statement::prepare(
             &connection,
             indoc! {"
@@ -182,16 +186,16 @@ impl BatchingLlmClient {
 
     async fn generate(
         &self,
-        model: String,
+        model: &str,
         max_tokens: u64,
         messages: Vec<Message>,
     ) -> Result<Option<AnthropicResponse>> {
-        let response = self.lookup(&model, max_tokens, &messages)?;
+        let response = self.lookup(model, max_tokens, &messages)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(&model, max_tokens, &messages)?;
+        self.mark_for_batch(model, max_tokens, &messages)?;
 
         Ok(None)
     }
@@ -258,7 +262,7 @@ impl BatchingLlmClient {
                         }
                     }
                 }
-                log::info!("Uploaded {} successful requests", success_count);
+                log::info!("Downloaded {} successful requests", success_count);
             }
         }
 
@@ -363,23 +367,20 @@ fn message_content_to_string(content: &[RequestContent]) -> String {
         .join("\n")
 }
 
-pub enum LlmClient {
+pub enum AnthropicClient {
     // No batching
     Plain(PlainLlmClient),
     Batch(BatchingLlmClient),
     Dummy,
 }
 
-impl LlmClient {
-    pub fn plain(http_client: Arc<dyn HttpClient>) -> Result<Self> {
-        Ok(Self::Plain(PlainLlmClient::new(http_client)?))
+impl AnthropicClient {
+    pub fn plain() -> Result<Self> {
+        Ok(Self::Plain(PlainLlmClient::new()?))
     }
 
-    pub fn batch(cache_path: &str, http_client: Arc<dyn HttpClient>) -> Result<Self> {
-        Ok(Self::Batch(BatchingLlmClient::new(
-            cache_path,
-            http_client,
-        )?))
+    pub fn batch(cache_path: &Path) -> Result<Self> {
+        Ok(Self::Batch(BatchingLlmClient::new(cache_path)?))
     }
 
     #[allow(dead_code)]
@@ -389,29 +390,29 @@ impl LlmClient {
 
     pub async fn generate(
         &self,
-        model: String,
+        model: &str,
         max_tokens: u64,
         messages: Vec<Message>,
     ) -> Result<Option<AnthropicResponse>> {
         match self {
-            LlmClient::Plain(plain_llm_client) => plain_llm_client
+            AnthropicClient::Plain(plain_llm_client) => plain_llm_client
                 .generate(model, max_tokens, messages)
                 .await
                 .map(Some),
-            LlmClient::Batch(batching_llm_client) => {
+            AnthropicClient::Batch(batching_llm_client) => {
                 batching_llm_client
                     .generate(model, max_tokens, messages)
                     .await
             }
-            LlmClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 
     pub async fn sync_batches(&self) -> Result<()> {
         match self {
-            LlmClient::Plain(_) => Ok(()),
-            LlmClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
-            LlmClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+            AnthropicClient::Plain(_) => Ok(()),
+            AnthropicClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }
 }
