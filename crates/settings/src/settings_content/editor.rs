@@ -101,7 +101,7 @@ pub struct EditorSettingsContent {
     pub smooth_scroll: Option<bool>,
     /// Defines how long the animation of the smooth scrolling runs.
     ///
-    /// Default: 0.25
+    /// Default: 0.14
     pub smooth_scroll_duration: Option<f32>,
     /// Settings for sticking scopes to the top of the editor.
     ///
