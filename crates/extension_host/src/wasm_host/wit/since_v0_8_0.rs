@@ -793,6 +793,12 @@ impl github::Host for WasmState {
         repo: String,
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        log::info!(
+            "[extension_host][wasm][github] latest_github_release repo={repo} require_assets={} pre_release={}",
+            options.require_assets,
+            options.pre_release
+        );
+
         maybe!(async {
             let release = ::http_client::github::latest_github_release(
                 &repo,
@@ -801,6 +807,13 @@ impl github::Host for WasmState {
                 self.host.http_client.clone(),
             )
             .await?;
+
+            log::info!(
+                "[extension_host][wasm][github] latest_github_release ok repo={repo} version={} assets={}",
+                release.tag_name,
+                release.assets.len()
+            );
+
             Ok(release.into())
         })
         .await
@@ -1031,6 +1044,14 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
+        log::info!(
+            "[extension_host][wasm][download_file] begin extension={} url={} path={} file_type={:?}",
+            self.manifest.id.as_ref(),
+            url,
+            path,
+            file_type
+        );
+
         maybe!(async {
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;
@@ -1044,6 +1065,12 @@ impl ExtensionImports for WasmState {
                 .host
                 .writeable_path_from_extension(&self.manifest.id, &path)?;
 
+            log::info!(
+                "[extension_host][wasm][download_file] requesting url={} destination_path={:?}",
+                url,
+                destination_path
+            );
+
             let mut response = self
                 .host
                 .http_client
@@ -1051,10 +1078,17 @@ impl ExtensionImports for WasmState {
                 .await
                 .context("downloading release")?;
 
+            let status = response.status();
+            log::info!(
+                "[extension_host][wasm][download_file] response url={} status={}",
+                url,
+                status
+            );
+
             anyhow::ensure!(
-                response.status().is_success(),
+                status.is_success(),
                 "download failed with status {}",
-                response.status()
+                status
             );
             let body = BufReader::new(response.body_mut());
 
@@ -1089,6 +1123,13 @@ impl ExtensionImports for WasmState {
                         .with_context(|| format!("unzipping {path:?} archive"))?;
                 }
             }
+
+            log::info!(
+                "[extension_host][wasm][download_file] done extension={} url={} destination_path={:?}",
+                self.manifest.id.as_ref(),
+                url,
+                destination_path
+            );
 
             Ok(())
         })

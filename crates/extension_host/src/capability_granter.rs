@@ -55,6 +55,13 @@ impl CapabilityGranter {
                 _ => false,
             });
 
+        log::info!(
+            "[extension_host][capabilities] download_file check extension={} url={} allowed={}",
+            self.manifest.id,
+            desired_url,
+            is_allowed
+        );
+
         if !is_allowed {
             bail!(
                 "capability for download_file {desired_url} is not granted by the extension host",

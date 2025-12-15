@@ -142,6 +142,17 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 
 - Use `./script/clippy` instead of `cargo clippy`
 
+## Progress-first mode
+
+By default, prioritize forward progress over waiting for confirmation. The following guidelines replace the standard uncertainty/deferral behavior:
+
+* **Attempt budget over early deferral**: Make up to 5 distinct attempts to fix diagnostics or solve a problem before stopping to summarize. Only stop earlier if you've exhausted meaningfully different approaches.
+* **Assumption-driven progress**: When requirements are ambiguous, proceed with the most reasonable interpretation. State assumptions explicitly in your response, and implement in a way that's easy to adjust (isolated functions, flags, config). Only stop for decisions that would cause breaking changes or require large rewrites.
+* **Speculative fixes are allowed** if they are: (a) localized/reversible, (b) accompanied by a test or diagnostic logging where practical, and (c) clearly noted as speculative.
+* **Bias toward small, reversible changes**: When uncertain, prefer incremental edits (tests, logging, guards, better error messages) that improve observability before attempting larger refactors.
+* **Keep moving unless blocked by high-impact ambiguity**: Only ask questions when there are multiple plausible paths with significantly different outcomes (e.g., architectural choices, breaking API changes, unclear product behavior). For lower-stakes uncertainty, pick the most conservative option and proceed.
+* **Summarize at the end**: After completing a task or exhausting the attempt budget, summarize what was done, what assumptions were made, and what (if anything) still needs decision or review.
+
 ## Ongoing Work
 
 ### Scheduler Integration

@@ -178,6 +178,16 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
+    // Diagnostics: When a user reports that they added a worktree but the tool can't `cd` into it,
+    // the most common culprits are (a) the agent is bound to a different Project entity/window, or
+    // (b) path normalization/canonicalization differences causing starts_with checks to fail.
+    //
+    // Enable with `ZED_AGENT_TERMINAL_CD_DIAGNOSTICS=1`.
+    let diagnostics_enabled = std::env::var("ZED_AGENT_TERMINAL_CD_DIAGNOSTICS")
+        .ok()
+        .as_deref()
+        == Some("1");
+
     if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
@@ -205,6 +215,40 @@ fn working_dir(
             }
         } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
             return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
+        }
+
+        if diagnostics_enabled {
+            let mut worktree_debug_lines = Vec::new();
+            for worktree in project.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let root_name = worktree.root_name();
+                let abs_path = worktree.abs_path().to_path_buf();
+
+                let starts_with = input_path.is_absolute() && input_path.starts_with(&abs_path);
+
+                let canonical_input = if input_path.is_absolute() {
+                    std::fs::canonicalize(input_path).ok()
+                } else {
+                    None
+                };
+                let canonical_worktree = std::fs::canonicalize(&abs_path).ok();
+
+                let canonical_starts_with = match (&canonical_input, &canonical_worktree) {
+                    (Some(ci), Some(cw)) => ci.starts_with(cw),
+                    _ => false,
+                };
+
+                worktree_debug_lines.push(format!(
+                    "  - root_name={root_name:?}\n    abs_path={abs_path:?}\n    starts_with(abs_path)={starts_with}\n    canonical_worktree={canonical_worktree:?}\n    canonical_input={canonical_input:?}\n    canonical_starts_with={canonical_starts_with}"
+                ));
+            }
+
+            log::warn!(
+                "[agent][terminal] rejecting cd: cd={cd:?} input_path={input_path:?} input_is_absolute={} worktrees_count={} \nworktrees:\n{}",
+                input_path.is_absolute(),
+                project.worktrees(cx).count(),
+                worktree_debug_lines.join("\n")
+            );
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");

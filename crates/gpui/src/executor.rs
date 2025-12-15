@@ -216,7 +216,10 @@ impl BackgroundExecutor {
         };
         let mut future = std::pin::pin!(future);
 
-        scheduler.block(Some(test_dispatcher.session_id()), future.as_mut(), None);
+        // In async GPUI tests, we must allow foreground tasks scheduled by the test itself
+        // (which are associated with the test session) to make progress while we block.
+        // Otherwise, awaiting futures that depend on same-session foreground work can deadlock.
+        scheduler.block(None, future.as_mut(), None);
 
         output.take().expect("block_test future did not complete")
     }
@@ -345,11 +348,80 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().scheduler().tick()
     }
 
-    /// In tests, run all tasks that are ready to run.
+    /// In tests, run tasks until the scheduler would park.
+    ///
+    /// Under the scheduler-backed test dispatcher, `tick()` will not advance the clock, so a pending
+    /// timer can keep `has_pending_tasks()` true even after all currently-runnable tasks have been
+    /// drained. To preserve the historical semantics that tests relied on (drain all work that can
+    /// make progress), we advance the clock to the next timer when no runnable tasks remain.
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
-        let scheduler = self.dispatcher.as_test().unwrap().scheduler();
-        while scheduler.tick() {}
+        let dispatcher = self.dispatcher.as_test().unwrap();
+        let scheduler = dispatcher.scheduler();
+
+        let log_enabled = std::env::var("GPUI_RUN_UNTIL_PARKED_LOG")
+            .ok()
+            .as_deref()
+            == Some("1");
+
+        if log_enabled {
+            let (foreground_len, background_len) = scheduler.pending_task_counts();
+            let has_pending = scheduler.has_pending_tasks();
+            log::warn!(
+                "[gpui::executor] run_until_parked: begin pending foreground={} background={} has_pending_tasks={}",
+                foreground_len,
+                background_len,
+                has_pending
+            );
+        }
+
+        let mut ticks = 0usize;
+        let mut advanced_timers = 0usize;
+
+        loop {
+            let mut did_work = false;
+            while scheduler.tick() {
+                did_work = true;
+                ticks += 1;
+
+                if log_enabled && ticks % 100 == 0 {
+                    let (foreground_len, background_len) = scheduler.pending_task_counts();
+                    let has_pending = scheduler.has_pending_tasks();
+                    log::warn!(
+                        "[gpui::executor] run_until_parked: progressed ticks={} pending foreground={} background={} has_pending_tasks={}",
+                        ticks,
+                        foreground_len,
+                        background_len,
+                        has_pending
+                    );
+                }
+            }
+
+            if did_work {
+                continue;
+            }
+
+            // No runnable tasks; if a timer is pending, advance time so it can become runnable.
+            if dispatcher.advance_clock_to_next_timer() {
+                advanced_timers += 1;
+                continue;
+            }
+
+            break;
+        }
+
+        if log_enabled {
+            let (foreground_len, background_len) = scheduler.pending_task_counts();
+            let has_pending = scheduler.has_pending_tasks();
+            log::warn!(
+                "[gpui::executor] run_until_parked: end ticks={} advanced_timers={} pending foreground={} background={} has_pending_tasks={}",
+                ticks,
+                advanced_timers,
+                foreground_len,
+                background_len,
+                has_pending
+            );
+        }
     }
 
     /// In tests, prevents `run_until_parked` from panicking if there are outstanding tasks.
@@ -360,6 +432,10 @@ impl BackgroundExecutor {
             .unwrap()
             .scheduler()
             .allow_parking();
+
+        if std::env::var("GPUI_RUN_UNTIL_PARKED_LOG").ok().as_deref() == Some("1") {
+            log::warn!("[gpui::executor] allow_parking: enabled");
+        }
     }
 
     /// Sets the range of ticks to run before timing out in block_on.

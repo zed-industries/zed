@@ -357,14 +357,14 @@ impl LocalLspStore {
     }
 
     fn start_language_server(
-        &mut self,
-        worktree_handle: &Entity<Worktree>,
-        delegate: Arc<LocalLspAdapterDelegate>,
-        adapter: Arc<CachedLspAdapter>,
-        settings: Arc<LspSettings>,
-        key: LanguageServerSeed,
-        cx: &mut App,
-    ) -> LanguageServerId {
+            &mut self,
+            worktree_handle: &Entity<Worktree>,
+            delegate: Arc<LocalLspAdapterDelegate>,
+            adapter: Arc<CachedLspAdapter>,
+            settings: Arc<LspSettings>,
+            key: LanguageServerSeed,
+            cx: &mut App,
+        ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
 
         let root_path = worktree.abs_path();
@@ -374,8 +374,8 @@ impl LocalLspStore {
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
 
         let server_id = self.languages.next_language_server_id();
-        log::trace!(
-            "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
+        log::warn!(
+            "[project::lsp_store][start_language_server] attempting name={:?} path={root_path:?} id={server_id}",
             adapter.name.0
         );
 
@@ -398,20 +398,47 @@ impl LocalLspStore {
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
                 let binary = binary.await?;
+
+                log::warn!(
+                    "[project::lsp_store][start_language_server] resolved_binary name={} id={} path={:?} args={:?}",
+                    server_name.0,
+                    server_id,
+                    binary.path,
+                    binary.arguments
+                );
+
                 #[cfg(any(test, feature = "test-support"))]
-                if let Some(server) = lsp_store
-                    .update(&mut cx.clone(), |this, cx| {
+                {
+                    let server_name_string = server_name.0.to_string();
+                    log::warn!(
+                        "[project::lsp_store][start_language_server] attempting_fake name={server_name_string} id={server_id}"
+                    );
+
+                    match lsp_store.update(&mut cx.clone(), |this, cx| {
                         this.languages.create_fake_language_server(
                             server_id,
                             &server_name,
                             binary.clone(),
                             &mut cx.to_async(),
                         )
-                    })
-                    .ok()
-                    .flatten()
-                {
-                    return Ok(server);
+                    }) {
+                        Ok(Some(server)) => {
+                            log::warn!(
+                                "[project::lsp_store][start_language_server] using_fake name={server_name_string} id={server_id}"
+                            );
+                            return Ok(server);
+                        }
+                        Ok(None) => {
+                            log::warn!(
+                                "[project::lsp_store][start_language_server] no_fake_registered name={server_name_string} id={server_id}"
+                            );
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "[project::lsp_store][start_language_server] fake_attempt_failed name={server_name_string} id={server_id} error={error:#}"
+                            );
+                        }
+                    }
                 }
 
                 let code_action_kinds = adapter.code_action_kinds();
@@ -427,6 +454,11 @@ impl LocalLspStore {
                 )
             }
         });
+
+        // Note: do not spawn a task that "forces" `pending_server` to run here. `Task<T>` is not
+        // cloneable, and attempting to do so breaks compilation. If `pending_server` isn't being
+        // polled in tests, the correct fix is to ensure the normal startup path awaits it (or to
+        // store it so it isn't dropped/canceled prematurely) rather than trying to poll it here.
 
         let startup = {
             let server_name = adapter.name.0.clone();
@@ -560,6 +592,8 @@ impl LocalLspStore {
             .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
 
         self.language_servers.insert(server_id, state);
+
+
         self.language_server_ids
             .entry(key)
             .or_insert(UnifiedLanguageServer {
