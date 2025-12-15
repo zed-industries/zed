@@ -1424,6 +1424,7 @@ fn convert_request_to_wit(request: LanguageModelRequest) -> LlmCompletionRequest
                         id: tool_use.id.to_string(),
                         name: tool_use.name.to_string(),
                         input: serde_json::to_string(&tool_use.input).unwrap_or_default(),
+                        is_input_complete: tool_use.is_input_complete,
                         thought_signature: tool_use.thought_signature,
                     }),
                     MessageContent::ToolResult(tool_result) => {
@@ -1514,7 +1515,7 @@ fn convert_completion_event(
                     name: tool_use.name.into(),
                     raw_input,
                     input,
-                    is_input_complete: true,
+                    is_input_complete: tool_use.is_input_complete,
                     thought_signature: tool_use.thought_signature,
                 },
             ))

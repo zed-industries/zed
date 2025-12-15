@@ -690,6 +690,7 @@ impl zed::Extension for AnthropicProvider {
                                     id: tool_use.id,
                                     name: tool_use.name,
                                     input: tool_use.input_json,
+                                    is_input_complete: true,
                                     thought_signature: state.pending_signature.take(),
                                 })));
                             }

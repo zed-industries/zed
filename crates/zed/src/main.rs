@@ -601,6 +601,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 

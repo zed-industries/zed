@@ -16,6 +16,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+pub mod utility_pane;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -31,6 +32,7 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{
     Future, FutureExt, StreamExt,
     channel::{
@@ -127,11 +129,16 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::persistence::{
-    SerializedAxis,
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+use crate::{
+    item::ItemBufferKind, notifications::NotificationId, utility_pane::UTILITY_PANE_MIN_WIDTH,
 };
-use crate::{item::ItemBufferKind, notifications::NotificationId};
+use crate::{
+    persistence::{
+        SerializedAxis,
+        model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    },
+    utility_pane::{DraggedUtilityPane, UtilityPaneFrame, UtilityPaneSlot, UtilityPaneState},
+};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -570,44 +577,43 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     toast_layer::init(cx);
     history_manager::init(cx);
 
-    cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
-    cx.on_action(|_: &Reload, cx| reload(cx));
-
-    cx.on_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &Open, cx: &mut App| {
-            if let Some(app_state) = app_state.upgrade() {
-                prompt_and_open_paths(
-                    app_state,
-                    PathPromptOptions {
-                        files: true,
-                        directories: true,
-                        multiple: true,
-                        prompt: None,
-                    },
-                    cx,
-                );
+    cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
+        .on_action(|_: &Reload, cx| reload(cx))
+        .on_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_: &Open, cx: &mut App| {
+                if let Some(app_state) = app_state.upgrade() {
+                    prompt_and_open_paths(
+                        app_state,
+                        PathPromptOptions {
+                            files: true,
+                            directories: true,
+                            multiple: true,
+                            prompt: None,
+                        },
+                        cx,
+                    );
+                }
             }
-        }
-    });
-    cx.on_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &OpenFiles, cx: &mut App| {
-            let directories = cx.can_select_mixed_files_and_dirs();
-            if let Some(app_state) = app_state.upgrade() {
-                prompt_and_open_paths(
-                    app_state,
-                    PathPromptOptions {
-                        files: true,
-                        directories,
-                        multiple: true,
-                        prompt: None,
-                    },
-                    cx,
-                );
+        })
+        .on_action({
+            let app_state = Arc::downgrade(&app_state);
+            move |_: &OpenFiles, cx: &mut App| {
+                let directories = cx.can_select_mixed_files_and_dirs();
+                if let Some(app_state) = app_state.upgrade() {
+                    prompt_and_open_paths(
+                        app_state,
+                        PathPromptOptions {
+                            files: true,
+                            directories,
+                            multiple: true,
+                            prompt: None,
+                        },
+                        cx,
+                    );
+                }
             }
-        }
-    });
+        });
 }
 
 type BuildProjectItemFn =
@@ -1176,6 +1182,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    utility_panes: UtilityPaneState,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1467,12 +1474,17 @@ impl Workspace {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
+
+        let mut center = PaneGroup::new(center_pane.clone());
+        center.set_is_center(true);
+        center.mark_positions(cx);
+
         Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
             previous_dock_drag_coordinates: None,
-            center: PaneGroup::new(center_pane.clone()),
+            center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
@@ -1520,6 +1532,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            utility_panes: UtilityPaneState::default(),
         }
     }
 
@@ -3772,7 +3785,7 @@ impl Workspace {
                 let new_pane = self.add_pane(window, cx);
                 if self
                     .center
-                    .split(&split_off_pane, &new_pane, direction)
+                    .split(&split_off_pane, &new_pane, direction, cx)
                     .log_err()
                     .is_none()
                 {
@@ -3957,7 +3970,7 @@ impl Workspace {
                 let new_pane = self.add_pane(window, cx);
                 if self
                     .center
-                    .split(&self.active_pane, &new_pane, action.direction)
+                    .split(&self.active_pane, &new_pane, action.direction, cx)
                     .log_err()
                     .is_none()
                 {
@@ -4011,7 +4024,7 @@ impl Workspace {
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane, &to);
+            self.center.swap(&self.active_pane, &to, cx);
             cx.notify();
         }
     }
@@ -4019,7 +4032,7 @@ impl Workspace {
     pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction)
+            .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
             cx.notify();
@@ -4049,13 +4062,13 @@ impl Workspace {
             }
         } else {
             self.center
-                .resize(&self.active_pane, axis, amount, &self.bounds);
+                .resize(&self.active_pane, axis, amount, &self.bounds, cx);
         }
         cx.notify();
     }
 
     pub fn reset_pane_sizes(&mut self, cx: &mut Context<Self>) {
-        self.center.reset_pane_sizes();
+        self.center.reset_pane_sizes(cx);
         cx.notify();
     }
 
@@ -4241,7 +4254,7 @@ impl Workspace {
     ) -> Entity<Pane> {
         let new_pane = self.add_pane(window, cx);
         self.center
-            .split(&pane_to_split, &new_pane, split_direction)
+            .split(&pane_to_split, &new_pane, split_direction, cx)
             .unwrap();
         cx.notify();
         new_pane
@@ -4261,7 +4274,7 @@ impl Workspace {
         new_pane.update(cx, |pane, cx| {
             pane.add_item(item, true, true, None, window, cx)
         });
-        self.center.split(&pane, &new_pane, direction).unwrap();
+        self.center.split(&pane, &new_pane, direction, cx).unwrap();
         cx.notify();
     }
 
@@ -4286,7 +4299,7 @@ impl Workspace {
                     new_pane.update(cx, |pane, cx| {
                         pane.add_item(clone, true, true, None, window, cx)
                     });
-                    this.center.split(&pane, &new_pane, direction).unwrap();
+                    this.center.split(&pane, &new_pane, direction, cx).unwrap();
                     cx.notify();
                     new_pane
                 })
@@ -4333,7 +4346,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.center.remove(&pane).unwrap() {
+        if self.center.remove(&pane, cx).unwrap() {
             self.force_remove_pane(&pane, &focus_on, window, cx);
             self.unfollow_in_pane(&pane, window, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
@@ -5685,6 +5698,9 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
+                    workspace.center.set_is_center(true);
+                    workspace.center.mark_positions(cx);
+
                     if let Some(active_pane) = active_pane {
                         workspace.set_active_pane(&active_pane, window, cx);
                         cx.focus_self(window);
@@ -6310,6 +6326,7 @@ impl Workspace {
                 left_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
     }
 
     fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
@@ -6332,6 +6349,7 @@ impl Workspace {
                 right_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
     }
 
     fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
@@ -6346,6 +6364,42 @@ impl Workspace {
                 bottom_dock.resize_active_panel(Some(size), window, cx);
             }
         });
+        self.clamp_utility_pane_widths(window, cx);
+    }
+
+    fn max_utility_pane_width(&self, window: &Window, cx: &App) -> Pixels {
+        let left_dock_width = self
+            .left_dock
+            .read(cx)
+            .active_panel_size(window, cx)
+            .unwrap_or(px(0.0));
+        let right_dock_width = self
+            .right_dock
+            .read(cx)
+            .active_panel_size(window, cx)
+            .unwrap_or(px(0.0));
+        let center_pane_width = self.bounds.size.width - left_dock_width - right_dock_width;
+        center_pane_width - px(10.0)
+    }
+
+    fn clamp_utility_pane_widths(&mut self, window: &mut Window, cx: &mut App) {
+        let max_width = self.max_utility_pane_width(window, cx);
+
+        // Clamp left slot utility pane if it exists
+        if let Some(handle) = self.utility_pane(UtilityPaneSlot::Left) {
+            let current_width = handle.width(cx);
+            if current_width > max_width {
+                handle.set_width(Some(max_width.max(UTILITY_PANE_MIN_WIDTH)), cx);
+            }
+        }
+
+        // Clamp right slot utility pane if it exists
+        if let Some(handle) = self.utility_pane(UtilityPaneSlot::Right) {
+            let current_width = handle.width(cx);
+            if current_width > max_width {
+                handle.set_width(Some(max_width.max(UTILITY_PANE_MIN_WIDTH)), cx);
+            }
+        }
     }
 
     fn toggle_edit_predictions_all_files(
@@ -6813,6 +6867,34 @@ impl Render for Workspace {
                                             }
                                         },
                                     ))
+                                    .on_drag_move(cx.listener(
+                                        move |workspace,
+                                              e: &DragMoveEvent<DraggedUtilityPane>,
+                                              window,
+                                              cx| {
+                                            let slot = e.drag(cx).0;
+                                            match slot {
+                                                UtilityPaneSlot::Left => {
+                                                    let left_dock_width = workspace.left_dock.read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(gpui::px(0.0));
+                                                    let new_width = e.event.position.x
+                                                        - workspace.bounds.left()
+                                                        - left_dock_width;
+                                                    workspace.resize_utility_pane(slot, new_width, window, cx);
+                                                }
+                                                UtilityPaneSlot::Right => {
+                                                    let right_dock_width = workspace.right_dock.read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(gpui::px(0.0));
+                                                    let new_width = workspace.bounds.right()
+                                                        - e.event.position.x
+                                                        - right_dock_width;
+                                                    workspace.resize_utility_pane(slot, new_width, window, cx);
+                                                }
+                                            }
+                                        },
+                                    ))
                                 })
                                 .child({
                                     match bottom_dock_layout {
@@ -6832,6 +6914,15 @@ impl Render for Workspace {
                                                         window,
                                                         cx,
                                                     ))
+                                                    .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                        this.when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
+                                                            this.when(pane.expanded(cx), |this| {
+                                                                this.child(
+                                                                    UtilityPaneFrame::new(UtilityPaneSlot::Left, pane.box_clone(), cx)
+                                                                )
+                                                            })
+                                                        })
+                                                    })
                                                     .child(
                                                         div()
                                                             .flex()
@@ -6873,6 +6964,15 @@ impl Render for Workspace {
                                                                     ),
                                                             ),
                                                     )
+                                                    .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                        this.when_some(self.utility_pane(UtilityPaneSlot::Right), |this, pane| {
+                                                            this.when(pane.expanded(cx), |this| {
+                                                                this.child(
+                                                                    UtilityPaneFrame::new(UtilityPaneSlot::Right, pane.box_clone(), cx)
+                                                                )
+                                                            })
+                                                        })
+                                                    })
                                                     .children(self.render_dock(
                                                         DockPosition::Right,
                                                         &self.right_dock,
@@ -6903,6 +7003,15 @@ impl Render for Workspace {
                                                             .flex_row()
                                                             .flex_1()
                                                             .children(self.render_dock(DockPosition::Left, &self.left_dock, window, cx))
+                                                            .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                                this.when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
+                                                                    this.when(pane.expanded(cx), |this| {
+                                                                        this.child(
+                                                                            UtilityPaneFrame::new(UtilityPaneSlot::Left, pane.box_clone(), cx)
+                                                                        )
+                                                                    })
+                                                                })
+                                                            })
                                                             .child(
                                                                 div()
                                                                     .flex()
@@ -6930,6 +7039,13 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
+                                                            .when_some(self.utility_pane(UtilityPaneSlot::Right), |this, pane| {
+                                                                this.when(pane.expanded(cx), |this| {
+                                                                    this.child(
+                                                                        UtilityPaneFrame::new(UtilityPaneSlot::Right, pane.box_clone(), cx)
+                                                                    )
+                                                                })
+                                                            })
                                                     )
                                                     .child(
                                                         div()
@@ -6954,6 +7070,15 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
+                                            .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                this.when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
+                                                    this.when(pane.expanded(cx), |this| {
+                                                        this.child(
+                                                            UtilityPaneFrame::new(UtilityPaneSlot::Left, pane.box_clone(), cx)
+                                                        )
+                                                    })
+                                                })
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -6992,6 +7117,15 @@ impl Render for Workspace {
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
+                                                            .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                                this.when_some(self.utility_pane(UtilityPaneSlot::Right), |this, pane| {
+                                                                    this.when(pane.expanded(cx), |this| {
+                                                                        this.child(
+                                                                            UtilityPaneFrame::new(UtilityPaneSlot::Right, pane.box_clone(), cx)
+                                                                        )
+                                                                    })
+                                                                })
+                                                            })
                                                             .children(self.render_dock(DockPosition::Right, &self.right_dock, window, cx))
                                                     )
                                                     .child(
@@ -7011,6 +7145,13 @@ impl Render for Workspace {
                                                 window,
                                                 cx,
                                             ))
+                                            .when_some(self.utility_pane(UtilityPaneSlot::Left), |this, pane| {
+                                                this.when(pane.expanded(cx), |this| {
+                                                    this.child(
+                                                        UtilityPaneFrame::new(UtilityPaneSlot::Left, pane.box_clone(), cx)
+                                                    )
+                                                })
+                                            })
                                             .child(
                                                 div()
                                                     .flex()
@@ -7048,6 +7189,15 @@ impl Render for Workspace {
                                                         cx,
                                                     )),
                                             )
+                                            .when(cx.has_flag::<AgentV2FeatureFlag>(), |this| {
+                                                this.when_some(self.utility_pane(UtilityPaneSlot::Right), |this, pane| {
+                                                    this.when(pane.expanded(cx), |this| {
+                                                        this.child(
+                                                            UtilityPaneFrame::new(UtilityPaneSlot::Right, pane.box_clone(), cx)
+                                                        )
+                                                    })
+                                                })
+                                            })
                                             .children(self.render_dock(
                                                 DockPosition::Right,
                                                 &self.right_dock,

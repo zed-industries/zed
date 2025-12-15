@@ -595,6 +595,7 @@ impl zed::Extension for OpenAiProvider {
                                             id: tool_call.id,
                                             name: tool_call.name,
                                             input: tool_call.arguments,
+                                            is_input_complete: true,
                                             thought_signature: None,
                                         })));
                                     }
@@ -658,6 +659,7 @@ impl zed::Extension for OpenAiProvider {
                                     id: tool_call.id,
                                     name: tool_call.name,
                                     input: tool_call.arguments,
+                                    is_input_complete: true,
                                     thought_signature: None,
                                 })));
                             }

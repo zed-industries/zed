@@ -107,6 +107,8 @@ interface llm-provider {
         name: string,
         /// JSON string of the tool input arguments.
         input: string,
+        /// Whether the input JSON is complete (false while streaming, true when done).
+        is-input-complete: bool,
         /// Thought signature for providers that support it (e.g., Anthropic).
         thought-signature: option<string>,
     }

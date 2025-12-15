@@ -697,6 +697,7 @@ impl zed::Extension for OpenRouterProvider {
                                         id: tc.id,
                                         name: tc.name,
                                         input: tc.arguments,
+                                        is_input_complete: true,
                                         thought_signature: None,
                                     })));
                                 }

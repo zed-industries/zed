@@ -728,6 +728,7 @@ impl zed::Extension for GoogleAiProvider {
                                             id,
                                             name: fc_part.function_call.name,
                                             input: fc_part.function_call.args.to_string(),
+                                            is_input_complete: true,
                                             thought_signature,
                                         })));
                                     }
