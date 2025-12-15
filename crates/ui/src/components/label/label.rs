@@ -1,4 +1,4 @@
-use crate::{LabelLike, prelude::*};
+use crate::{LabelLike, TruncateLeft, prelude::*};
 use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.
@@ -33,6 +33,7 @@ use gpui::StyleRefinement;
 pub struct Label {
     base: LabelLike,
     label: SharedString,
+    truncate_path: bool,
 }
 
 impl Label {
@@ -49,12 +50,18 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
+            truncate_path: false,
         }
     }
 
     /// Sets the text of the [`Label`].
     pub fn set_text(&mut self, text: impl Into<SharedString>) {
         self.label = text.into();
+    }
+
+    pub fn truncate_path(mut self) -> Self {
+        self.truncate_path = true;
+        self
     }
 }
 
@@ -200,7 +207,14 @@ impl LabelCommon for Label {
 
 impl RenderOnce for Label {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        self.base.child(self.label)
+        if self.truncate_path {
+            TruncateLeft::new(self.label)
+                .color(self.base.color)
+                .size(self.base.size)
+                .into_any_element()
+        } else {
+            self.base.child(self.label).into_any_element()
+        }
     }
 }
 

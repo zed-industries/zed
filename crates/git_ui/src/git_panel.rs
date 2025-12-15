@@ -4360,7 +4360,7 @@ impl GitPanel {
                     !dir.is_empty(),
                     git_path_style == GitPathStyle::FileNameFirst,
                 ) {
-                    (true, true) => this.child(TruncateLeft::new(dir).color(path_color)),
+                    (true, true) => this.child(Label::new(dir).truncate_path().color(path_color)),
                     (true, false) => this.child(
                         self.entry_label(format!("{dir}{}", path_style.separator()), path_color)
                             .when(strikethrough, Label::strikethrough),

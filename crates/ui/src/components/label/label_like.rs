@@ -77,7 +77,7 @@ pub trait LabelCommon {
 #[derive(IntoElement)]
 pub struct LabelLike {
     pub(super) base: Div,
-    size: LabelSize,
+    pub(crate) size: LabelSize,
     weight: Option<FontWeight>,
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
