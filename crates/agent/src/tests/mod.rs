@@ -9,13 +9,12 @@ use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use fs::{FakeFs, Fs};
 use futures::{
-    FutureExt as _,
-    StreamExt,
+    FutureExt as _, StreamExt,
     channel::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{Shared, Fuse},
+    future::{Fuse, Shared},
 };
 use gpui::{
     App, AppContext, AsyncApp, Entity, Task, TestAppContext, UpdateGlobal,
@@ -78,7 +77,9 @@ impl FakeTerminalHandle {
                     if killed_for_task.load(Ordering::SeqCst) {
                         return acp::TerminalExitStatus::new();
                     }
-                    cx.background_executor().timer(Duration::from_millis(1)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1))
+                        .await;
                 }
             })
             .shared();
