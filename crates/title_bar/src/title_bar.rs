@@ -204,7 +204,7 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(TitleBarSettings::get_global(cx).show_app_menu, |el| {
+                .when(TitleBarSettings::get_global(cx).show_user_menu, |el| {
                     el.child(self.render_app_menu_button(cx))
                 })
                 .into_any_element(),

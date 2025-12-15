@@ -2949,18 +2949,18 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show App Menu",
-                    description: "Show the app menu button in the titlebar.",
+                    title: "Show User Menu",
+                    description: "Show the user menu button in the titlebar.",
                     field: Box::new(SettingField {
-                        json_path: Some("title_bar.show_app_menu"),
+                        json_path: Some("title_bar.show_user_menu"),
                         pick: |settings_content| {
-                            settings_content.title_bar.as_ref()?.show_app_menu.as_ref()
+                            settings_content.title_bar.as_ref()?.show_user_menu.as_ref()
                         },
                         write: |settings_content, value| {
                             settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_app_menu = value;
+                                .show_user_menu = value;
                         },
                     }),
                     metadata: None,
