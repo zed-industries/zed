@@ -1171,7 +1171,7 @@ impl LanguageRegistry {
 
         // Emit synchronously so tests can reliably observe server creation even if the LSP startup
         // task hasn't progressed to initialization yet.
-        if fake_entry.tx.unbounded_send(fake_server.clone()).is_err() {
+        if fake_entry.tx.unbounded_send(fake_server).is_err() {
             log::warn!(
                 "[language_registry] create_fake_language_server: failed to send fake server for {server_name} (receiver dropped)"
             );

@@ -48,9 +48,6 @@ pub struct State {
     codestral_api_key_state: Entity<ApiKeyState>,
 }
 
-struct CodestralApiKey(Entity<ApiKeyState>);
-impl Global for CodestralApiKey {}
-
 pub fn codestral_api_key(cx: &mut App) -> Entity<ApiKeyState> {
     // IMPORTANT:
     // Do not store `Entity<T>` handles in process-wide statics (e.g. `OnceLock`).

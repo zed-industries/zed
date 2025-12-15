@@ -384,7 +384,7 @@ impl BackgroundExecutor {
                 did_work = true;
                 ticks += 1;
 
-                if log_enabled && ticks % 100 == 0 {
+                if log_enabled && ticks.is_multiple_of(100) {
                     let (foreground_len, background_len) = scheduler.pending_task_counts();
                     let has_pending = scheduler.has_pending_tasks();
                     log::warn!(
