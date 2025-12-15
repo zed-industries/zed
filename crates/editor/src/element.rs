@@ -9076,6 +9076,8 @@ impl Element for EditorElement {
 
                         if let Some(target) = editor.scroll_manager.update_animation() {
                             editor.set_scroll_position(target, window, cx);
+                            // TODO: Can we find a better solution?
+                            // See: https://github.com/zed-industries/zed/pull/39095#issuecomment-3352910885
                             window.request_animation_frame();
                         }
 
