@@ -251,7 +251,7 @@ impl Markdown {
         self.autoscroll_request = None;
         self.pending_parse = None;
         self.should_reparse = false;
-        self.parsed_markdown = ParsedMarkdown::default();
+        // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
 

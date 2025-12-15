@@ -20,7 +20,9 @@ use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
-use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
+use remote::{
+    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -702,6 +704,10 @@ impl Domain for WorkspaceDb {
         sql!(
             DROP TABLE ssh_connections;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN name TEXT;
+            ALTER TABLE remote_connections ADD COLUMN container_id TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -728,9 +734,9 @@ impl WorkspaceDb {
     pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
-        ssh_project_id: RemoteConnectionId,
+        remote_project_id: RemoteConnectionId,
     ) -> Option<SerializedWorkspace> {
-        self.workspace_for_roots_internal(worktree_roots, Some(ssh_project_id))
+        self.workspace_for_roots_internal(worktree_roots, Some(remote_project_id))
     }
 
     pub(crate) fn workspace_for_roots_internal<P: AsRef<Path>>(
@@ -806,9 +812,20 @@ impl WorkspaceDb {
             order: paths_order,
         });
 
+        let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
+            self.remote_connection(remote_connection_id)
+                .context("Get remote connection")
+                .log_err()
+        } else {
+            None
+        };
+
         Some(SerializedWorkspace {
             id: workspace_id,
-            location: SerializedWorkspaceLocation::Local,
+            location: match remote_connection_options {
+                Some(options) => SerializedWorkspaceLocation::Remote(options),
+                None => SerializedWorkspaceLocation::Local,
+            },
             paths,
             center_group: self
                 .get_center_pane_group(workspace_id)
@@ -1110,10 +1127,12 @@ impl WorkspaceDb {
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
         let kind;
-        let user;
+        let mut user = None;
         let mut host = None;
         let mut port = None;
         let mut distro = None;
+        let mut name = None;
+        let mut container_id = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1126,8 +1145,22 @@ impl WorkspaceDb {
                 distro = Some(options.distro_name);
                 user = options.user;
             }
+            RemoteConnectionOptions::Docker(options) => {
+                kind = RemoteConnectionKind::Docker;
+                container_id = Some(options.container_id);
+                name = Some(options.name);
+            }
         }
-        Self::get_or_create_remote_connection_query(this, kind, host, port, user, distro)
+        Self::get_or_create_remote_connection_query(
+            this,
+            kind,
+            host,
+            port,
+            user,
+            distro,
+            name,
+            container_id,
+        )
     }
 
     fn get_or_create_remote_connection_query(
@@ -1137,6 +1170,8 @@ impl WorkspaceDb {
         port: Option<u16>,
         user: Option<String>,
         distro: Option<String>,
+        name: Option<String>,
+        container_id: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1146,7 +1181,9 @@ impl WorkspaceDb {
                 host IS ? AND
                 port IS ? AND
                 user IS ? AND
-                distro IS ?
+                distro IS ? AND
+                name IS ? AND
+                container_id IS ?
             LIMIT 1
         ))?((
             kind.serialize(),
@@ -1154,6 +1191,8 @@ impl WorkspaceDb {
             port,
             user.clone(),
             distro.clone(),
+            name.clone(),
+            container_id.clone(),
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -1163,10 +1202,20 @@ impl WorkspaceDb {
                     host,
                     port,
                     user,
-                    distro
-                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                    distro,
+                    name,
+                    container_id
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 RETURNING id
-            ))?((kind.serialize(), host, port, user, distro))?
+            ))?((
+                kind.serialize(),
+                host,
+                port,
+                user,
+                distro,
+                name,
+                container_id,
+            ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
         }
@@ -1249,15 +1298,23 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro
+                id, kind, host, port, user, distro, container_id, name
             FROM
                 remote_connections
         ))?()?
         .into_iter()
-        .filter_map(|(id, kind, host, port, user, distro)| {
+        .filter_map(|(id, kind, host, port, user, distro, container_id, name)| {
             Some((
                 RemoteConnectionId(id),
-                Self::remote_connection_from_row(kind, host, port, user, distro)?,
+                Self::remote_connection_from_row(
+                    kind,
+                    host,
+                    port,
+                    user,
+                    distro,
+                    container_id,
+                    name,
+                )?,
             ))
         })
         .collect())
@@ -1267,13 +1324,13 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro) = self.select_row_bound(sql!(
-            SELECT kind, host, port, user, distro
+        let (kind, host, port, user, distro, container_id, name) = self.select_row_bound(sql!(
+            SELECT kind, host, port, user, distro, container_id, name
             FROM remote_connections
             WHERE id = ?
         ))?(id.0)?
         .context("no such remote connection")?;
-        Self::remote_connection_from_row(kind, host, port, user, distro)
+        Self::remote_connection_from_row(kind, host, port, user, distro, container_id, name)
             .context("invalid remote_connection row")
     }
 
@@ -1283,6 +1340,8 @@ impl WorkspaceDb {
         port: Option<u16>,
         user: Option<String>,
         distro: Option<String>,
+        container_id: Option<String>,
+        name: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1295,6 +1354,13 @@ impl WorkspaceDb {
                 username: user,
                 ..Default::default()
             })),
+            RemoteConnectionKind::Docker => {
+                Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                    container_id: container_id?,
+                    name: name?,
+                    upload_binary_over_docker_exec: false,
+                }))
+            }
         }
     }
 

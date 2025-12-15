@@ -12,6 +12,7 @@ use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
 use smol::process::Child;
 
+pub mod docker;
 pub mod ssh;
 pub mod wsl;
 
@@ -64,15 +65,15 @@ fn parse_shell(output: &str, fallback_shell: &str) -> String {
 }
 
 fn handle_rpc_messages_over_child_process_stdio(
-    mut ssh_proxy_process: Child,
+    mut remote_proxy_process: Child,
     incoming_tx: UnboundedSender<Envelope>,
     mut outgoing_rx: UnboundedReceiver<Envelope>,
     mut connection_activity_tx: Sender<()>,
     cx: &AsyncApp,
 ) -> Task<Result<i32>> {
-    let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
-    let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
-    let mut child_stdin = ssh_proxy_process.stdin.take().unwrap();
+    let mut child_stderr = remote_proxy_process.stderr.take().unwrap();
+    let mut child_stdout = remote_proxy_process.stdout.take().unwrap();
+    let mut child_stdin = remote_proxy_process.stdin.take().unwrap();
 
     let mut stdin_buffer = Vec::new();
     let mut stdout_buffer = Vec::new();
@@ -156,7 +157,7 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-        let status = ssh_proxy_process.status().await?.code().unwrap_or(1);
+        let status = remote_proxy_process.status().await?.code().unwrap_or(1);
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
