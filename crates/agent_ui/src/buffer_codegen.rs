@@ -42,29 +42,24 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 
-/// Use this tool to provide a message to the user when you're unable to complete a task.
+/// Use this tool when you cannot or should not make a rewrite. This includes:
+/// - The user's request is unclear, ambiguous, or nonsensical
+/// - The requested change cannot be made by only editing the <rewrite_this> section
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FailureMessageInput {
     /// A brief message to the user explaining why you're unable to fulfill the request or to ask a question about the request.
-    ///
-    /// The message may use markdown formatting if you wish.
     #[serde(default)]
     pub message: String,
 }
 
 /// Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.
+/// Only use this tool when you are confident you understand the user's request and can fulfill it
+/// by editing the marked section.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RewriteSectionInput {
     /// The text to replace the section with.
     #[serde(default)]
     pub replacement_text: String,
-
-    /// A brief description of the edit you have made.
-    ///
-    /// The description may use markdown formatting if you wish.
-    /// This is optional - if the edit is simple or obvious, you should leave it empty.
-    #[serde(default)]
-    pub description: String,
 }
 
 pub struct BufferCodegen {
@@ -1163,20 +1158,17 @@ impl CodegenAlternative {
                 let is_complete = tool_use.is_input_complete;
                 match tool_use.name.as_ref() {
                     "rewrite_section" => {
-                        let Ok(mut input) =
+                        let Ok(input) =
                             serde_json::from_value::<RewriteSectionInput>(tool_use.input)
                         else {
                             return None;
                         };
                         let text = input.replacement_text[*chars_read_so_far..].to_string();
                         *chars_read_so_far = input.replacement_text.len();
-                        let description = is_complete
-                            .then(|| {
-                                let desc = std::mem::take(&mut input.description);
-                                if desc.is_empty() { None } else { Some(desc) }
-                            })
-                            .flatten();
-                        Some(ToolUseOutput::Rewrite { text, description })
+                        Some(ToolUseOutput::Rewrite {
+                            text,
+                            description: None,
+                        })
                     }
                     "failure_message" => {
                         if !is_complete {
