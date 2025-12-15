@@ -4814,7 +4814,7 @@ impl GitPanel {
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
-                el.border_color(cx.theme().colors().border_focused)
+                el.border_color(cx.theme().colors().panel_focused_border)
             })
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
@@ -4979,7 +4979,7 @@ impl GitPanel {
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
-                el.border_color(cx.theme().colors().border_focused)
+                el.border_color(cx.theme().colors().panel_focused_border)
             })
             .px(rems(0.75))
             .overflow_hidden()

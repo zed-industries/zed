@@ -14,7 +14,7 @@ pub async fn run_distill(example: &mut Example) -> Result<()> {
                 )
             })?;
 
-    example.expected_patch = prediction.actual_patch;
+    example.spec.expected_patch = prediction.actual_patch;
     example.prompt = None;
     example.predictions = Vec::new();
     example.score = Vec::new();

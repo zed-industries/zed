@@ -5,11 +5,11 @@ use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, TokenUsage,
+    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::{
@@ -20,13 +20,9 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
-
-use crate::ui::ConfiguredApiCard;
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -62,12 +58,8 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let api_url = OpenAiLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
-            api_url,
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        )
+        self.api_key_state
+            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
     }
 }
 
@@ -76,17 +68,13 @@ impl OpenAiLanguageModelProvider {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    &API_KEY_ENV_VAR,
-                    |this| &mut this.api_key_state,
-                    cx,
-                );
+                this.api_key_state
+                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
                 cx.notify();
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
             }
         });
 
@@ -790,17 +778,17 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("OpenAI's console"),
-                            Some("https://platform.openai.com/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenAI account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create one by visiting"))
+                                .child(ButtonLink::new("OpenAI's console", "https://platform.openai.com/api-keys"))
+                        )
+                        .child(
+                            ListBulletItem::new("Ensure your OpenAI account has credits")
+                        )
+                        .child(
+                            ListBulletItem::new("Paste your API key below and hit enter to start using the agent")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(

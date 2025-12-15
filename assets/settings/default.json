@@ -896,6 +896,8 @@
     "default_width": 380,
   },
   "agent": {
+    // Whether the inline assistant should use streaming tools, when available
+    "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
     // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -904,6 +906,8 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Where to dock the agents panel. Can be 'left' or 'right'.
+    "agents_panel_dock": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -1410,8 +1414,9 @@
       "proxy_no_verify": null,
     },
     "codestral": {
-      "model": null,
-      "max_tokens": null,
+      "api_url": "https://codestral.mistral.ai",
+      "model": "codestral-latest",
+      "max_tokens": 150,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1926,6 +1931,9 @@
       "completions": {
         "words": "disabled",
       },
+    },
+    "Proto": {
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
     },
     "Python": {
       "code_actions_on_format": {
