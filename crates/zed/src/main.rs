@@ -477,7 +477,7 @@ pub fn main() {
         })
         .detach();
 
-        let trust_task = trusted_worktrees::wait_for_default_global_trust("Node runtime", cx)
+        let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
             .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
         let node_runtime = NodeRuntime::new(
             client.http_client(),

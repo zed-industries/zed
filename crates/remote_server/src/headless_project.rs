@@ -649,8 +649,8 @@ impl HeadlessProject {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if envelope.payload.restrict_global {
-                restricted_paths.insert(PathTrust::Global);
+            if envelope.payload.restrict_workspace {
+                restricted_paths.insert(PathTrust::Workspace);
             }
             trusted_worktrees.restrict(restricted_paths, None, cx);
         })?;

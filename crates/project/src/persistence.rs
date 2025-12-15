@@ -41,7 +41,7 @@ impl ProjectDb {
     pub(crate) async fn save_trusted_worktrees(
         &self,
         trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
-        trusted_globals: HashSet<Option<RemoteHostLocation>>,
+        trusted_workspaces: HashSet<Option<RemoteHostLocation>>,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
         use db::sqlez::statement::Statement;
@@ -59,7 +59,7 @@ impl ProjectDb {
                     .into_iter()
                     .map(move |abs_path| (Some(abs_path), host.clone()))
             })
-            .chain(trusted_globals.into_iter().map(|host| (None, host)))
+            .chain(trusted_workspaces.into_iter().map(|host| (None, host)))
             .collect::<Vec<_>>();
         let mut first_worktree;
         let mut last_worktree = 0_usize;
@@ -150,7 +150,7 @@ VALUES {placeholders};"#
                             (db_host, PathTrust::AbsPath(abs_path))
                         }
                     }
-                    None => (db_host, PathTrust::Global),
+                    None => (db_host, PathTrust::Workspace),
                 }
             })
             .fold(HashMap::default(), |mut acc, (remote_host, path_trust)| {
@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_and_fetch_global_trust(cx: &mut TestAppContext) {
+    async fn test_save_and_fetch_workspace_trust(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let _guard = TEST_LOCK.lock().await;
         PROJECT_DB.clear_trusted_worktrees().await.unwrap();
@@ -285,9 +285,9 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
 
-        let trusted_globals = HashSet::from_iter([None]);
+        let trusted_workspaces = HashSet::from_iter([None]);
         PROJECT_DB
-            .save_trusted_worktrees(HashMap::default(), trusted_globals)
+            .save_trusted_worktrees(HashMap::default(), trusted_workspaces)
             .await
             .unwrap();
 
@@ -297,7 +297,7 @@ mod tests {
         let fetched = fetched.unwrap();
 
         let local_trust = fetched.get(&None).expect("should have local host entry");
-        assert!(local_trust.contains(&PathTrust::Global));
+        assert!(local_trust.contains(&PathTrust::Workspace));
 
         let fetched_no_store = cx
             .update(|cx| PROJECT_DB.fetch_trusted_worktrees(None, None, cx))
@@ -305,7 +305,7 @@ mod tests {
         let local_trust_no_store = fetched_no_store
             .get(&None)
             .expect("should have local host entry");
-        assert!(local_trust_no_store.contains(&PathTrust::Global));
+        assert!(local_trust_no_store.contains(&PathTrust::Workspace));
     }
 
     #[gpui::test]
@@ -388,9 +388,9 @@ mod tests {
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
 
-        let trusted_globals = HashSet::from_iter([None]);
+        let trusted_workspaces = HashSet::from_iter([None]);
         PROJECT_DB
-            .save_trusted_worktrees(HashMap::default(), trusted_globals)
+            .save_trusted_worktrees(HashMap::default(), trusted_workspaces)
             .await
             .unwrap();
 

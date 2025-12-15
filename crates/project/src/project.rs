@@ -4893,8 +4893,8 @@ impl Project {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if envelope.payload.restrict_global {
-                restricted_paths.insert(PathTrust::Global);
+            if envelope.payload.restrict_workspace {
+                restricted_paths.insert(PathTrust::Workspace);
             }
             let remote_host = this
                 .read(cx)

@@ -7,7 +7,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
     agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_global_trust},
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees, wait_for_workspace_trust},
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -685,7 +685,7 @@ impl AgentPanel {
         let worktree_trust_subscription =
             TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
                 let has_global_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust_global(
+                    trusted_worktrees.can_trust_workspace(
                         project
                             .read(cx)
                             .remote_connection_options(cx)
@@ -703,7 +703,7 @@ impl AgentPanel {
                         move |agent_panel, trusted_worktrees, _, cx| {
                             let new_show_trust_workspace_message =
                                 !trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                    trusted_worktrees.can_trust_global(
+                                    trusted_worktrees.can_trust_workspace(
                                         project
                                             .read(cx)
                                             .remote_connection_options(cx)
@@ -948,7 +948,7 @@ impl AgentPanel {
             if ext_agent.is_mcp() {
                 let wait_task = this.update(cx, |agent_panel, cx| {
                     agent_panel.project.update(cx, |project, cx| {
-                        wait_for_global_trust(
+                        wait_for_workspace_trust(
                             project.remote_connection_options(cx),
                             "context servers",
                             cx,
@@ -1512,7 +1512,11 @@ impl AgentPanel {
     ) {
         let wait_task = if agent.is_mcp() {
             self.project.update(cx, |project, cx| {
-                wait_for_global_trust(project.remote_connection_options(cx), "context servers", cx)
+                wait_for_workspace_trust(
+                    project.remote_connection_options(cx),
+                    "context servers",
+                    cx,
+                )
             })
         } else {
             None

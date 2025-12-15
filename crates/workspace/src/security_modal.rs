@@ -1,3 +1,5 @@
+//! A UI interface for managing the [`TrustedWorktrees`] data.
+
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -289,14 +291,14 @@ impl SecurityModal {
                     .keys()
                     .map(|worktree_id| match worktree_id {
                         Some(worktree_id) => PathTrust::Worktree(*worktree_id),
-                        None => PathTrust::Global,
+                        None => PathTrust::Workspace,
                     })
                     .collect::<HashSet<_>>();
                 if self.trust_parents {
                     paths_to_trust.extend(self.restricted_paths.values().filter_map(
                         |restricted_paths| {
                             if restricted_paths.is_file {
-                                Some(PathTrust::Global)
+                                Some(PathTrust::Workspace)
                             } else {
                                 let parent_abs_path =
                                     restricted_paths.abs_path.as_ref()?.parent()?.to_owned();
@@ -351,8 +353,8 @@ impl SecurityModal {
                     })
                     .collect::<HashMap<_, _>>();
                 // Do not clutter the UI:
-                // * trusting regular local worktrees assumes the global is trusted either, on the same host.
-                // * trusting a global worktree trusts all single-file worktrees on the same host.
+                // * trusting regular local worktrees assumes the workspace is trusted either, on the same host.
+                // * trusting a workspace trusts all single-file worktrees on the same host.
                 if new_restricted_worktrees.len() > 1 {
                     new_restricted_worktrees.remove(&None);
                 }
