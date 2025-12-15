@@ -413,13 +413,7 @@ struct LastEvent {
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
     end_edit_anchor: Option<Anchor>,
-
-    /// Snapshot at the boundary between earlier edits and the last burst of edits (if a pause
-    /// was detected). This is the snapshot *after* the last edit before the pause that precedes
-    /// the last burst.
-    snapshot_before_last_edit_burst: Option<TextBufferSnapshot>,
-
-    /// The timestamp of the most recent edit that contributed to this `LastEvent`.
+    snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
 }
 
@@ -460,7 +454,7 @@ impl LastEvent {
     }
 
     pub fn split_by_pause(&self) -> (LastEvent, Option<LastEvent>) {
-        let Some(boundary_snapshot) = self.snapshot_before_last_edit_burst.as_ref() else {
+        let Some(boundary_snapshot) = self.snapshot_after_last_editing_pause.as_ref() else {
             return (self.clone(), None);
         };
 
@@ -470,7 +464,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             end_edit_anchor: self.end_edit_anchor,
-            snapshot_before_last_edit_burst: None,
+            snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
 
@@ -480,7 +474,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             end_edit_anchor: self.end_edit_anchor,
-            snapshot_before_last_edit_burst: None,
+            snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
 
@@ -950,7 +944,7 @@ impl EditPredictionStore {
                     .map(|t| now.duration_since(t) >= LAST_CHANGE_GROUPING_TIME)
                     .unwrap_or(false);
                 if pause_elapsed {
-                    last_event.snapshot_before_last_edit_burst =
+                    last_event.snapshot_after_last_editing_pause =
                         Some(last_event.new_snapshot.clone());
                 }
 
@@ -975,7 +969,7 @@ impl EditPredictionStore {
             old_snapshot,
             new_snapshot,
             end_edit_anchor,
-            snapshot_before_last_edit_burst: None,
+            snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
         });
     }
