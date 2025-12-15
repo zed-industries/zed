@@ -117,14 +117,6 @@ impl InlineAssistant {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_completion_receiver(
-        &mut self,
-        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
-    ) {
-        self._inline_assistant_completions = Some(sender);
-    }
-
     pub fn register_workspace(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -1593,6 +1585,27 @@ impl InlineAssistant {
                 .map(InlineAssistTarget::Terminal)
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_completion_receiver(
+        &mut self,
+        sender: mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>,
+    ) {
+        self._inline_assistant_completions = Some(sender);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_codegen(
+        &mut self,
+        assist_id: InlineAssistId,
+        cx: &mut App,
+    ) -> Option<Entity<CodegenAlternative>> {
+        self.assists.get(&assist_id).map(|inline_assist| {
+            inline_assist
+                .codegen
+                .update(cx, |codegen, _cx| codegen.active_alternative().clone())
+        })
+    }
 }
 
 struct EditorInlineAssists {
@@ -2014,8 +2027,10 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod test {
+
     use std::sync::Arc;
 
     use agent::HistoryStore;
@@ -2026,7 +2041,6 @@ pub mod test {
     use futures::channel::mpsc;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
-    use language_model::LanguageModelRegistry;
     use project::Project;
     use prompt_store::PromptBuilder;
     use smol::stream::StreamExt as _;
@@ -2035,13 +2049,43 @@ pub mod test {
 
     use crate::InlineAssistant;
 
+    #[derive(Debug)]
+    pub enum InlineAssistantOutput {
+        Success {
+            completion: Option<String>,
+            description: Option<String>,
+            full_buffer_text: String,
+        },
+        Failure {
+            failure: String,
+        },
+        // These fields are used for logging
+        #[allow(unused)]
+        Malformed {
+            completion: Option<String>,
+            description: Option<String>,
+            failure: Option<String>,
+        },
+    }
+
+    impl InlineAssistantOutput {
+        pub fn buffer_text(&self) -> &str {
+            match self {
+                InlineAssistantOutput::Success {
+                    full_buffer_text, ..
+                } => full_buffer_text,
+                _ => "",
+            }
+        }
+    }
+
     pub fn run_inline_assistant_test<SetupF, TestF>(
         base_buffer: String,
         prompt: String,
         setup: SetupF,
         test: TestF,
         cx: &mut TestAppContext,
-    ) -> String
+    ) -> InlineAssistantOutput
     where
         SetupF: FnOnce(&mut gpui::VisualTestContext),
         TestF: FnOnce(&mut gpui::VisualTestContext),
@@ -2133,39 +2177,198 @@ pub mod test {
 
         test(cx);
 
-        cx.executor()
-            .block_test(async { completion_rx.next().await });
+        let assist_id = cx
+            .executor()
+            .block_test(async { completion_rx.next().await })
+            .unwrap()
+            .unwrap();
 
-        buffer.read_with(cx, |buffer, _| buffer.text())
+        let (completion, description, failure) = cx.update(|_, cx| {
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                let codegen = inline_assistant.get_codegen(assist_id, cx).unwrap();
+
+                let completion = codegen.read(cx).current_completion();
+                let description = codegen.read(cx).current_description();
+                let failure = codegen.read(cx).current_failure();
+
+                (completion, description, failure)
+            })
+        });
+
+        if failure.is_some() && (completion.is_some() || description.is_some()) {
+            InlineAssistantOutput::Malformed {
+                completion,
+                description,
+                failure,
+            }
+        } else if let Some(failure) = failure {
+            InlineAssistantOutput::Failure { failure }
+        } else {
+            InlineAssistantOutput::Success {
+                completion,
+                description,
+                full_buffer_text: buffer.read_with(cx, |buffer, _| buffer.text()),
+            }
+        }
+    }
+}
+
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod evals {
+    use std::str::FromStr;
+
+    use eval_utils::{EvalOutput, NoProcessor};
+    use gpui::TestAppContext;
+    use language_model::{LanguageModelRegistry, SelectedModel};
+    use rand::{SeedableRng as _, rngs::StdRng};
+
+    use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
+
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_single_cursor_edit() {
+        run_eval(
+            20,
+            1.0,
+            "Rename this variable to buffer_text".to_string(),
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "}
+            .to_string(),
+            exact_buffer_match(indoc::indoc! {"
+                struct EvalExampleStruct {
+                    buffer_text: String,
+                    prompt: String,
+                }
+            "}),
+        );
     }
 
-    #[allow(unused)]
-    pub fn test_inline_assistant(
-        base_buffer: &'static str,
-        llm_output: &'static str,
-        cx: &mut TestAppContext,
-    ) -> String {
-        run_inline_assistant_test(
-            base_buffer.to_string(),
-            "Prompt doesn't matter because we're using a fake model".to_string(),
-            |cx| {
-                cx.update(|_, cx| LanguageModelRegistry::test(cx));
-            },
-            |cx| {
-                let fake_model = cx.update(|_, cx| {
-                    LanguageModelRegistry::global(cx)
-                        .update(cx, |registry, _| registry.fake_model())
-                });
-                let fake = fake_model.as_fake();
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_cant_do() {
+        run_eval(
+            20,
+            1.0,
+            "Rename the struct to EvalExampleStructNope",
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "},
+            uncertain_output,
+        );
+    }
 
-                // let fake = fake_model;
-                fake.send_last_completion_stream_text_chunk(llm_output.to_string());
-                fake.end_last_completion_stream();
+    #[test]
+    #[cfg_attr(not(feature = "unit-eval"), ignore)]
+    fn eval_unclear() {
+        run_eval(
+            20,
+            1.0,
+            "Make exactly the change I want you to make",
+            indoc::indoc! {"
+                struct EvalExampleStruct {
+                    text: Strˇing,
+                    prompt: String,
+                }
+            "},
+            uncertain_output,
+        );
+    }
 
-                // Run again to process the model's response
-                cx.run_until_parked();
-            },
-            cx,
-        )
+    fn run_eval(
+        iterations: usize,
+        expected_pass_ratio: f32,
+        prompt: impl Into<String>,
+        buffer: impl Into<String>,
+        judge: impl Fn(InlineAssistantOutput) -> eval_utils::EvalOutput<()> + Send + Sync + 'static,
+    ) {
+        let buffer = buffer.into();
+        let prompt = prompt.into();
+
+        eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
+            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let mut cx = TestAppContext::build(dispatcher, None);
+            cx.skip_drawing();
+
+            let output = run_inline_assistant_test(
+                buffer.clone(),
+                prompt.clone(),
+                |cx| {
+                    // Reconfigure to use a real model instead of the fake one
+                    let model_name = std::env::var("ZED_AGENT_MODEL")
+                        .unwrap_or("anthropic/claude-sonnet-4-latest".into());
+
+                    let selected_model = SelectedModel::from_str(&model_name)
+                        .expect("Invalid model format. Use 'provider/model-id'");
+
+                    log::info!("Selected model: {selected_model:?}");
+
+                    cx.update(|_, cx| {
+                        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                            registry.select_inline_assistant_model(Some(&selected_model), cx);
+                        });
+                    });
+                },
+                |_cx| {
+                    log::info!("Waiting for actual response from the LLM...");
+                },
+                &mut cx,
+            );
+
+            cx.quit();
+
+            judge(output)
+        });
+    }
+
+    fn uncertain_output(output: InlineAssistantOutput) -> EvalOutput<()> {
+        match &output {
+            o @ InlineAssistantOutput::Success {
+                completion,
+                description,
+                ..
+            } => {
+                if description.is_some() && completion.is_none() {
+                    EvalOutput::passed(format!(
+                        "Assistant produced no completion, but a description:\n{}",
+                        description.as_ref().unwrap()
+                    ))
+                } else {
+                    EvalOutput::failed(format!("Assistant produced a completion:\n{:?}", o))
+                }
+            }
+            InlineAssistantOutput::Failure {
+                failure: error_message,
+            } => EvalOutput::passed(format!(
+                "Assistant produced a failure message: {}",
+                error_message
+            )),
+            o @ InlineAssistantOutput::Malformed { .. } => {
+                EvalOutput::failed(format!("Assistant produced a malformed response:\n{:?}", o))
+            }
+        }
+    }
+
+    fn exact_buffer_match(
+        correct_output: impl Into<String>,
+    ) -> impl Fn(InlineAssistantOutput) -> EvalOutput<()> {
+        let correct_output = correct_output.into();
+        move |output| {
+            if output.buffer_text() == correct_output {
+                EvalOutput::passed("Assistant output matches")
+            } else {
+                EvalOutput::failed(format!(
+                    "Assistant output does not match expected output: {:?}",
+                    output
+                ))
+            }
+        }
     }
 }

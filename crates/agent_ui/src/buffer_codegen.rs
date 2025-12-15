@@ -41,7 +41,6 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use ui::SharedString;
 
 /// Use this tool to provide a message to the user when you're unable to complete a task.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -56,16 +55,16 @@ pub struct FailureMessageInput {
 /// Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RewriteSectionInput {
+    /// The text to replace the section with.
+    #[serde(default)]
+    pub replacement_text: String,
+
     /// A brief description of the edit you have made.
     ///
     /// The description may use markdown formatting if you wish.
     /// This is optional - if the edit is simple or obvious, you should leave it empty.
     #[serde(default)]
     pub description: String,
-
-    /// The text to replace the section with.
-    #[serde(default)]
-    pub replacement_text: String,
 }
 
 pub struct BufferCodegen {
@@ -287,8 +286,9 @@ pub struct CodegenAlternative {
     completion: Option<String>,
     selected_text: Option<String>,
     pub message_id: Option<String>,
-    pub model_explanation: Option<SharedString>,
     session_id: Uuid,
+    pub description: Option<String>,
+    pub failure: Option<String>,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -346,8 +346,9 @@ impl CodegenAlternative {
             elapsed_time: None,
             completion: None,
             selected_text: None,
-            model_explanation: None,
             session_id,
+            description: None,
+            failure: None,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
     }
@@ -920,6 +921,16 @@ impl CodegenAlternative {
         self.completion.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_description(&self) -> Option<String> {
+        self.description.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn current_failure(&self) -> Option<String> {
+        self.failure.clone()
+    }
+
     pub fn selected_text(&self) -> Option<&str> {
         self.selected_text.as_deref()
     }
@@ -1133,32 +1144,69 @@ impl CodegenAlternative {
                 }
             };
 
+            enum ToolUseOutput {
+                Rewrite {
+                    text: String,
+                    description: Option<String>,
+                },
+                Failure(String),
+            }
+
+            enum ModelUpdate {
+                Description(String),
+                Failure(String),
+            }
+
             let chars_read_so_far = Arc::new(Mutex::new(0usize));
-            let tool_to_text_and_message =
-                move |tool_use: LanguageModelToolUse| -> (Option<String>, Option<String>) {
-                    let mut chars_read_so_far = chars_read_so_far.lock();
-                    match tool_use.name.as_ref() {
-                        "rewrite_section" => {
-                            let Ok(mut input) =
-                                serde_json::from_value::<RewriteSectionInput>(tool_use.input)
-                            else {
-                                return (None, None);
-                            };
-                            let value = input.replacement_text[*chars_read_so_far..].to_string();
-                            *chars_read_so_far = input.replacement_text.len();
-                            (Some(value), Some(std::mem::take(&mut input.description)))
-                        }
-                        "failure_message" => {
-                            let Ok(mut input) =
-                                serde_json::from_value::<FailureMessageInput>(tool_use.input)
-                            else {
-                                return (None, None);
-                            };
-                            (None, Some(std::mem::take(&mut input.message)))
-                        }
-                        _ => (None, None),
+            let process_tool_use = move |tool_use: LanguageModelToolUse| -> Option<ToolUseOutput> {
+                let mut chars_read_so_far = chars_read_so_far.lock();
+                let is_complete = tool_use.is_input_complete;
+                match tool_use.name.as_ref() {
+                    "rewrite_section" => {
+                        let Ok(mut input) =
+                            serde_json::from_value::<RewriteSectionInput>(tool_use.input)
+                        else {
+                            return None;
+                        };
+                        let text = input.replacement_text[*chars_read_so_far..].to_string();
+                        *chars_read_so_far = input.replacement_text.len();
+                        let description = is_complete
+                            .then(|| {
+                                let desc = std::mem::take(&mut input.description);
+                                if desc.is_empty() { None } else { Some(desc) }
+                            })
+                            .flatten();
+                        Some(ToolUseOutput::Rewrite { text, description })
                     }
-                };
+                    "failure_message" => {
+                        if !is_complete {
+                            return None;
+                        }
+                        let Ok(mut input) =
+                            serde_json::from_value::<FailureMessageInput>(tool_use.input)
+                        else {
+                            return None;
+                        };
+                        Some(ToolUseOutput::Failure(std::mem::take(&mut input.message)))
+                    }
+                    _ => None,
+                }
+            };
+
+            let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded::<ModelUpdate>();
+
+            cx.spawn({
+                let codegen = codegen.clone();
+                async move |cx| {
+                    while let Some(update) = message_rx.next().await {
+                        let _ = codegen.update(cx, |this, _cx| match update {
+                            ModelUpdate::Description(d) => this.description = Some(d),
+                            ModelUpdate::Failure(f) => this.failure = Some(f),
+                        });
+                    }
+                }
+            })
+            .detach();
 
             let mut message_id = None;
             let mut first_text = None;
@@ -1171,24 +1219,23 @@ impl CodegenAlternative {
                         Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
                             message_id = Some(id);
                         }
-                        Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                            if matches!(
-                                tool_use.name.as_ref(),
-                                "rewrite_section" | "failure_message"
-                            ) =>
-                        {
-                            let is_complete = tool_use.is_input_complete;
-                            let (text, message) = tool_to_text_and_message(tool_use);
-                            // Only update the model explanation if the tool use is complete.
-                            // Otherwise the UI element bounces around as it's updated.
-                            if is_complete {
-                                let _ = codegen.update(cx, |this, _cx| {
-                                    this.model_explanation = message.map(Into::into);
-                                });
-                            }
-                            first_text = text;
-                            if first_text.is_some() {
-                                break;
+                        Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                            if let Some(output) = process_tool_use(tool_use) {
+                                let (text, update) = match output {
+                                    ToolUseOutput::Rewrite { text, description } => {
+                                        (Some(text), description.map(ModelUpdate::Description))
+                                    }
+                                    ToolUseOutput::Failure(message) => {
+                                        (None, Some(ModelUpdate::Failure(message)))
+                                    }
+                                };
+                                if let Some(update) = update {
+                                    let _ = message_tx.unbounded_send(update);
+                                }
+                                first_text = text;
+                                if first_text.is_some() {
+                                    break;
+                                }
                             }
                         }
                         Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
@@ -1215,41 +1262,30 @@ impl CodegenAlternative {
                 return;
             };
 
-            let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
-
-            cx.spawn({
-                let codegen = codegen.clone();
-                async move |cx| {
-                    while let Some(message) = message_rx.next().await {
-                        let _ = codegen.update(cx, |this, _cx| {
-                            this.model_explanation = message;
-                        });
-                    }
-                }
-            })
-            .detach();
-
             let move_last_token_usage = last_token_usage.clone();
 
             let text_stream = Box::pin(futures::stream::once(async { Ok(first_text) }).chain(
                 completion_events.filter_map(move |e| {
-                    let tool_to_text_and_message = tool_to_text_and_message.clone();
+                    let process_tool_use = process_tool_use.clone();
                     let last_token_usage = move_last_token_usage.clone();
                     let total_text = total_text.clone();
                     let mut message_tx = message_tx.clone();
                     async move {
                         match e {
-                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                                if matches!(
-                                    tool_use.name.as_ref(),
-                                    "rewrite_section" | "failure_message"
-                                ) =>
-                            {
-                                let is_complete = tool_use.is_input_complete;
-                                let (text, message) = tool_to_text_and_message(tool_use);
-                                if is_complete {
-                                    // Again only send the message when complete to not get a bouncing UI element.
-                                    let _ = message_tx.send(message.map(Into::into)).await;
+                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                                let Some(output) = process_tool_use(tool_use) else {
+                                    return None;
+                                };
+                                let (text, update) = match output {
+                                    ToolUseOutput::Rewrite { text, description } => {
+                                        (Some(text), description.map(ModelUpdate::Description))
+                                    }
+                                    ToolUseOutput::Failure(message) => {
+                                        (None, Some(ModelUpdate::Failure(message)))
+                                    }
+                                };
+                                if let Some(update) = update {
+                                    let _ = message_tx.send(update).await;
                                 }
                                 text.map(Ok)
                             }

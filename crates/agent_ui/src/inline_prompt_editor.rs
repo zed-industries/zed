@@ -101,11 +101,11 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let left_gutter_width = gutter.full_width() + (gutter.margin / 2.0);
                 let right_padding = editor_margins.right + RIGHT_PADDING;
 
-                let explanation = codegen
-                    .active_alternative()
-                    .read(cx)
-                    .model_explanation
-                    .clone();
+                let active_alternative = codegen.active_alternative().read(cx);
+                let explanation = active_alternative
+                    .description
+                    .clone()
+                    .or_else(|| active_alternative.failure.clone());
 
                 (left_gutter_width, right_padding, explanation)
             }
@@ -139,7 +139,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         if let Some(explanation) = &explanation {
             markdown.update(cx, |markdown, cx| {
-                markdown.reset(explanation.clone(), cx);
+                markdown.reset(SharedString::from(explanation), cx);
             });
         }
 

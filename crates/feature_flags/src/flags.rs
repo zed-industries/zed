@@ -18,6 +18,6 @@ impl FeatureFlag for InlineAssistantUseToolFeatureFlag {
     const NAME: &'static str = "inline-assistant-use-tool";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
