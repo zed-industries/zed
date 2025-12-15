@@ -599,14 +599,19 @@ pub struct TypeScriptLspAdapter {
 }
 
 impl TypeScriptLspAdapter {
-    const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
-    const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
-    const SERVER_NAME: LanguageServerName =
-        LanguageServerName::new_static("typescript-language-server");
+    const OLD_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.js";
+    const NEW_SERVER_PATH: &str = "node_modules/typescript-language-server/lib/cli.mjs";
+
     const PACKAGE_NAME: &str = "typescript";
+    const SERVER_PACKAGE_NAME: &str = "typescript-language-server";
+
+    const SERVER_NAME: LanguageServerName =
+        LanguageServerName::new_static(Self::SERVER_PACKAGE_NAME);
+
     pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
         TypeScriptLspAdapter { fs, node }
     }
+
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
@@ -646,10 +651,13 @@ impl LspInstaller for TypeScriptLspAdapter {
         _: &mut AsyncApp,
     ) -> Result<TypeScriptVersions> {
         Ok(TypeScriptVersions {
-            typescript_version: self.node.npm_package_latest_version("typescript").await?,
+            typescript_version: self
+                .node
+                .npm_package_latest_version(Self::PACKAGE_NAME)
+                .await?,
             server_version: self
                 .node
-                .npm_package_latest_version("typescript-language-server")
+                .npm_package_latest_version(Self::SERVER_PACKAGE_NAME)
                 .await?,
         })
     }
@@ -662,7 +670,7 @@ impl LspInstaller for TypeScriptLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
-        let should_install_language_server = self
+        if self
             .node
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
@@ -670,17 +678,29 @@ impl LspInstaller for TypeScriptLspAdapter {
                 container_dir,
                 VersionStrategy::Latest(version.typescript_version.as_str()),
             )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: None,
-                arguments: typescript_server_binary_arguments(&server_path),
-            })
+            .await
+        {
+            return None;
         }
+
+        if self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version.server_version.as_str()),
+            )
+            .await
+        {
+            return None;
+        }
+
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: typescript_server_binary_arguments(&server_path),
+        })
     }
 
     async fn fetch_server_binary(
@@ -700,7 +720,7 @@ impl LspInstaller for TypeScriptLspAdapter {
                         latest_version.typescript_version.as_str(),
                     ),
                     (
-                        "typescript-language-server",
+                        Self::SERVER_PACKAGE_NAME,
                         latest_version.server_version.as_str(),
                     ),
                 ],
@@ -822,9 +842,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("TypeScript"), "typescript".into()),
-            (LanguageName::new("JavaScript"), "javascript".into()),
-            (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new_static("TypeScript"), "typescript".into()),
+            (LanguageName::new_static("JavaScript"), "javascript".into()),
+            (LanguageName::new_static("TSX"), "typescriptreact".into()),
         ])
     }
 }

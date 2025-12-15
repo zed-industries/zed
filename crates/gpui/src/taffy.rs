@@ -8,7 +8,6 @@ use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
-    prelude::min_content,
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -296,7 +295,7 @@ trait ToTaffy<Output> {
 
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
-        use taffy::style_helpers::{length, minmax, repeat};
+        use taffy::style_helpers::{fr, length, minmax, repeat};
 
         fn to_grid_line(
             placement: &Range<crate::GridPlacement>,
@@ -310,8 +309,8 @@ impl ToTaffy<taffy::style::Style> for Style {
         fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
             unit: &Option<u16>,
         ) -> Vec<taffy::GridTemplateComponent<T>> {
-            // grid-template-columns: repeat(<number>, minmax(0, min-content));
-            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), min_content())])])
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
                 .unwrap_or_default()
         }
 

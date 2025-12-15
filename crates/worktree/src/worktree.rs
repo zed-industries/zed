@@ -14,7 +14,7 @@ use futures::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
-    select_biased,
+    select_biased, stream,
     task::Poll,
 };
 use fuzzy::CharBag;
@@ -22,7 +22,8 @@ use git::{
     COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK, LFS_DIR, status::GitSummary,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Priority,
+    Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -52,7 +53,7 @@ use std::{
     fmt,
     future::Future,
     mem::{self},
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -97,6 +98,7 @@ pub enum CreatedEntry {
     Excluded { abs_path: PathBuf },
 }
 
+#[derive(Debug)]
 pub struct LoadedFile {
     pub file: Arc<File>,
     pub text: String,
@@ -129,6 +131,7 @@ pub struct LocalWorktree {
     next_entry_id: Arc<AtomicUsize>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    scanning_enabled: bool,
 }
 
 pub struct PathPrefixScanRequest {
@@ -356,6 +359,7 @@ impl Worktree {
         visible: bool,
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
+        scanning_enabled: bool,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
@@ -428,7 +432,7 @@ impl Worktree {
                 let mut entry = Entry::new(
                     RelPath::empty().into(),
                     &metadata,
-                    &next_entry_id,
+                    ProjectEntryId::new(&next_entry_id),
                     snapshot.root_char_bag,
                     None,
                 );
@@ -459,6 +463,7 @@ impl Worktree {
                 fs_case_sensitive,
                 visible,
                 settings,
+                scanning_enabled,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1049,13 +1054,18 @@ impl LocalWorktree {
         let share_private_files = self.share_private_files;
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
+        let scanning_enabled = self.scanning_enabled;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
-                let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
+                let (events, watcher) = if scanning_enabled {
+                    fs.watch(&abs_path, FS_WATCH_LATENCY).await
+                } else {
+                    (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
+                };
                 let fs_case_sensitive = fs.is_case_sensitive().await.unwrap_or_else(|e| {
                     log::error!("Failed to determine whether filesystem is case sensitive: {e:#}");
                     true
@@ -1080,6 +1090,7 @@ impl LocalWorktree {
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
+                    scanning_enabled,
                     settings,
                     watcher,
                 };
@@ -2736,13 +2747,30 @@ impl BackgroundScannerState {
         }
     }
 
-    async fn insert_entry(
+    fn entry_id_for(
         &mut self,
-        mut entry: Entry,
-        fs: &dyn Fs,
-        watcher: &dyn Watcher,
-    ) -> Entry {
-        self.reuse_entry_id(&mut entry);
+        next_entry_id: &AtomicUsize,
+        path: &RelPath,
+        metadata: &fs::Metadata,
+    ) -> ProjectEntryId {
+        // If an entry with the same inode was removed from the worktree during this scan,
+        // then it *might* represent the same file or directory. But the OS might also have
+        // re-used the inode for a completely different file or directory.
+        //
+        // Conditionally reuse the old entry's id:
+        // * if the mtime is the same, the file was probably been renamed.
+        // * if the path is the same, the file may just have been updated
+        if let Some(removed_entry) = self.removed_entries.remove(&metadata.inode) {
+            if removed_entry.mtime == Some(metadata.mtime) || *removed_entry.path == *path {
+                return removed_entry.id;
+            }
+        } else if let Some(existing_entry) = self.snapshot.entry_for_path(path) {
+            return existing_entry.id;
+        }
+        ProjectEntryId::new(next_entry_id)
+    }
+
+    async fn insert_entry(&mut self, entry: Entry, fs: &dyn Fs, watcher: &dyn Watcher) -> Entry {
         let entry = self.snapshot.insert_entry(entry, fs);
         if entry.path.file_name() == Some(&DOT_GIT) {
             self.insert_git_repository(entry.path.clone(), fs, watcher)
@@ -3389,13 +3417,13 @@ impl Entry {
     fn new(
         path: Arc<RelPath>,
         metadata: &fs::Metadata,
-        next_entry_id: &AtomicUsize,
+        id: ProjectEntryId,
         root_char_bag: CharBag,
         canonical_path: Option<Arc<Path>>,
     ) -> Self {
         let char_bag = char_bag_for_path(root_char_bag, &path);
         Self {
-            id: ProjectEntryId::new(next_entry_id),
+            id,
             kind: if metadata.is_dir {
                 EntryKind::PendingDir
             } else {
@@ -3600,6 +3628,7 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    scanning_enabled: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -3615,14 +3644,23 @@ impl BackgroundScanner {
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
         let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
-        let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
-        self.state
-            .lock()
-            .await
-            .snapshot
-            .ignores_by_parent_abs_path
-            .extend(ignores);
-        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo {
+
+        let repo = if self.scanning_enabled {
+            let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+            self.state
+                .lock()
+                .await
+                .snapshot
+                .ignores_by_parent_abs_path
+                .extend(ignores);
+            repo
+        } else {
+            None
+        };
+
+        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
+            && self.scanning_enabled
+        {
             maybe!(async {
                 self.state
                     .lock()
@@ -3646,6 +3684,7 @@ impl BackgroundScanner {
 
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
             &paths::global_gitignore_path()
+            && self.scanning_enabled
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
             self.state.lock().await.snapshot.global_gitignore = if is_file {
@@ -3682,11 +3721,13 @@ impl BackgroundScanner {
                     .await;
                 if ignore_stack.is_abs_path_ignored(root_abs_path.as_path(), true) {
                     root_entry.is_ignored = true;
+                    let mut root_entry = root_entry.clone();
+                    state.reuse_entry_id(&mut root_entry);
                     state
-                        .insert_entry(root_entry.clone(), self.fs.as_ref(), self.watcher.as_ref())
+                        .insert_entry(root_entry, self.fs.as_ref(), self.watcher.as_ref())
                         .await;
                 }
-                if root_entry.is_dir() {
+                if root_entry.is_dir() && self.scanning_enabled {
                     state
                         .enqueue_scan_dir(
                             root_abs_path.as_path().into(),
@@ -3795,7 +3836,7 @@ impl BackgroundScanner {
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path {root_path:?}: {err}");
+                log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
                 return true;
             }
         };
@@ -3877,29 +3918,35 @@ impl BackgroundScanner {
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         {
             let snapshot = &self.state.lock().await.snapshot;
-            abs_paths.retain(|abs_path| {
-            let abs_path = &SanitizedPath::new(abs_path);
 
+            let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
 
-            {
+            fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
+                if let Some(last_range) = ranges.last_mut()
+                    && last_range.end == ix
+                {
+                    last_range.end += 1;
+                } else {
+                    ranges.push(ix..ix + 1);
+                }
+            }
+
+            for (ix, abs_path) in abs_paths.iter().enumerate() {
+                let abs_path = &SanitizedPath::new(&abs_path);
+
                 let mut is_git_related = false;
+                let mut dot_git_paths = None;
 
-                let dot_git_paths = self.executor.block(maybe!(async  {
-                    let mut path = None;
-                    for ancestor in abs_path.as_path().ancestors() {
-
+                for ancestor in abs_path.as_path().ancestors() {
                     if is_git_dir(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
                             .expect("stripping off the ancestor");
-                       path = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
-                       break;
+                        dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
+                        break;
                     }
-                    }
-                    path
-
-                }));
+                }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
                     if skipped_files_in_dot_git
@@ -3909,8 +3956,11 @@ impl BackgroundScanner {
                             path_in_git_dir.starts_with(skipped_git_subdir)
                         })
                     {
-                        log::debug!("ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories");
-                        return false;
+                        log::debug!(
+                            "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
+                        );
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
                     }
 
                     is_git_related = true;
@@ -3919,8 +3969,7 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path = if let Ok(path) =
-                    abs_path.strip_prefix(&root_canonical_path)
+                let relative_path = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
@@ -3931,10 +3980,11 @@ impl BackgroundScanner {
                         );
                     } else {
                         log::error!(
-                          "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
+                            "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
                         );
                     }
-                    return false;
+                    skip_ix(&mut ranges_to_drop, ix);
+                    continue;
                 };
 
                 if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
@@ -3958,21 +4008,26 @@ impl BackgroundScanner {
                 });
                 if !parent_dir_is_loaded {
                     log::debug!("ignoring event {relative_path:?} within unloaded directory");
-                    return false;
+                    skip_ix(&mut ranges_to_drop, ix);
+                    continue;
                 }
 
                 if self.settings.is_path_excluded(&relative_path) {
                     if !is_git_related {
                         log::debug!("ignoring FS event for excluded path {relative_path:?}");
                     }
-                    return false;
+                    skip_ix(&mut ranges_to_drop, ix);
+                    continue;
                 }
 
                 relative_paths.push(relative_path.into_arc());
-                true
             }
-        });
+
+            for range_to_drop in ranges_to_drop.into_iter().rev() {
+                abs_paths.drain(range_to_drop);
+            }
         }
+
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
         }
@@ -4090,7 +4145,7 @@ impl BackgroundScanner {
 
         let progress_update_count = AtomicUsize::new(0);
         self.executor
-            .scoped(|scope| {
+            .scoped_priority(Priority::Low, |scope| {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         let mut last_progress_update_count = 0;
@@ -4275,7 +4330,7 @@ impl BackgroundScanner {
             let mut child_entry = Entry::new(
                 child_path.clone(),
                 &child_metadata,
-                &next_entry_id,
+                ProjectEntryId::new(&next_entry_id),
                 root_char_bag,
                 None,
             );
@@ -4462,10 +4517,11 @@ impl BackgroundScanner {
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir, self.fs.as_ref())
                         .await;
                     let is_external = !canonical_path.starts_with(&root_canonical_path);
+                    let entry_id = state.entry_id_for(self.next_entry_id.as_ref(), path, &metadata);
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
-                        self.next_entry_id.as_ref(),
+                        entry_id,
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
                             Some(canonical_path.as_path().to_path_buf().into())
@@ -5606,4 +5662,16 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
         }
     };
     (repository_dir_abs_path, common_dir_abs_path)
+}
+
+struct NullWatcher;
+
+impl fs::Watcher for NullWatcher {
+    fn add(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove(&self, _path: &Path) -> Result<()> {
+        Ok(())
+    }
 }

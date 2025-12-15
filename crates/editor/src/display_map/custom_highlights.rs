@@ -30,6 +30,7 @@ struct HighlightEndpoint {
 }
 
 impl<'a> CustomHighlightsChunks<'a> {
+    #[ztracing::instrument(skip_all)]
     pub fn new(
         range: Range<MultiBufferOffset>,
         language_aware: bool,
@@ -51,6 +52,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn seek(&mut self, new_range: Range<MultiBufferOffset>) {
         self.highlight_endpoints =
             create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
@@ -77,12 +79,15 @@ fn create_highlight_endpoints(
             let start_ix = ranges
                 .binary_search_by(|probe| probe.end.cmp(&start, buffer).then(cmp::Ordering::Less))
                 .unwrap_or_else(|i| i);
+            let end_ix = ranges[start_ix..]
+                .binary_search_by(|probe| {
+                    probe.start.cmp(&end, buffer).then(cmp::Ordering::Greater)
+                })
+                .unwrap_or_else(|i| i);
 
-            for range in &ranges[start_ix..] {
-                if range.start.cmp(&end, buffer).is_ge() {
-                    break;
-                }
+            highlight_endpoints.reserve(2 * end_ix);
 
+            for range in &ranges[start_ix..][..end_ix] {
                 let start = range.start.to_offset(buffer);
                 let end = range.end.to_offset(buffer);
                 if start == end {
@@ -108,6 +113,7 @@ fn create_highlight_endpoints(
 impl<'a> Iterator for CustomHighlightsChunks<'a> {
     type Item = Chunk<'a>;
 
+    #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_highlight_endpoint = MultiBufferOffset(usize::MAX);
         while let Some(endpoint) = self.highlight_endpoints.peek().copied() {

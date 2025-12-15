@@ -7,7 +7,7 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
-use fs::RealFs;
+use fs::{Fs, RealFs};
 use gpui::{TestAppContext, TestDispatcher};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
@@ -24,7 +24,11 @@ fn extension_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("load");
 
     let mut manifest = manifest();
-    let wasm_bytes = wasm_bytes(&cx, &mut manifest);
+    let wasm_bytes = wasm_bytes(
+        &cx,
+        &mut manifest,
+        Arc::new(RealFs::new(None, cx.executor())),
+    );
     let manifest = Arc::new(manifest);
     let extensions_dir = TempTree::new(json!({
         "installed": {},
@@ -60,7 +64,7 @@ fn init() -> TestAppContext {
     cx
 }
 
-fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> {
+fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn Fs>) -> Vec<u8> {
     let extension_builder = extension_builder();
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -73,6 +77,7 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> 
             &path,
             manifest,
             CompileExtensionOptions { release: true },
+            fs,
         ))
         .unwrap();
     std::fs::read(path.join("extension.wasm")).unwrap()
