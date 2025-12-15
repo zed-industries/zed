@@ -38,6 +38,7 @@ smol.workspace = true
 task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
+url.workspace = true
 util.workspace = true
 urlencoding.workspace = true
 
@@ -49,5 +50,4 @@ gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-url.workspace = true
 util_macros.workspace = true

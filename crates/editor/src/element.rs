@@ -48,11 +48,11 @@ use gpui::{
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -62,6 +62,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 
+use edit_prediction_types::EditPredictionGranularity;
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -132,6 +133,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
+        vim_mode_enabled: bool,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -152,12 +154,9 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if (cursor_shape == CursorShape::Block || cursor_shape == CursorShape::Hollow)
-            && !range.is_empty()
-            && !selection.reversed
-        {
+        if vim_mode_enabled && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
-                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left)
+                head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0 && head != map.max_point() {
                 head = map.clip_point(
                     DisplayPoint::new(
@@ -605,7 +604,8 @@ impl EditorElement {
         register_action(editor, window, Editor::display_cursor_names);
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
-        register_action(editor, window, Editor::accept_partial_edit_prediction);
+        register_action(editor, window, Editor::accept_next_word_edit_prediction);
+        register_action(editor, window, Editor::accept_next_line_edit_prediction);
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
@@ -1017,16 +1017,44 @@ impl EditorElement {
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&event.modifiers(), cx);
+        let mouse_down_hovered_link_modifier = if let ClickEvent::Mouse(mouse_event) = event {
+            Editor::is_cmd_or_ctrl_pressed(&mouse_event.down.modifiers, cx)
+        } else {
+            true
+        };
 
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
             && hovered_link_modifier
+            && mouse_down_hovered_link_modifier
             && text_hitbox.is_hovered(window)
         {
             let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
             editor.selection_drag_state = SelectionDragState::None;
 
+            cx.stop_propagation();
+        }
+    }
+
+    fn pressure_click(
+        editor: &mut Editor,
+        event: &MousePressureEvent,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let text_hitbox = &position_map.text_hitbox;
+        let force_click_possible =
+            matches!(editor.prev_pressure_stage, Some(PressureStage::Normal))
+                && event.stage == PressureStage::Force;
+
+        editor.prev_pressure_stage = Some(event.stage);
+
+        if force_click_possible && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(event.position);
+            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
             cx.stop_propagation();
         }
     }
@@ -1435,6 +1463,7 @@ impl EditorElement {
                     let layout = SelectionLayout::new(
                         selection,
                         editor.selections.line_mode(),
+                        editor.is_vim_mode_enabled(cx),
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -1481,6 +1510,7 @@ impl EditorElement {
                     let drag_cursor_layout = SelectionLayout::new(
                         drop_cursor.clone(),
                         false,
+                        editor.is_vim_mode_enabled(cx),
                         CursorShape::Bar,
                         &snapshot.display_snapshot,
                         false,
@@ -1544,6 +1574,7 @@ impl EditorElement {
                         .push(SelectionLayout::new(
                             selection.selection,
                             selection.line_mode,
+                            editor.is_vim_mode_enabled(cx),
                             selection.cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1554,6 +1585,7 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+                let player = editor.current_user_player_color(cx);
                 let layouts = snapshot
                     .buffer_snapshot()
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1561,6 +1593,7 @@ impl EditorElement {
                         SelectionLayout::new(
                             selection,
                             line_mode,
+                            editor.is_vim_mode_enabled(cx),
                             cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1569,7 +1602,7 @@ impl EditorElement {
                         )
                     })
                     .collect::<Vec<_>>();
-                let player = editor.current_user_player_color(cx);
+
                 selections.push((player, layouts));
             }
         });
@@ -3284,6 +3317,7 @@ impl EditorElement {
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode(),
+                    editor.is_vim_mode_enabled(cx),
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,
@@ -4867,8 +4901,11 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding =
-                            editor.accept_edit_prediction_keybind(false, window, cx);
+                        let accept_binding = editor.accept_edit_prediction_keybind(
+                            EditPredictionGranularity::Full,
+                            window,
+                            cx,
+                        );
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
@@ -7762,6 +7799,19 @@ impl EditorElement {
                         Self::click(editor, &event, &position_map, window, cx);
                     }
                 }),
+            }
+        });
+
+        window.on_mouse_event({
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+
+            move |event: &MousePressureEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    editor.update(cx, |editor, cx| {
+                        Self::pressure_click(editor, &event, &position_map, window, cx);
+                    })
+                }
             }
         });
 
@@ -11525,6 +11575,7 @@ mod tests {
     use log::info;
     use std::num::NonZeroU32;
     use util::test::sample_text;
+    use vim_mode_setting::VimModeSetting;
 
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
@@ -11869,6 +11920,12 @@ mod tests {
     async fn test_vim_visual_selections(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
+        // Enable `vim_mode` setting so the logic that checks whether this is
+        // enabled can work as expected.
+        cx.update(|cx| {
+            VimModeSetting::override_global(VimModeSetting(true), cx);
+        });
+
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
             Editor::new(EditorMode::full(), buffer, None, window, cx)
@@ -11879,7 +11936,6 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_shape = CursorShape::Block;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),

@@ -26,6 +26,7 @@ acp_tools.workspace = true
 activity_indicator.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
+agent_ui_v2.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
