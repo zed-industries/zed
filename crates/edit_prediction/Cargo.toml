@@ -41,6 +41,7 @@ open_ai.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+pulldown-cmark.workspace = true
 rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true

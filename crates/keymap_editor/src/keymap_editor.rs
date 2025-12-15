@@ -123,8 +123,8 @@ pub fn init(cx: &mut App) {
         })
     }
 
-    cx.on_action(|_: &OpenKeymap, cx| common(None, cx));
-    cx.on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
+    cx.on_action(|_: &OpenKeymap, cx| common(None, cx))
+        .on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
 
     register_serializable_item::<KeymapEditor>(cx);
 }

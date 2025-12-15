@@ -26,7 +26,7 @@ pub async fn run_context_retrieval(
     run_load_project(example, app_state.clone(), cx.clone()).await?;
 
     let step_progress: Arc<StepProgress> = Progress::global()
-        .start(Step::Context, &example.name)
+        .start(Step::Context, &example.spec.name)
         .into();
 
     let state = example.state.as_ref().unwrap();

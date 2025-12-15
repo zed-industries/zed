@@ -35,6 +35,7 @@ clock.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
