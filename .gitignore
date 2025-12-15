@@ -8,6 +8,7 @@
 .DS_Store
 .blob_store
 .build
+.claude
 .envrc
 .flatpak-builder
 .idea
