@@ -201,7 +201,10 @@ pub enum LspFormatTarget {
     Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
-pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct OpenLspBufferHandle(Entity<OpenLspBuffer>);
+
+struct OpenLspBuffer(Entity<Buffer>);
 
 impl FormatTrigger {
     fn from_proto(value: i32) -> FormatTrigger {
@@ -219,7 +222,7 @@ struct UnifiedLanguageServer {
     project_roots: HashSet<Arc<RelPath>>,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct LanguageServerSeed {
     worktree_id: WorktreeId,
     name: LanguageServerName,
@@ -4207,7 +4210,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
-        let handle = cx.new(|_| buffer.clone());
+        let handle = OpenLspBufferHandle(cx.new(|_| OpenLspBuffer(buffer.clone())));
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             if !ignore_refcounts {
@@ -4229,7 +4232,7 @@ impl LspStore {
                 local.register_buffer_with_language_servers(buffer, only_register_servers, cx);
             }
             if !ignore_refcounts {
-                cx.observe_release(&handle, move |lsp_store, buffer, cx| {
+                cx.observe_release(&handle.0, move |lsp_store, buffer, cx| {
                     let refcount = {
                         let local = lsp_store.as_local_mut().unwrap();
                         let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
@@ -4246,8 +4249,8 @@ impl LspStore {
                         local.registered_buffers.remove(&buffer_id);
 
                         local.buffers_opened_in_servers.remove(&buffer_id);
-                        if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                            local.unregister_old_buffer_from_language_servers(buffer, &file, cx);
+                        if let Some(file) = File::from_dyn(buffer.0.read(cx).file()).cloned() {
+                            local.unregister_old_buffer_from_language_servers(&buffer.0, &file, cx);
 
                             let buffer_abs_path = file.abs_path(cx);
                             for (_, buffer_pull_diagnostics_result_ids) in
@@ -6782,7 +6785,7 @@ impl LspStore {
             })
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
-                self.language_servers_for_local_buffer(buffer, cx)
+                self.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
@@ -8122,7 +8125,7 @@ impl LspStore {
         })
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
+    pub fn running_language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
         cx: &mut App,
@@ -8142,6 +8145,17 @@ impl LspStore {
                     _ => None,
                 },
             )
+    }
+
+    pub fn language_servers_for_local_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Vec<LanguageServerId> {
+        let local = self.as_local();
+        local
+            .map(|local| local.language_server_ids_for_buffer(buffer, cx))
+            .unwrap_or_default()
     }
 
     pub fn language_server_for_local_buffer<'a>(
