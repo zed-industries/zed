@@ -777,13 +777,7 @@ impl gpui::Render for ExtensionProviderConfigurationView {
         // Render settings markdown if available
         if let Some(markdown) = &self.settings_markdown {
             let style = settings_markdown_style(_window, cx);
-            content = content.child(
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().colors().surface_background)
-                    .child(MarkdownElement::new(markdown.clone(), style)),
-            );
+            content = content.child(MarkdownElement::new(markdown.clone(), style));
         }
 
         // Render env var checkbox if the extension specifies an env var
@@ -808,17 +802,45 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                 // Show status if env var is allowed
                 if env_var_allowed {
                     if api_key_from_env {
+                        let tooltip_label = format!(
+                            "To reset this API key, unset the {} environment variable.",
+                            env_var_name
+                        );
                         content = content.child(
                             h_flex()
-                                .gap_2()
+                                .mt_0p5()
+                                .p_1()
+                                .justify_between()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().background)
                                 .child(
-                                    ui::Icon::new(ui::IconName::Check)
-                                        .color(Color::Success)
-                                        .size(ui::IconSize::Small),
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(
+                                            ui::Icon::new(ui::IconName::Check)
+                                                .color(Color::Success),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "API key set in {} environment variable",
+                                                env_var_name
+                                            ))
+                                            .truncate(),
+                                        ),
                                 )
                                 .child(
-                                    Label::new(format!("API key loaded from {}", env_var_name))
-                                        .color(Color::Success),
+                                    ui::Button::new("reset-key", "Reset Key")
+                                        .label_size(LabelSize::Small)
+                                        .icon(ui::IconName::Undo)
+                                        .icon_size(ui::IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(ui::IconPosition::Start)
+                                        .disabled(true)
+                                        .tooltip(ui::Tooltip::text(tooltip_label)),
                                 ),
                         );
                         return content.into_any_element();
@@ -850,31 +872,39 @@ impl gpui::Render for ExtensionProviderConfigurationView {
             let reset_label = if has_oauth && !has_api_key {
                 "Sign Out"
             } else {
-                "Reset Credentials"
+                "Reset Key"
             };
 
             let status_label = if has_oauth && !has_api_key {
                 "Signed in"
             } else {
-                "Authenticated"
+                "API key configured"
             };
 
             content = content.child(
-                v_flex()
-                    .gap_2()
+                h_flex()
+                    .mt_0p5()
+                    .p_1()
+                    .justify_between()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().background)
                     .child(
                         h_flex()
-                            .gap_2()
-                            .child(
-                                ui::Icon::new(ui::IconName::Check)
-                                    .color(Color::Success)
-                                    .size(ui::IconSize::Small),
-                            )
-                            .child(Label::new(status_label).color(Color::Success)),
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(ui::Icon::new(ui::IconName::Check).color(Color::Success))
+                            .child(Label::new(status_label).truncate()),
                     )
                     .child(
-                        ui::Button::new("reset-credentials", reset_label)
-                            .style(ui::ButtonStyle::Subtle)
+                        ui::Button::new("reset-key", reset_label)
+                            .label_size(LabelSize::Small)
+                            .icon(ui::IconName::Undo)
+                            .icon_size(ui::IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .icon_position(ui::IconPosition::Start)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.reset_api_key(window, cx);
                             })),
