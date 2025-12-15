@@ -260,6 +260,7 @@ pub enum IconName {
     XCircle,
     XCircleFilled,
     ZedAgent,
+    ZedAgent2,
     ZedAssistant,
     ZedBurnMode,
     ZedBurnModeOn,
