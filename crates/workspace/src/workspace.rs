@@ -1540,6 +1540,7 @@ impl Workspace {
         app_state: Arc<AppState>,
         requesting_window: Option<WindowHandle<Workspace>>,
         env: Option<HashMap<String, String>>,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         cx: &mut App,
     ) -> Task<
         anyhow::Result<(
@@ -1635,7 +1636,7 @@ impl Workspace {
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
 
-                cx.update_window(window.into(), |_, window, cx| {
+                let workspace_entity = cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
                         let mut workspace = Workspace::new(
                             Some(workspace_id),
@@ -1647,8 +1648,16 @@ impl Workspace {
 
                         workspace.centered_layout = centered_layout;
                         workspace
-                    });
+                    })
                 })?;
+                
+                // Call init callback before window is shown to avoid flicker
+                if let Some(init) = init {
+                    workspace_entity.update(cx, |workspace, window, cx| {
+                        init(workspace, window, cx);
+                    })?;
+                }
+                
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
@@ -1676,7 +1685,7 @@ impl Workspace {
                     .as_ref()
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
-                cx.open_window(options, {
+                let workspace_entity = cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |window, cx| {
@@ -1692,7 +1701,16 @@ impl Workspace {
                             workspace
                         })
                     }
-                })?
+                })?;
+                
+                // Call init callback before window is shown to avoid flicker
+                if let Some(init) = init {
+                    workspace_entity.update(cx, |workspace, window, cx| {
+                        init(workspace, window, cx);
+                    })?;
+                }
+                
+                workspace_entity
             };
 
             notify_if_database_failed(window, cx);
@@ -2254,7 +2272,7 @@ impl Workspace {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
-            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, None, cx);
             cx.spawn_in(window, async move |_vh, cx| {
                 let (workspace, _) = task.await?;
                 workspace.update(cx, callback)
@@ -7599,7 +7617,7 @@ pub fn join_channel(
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
                 .update(|cx| {
-                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, cx)
+                    Workspace::new_local(vec![], app_state.clone(), requesting_window, None, None, cx)
                 })?
                 .await?;
 
@@ -7665,7 +7683,7 @@ pub async fn get_any_active_workspace(
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
     if active_window.is_none() {
-        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, cx))?
+        cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, None, cx))?
             .await?;
     }
     activate_any_workspace_window(&mut cx).context("could not open zed")
@@ -7832,6 +7850,7 @@ pub fn open_paths(
                     app_state.clone(),
                     open_options.replace_window,
                     open_options.env,
+                    None,
                     cx,
                 )
             })?
@@ -7876,14 +7895,17 @@ pub fn open_new(
     cx: &mut App,
     init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
-    cx.spawn(async move |cx| {
-        let (workspace, opened_paths) = task.await?;
-        workspace.update(cx, |workspace, window, cx| {
-            if opened_paths.is_empty() {
-                init(workspace, window, cx)
-            }
-        })?;
+    let task = Workspace::new_local(
+        Vec::new(),
+        app_state,
+        None,
+        open_options.env,
+        Some(Box::new(init)),
+        cx,
+    );
+    cx.spawn(async move |_cx| {
+        let (_workspace, _opened_paths) = task.await?;
+        // Init callback is now called synchronously during window creation
         Ok(())
     })
 }
