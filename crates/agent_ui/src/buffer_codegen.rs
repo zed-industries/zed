@@ -409,6 +409,9 @@ impl CodegenAlternative {
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        // Clear the model explanation since the user has started a new generation.
+        self.description = None;
+
         if let Some(transformation_transaction_id) = self.transformation_transaction_id.take() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.undo_transaction(transformation_transaction_id, cx);
