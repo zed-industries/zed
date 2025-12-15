@@ -12,7 +12,7 @@ workspace = true
 path = "src/edit_prediction.rs"
 
 [features]
-eval-support = []
+cli-support = []
 
 [dependencies]
 ai_onboarding.workspace = true
@@ -23,7 +23,6 @@ client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
-credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -42,6 +41,7 @@ open_ai.workspace = true
 postage.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+pulldown-cmark.workspace = true
 rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true

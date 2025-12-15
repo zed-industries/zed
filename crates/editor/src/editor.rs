@@ -107,10 +107,11 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, Render,
-    ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
+    Render, ScrollHandle, SharedString, Size, Stateful, Styled, Subscription, Task, TextRun,
+    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    WeakEntity, WeakFocusHandle, Window, div, point, prelude::*, pulsating_between, px, relative,
+    size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -351,8 +352,8 @@ pub fn init(cx: &mut App) {
             )
             .detach();
         }
-    });
-    cx.on_action(move |_: &workspace::NewWindow, cx| {
+    })
+    .on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(
@@ -1107,6 +1108,9 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
+    /// Whether the cursor is offset one character to the left when something is
+    /// selected (needed for vim visual mode)
+    cursor_offset_on_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     pub collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
@@ -1118,6 +1122,7 @@ pub struct Editor {
     remote_id: Option<ViewId>,
     pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
+    prev_pressure_stage: Option<PressureStage>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
@@ -2281,6 +2286,7 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
+            cursor_offset_on_selection: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -2296,6 +2302,7 @@ impl Editor {
             remote_id: None,
             hover_state: HoverState::default(),
             pending_mouse_down: None,
+            prev_pressure_stage: None,
             hovered_link_state: None,
             edit_prediction_provider: None,
             active_edit_prediction: None,
@@ -3093,6 +3100,10 @@ impl Editor {
 
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
+    }
+
+    pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
+        self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
     pub fn set_current_line_highlight(
@@ -5010,6 +5021,9 @@ impl Editor {
 
             this.change_selections(Default::default(), window, cx, |s| s.select(new_selections));
             this.refresh_edit_prediction(true, false, window, cx);
+            if let Some(task) = this.trigger_on_type_formatting("\n".to_owned(), window, cx) {
+                task.detach_and_log_err(cx);
+            }
         });
     }
 
@@ -5074,6 +5088,9 @@ impl Editor {
                 }
             }
             editor.edit(indent_edits, cx);
+            if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
+                format.detach_and_log_err(cx);
+            }
         });
     }
 
@@ -5136,6 +5153,9 @@ impl Editor {
                 }
             }
             editor.edit(indent_edits, cx);
+            if let Some(format) = editor.trigger_on_type_formatting("\n".to_owned(), window, cx) {
+                format.detach_and_log_err(cx);
+            }
         });
     }
 
@@ -5446,7 +5466,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        if input.len() != 1 {
+        if input.chars().count() != 1 {
             return None;
         }
 
@@ -7135,6 +7155,7 @@ impl Editor {
         Some((query, selection_anchor_range))
     }
 
+    #[ztracing::instrument(skip_all)]
     fn update_selection_occurrence_highlights(
         &mut self,
         query_text: String,
@@ -7279,6 +7300,7 @@ impl Editor {
         });
     }
 
+    #[ztracing::instrument(skip_all)]
     fn refresh_selected_text_highlights(
         &mut self,
         on_buffer_edit: bool,
@@ -20973,9 +20995,22 @@ impl Editor {
                 buffer_ranges.last()
             }?;
 
-            let selection = text::ToPoint::to_point(&range.start, buffer).row
-                ..text::ToPoint::to_point(&range.end, buffer).row;
-            Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection))
+            let start_row_in_buffer = text::ToPoint::to_point(&range.start, buffer).row;
+            let end_row_in_buffer = text::ToPoint::to_point(&range.end, buffer).row;
+
+            let Some(buffer_diff) = multi_buffer.diff_for(buffer.remote_id()) else {
+                let selection = start_row_in_buffer..end_row_in_buffer;
+
+                return Some((multi_buffer.buffer(buffer.remote_id()).unwrap(), selection));
+            };
+
+            let buffer_diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+
+            Some((
+                multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                buffer_diff_snapshot.row_to_base_text_row(start_row_in_buffer, buffer)
+                    ..buffer_diff_snapshot.row_to_base_text_row(end_row_in_buffer, buffer),
+            ))
         });
 
         let Some((buffer, selection)) = buffer_and_selection else {
@@ -22941,10 +22976,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self.workspace();
-        let project = self.project();
-        let save_tasks = self.buffer().update(cx, |multi_buffer, cx| {
-            let mut tasks = Vec::new();
+        self.buffer().update(cx, |multi_buffer, cx| {
             for (buffer_id, changes) in revert_changes {
                 if let Some(buffer) = multi_buffer.buffer(buffer_id) {
                     buffer.update(cx, |buffer, cx| {
@@ -22956,44 +22988,9 @@ impl Editor {
                             cx,
                         );
                     });
-
-                    if let Some(project) =
-                        project.filter(|_| multi_buffer.all_diff_hunks_expanded())
-                    {
-                        project.update(cx, |project, cx| {
-                            tasks.push((buffer.clone(), project.save_buffer(buffer, cx)));
-                        })
-                    }
                 }
             }
-            tasks
         });
-        cx.spawn_in(window, async move |_, cx| {
-            for (buffer, task) in save_tasks {
-                let result = task.await;
-                if result.is_err() {
-                    let Some(path) = buffer
-                        .read_with(cx, |buffer, cx| buffer.project_path(cx))
-                        .ok()
-                    else {
-                        continue;
-                    };
-                    if let Some((workspace, path)) = workspace.as_ref().zip(path) {
-                        let Some(task) = cx
-                            .update_window_entity(workspace, |workspace, window, cx| {
-                                workspace
-                                    .open_path_preview(path, None, false, false, false, window, cx)
-                            })
-                            .ok()
-                        else {
-                            continue;
-                        };
-                        task.await.log_err();
-                    }
-                }
-            }
-        })
-        .detach();
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.refresh()
         });

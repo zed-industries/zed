@@ -803,7 +803,7 @@ impl Fs for RealFs {
         }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
+        for chunk in text::chunks_with_line_ending(text, line_ending) {
             writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
@@ -2555,7 +2555,7 @@ impl Fs for FakeFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
-        let content = chunks(text, line_ending).collect::<String>();
+        let content = text::chunks_with_line_ending(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
@@ -2771,25 +2771,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-}
-
-fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
-    rope.chunks().flat_map(move |chunk| {
-        let mut newline = false;
-        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
-        chunk
-            .lines()
-            .flat_map(move |line| {
-                let ending = if newline {
-                    Some(line_ending.as_str())
-                } else {
-                    None
-                };
-                newline = true;
-                ending.into_iter().chain([line])
-            })
-            .chain(end_with_newline)
-    })
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {

@@ -1,4 +1,4 @@
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 use crate::EvalCacheEntryKind;
 use crate::open_ai_response::text_from_response;
 use crate::prediction::EditPredictionResult;
@@ -44,7 +44,7 @@ pub fn request_prediction_with_zeta2(
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     let eval_cache = store.eval_cache.clone();
 
     let request_task = cx.background_spawn({
@@ -95,9 +95,9 @@ pub fn request_prediction_with_zeta2(
                 client,
                 llm_token,
                 app_version,
-                #[cfg(feature = "eval-support")]
+                #[cfg(feature = "cli-support")]
                 eval_cache,
-                #[cfg(feature = "eval-support")]
+                #[cfg(feature = "cli-support")]
                 EvalCacheEntryKind::Prediction,
             )
             .await;
@@ -225,4 +225,19 @@ pub fn zeta2_prompt_input(
         related_files,
     };
     (editable_offset_range, prompt_input)
+}
+
+#[cfg(feature = "cli-support")]
+pub fn zeta2_output_for_patch(input: &zeta_prompt::ZetaPromptInput, patch: &str) -> Result<String> {
+    let text = &input.cursor_excerpt;
+    let editable_region = input.editable_range_in_excerpt.clone();
+    let old_prefix = &text[..editable_region.start];
+    let old_suffix = &text[editable_region.end..];
+
+    let new = crate::udiff::apply_diff_to_string(patch, text)?;
+    if !new.starts_with(old_prefix) || !new.ends_with(old_suffix) {
+        anyhow::bail!("Patch shouldn't affect text outside of editable region");
+    }
+
+    Ok(new[editable_region.start..new.len() - old_suffix.len()].to_string())
 }
