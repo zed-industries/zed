@@ -146,7 +146,6 @@ impl Render for EditPredictionSetupPage {
             );
         }
 
-        // Mercury (feature flagged)
         if cx.has_flag::<Zeta2FeatureFlag>() {
             providers.push(
                 render_api_key_provider(
@@ -163,7 +162,6 @@ impl Render for EditPredictionSetupPage {
             );
         }
 
-        // Sweep (feature flagged)
         if cx.has_flag::<Zeta2FeatureFlag>() {
             providers.push(
                 render_api_key_provider(
@@ -180,7 +178,6 @@ impl Render for EditPredictionSetupPage {
             );
         }
 
-        // Codestral
         providers.push(
             render_api_key_provider(
                 IconName::AiMistral,
