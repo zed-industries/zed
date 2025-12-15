@@ -422,28 +422,72 @@ impl Focusable for Markdown {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Debug, Default, Clone)]
+enum SelectMode {
+    #[default]
+    Character,
+    Word(Range<usize>),
+    Line(Range<usize>),
+    All,
+}
+
+#[derive(Clone, Default)]
 struct Selection {
     start: usize,
     end: usize,
     reversed: bool,
     pending: bool,
+    mode: SelectMode,
 }
 
 impl Selection {
-    fn set_head(&mut self, head: usize) {
-        if head < self.tail() {
-            if !self.reversed {
-                self.end = self.start;
-                self.reversed = true;
+    fn set_head(&mut self, head: usize, rendered_text: &RenderedText) {
+        match &self.mode {
+            SelectMode::Character => {
+                if head < self.tail() {
+                    if !self.reversed {
+                        self.end = self.start;
+                        self.reversed = true;
+                    }
+                    self.start = head;
+                } else {
+                    if self.reversed {
+                        self.start = self.end;
+                        self.reversed = false;
+                    }
+                    self.end = head;
+                }
             }
-            self.start = head;
-        } else {
-            if self.reversed {
-                self.start = self.end;
+            SelectMode::Word(original_range) | SelectMode::Line(original_range) => {
+                let head_range = if matches!(self.mode, SelectMode::Word(_)) {
+                    rendered_text.surrounding_word_range(head)
+                } else {
+                    rendered_text.surrounding_line_range(head)
+                };
+
+                if head < original_range.start {
+                    self.start = head_range.start;
+                    self.end = original_range.end;
+                    self.reversed = true;
+                } else if head >= original_range.end {
+                    self.start = original_range.start;
+                    self.end = head_range.end;
+                    self.reversed = false;
+                } else {
+                    self.start = original_range.start;
+                    self.end = original_range.end;
+                    self.reversed = false;
+                }
+            }
+            SelectMode::All => {
+                self.start = 0;
+                self.end = rendered_text
+                    .lines
+                    .last()
+                    .map(|line| line.source_end)
+                    .unwrap_or(0);
                 self.reversed = false;
             }
-            self.end = head;
         }
     }
 
@@ -532,7 +576,7 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let selection = self.markdown.read(cx).selection;
+        let selection = self.markdown.read(cx).selection.clone();
         let selection_start = rendered_text.position_for_source_index(selection.start);
         let selection_end = rendered_text.position_for_source_index(selection.end);
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
@@ -632,18 +676,34 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
-                            let range = if event.click_count == 2 {
-                                rendered_text.surrounding_word_range(source_index)
-                            } else if event.click_count == 3 {
-                                rendered_text.surrounding_line_range(source_index)
-                            } else {
-                                source_index..source_index
+                            let (range, mode) = match event.click_count {
+                                1 => {
+                                    let range = source_index..source_index;
+                                    (range, SelectMode::Character)
+                                }
+                                2 => {
+                                    let range = rendered_text.surrounding_word_range(source_index);
+                                    (range.clone(), SelectMode::Word(range))
+                                }
+                                3 => {
+                                    let range = rendered_text.surrounding_line_range(source_index);
+                                    (range.clone(), SelectMode::Line(range))
+                                }
+                                _ => {
+                                    let range = 0..rendered_text
+                                        .lines
+                                        .last()
+                                        .map(|line| line.source_end)
+                                        .unwrap_or(0);
+                                    (range, SelectMode::All)
+                                }
                             };
                             markdown.selection = Selection {
                                 start: range.start,
                                 end: range.end,
                                 reversed: false,
                                 pending: true,
+                                mode,
                             };
                             window.focus(&markdown.focus_handle);
                         }
@@ -672,7 +732,7 @@ impl MarkdownElement {
                     {
                         Ok(ix) | Err(ix) => ix,
                     };
-                    markdown.selection.set_head(source_index);
+                    markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
@@ -1939,6 +1999,178 @@ mod tests {
             |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
         );
         rendered.text
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word_range(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world tesεζ", cx);
+
+        // Test word selection for "Hello"
+        let word_range = rendered.surrounding_word_range(2); // Simulate click on 'l' in "Hello"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "Hello");
+
+        // Test word selection for "world"
+        let word_range = rendered.surrounding_word_range(7); // Simulate click on 'o' in "world"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "world");
+
+        // Test word selection for "tesεζ"
+        let word_range = rendered.surrounding_word_range(14); // Simulate click on 's' in "tesεζ"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "tesεζ");
+
+        // Test word selection at word boundary (space)
+        let word_range = rendered.surrounding_word_range(5); // Simulate click on space between "Hello" and "world", expect highlighting word to the left
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "Hello");
+    }
+
+    #[gpui::test]
+    fn test_surrounding_line_range(cx: &mut TestAppContext) {
+        let rendered = render_markdown("First line\n\nSecond line\n\nThird lineεζ", cx);
+
+        // Test getting line range for first line
+        let line_range = rendered.surrounding_line_range(5); // Simulate click somewhere in first line
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "First line");
+
+        // Test getting line range for second line
+        let line_range = rendered.surrounding_line_range(13); // Simulate click at beginning in second line
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "Second line");
+
+        // Test getting line range for third line
+        let line_range = rendered.surrounding_line_range(37); // Simulate click at end of third line with multi-byte chars
+        let selected_text = rendered.text_for_range(line_range);
+        assert_eq!(selected_text, "Third lineεζ");
+    }
+
+    #[gpui::test]
+    fn test_selection_head_movement(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world test", cx);
+
+        let mut selection = Selection {
+            start: 5,
+            end: 5,
+            reversed: false,
+            pending: false,
+            mode: SelectMode::Character,
+        };
+
+        // Test forward selection
+        selection.set_head(10, &rendered);
+        assert_eq!(selection.start, 5);
+        assert_eq!(selection.end, 10);
+        assert!(!selection.reversed);
+        assert_eq!(selection.tail(), 5);
+
+        // Test backward selection
+        selection.set_head(2, &rendered);
+        assert_eq!(selection.start, 2);
+        assert_eq!(selection.end, 5);
+        assert!(selection.reversed);
+        assert_eq!(selection.tail(), 5);
+
+        // Test forward selection again from reversed state
+        selection.set_head(15, &rendered);
+        assert_eq!(selection.start, 5);
+        assert_eq!(selection.end, 15);
+        assert!(!selection.reversed);
+        assert_eq!(selection.tail(), 5);
+    }
+
+    #[gpui::test]
+    fn test_word_selection_drag(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world test", cx);
+
+        // Start with a simulated double-click on "world" (index 6-10)
+        let word_range = rendered.surrounding_word_range(7); // Click on 'o' in "world"
+        let mut selection = Selection {
+            start: word_range.start,
+            end: word_range.end,
+            reversed: false,
+            pending: true,
+            mode: SelectMode::Word(word_range),
+        };
+
+        // Drag forward to "test" - should expand selection to include "test"
+        selection.set_head(13, &rendered); // Index in "test"
+        assert_eq!(selection.start, 6); // Start of "world"
+        assert_eq!(selection.end, 16); // End of "test"
+        assert!(!selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "world test");
+
+        // Drag backward to "Hello" - should expand selection to include "Hello"
+        selection.set_head(2, &rendered); // Index in "Hello"
+        assert_eq!(selection.start, 0); // Start of "Hello"
+        assert_eq!(selection.end, 11); // End of "world" (original selection)
+        assert!(selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "Hello world");
+
+        // Drag back within original word - should revert to original selection
+        selection.set_head(8, &rendered); // Back within "world"
+        assert_eq!(selection.start, 6); // Start of "world"
+        assert_eq!(selection.end, 11); // End of "world"
+        assert!(!selection.reversed);
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(selected_text, "world");
+    }
+
+    #[gpui::test]
+    fn test_selection_with_markdown_formatting(cx: &mut TestAppContext) {
+        let rendered = render_markdown(
+            "This is **bold** text, this is *italic* text, use `code` here",
+            cx,
+        );
+        let word_range = rendered.surrounding_word_range(10); // Inside "bold"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "bold");
+
+        let word_range = rendered.surrounding_word_range(32); // Inside "italic"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "italic");
+
+        let word_range = rendered.surrounding_word_range(51); // Inside "code"
+        let selected_text = rendered.text_for_range(word_range);
+        assert_eq!(selected_text, "code");
+    }
+
+    #[gpui::test]
+    fn test_all_selection(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world\n\nThis is a test\n\nwith multiple lines", cx);
+
+        let total_length = rendered
+            .lines
+            .last()
+            .map(|line| line.source_end)
+            .unwrap_or(0);
+
+        let mut selection = Selection {
+            start: 0,
+            end: total_length,
+            reversed: false,
+            pending: true,
+            mode: SelectMode::All,
+        };
+
+        selection.set_head(5, &rendered); // Try to set head in middle
+        assert_eq!(selection.start, 0);
+        assert_eq!(selection.end, total_length);
+        assert!(!selection.reversed);
+
+        selection.set_head(25, &rendered); // Try to set head near end
+        assert_eq!(selection.start, 0);
+        assert_eq!(selection.end, total_length);
+        assert!(!selection.reversed);
+
+        let selected_text = rendered.text_for_range(selection.start..selection.end);
+        assert_eq!(
+            selected_text,
+            "Hello world\nThis is a test\nwith multiple lines"
+        );
     }
 
     #[test]
