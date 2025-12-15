@@ -1878,9 +1878,10 @@ impl App {
         for window in self.windows() {
             window
                 .update(self, |_, window, cx| {
-                    window.clear_pending_keystrokes();
-                    // platform-level calls to notify observers immediately rather than waiting for the next frame.
-                    window.notify_pending_input_if_needed(cx);
+                    if window.pending_input_keystrokes().is_some() {
+                        window.clear_pending_keystrokes();
+                        window.pending_input_changed(cx);
+                    }
                 })
                 .ok();
         }
