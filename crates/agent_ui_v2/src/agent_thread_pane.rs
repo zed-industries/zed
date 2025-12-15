@@ -13,11 +13,12 @@ use settings::DockSide;
 use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::Tooltip;
-use ui::{Context, DynamicSpacing, IconButton, Tab, prelude::*};
-use workspace::Workspace;
-use workspace::dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition};
-use workspace::utility_pane::UtilityPaneSlot;
+use ui::{Context, DynamicSpacing, Tab, Tooltip, prelude::*};
+use workspace::{
+    Workspace,
+    dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition},
+    utility_pane::UtilityPaneSlot,
+};
 
 pub const DEFAULT_UTILITY_PANE_WIDTH: Pixels = gpui::px(400.0);
 
