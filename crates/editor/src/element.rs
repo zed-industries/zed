@@ -7660,7 +7660,7 @@ impl EditorElement {
                         }
 
                         if scroll_position != base_scroll_position {
-                            editor.animate_scroll_to(scroll_position, axis, window, cx);
+                            editor.scroll(scroll_position, axis, window, cx);
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
@@ -9073,7 +9073,11 @@ impl Element for EditorElement {
                             cx,
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
-                        editor.update_scroll_animation(window, cx);
+
+                        if let Some(target) = editor.scroll_manager.update_animation() {
+                            editor.set_scroll_position(target, window, cx);
+                            window.request_animation_frame();
+                        }
 
                         if matches!(
                             editor.mode,
