@@ -16214,8 +16214,8 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         fn a() {
             // «b();
-            // c();
-            ˇ»//  d();
+            ˇ»// «c();
+            ˇ» // d();
         }
     "});
 
