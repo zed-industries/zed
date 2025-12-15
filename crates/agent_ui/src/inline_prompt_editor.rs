@@ -33,7 +33,7 @@ use workspace::{Toast, Workspace};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::agent_model_selector::AgentModelSelector;
-use crate::buffer_codegen::BufferCodegen;
+use crate::buffer_codegen::{BufferCodegen, CodegenAlternative};
 use crate::completion_provider::{
     PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextType,
 };
@@ -585,12 +585,18 @@ impl<T: 'static> PromptEditor<T> {
             }
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
-                let model_id = {
+                let (model_id, use_streaming_tools) = {
                     let Some(configured_model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
-                    configured_model.model.telemetry_id()
+                    (
+                        configured_model.model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(
+                            configured_model.model.as_ref(),
+                            cx,
+                        ),
+                    )
                 };
 
                 let selected_text = match &self.mode {
@@ -616,6 +622,7 @@ impl<T: 'static> PromptEditor<T> {
                     prompt = prompt,
                     completion = completion_text,
                     selected_text = selected_text,
+                    use_streaming_tools
                 );
 
                 self.session_state.completion = CompletionState::Rated;
@@ -641,12 +648,18 @@ impl<T: 'static> PromptEditor<T> {
             }
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
-                let model_telemetry_id = {
+                let (model_telemetry_id, use_streaming_tools) = {
                     let Some(configured_model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
-                    configured_model.model.telemetry_id()
+                    (
+                        configured_model.model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(
+                            configured_model.model.as_ref(),
+                            cx,
+                        ),
+                    )
                 };
 
                 let selected_text = match &self.mode {
@@ -672,6 +685,7 @@ impl<T: 'static> PromptEditor<T> {
                     prompt = prompt,
                     completion = completion_text,
                     selected_text = selected_text,
+                    use_streaming_tools
                 );
 
                 self.session_state.completion = CompletionState::Rated;
