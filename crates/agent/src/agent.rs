@@ -22,7 +22,7 @@ use acp_thread::{AcpThread, AgentModelSelector};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use collections::{HashSet, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
@@ -38,7 +38,6 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -283,7 +282,7 @@ impl NativeAgent {
             let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
                 watch::channel(());
             Self {
-                sessions: HashMap::new(),
+                sessions: HashMap::default(),
                 history,
                 project_context: cx.new(|_| project_context),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
@@ -1061,17 +1060,16 @@ impl NativeAgentConnection {
             server_id
         );
 
-        let arguments = match (argument, argument_name) {
+        let mut arguments = HashMap::default();
+        match (argument, argument_name) {
             (Some(arg), Some(arg_name)) => {
-                let mut args = std::collections::HashMap::new();
-                args.insert(arg_name, arg);
-                Some(args)
+                arguments.insert(arg_name, arg);
             }
-            _ => None,
-        };
+            _ => {}
+        }
 
         let expanded =
-            crate::execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
+            crate::get_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
 
         Ok(Some(expanded))
     }

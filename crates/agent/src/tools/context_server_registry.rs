@@ -5,7 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::ContextServerId;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
-use std::{collections::HashMap as StdHashMap, sync::Arc};
+use std::sync::Arc;
 use util::ResultExt;
 
 pub struct ContextServerPrompt {
@@ -354,15 +354,12 @@ fn acceptable_prompt(prompt: &context_server::types::Prompt) -> bool {
     }
 }
 
-/// Execute an MCP prompt and return the result as text.
-///
-/// This function spawns a background task to execute the prompt, capturing the server client up
-/// front so the async task doesn't need to re-enter the app to access it.
-pub fn execute_prompt(
+// todo! move to impl?
+pub fn get_prompt(
     server_store: &Entity<ContextServerStore>,
     server_id: &ContextServerId,
     prompt_name: &str,
-    arguments: Option<StdHashMap<String, String>>,
+    arguments: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Task<Result<String>> {
     let server = match cx.update(|cx| server_store.read(cx).get_running_server(server_id)) {
@@ -378,14 +375,17 @@ pub fn execute_prompt(
     };
 
     let prompt_name = prompt_name.to_string();
-    let arguments = arguments.map(|args| args.into_iter().collect::<HashMap<_, _>>());
 
     cx.background_spawn(async move {
         let response = protocol
             .request::<context_server::types::requests::PromptsGet>(
                 context_server::types::PromptsGetParams {
                     name: prompt_name,
-                    arguments,
+                    arguments: if arguments.is_empty() {
+                        Some(arguments)
+                    } else {
+                        None
+                    },
                     meta: None,
                 },
             )
