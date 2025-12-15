@@ -4,7 +4,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
 use util::ResultExt;
 use windows::{
     System::Threading::{
@@ -12,10 +11,6 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
-        System::Threading::{
-            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
-            THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL,
-        },
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
