@@ -13,6 +13,7 @@ That assumption was wrong: depending on the scheduler’s behavior, the task cou
 **Root cause**
 
 In `TestScheduler`, timeouts are implemented as a bounded number of scheduler iterations (“ticks”), controlled by `TestSchedulerConfig::timeout_ticks`. When a timeout is present, `block()` picks a `max_ticks` value from `timeout_ticks` and may:
+
 - poll the blocked future,
 - step other tasks,
 - and potentially advance timers,
@@ -31,7 +32,7 @@ Then, after explicitly calling `advance_clock(...)` and `run()`, the returned fu
 
 **Takeaway**
 
-- Yielding should *not* advance time, and it doesn’t.
+- Yielding should _not_ advance time, and it doesn’t.
 - If a test needs time to advance, it should do so explicitly via `advance_clock`.
 - If a test needs deterministic timeout behavior, it should control `timeout_ticks` to avoid incidental progress during a timeout.
 
@@ -42,6 +43,7 @@ Then, after explicitly calling `advance_clock(...)` and `run()`, the returned fu
 `Priority::Realtime(_)` is implemented in GPUI by spawning a dedicated OS thread and feeding it runnables. That is appropriate for production realtime workloads (e.g. audio), but it breaks determinism.
 
 Because GPUI tests rely on `TestDispatcher` + `TestScheduler` for deterministic execution, allowing realtime spawns inside tests would introduce:
+
 - nondeterministic scheduling (real threads outside the test scheduler)
 - hangs/flakes that vary by platform and timing
 - unreproducible failures even with the same seed
@@ -87,9 +89,10 @@ The backtraces pointed at a `OnceLock<Entity<ApiKeyState>>` used by the Mistral 
 
 **Root cause**
 
-`gpui::Entity<T>` is **not** a plain owned value; it is a handle tied to a particular `App`’s entity-map/context. If you store an `Entity<T>` in a process-wide static and then create a *different* `App` instance later (very common in tests, but also plausible in multi-app contexts), reusing that cached `Entity<T>` will reference the wrong entity-map.
+`gpui::Entity<T>` is **not** a plain owned value; it is a handle tied to a particular `App`’s entity-map/context. If you store an `Entity<T>` in a process-wide static and then create a _different_ `App` instance later (very common in tests, but also plausible in multi-app contexts), reusing that cached `Entity<T>` will reference the wrong entity-map.
 
 This manifests as:
+
 - context assertion failures (`wrong context`)
 - weak `entity_map` upgrades failing (leading to `unwrap()` panics in leak-detection-only clone paths)
 - nondeterministic behavior depending on test ordering (because the first `App` that initializes the static “wins”)
@@ -97,6 +100,7 @@ This manifests as:
 **Fix applied**
 
 Avoid caching `Entity<T>` in process-wide statics. Instead:
+
 - cache plain data (env var name, URL, etc.), and
 - create the `Entity<T>` per-`App`.
 
@@ -129,10 +133,12 @@ Major surfaces touched by this branch include:
 ### Highest regression risk areas
 
 1. **Realtime tasks (`Priority::Realtime`) implementation uses a bounded, blocking channel**
+
    - This can block scheduling paths and create deadlocks or latent stalls under load.
    - It can also mask failures (ignored send errors) leading to “stuck” tasks.
 
 2. **Documentation/plan says realtime panics in tests, but runtime guard may be missing**
+
    - If realtime is accidentally used in tests, it could introduce nondeterminism or hangs.
    - Different platforms/test dispatchers could behave differently (panic vs silently spawning threads).
 
@@ -201,14 +207,17 @@ Observed pattern:
 Risks:
 
 1. **Blocking send in scheduling closure**
+
    - `send` can block if buffer is full.
    - The scheduling closure is often invoked from the async runtime / scheduler worker.
    - Blocking there can stall progress and create deadlocks (especially if the receiver needs other tasks to run to make progress).
 
 2. **Backpressure semantics may differ from previous implementation**
+
    - Even if “equivalent” conceptually, the bounded buffer changes throughput behavior and can surface as latency spikes or stalls.
 
 3. **Ignored `send` result**
+
    - If the receiver drops early (thread exits), send will fail.
    - Ignoring this can silently drop wakeups; tasks can hang in a “never re-polled” state.
 
@@ -369,9 +378,11 @@ This may require internal visibility/test hooks.
 ## Suggested implementation guardrails (small changes with big payoff)
 
 1. **Panic in tests for realtime priority**
+
    - Detect test scheduler/dispatcher and panic with a clear message.
 
 2. **Avoid blocking in scheduling callback**
+
    - Prefer non-blocking `try_send` or an unbounded queue.
    - At minimum, ensure failures are visible in debug logs.
 
@@ -385,9 +396,9 @@ This may require internal visibility/test hooks.
 
 - Use this as a checklist while running CI and reviewing flake-prone areas.
 - Prioritize adding:
-  1) realtime-in-tests panic test
-  2) timer semantics tests
-  3) block/timeout continuation tests
+  1. realtime-in-tests panic test
+  2. timer semantics tests
+  3. block/timeout continuation tests
 - Consider redesigning realtime scheduling to ensure scheduling never blocks.
 
 ---

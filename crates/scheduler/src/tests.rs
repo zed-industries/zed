@@ -366,9 +366,7 @@ fn test_block_with_timeout() {
         scheduler.advance_clock(Duration::from_millis(100));
         scheduler.run();
 
-        let output = scheduler
-            .foreground()
-            .block_on(async move { (&mut task).await });
+        let output = scheduler.foreground().block_on(&mut task);
         assert_eq!(output, 123);
     });
 }
