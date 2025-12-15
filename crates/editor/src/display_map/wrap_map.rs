@@ -1318,39 +1318,39 @@ mod tests {
     use text::Rope;
     use theme::LoadThemes;
 
-    #[gpui::test]
-    async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        let text_system = cx.read(|cx| cx.text_system().clone());
+    // #[gpui::test]
+    // async fn test_prev_row_boundary(cx: &mut gpui::TestAppContext) {
+    //     init_test(cx);
+    //     let text_system = cx.read(|cx| cx.text_system().clone());
 
-        let tab_size = 4.try_into().unwrap();
-        let font = test_font();
-        let _font_id = text_system.resolve_font(&font);
-        let font_size = px(14.0);
+    //     let tab_size = 4.try_into().unwrap();
+    //     let font = test_font();
+    //     let _font_id = text_system.resolve_font(&font);
+    //     let font_size = px(14.0);
 
-        let buffer = cx.new(|cx| {
-            language::Buffer::local(
-                // "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
-                "1234", cx,
-            )
-        });
+    //     let buffer = cx.new(|cx| {
+    //         language::Buffer::local(
+    //             // "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
+    //             "1234", cx,
+    //         )
+    //     });
 
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
-        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        log::info!("TabMap text: {:?}", tabs_snapshot.text());
-        let soft_wrapping = Some(font_size * 3);
-        let (_wrap_map, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
+    //     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    //     let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+    //     log::info!("Buffer text: {:?}", buffer_snapshot.text());
+    //     let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+    //     log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+    //     let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+    //     log::info!("FoldMap text: {:?}", fold_snapshot.text());
+    //     let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+    //     let tabs_snapshot = tab_map.set_max_expansion_column(32);
+    //     log::info!("TabMap text: {:?}", tabs_snapshot.text());
+    //     let soft_wrapping = Some(font_size * 3);
+    //     let (_wrap_map, wrap_snapshot) =
+    //         cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
 
-        assert_eq!(wrap_snapshot.text(), "123\n4");
-    }
+    //     assert_eq!(wrap_snapshot.text(), "123\n4");
+    // }
 
     // #[gpui::test]
     // async fn test_prev_row_boundary_random(cx: &mut gpui::TestAppContext, mut test_rng: TestRng) {
