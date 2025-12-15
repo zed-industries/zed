@@ -157,14 +157,28 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
 ]
 ```
 
-## Extensions
+## Protocol Extensions
 
-Zed implements several `clangd` [extensions](https://clangd.llvm.org/extensions) to enhance the support for C/C++ development.
+Zed currently implements the following `clangd` [extensions](https://clangd.llvm.org/extensions):
 
-### Switch Between Source and Header File
+### Inactive Regions
 
-You can instantly jump between a source file and its corresponding header file using a dedicated command.
+<!--Allows clients to communicate regions of code that are inactive due to preprocessor directives, such as `#if`, `#ifdef`, or `#ifndef` blocks that evaluate to false.
+Code disabled by preprocessor directives (`#if 0`, false `#ifdef` conditions, etc.) is automatically detected and visually dimmed.-->
 
-### Inactive Code Highlighting
+Automatically dims inactive sections of code due to preprocessor directives, such as `#if`, `#ifdef`, or `#ifndef` blocks that evaluate to false.
 
-Zed visually dims code that is inactive due to preprocessor directives (such as code within an `#if 0` block). This makes it easy to distinguish between active and compiled-out code, helping you better understand the current compilation state of your files.
+### Switch Between Source and Header Files
+
+Allows switching between corresponding C++ source files (e.g., `.cpp`) and header files (e.g., `.h`).
+by running the command {#action editor::SwitchSourceHeader} from the command palette or by setting
+a keybinding for the `editor::SwitchSourceHeader` action.
+
+```json [settings]
+{
+  "context": "Editor",
+  "bindings": {
+    "alt-enter": "editor::SwitchSourceHeader"
+  }
+}
+```
