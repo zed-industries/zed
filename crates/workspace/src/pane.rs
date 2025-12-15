@@ -3047,6 +3047,8 @@ impl Pane {
         };
 
         let focus_handle = self.focus_handle.clone();
+        let is_pane_focused = self.has_focus(window, cx);
+
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
@@ -3076,15 +3078,27 @@ impl Pane {
                 let toggle_icon = pane.toggle_icon(cx);
                 let workspace_handle = self.workspace.clone();
 
-                IconButton::new("open_aside_left", toggle_icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, window, cx| {
-                        workspace_handle
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
-                            })
-                            .ok();
-                    })
+                h_flex()
+                    .h_full()
+                    .pr_1p5()
+                    .border_r_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        IconButton::new("open_aside_left", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Left,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
                     .into_any_element()
             })
         };
@@ -3095,15 +3109,29 @@ impl Pane {
                 let toggle_icon = pane.toggle_icon(cx);
                 let workspace_handle = self.workspace.clone();
 
-                IconButton::new("open_aside_right", toggle_icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(move |_, window, cx| {
-                        workspace_handle
-                            .update(cx, |workspace, cx| {
-                                workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
-                            })
-                            .ok();
+                h_flex()
+                    .h_full()
+                    .when(is_pane_focused, |this| {
+                        this.pl(DynamicSpacing::Base04.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
                     })
+                    .child(
+                        IconButton::new("open_aside_right", toggle_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Toggle Agent Pane")) // TODO: Probably want to make this generic
+                            .on_click(move |_, window, cx| {
+                                workspace_handle
+                                    .update(cx, |workspace, cx| {
+                                        workspace.toggle_utility_pane(
+                                            UtilityPaneSlot::Right,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }),
+                    )
                     .into_any_element()
             })
         };
