@@ -11,6 +11,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, IndexSet};
 use db::{
+    kvp::KEY_VALUE_STORE,
     query,
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
@@ -23,6 +24,7 @@ use project::WorktreeId;
 use remote::{
     DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
 };
+use serde::{Deserialize, Serialize};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -151,6 +153,124 @@ impl Column for SerializedWindowBounds {
         };
 
         Ok((status, next_index + 4))
+    }
+}
+
+const NO_PROJECT_WINDOW_BOUNDS_KEY: &str = "no_project_window_bounds";
+
+pub fn read_no_project_window_bounds() -> Option<(Uuid, SerializedWindowBounds)> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY)
+        .log_err()
+        .flatten()?;
+
+    let (display_uuid, persisted) =
+        serde_json::from_str::<(Uuid, NoProjectWindowBounds)>(&json_str).ok()?;
+    Some((display_uuid, SerializedWindowBounds(persisted.into())))
+}
+
+pub async fn write_no_project_window_bounds(
+    bounds: SerializedWindowBounds,
+    display_uuid: Uuid,
+) -> anyhow::Result<()> {
+    let persisted = NoProjectWindowBounds::from(bounds.0);
+    let json_str = serde_json::to_string(&(display_uuid, persisted))?;
+    KEY_VALUE_STORE
+        .write_kvp(NO_PROJECT_WINDOW_BOUNDS_KEY.to_string(), json_str)
+        .await?;
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum NoProjectWindowBounds {
+    Windowed {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Maximized {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+    Fullscreen {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+}
+
+impl From<WindowBounds> for NoProjectWindowBounds {
+    fn from(b: WindowBounds) -> Self {
+        match b {
+            WindowBounds::Windowed(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                NoProjectWindowBounds::Windowed {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Maximized(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                NoProjectWindowBounds::Maximized {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+            WindowBounds::Fullscreen(bounds) => {
+                let origin = bounds.origin;
+                let size = bounds.size;
+                NoProjectWindowBounds::Fullscreen {
+                    x: f32::from(origin.x).round() as i32,
+                    y: f32::from(origin.y).round() as i32,
+                    width: f32::from(size.width).round() as i32,
+                    height: f32::from(size.height).round() as i32,
+                }
+            }
+        }
+    }
+}
+
+impl From<NoProjectWindowBounds> for WindowBounds {
+    fn from(n: NoProjectWindowBounds) -> Self {
+        match n {
+            NoProjectWindowBounds::Windowed {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Windowed(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            NoProjectWindowBounds::Maximized {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Maximized(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+            NoProjectWindowBounds::Fullscreen {
+                x,
+                y,
+                width,
+                height,
+            } => WindowBounds::Fullscreen(Bounds {
+                origin: point(px(x as f32), px(y as f32)),
+                size: size(px(width as f32), px(height as f32)),
+            }),
+        }
     }
 }
 
