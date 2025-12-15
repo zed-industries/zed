@@ -624,7 +624,7 @@
   // Whether to animate scrolling with a smooth easing effect.
   "smooth_scroll": false,
   // Duration of the scrolling animation
-  "smooth_scroll_duration": 0.2,
+  "smooth_scroll_duration": 0.14,
   "sticky_scroll": {
     // Whether to stick scopes to the top of the editor.
     "enabled": false
