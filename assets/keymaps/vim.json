@@ -445,9 +445,9 @@
       "shift-r": "editor::Paste",
       "`": "vim::ConvertToLowerCase",
       "alt-`": "vim::ConvertToUpperCase",
-      "insert": "vim::InsertBefore",
+      "insert": "vim::InsertBefore", // not a helix default
       "shift-u": "editor::Redo",
-      "ctrl-r": "vim::Redo",
+      "ctrl-r": "vim::Redo", // not a helix default
       "y": "vim::HelixYank",
       "p": "vim::HelixPaste",
       "shift-p": ["vim::HelixPaste", { "before": true }],
@@ -476,6 +476,7 @@
       "alt-p": "editor::SelectPreviousSyntaxNode",
       "alt-n": "editor::SelectNextSyntaxNode",
 
+      // Search
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
@@ -483,27 +484,27 @@
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
       "g l": "vim::EndOfLine",
-      "g s": "vim::FirstNonWhitespace", // "g s" default behavior is "space s"
+      "g s": "vim::FirstNonWhitespace",
       "g t": "vim::WindowTop",
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
-      "g r": "editor::FindAllReferences", // zed specific
+      "g r": "editor::FindAllReferences",
       "g n": "pane::ActivateNextItem",
-      "shift-l": "pane::ActivateNextItem",
+      "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
-      "shift-h": "pane::ActivatePreviousItem",
-      "g .": "vim::HelixGotoLastModification", // go to last modification
+      "shift-h": "pane::ActivatePreviousItem", // not a helix default
+      "g .": "vim::HelixGotoLastModification",
 
       // Window mode
-      "space w h": "workspace::ActivatePaneLeft",
-      "space w l": "workspace::ActivatePaneRight",
-      "space w k": "workspace::ActivatePaneUp",
-      "space w j": "workspace::ActivatePaneDown",
-      "space w q": "pane::CloseActiveItem",
-      "space w s": "pane::SplitRight",
-      "space w r": "pane::SplitRight",
       "space w v": "pane::SplitDown",
-      "space w d": "pane::SplitDown",
+      "space w s": "pane::SplitRight",
+      "space w h": "workspace::ActivatePaneLeft",
+      "space w j": "workspace::ActivatePaneDown",
+      "space w k": "workspace::ActivatePaneUp",
+      "space w l": "workspace::ActivatePaneRight",
+      "space w q": "pane::CloseActiveItem",
+      "space w r": "pane::SplitRight", // not a helix default
+      "space w d": "pane::SplitDown", // not a helix default
 
       // Space mode
       "space f": "file_finder::Toggle",
@@ -525,9 +526,7 @@
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
       "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap"
-      // "tab": "pane::ActivateNextItem",
-      // "shift-tab": "pane::ActivatePrevItem",
+      "g w": "vim::PushRewrap"  // not a helix default & clashes with helix `goto_word`
     }
   },
   {
