@@ -1,8 +1,11 @@
+use language_model::AnthropicEventData;
+use language_model::report_anthropic_event;
 use std::cmp;
 use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
@@ -15,7 +18,6 @@ use crate::{
 use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::EditorSnapshot;
 use editor::MultiBufferOffset;
@@ -38,15 +40,13 @@ use gpui::{
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::{
-    ConfigurationError, ConfiguredModel, LanguageModelRegistry, report_assistant_event,
-};
+use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, DisableAiSettings, LspAction, Project, ProjectTransaction};
 use prompt_store::{PromptBuilder, PromptStore};
 use settings::{Settings, SettingsStore};
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
@@ -54,13 +54,8 @@ use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenSettings;
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
-    cx: &mut App,
-) {
-    cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
+    cx.set_global(InlineAssistant::new(fs, prompt_builder));
 
     cx.observe_global::<SettingsStore>(|cx| {
         if DisableAiSettings::get_global(cx).disable_ai {
@@ -100,7 +95,6 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Entity<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
     _inline_assistant_completions: Option<mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>>,
 }
@@ -108,11 +102,7 @@ pub struct InlineAssistant {
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        prompt_builder: Arc<PromptBuilder>,
-        telemetry: Arc<Telemetry>,
-    ) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>) -> Self {
         Self {
             next_assist_id: InlineAssistId::default(),
             next_assist_group_id: InlineAssistGroupId::default(),
@@ -122,7 +112,6 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry,
             fs,
             _inline_assistant_completions: None,
         }
@@ -457,17 +446,25 @@ impl InlineAssistant {
             codegen_ranges.push(anchor_range);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
-                self.telemetry.report_assistant_event(AssistantEventData {
-                    conversation_id: None,
-                    kind: AssistantKind::Inline,
-                    phase: AssistantPhase::Invoked,
-                    message_id: None,
-                    model: model.model.telemetry_id(),
-                    model_provider: model.provider.id().to_string(),
-                    response_latency: None,
-                    error_message: None,
-                    language_name: buffer.language().map(|language| language.name().to_proto()),
-                });
+                telemetry::event!(
+                    "Assistant Invoked",
+                    kind = "inline",
+                    phase = "invoked",
+                    model = model.model.telemetry_id(),
+                    model_provider = model.provider.id().to_string(),
+                    language_name = buffer.language().map(|language| language.name().to_proto())
+                );
+
+                report_anthropic_event(
+                    &model.model,
+                    AnthropicEventData {
+                        completion_type: language_model::AnthropicCompletionType::Editor,
+                        event: language_model::AnthropicEventType::Invoked,
+                        language_name: buffer.language().map(|language| language.name().to_proto()),
+                        message_id: None,
+                    },
+                    cx,
+                );
             }
         }
 
@@ -491,6 +488,7 @@ impl InlineAssistant {
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
         let assist_group_id = self.next_assist_group_id.post_inc();
+        let session_id = Uuid::new_v4();
         let prompt_buffer = cx.new(|cx| {
             MultiBuffer::singleton(
                 cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx)),
@@ -508,7 +506,7 @@ impl InlineAssistant {
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     initial_transaction_id,
-                    self.telemetry.clone(),
+                    session_id,
                     self.prompt_builder.clone(),
                     cx,
                 )
@@ -522,6 +520,7 @@ impl InlineAssistant {
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
+                    session_id,
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
@@ -1069,8 +1068,6 @@ impl InlineAssistant {
             }
 
             let active_alternative = assist.codegen.read(cx).active_alternative().clone();
-            let message_id = active_alternative.read(cx).message_id.clone();
-
             if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
@@ -1079,28 +1076,49 @@ impl InlineAssistant {
                     ranges
                         .first()
                         .and_then(|(buffer, _, _)| buffer.language())
-                        .map(|language| language.name())
+                        .map(|language| language.name().0.to_string())
                 });
-                report_assistant_event(
-                    AssistantEventData {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
+
+                let codegen = assist.codegen.read(cx);
+                let session_id = codegen.session_id();
+                let message_id = active_alternative.read(cx).message_id.clone();
+                let model_telemetry_id = model.model.telemetry_id();
+                let model_provider_id = model.model.provider_id().to_string();
+
+                let (phase, event_type, anthropic_event_type) = if undo {
+                    (
+                        "rejected",
+                        "Assistant Response Rejected",
+                        language_model::AnthropicEventType::Reject,
+                    )
+                } else {
+                    (
+                        "accepted",
+                        "Assistant Response Accepted",
+                        language_model::AnthropicEventType::Accept,
+                    )
+                };
+
+                telemetry::event!(
+                    event_type,
+                    phase,
+                    session_id = session_id.to_string(),
+                    kind = "inline",
+                    model = model_telemetry_id,
+                    model_provider = model_provider_id,
+                    language_name = language_name,
+                    message_id = message_id.as_deref(),
+                );
+
+                report_anthropic_event(
+                    &model.model,
+                    language_model::AnthropicEventData {
+                        completion_type: language_model::AnthropicCompletionType::Editor,
+                        event: anthropic_event_type,
+                        language_name,
                         message_id,
-                        phase: if undo {
-                            AssistantPhase::Rejected
-                        } else {
-                            AssistantPhase::Accepted
-                        },
-                        model: model.model.telemetry_id(),
-                        model_provider: model.model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: language_name.map(|name| name.to_proto()),
                     },
-                    Some(self.telemetry.clone()),
-                    cx.http_client(),
-                    model.model.api_key(cx),
-                    cx.background_executor(),
+                    cx,
                 );
             }
 
@@ -2036,8 +2054,7 @@ pub mod test {
             cx.set_http_client(http);
             Client::production(cx)
         });
-        let mut inline_assistant =
-            InlineAssistant::new(fs.clone(), prompt_builder, client.telemetry().clone());
+        let mut inline_assistant = InlineAssistant::new(fs.clone(), prompt_builder);
 
         let (tx, mut completion_rx) = mpsc::unbounded();
         inline_assistant.set_completion_receiver(tx);

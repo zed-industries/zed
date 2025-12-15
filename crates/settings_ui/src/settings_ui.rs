@@ -4,7 +4,6 @@ mod pages;
 
 use anyhow::Result;
 use editor::{Editor, EditorEvent};
-use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
@@ -368,12 +367,6 @@ impl Focusable for NonFocusableHandle {
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
-}
-
-pub struct SettingsUiFeatureFlag;
-
-impl FeatureFlag for SettingsUiFeatureFlag {
-    const NAME: &'static str = "settings-ui";
 }
 
 pub fn init(cx: &mut App) {
