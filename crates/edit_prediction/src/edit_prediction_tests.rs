@@ -338,7 +338,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
     });
 
     // Simulate a pause longer than the grouping threshold (e.g. 500ms).
-    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.executor().advance_clock(LAST_CHANGE_GROUPING_TIME * 2);
     cx.run_until_parked();
 
     // Second burst: append " are you?" immediately after "How" on the same line.
