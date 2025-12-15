@@ -237,7 +237,6 @@ pub struct NativeAgent {
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
-    context_server_prompt_registry: Entity<ContextServerPromptRegistry>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
     /// Cached model information
@@ -266,9 +265,6 @@ impl NativeAgent {
         cx.new(|cx| {
             let context_server_store = project.read(cx).context_server_store();
 
-            let context_server_prompt_registry =
-                cx.new(|cx| ContextServerPromptRegistry::new(context_server_store.clone(), cx));
-
             let mut subscriptions = vec![
                 cx.subscribe(&project, Self::handle_project_event),
                 cx.subscribe(
@@ -276,8 +272,8 @@ impl NativeAgent {
                     Self::handle_models_updated_event,
                 ),
                 cx.subscribe(
-                    &context_server_prompt_registry,
-                    Self::handle_context_server_prompts_updated,
+                    &context_server_store,
+                    Self::handle_context_server_store_updated,
                 ),
             ];
             if let Some(prompt_store) = prompt_store.as_ref() {
@@ -296,7 +292,6 @@ impl NativeAgent {
                 }),
                 context_server_registry: cx
                     .new(|cx| ContextServerRegistry::new(context_server_store, cx)),
-                context_server_prompt_registry,
                 templates,
                 models: LanguageModels::new(cx),
                 project,
@@ -648,17 +643,13 @@ impl NativeAgent {
         }
     }
 
-    fn handle_context_server_prompts_updated(
+    fn handle_context_server_store_updated(
         &mut self,
-        _registry: Entity<ContextServerPromptRegistry>,
-        event: &ContextServerPromptRegistryEvent,
+        _store: Entity<project::context_server_store::ContextServerStore>,
+        _event: &project::context_server_store::Event,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            ContextServerPromptRegistryEvent::PromptsChanged => {
-                self.broadcast_available_commands(cx);
-            }
-        }
+        self.broadcast_available_commands(cx);
     }
 
     fn broadcast_available_commands(&self, cx: &mut Context<Self>) {
@@ -683,7 +674,7 @@ impl NativeAgent {
     }
 
     fn build_available_commands(&self, cx: &App) -> Vec<acp::AvailableCommand> {
-        self.context_server_prompt_registry
+        self.context_server_registry
             .read(cx)
             .prompts()
             .map(|context_server_prompt| {
@@ -991,8 +982,8 @@ impl NativeAgentConnection {
         prompt: Vec<acp::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<Vec<acp::ContentBlock>>> {
-        let prompt_registry = self.0.read(cx).context_server_prompt_registry.clone();
-        let server_store = prompt_registry.read(cx).server_store().clone();
+        let registry = self.0.read(cx).context_server_registry.clone();
+        let server_store = registry.read(cx).server_store().clone();
 
         cx.spawn(async move |mut cx| {
             let mut result = Vec::with_capacity(prompt.len());
@@ -1002,7 +993,7 @@ impl NativeAgentConnection {
                     acp::ContentBlock::Text(text_content) => {
                         if let Some(expanded) = Self::try_expand_mcp_prompt(
                             &text_content.text,
-                            &prompt_registry,
+                            &registry,
                             &server_store,
                             &mut cx,
                         )
@@ -1027,7 +1018,7 @@ impl NativeAgentConnection {
 
     async fn try_expand_mcp_prompt(
         text: &str,
-        prompt_registry: &Entity<ContextServerPromptRegistry>,
+        registry: &Entity<ContextServerRegistry>,
         server_store: &Entity<project::context_server_store::ContextServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Option<String>> {
@@ -1044,7 +1035,7 @@ impl NativeAgentConnection {
             };
 
         let prompt_info = cx.update(|cx| {
-            let registry = prompt_registry.read(cx);
+            let registry = registry.read(cx);
             registry.prompts().find_map(|p| {
                 if p.prompt.name == command_name {
                     let argument_name = p
@@ -1080,9 +1071,9 @@ impl NativeAgentConnection {
         };
 
         let expanded =
-            cx.update(|cx| execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx))?;
+            crate::execute_prompt(&server_store, &server_id, &prompt_name, arguments, cx).await?;
 
-        Ok(Some(expanded.await?))
+        Ok(Some(expanded))
     }
 }
 

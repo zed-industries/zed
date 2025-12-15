@@ -3,10 +3,22 @@ use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use context_server::ContextServerId;
-use gpui::{App, Context, Entity, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
-use std::sync::Arc;
+use std::{collections::HashMap as StdHashMap, sync::Arc};
 use util::ResultExt;
+
+pub struct ContextServerPrompt {
+    pub server_id: ContextServerId,
+    pub prompt: context_server::types::Prompt,
+}
+
+pub enum ContextServerRegistryEvent {
+    ToolsChanged,
+    PromptsChanged,
+}
+
+impl EventEmitter<ContextServerRegistryEvent> for ContextServerRegistry {}
 
 pub struct ContextServerRegistry {
     server_store: Entity<ContextServerStore>,
@@ -16,7 +28,20 @@ pub struct ContextServerRegistry {
 
 struct RegisteredContextServer {
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    prompts: BTreeMap<SharedString, ContextServerPrompt>,
     load_tools: Task<Result<()>>,
+    load_prompts: Task<Result<()>>,
+}
+
+impl RegisteredContextServer {
+    fn new() -> Self {
+        Self {
+            tools: BTreeMap::default(),
+            prompts: BTreeMap::default(),
+            load_tools: Task::ready(Ok(())),
+            load_prompts: Task::ready(Ok(())),
+        }
+    }
 }
 
 impl ContextServerRegistry {
@@ -28,6 +53,7 @@ impl ContextServerRegistry {
         };
         for server in server_store.read(cx).running_servers() {
             this.reload_tools_for_server(server.id(), cx);
+            this.reload_prompts_for_server(server.id(), cx);
         }
         this
     }
@@ -56,6 +82,25 @@ impl ContextServerRegistry {
             .map(|(id, server)| (id, &server.tools))
     }
 
+    pub fn prompts(&self) -> impl Iterator<Item = &ContextServerPrompt> {
+        self.registered_servers
+            .values()
+            .flat_map(|server| server.prompts.values())
+    }
+
+    pub fn server_store(&self) -> &Entity<ContextServerStore> {
+        &self.server_store
+    }
+
+    fn get_or_register_server(
+        &mut self,
+        server_id: &ContextServerId,
+    ) -> &mut RegisteredContextServer {
+        self.registered_servers
+            .entry(server_id.clone())
+            .or_insert_with(RegisteredContextServer::new)
+    }
+
     fn reload_tools_for_server(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
         let Some(server) = self.server_store.read(cx).get_running_server(&server_id) else {
             return;
@@ -67,13 +112,7 @@ impl ContextServerRegistry {
             return;
         }
 
-        let registered_server =
-            self.registered_servers
-                .entry(server_id.clone())
-                .or_insert(RegisteredContextServer {
-                    tools: BTreeMap::default(),
-                    load_tools: Task::ready(Ok(())),
-                });
+        let registered_server = self.get_or_register_server(&server_id);
         registered_server.load_tools = cx.spawn(async move |this, cx| {
             let response = client
                 .request::<context_server::types::requests::ListTools>(())
@@ -94,6 +133,51 @@ impl ContextServerRegistry {
                         ));
                         registered_server.tools.insert(tool.name(), tool);
                     }
+                    cx.emit(ContextServerRegistryEvent::ToolsChanged);
+                    cx.notify();
+                }
+            })
+        });
+    }
+
+    fn reload_prompts_for_server(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        let Some(server) = self.server_store.read(cx).get_running_server(&server_id) else {
+            return;
+        };
+        let Some(client) = server.client() else {
+            return;
+        };
+        if !client.capable(context_server::protocol::ServerCapability::Prompts) {
+            return;
+        }
+
+        let registered_server = self.get_or_register_server(&server_id);
+
+        registered_server.load_prompts = cx.spawn(async move |this, cx| {
+            let response = client
+                .request::<context_server::types::requests::PromptsList>(())
+                .await;
+
+            this.update(cx, |this, cx| {
+                let Some(registered_server) = this.registered_servers.get_mut(&server_id) else {
+                    return;
+                };
+
+                registered_server.prompts.clear();
+                if let Some(response) = response.log_err() {
+                    for prompt in response.prompts {
+                        if acceptable_prompt(&prompt) {
+                            let name: SharedString = prompt.name.clone().into();
+                            registered_server.prompts.insert(
+                                name,
+                                ContextServerPrompt {
+                                    server_id: server_id.clone(),
+                                    prompt,
+                                },
+                            );
+                        }
+                    }
+                    cx.emit(ContextServerRegistryEvent::PromptsChanged);
                     cx.notify();
                 }
             })
@@ -112,9 +196,17 @@ impl ContextServerRegistry {
                     ContextServerStatus::Starting => {}
                     ContextServerStatus::Running => {
                         self.reload_tools_for_server(server_id.clone(), cx);
+                        self.reload_prompts_for_server(server_id.clone(), cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        self.registered_servers.remove(server_id);
+                        if let Some(registered_server) = self.registered_servers.remove(server_id) {
+                            if !registered_server.tools.is_empty() {
+                                cx.emit(ContextServerRegistryEvent::ToolsChanged);
+                            }
+                            if !registered_server.prompts.is_empty() {
+                                cx.emit(ContextServerRegistryEvent::PromptsChanged);
+                            }
+                        }
                         cx.notify();
                     }
                 }
@@ -250,4 +342,75 @@ impl AnyAgentTool for ContextServerTool {
     ) -> Result<()> {
         Ok(())
     }
+}
+
+/// MCP servers can return prompts with multiple arguments. Since we only
+/// support one argument, we ignore all others.
+fn acceptable_prompt(prompt: &context_server::types::Prompt) -> bool {
+    match &prompt.arguments {
+        None => true,
+        Some(args) if args.len() <= 1 => true,
+        _ => false,
+    }
+}
+
+/// Execute an MCP prompt and return the result as text.
+///
+/// This function spawns a background task to execute the prompt, capturing the server client up
+/// front so the async task doesn't need to re-enter the app to access it.
+pub fn execute_prompt(
+    server_store: &Entity<ContextServerStore>,
+    server_id: &ContextServerId,
+    prompt_name: &str,
+    arguments: Option<StdHashMap<String, String>>,
+    cx: &mut AsyncApp,
+) -> Task<Result<String>> {
+    let server = match cx.update(|cx| server_store.read(cx).get_running_server(server_id)) {
+        Ok(server) => server,
+        Err(error) => return Task::ready(Err(error)),
+    };
+    let Some(server) = server else {
+        return Task::ready(Err(anyhow::anyhow!("Context server not found")));
+    };
+
+    let Some(protocol) = server.client() else {
+        return Task::ready(Err(anyhow::anyhow!("Context server not initialized")));
+    };
+
+    let prompt_name = prompt_name.to_string();
+    let arguments = arguments.map(|args| args.into_iter().collect::<HashMap<_, _>>());
+
+    cx.background_spawn(async move {
+        let response = protocol
+            .request::<context_server::types::requests::PromptsGet>(
+                context_server::types::PromptsGetParams {
+                    name: prompt_name,
+                    arguments,
+                    meta: None,
+                },
+            )
+            .await?;
+
+        anyhow::ensure!(
+            response
+                .messages
+                .iter()
+                .all(|msg| matches!(msg.role, context_server::types::Role::User)),
+            "Prompt contains non-user roles, which is not supported"
+        );
+
+        let mut prompt = response
+            .messages
+            .into_iter()
+            .filter_map(|msg| match msg.content {
+                context_server::types::MessageContent::Text { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n\n");
+
+        text::LineEnding::normalize(&mut prompt);
+
+        Ok(prompt)
+    })
 }
