@@ -150,9 +150,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                     .detach_and_log_err(cx);
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
@@ -162,9 +161,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
                 .detach();
             }
         }
-    });
-
-    cx.on_action({
+    })
+    .on_action({
         let client = client;
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
@@ -1487,7 +1485,7 @@ impl Client {
 
         let url = self
             .http
-            .build_zed_cloud_url("/internal/users/impersonate", &[])?;
+            .build_zed_cloud_url("/internal/users/impersonate")?;
         let request = Request::post(url.as_str())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {api_token}"))
@@ -1722,6 +1720,10 @@ impl ProtoClient for Client {
 
     fn is_via_collab(&self) -> bool {
         true
+    }
+
+    fn has_wsl_interop(&self) -> bool {
+        false
     }
 }
 

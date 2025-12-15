@@ -108,7 +108,7 @@ impl MentionUri {
                 if let Some(thread_id) = path.strip_prefix("/agent/thread/") {
                     let name = single_query_param(&url, "name")?.context("Missing thread name")?;
                     Ok(Self::Thread {
-                        id: acp::SessionId(thread_id.into()),
+                        id: acp::SessionId::new(thread_id),
                         name,
                     })
                 } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {

@@ -370,11 +370,16 @@ impl BufferDiagnosticsEditor {
                     continue;
                 }
 
+                let languages = buffer_diagnostics_editor
+                    .read_with(cx, |b, cx| b.project.read(cx).languages().clone())
+                    .ok();
+
                 let diagnostic_blocks = cx.update(|_window, cx| {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
                         Some(Arc::new(buffer_diagnostics_editor.clone())),
+                        languages,
                         cx,
                     )
                 })?;
@@ -675,11 +680,11 @@ impl Item for BufferDiagnosticsEditor {
         type_id: std::any::TypeId,
         self_handle: &'a Entity<Self>,
         _: &'a App,
-    ) -> Option<gpui::AnyView> {
+    ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.to_any())
+            Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.to_any())
+            Some(self.editor.clone().into())
         } else {
             None
         }

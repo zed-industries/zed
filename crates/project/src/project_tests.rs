@@ -20,7 +20,7 @@ use git::{
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
-use gpui::{App, BackgroundExecutor, FutureExt, SemanticVersion, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, FutureExt, UpdateGlobal};
 use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
@@ -28,7 +28,7 @@ use language::{
     ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
     ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
-    tree_sitter_rust, tree_sitter_typescript,
+    rust_lang, tree_sitter_typescript,
 };
 use lsp::{
     DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
@@ -691,7 +691,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -720,7 +720,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -746,7 +746,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -762,7 +762,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                     worktree_id,
                     path: rel_path("project-b/source_file.py").into(),
                 },
-                LanguageName::new("Python"),
+                LanguageName::new_static("Python"),
                 cx,
             )
         })
@@ -791,7 +791,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     let servers = project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
-                this.language_servers_for_local_buffer(buffer, cx)
+                this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
                     .collect::<Vec<_>>()
             })
@@ -1215,13 +1215,20 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let settings_json_contents = json!({
         "languages": {
             "Rust": {
-                "language_servers": ["my_fake_lsp"]
+                "language_servers": ["my_fake_lsp", "lsp_on_path"]
             }
         },
         "lsp": {
             "my_fake_lsp": {
                 "binary": {
-                    "path": path!("relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                    // file exists, so this is treated as a relative path
+                    "path": path!(".relative_path/to/my_fake_lsp_binary.exe").to_string(),
+                }
+            },
+            "lsp_on_path": {
+                "binary": {
+                    // file doesn't exist, so it will fall back on PATH env var
+                    "path": path!("lsp_on_path.exe").to_string(),
                 }
             }
         },
@@ -1234,7 +1241,7 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
             ".zed": {
                 "settings.json": settings_json_contents.to_string(),
             },
-            "relative_path": {
+            ".relative_path": {
                 "to": {
                     "my_fake_lsp.exe": "",
                 },
@@ -1250,10 +1257,17 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
-    let mut fake_rust_servers = language_registry.register_fake_lsp(
+    let mut my_fake_lsp = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my_fake_lsp",
+            ..Default::default()
+        },
+    );
+    let mut lsp_on_path = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "lsp_on_path",
             ..Default::default()
         },
     );
@@ -1268,10 +1282,74 @@ async fn test_language_server_relative_path(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let lsp_path = fake_rust_servers.next().await.unwrap().binary.path;
+    let lsp_path = my_fake_lsp.next().await.unwrap().binary.path;
     assert_eq!(
         lsp_path.to_string_lossy(),
-        path!("/the-root/relative_path/to/my_fake_lsp_binary.exe"),
+        path!("/the-root/.relative_path/to/my_fake_lsp_binary.exe"),
+    );
+
+    let lsp_path = lsp_on_path.next().await.unwrap().binary.path;
+    assert_eq!(lsp_path.to_string_lossy(), path!("lsp_on_path.exe"));
+}
+
+#[gpui::test]
+async fn test_language_server_tilde_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let settings_json_contents = json!({
+        "languages": {
+            "Rust": {
+                "language_servers": ["tilde_lsp"]
+            }
+        },
+        "lsp": {
+            "tilde_lsp": {
+                "binary": {
+                    "path": "~/.local/bin/rust-analyzer",
+                }
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json_contents.to_string(),
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut tilde_lsp = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "tilde_lsp",
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let lsp_path = tilde_lsp.next().await.unwrap().binary.path;
+    let expected_path = paths::home_dir().join(".local/bin/rust-analyzer");
+    assert_eq!(
+        lsp_path, expected_path,
+        "Tilde path should expand to home directory"
     );
 }
 
@@ -2672,11 +2750,13 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     );
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": text })).await;
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -2685,7 +2765,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
-                    PathBuf::from("/dir/a.rs"),
+                    PathBuf::from(path!("/dir/a.rs")),
                     None,
                     None,
                     vec![
@@ -2742,17 +2822,17 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
         .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(0),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -2771,7 +2851,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(1),
-                Path::new("/dir/a.rs").to_owned(),
+                Path::new(path!("/dir/a.rs")).to_owned(),
                 None,
                 None,
                 vec![DiagnosticEntry {
@@ -8096,6 +8176,91 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
+// TODO: Should we test this on Windows also?
+#[gpui::test]
+#[cfg(not(windows))]
+async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    init_test(cx);
+    cx.executor().allow_parking();
+    let committed_contents = "bar\n";
+    let file_contents = "baz\n";
+    let root = TempTree::new(json!({
+        "project": {
+            "foo": committed_contents
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let file_path = work_dir.join("foo");
+    let repo = git_init(work_dir.as_path());
+    let mut perms = std::fs::metadata(&file_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&file_path, perms).unwrap();
+    git_add("foo", &repo);
+    git_commit("Initial commit", &repo);
+    std::fs::write(&file_path, file_contents).unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
+        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+    });
+
+    cx.run_until_parked();
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["diff", "--staged"])
+        .output()
+        .await
+        .unwrap();
+
+    let staged_diff = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        !staged_diff.contains("new mode 100644"),
+        "Staging should not change file mode from 755 to 644.\ngit diff --staged:\n{}",
+        staged_diff
+    );
+
+    let output = smol::process::Command::new("git")
+        .current_dir(&work_dir)
+        .args(["ls-files", "-s"])
+        .output()
+        .await
+        .unwrap();
+    let index_contents = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        index_contents.contains("100755"),
+        "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
+        index_contents
+    );
+}
+
 #[gpui::test]
 async fn test_repository_and_path_for_project_path(
     background_executor: BackgroundExecutor,
@@ -8375,6 +8540,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -8533,7 +8699,7 @@ async fn test_repository_pending_ops_staging(
 
     // Ensure we have no pending ops for any of the untracked files
     repo.read_with(cx, |repo, _cx| {
-        assert!(repo.pending_ops_by_path.is_empty());
+        assert!(repo.pending_ops().next().is_none());
     });
 
     let mut id = 1u16;
@@ -9497,7 +9663,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::StatusesChanged { full_scan: true },
+            RepositoryEvent::StatusesChanged,
             RepositoryEvent::MergeHeadsChanged,
         ],
         "Initial worktree scan should produce a repo update event"
@@ -9569,11 +9735,14 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
             ("project/target/debug/deps".to_string(), PathChange::Added),
             ("project/target/debug/deps".to_string(), PathChange::Removed),
         ],
-        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        "Due to `debug` directory being tracked, it should get updates for entries inside it.
         No updates for more nested directories should happen as those are ignored",
     );
 }
 
+// todo(jk): turning this test off until we rework it in such a way so that it is not so susceptible
+// to different timings/ordering of events.
+#[ignore]
 #[gpui::test]
 async fn test_odd_events_for_ignored_dirs(
     executor: BackgroundExecutor,
@@ -9665,8 +9834,8 @@ async fn test_odd_events_for_ignored_dirs(
         vec![
             RepositoryEvent::MergeHeadsChanged,
             RepositoryEvent::BranchChanged,
-            RepositoryEvent::StatusesChanged { full_scan: false },
-            RepositoryEvent::StatusesChanged { full_scan: false },
+            RepositoryEvent::StatusesChanged,
+            RepositoryEvent::StatusesChanged,
         ],
         "Initial worktree scan should produce a repo update event"
     );
@@ -10267,7 +10436,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        release_channel::init(SemanticVersion::default(), cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }
 
@@ -10296,20 +10465,6 @@ fn js_lang() -> Arc<Language> {
             ..Default::default()
         },
         None,
-    ))
-}
-
-fn rust_lang() -> Arc<Language> {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Rust".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }
 

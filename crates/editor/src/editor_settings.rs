@@ -162,10 +162,15 @@ pub struct DragAndDropSelection {
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     pub button: bool,
+    /// Whether to only match on whole words.
     pub whole_word: bool,
+    /// Whether to match case sensitively.
     pub case_sensitive: bool,
+    /// Whether to include gitignored files in search results.
     pub include_ignored: bool,
+    /// Whether to interpret the search query as a regular expression.
     pub regex: bool,
+    /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
 }
 

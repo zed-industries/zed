@@ -48,6 +48,12 @@ pub(crate) struct DirectXRenderer {
 
     width: u32,
     height: u32,
+
+    /// Whether we want to skip drwaing due to device lost events.
+    ///
+    /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
+    /// meaning we lost all the allocated gpu textures and scene resources.
+    skip_draws: bool,
 }
 
 /// Direct3D objects
@@ -167,6 +173,7 @@ impl DirectXRenderer {
             font_info: Self::get_font_info(),
             width: 1,
             height: 1,
+            skip_draws: false,
         })
     }
 
@@ -192,8 +199,13 @@ impl DirectXRenderer {
             }],
         )?;
         unsafe {
-            device_context
-                .ClearRenderTargetView(resources.render_target_view.as_ref().unwrap(), &[0.0; 4]);
+            device_context.ClearRenderTargetView(
+                resources
+                    .render_target_view
+                    .as_ref()
+                    .context("missing render target view")?,
+                &[0.0; 4],
+            );
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
@@ -283,10 +295,16 @@ impl DirectXRenderer {
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
+        self.skip_draws = true;
         Ok(())
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+        if self.skip_draws {
+            // skip drawing this frame, we just recovered from a device lost event
+            // and so likely do not have the textures anymore that are required for drawing
+            return Ok(());
+        }
         self.pre_draw()?;
         for batch in scene.batches() {
             match batch {
@@ -306,14 +324,18 @@ impl DirectXRenderer {
                     sprites,
                 } => self.draw_polychrome_sprites(texture_id, sprites),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
-            }.context(format!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
-                    scene.paths.len(),
-                    scene.shadows.len(),
-                    scene.quads.len(),
-                    scene.underlines.len(),
-                    scene.monochrome_sprites.len(),
-                    scene.polychrome_sprites.len(),
-                    scene.surfaces.len(),))?;
+            }
+            .context(format!(
+                "scene too large:\
+                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                scene.paths.len(),
+                scene.shadows.len(),
+                scene.quads.len(),
+                scene.underlines.len(),
+                scene.monochrome_sprites.len(),
+                scene.polychrome_sprites.len(),
+                scene.surfaces.len(),
+            ))?;
         }
         self.present()
     }
@@ -352,6 +374,7 @@ impl DirectXRenderer {
         }
 
         resources.recreate_resources(devices, width, height)?;
+
         unsafe {
             devices
                 .device_context
@@ -646,6 +669,10 @@ impl DirectXRenderer {
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
             }
         })
+    }
+
+    pub(crate) fn mark_drawable(&mut self) {
+        self.skip_draws = false;
     }
 }
 

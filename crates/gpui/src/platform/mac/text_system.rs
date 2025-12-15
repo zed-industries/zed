@@ -435,6 +435,7 @@ impl MacTextSystemState {
 
         {
             let mut text = text;
+            let mut break_ligature = true;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
@@ -444,7 +445,8 @@ impl MacTextSystemState {
                 string.replace_str(&CFString::new(text_run), CFRange::init(utf16_start, 0));
                 let utf16_end = string.char_len();
 
-                let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
+                let length = utf16_end - utf16_start;
+                let cf_range = CFRange::init(utf16_start, length);
                 let font = &self.fonts[run.font_id.0];
 
                 let font_metrics = font.metrics();
@@ -452,6 +454,11 @@ impl MacTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
+                let font_size = if break_ligature {
+                    px(font_size.0.next_up())
+                } else {
+                    font_size
+                };
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -459,6 +466,7 @@ impl MacTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
+                break_ligature = !break_ligature;
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.

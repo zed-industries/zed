@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -eu
+set -euxo pipefail
 
 if [[ $# -ne 1 ]]; then
     echo "usage: $0 <MAX_SIZE_IN_GB>"
@@ -21,5 +21,6 @@ echo "target directory size: ${current_size_gb}gb. max size: ${max_size_gb}gb"
 
 if [[ ${current_size_gb} -gt ${max_size_gb} ]]; then
     echo "clearing target directory"
-    rm -rf target
+    shopt -s dotglob
+    rm -rf target/*
 fi

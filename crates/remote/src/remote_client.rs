@@ -3,6 +3,7 @@ use crate::{
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        docker::{DockerConnectionOptions, DockerExecConnection},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
@@ -22,7 +23,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Task, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -31,6 +32,7 @@ use rpc::{
     AnyProtoClient, ErrorExt, ProtoClient, ProtoMessageHandlerSet, RpcError,
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
+use semver::Version;
 use std::{
     collections::VecDeque,
     fmt,
@@ -67,18 +69,18 @@ pub trait RemoteClientDelegate: Send + Sync {
         tx: oneshot::Sender<EncryptedPassword>,
         cx: &mut AsyncApp,
     );
-    fn get_download_params(
+    fn get_download_url(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>>;
+    ) -> Task<Result<Option<String>>>;
     fn download_server_binary_locally(
         &self,
         platform: RemotePlatform,
         release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
+        version: Option<Version>,
         cx: &mut AsyncApp,
     ) -> Task<Result<PathBuf>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp);
@@ -327,8 +329,15 @@ impl RemoteClient {
                 let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
                 let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-                let client =
-                    cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
+                let client = cx.update(|cx| {
+                    ChannelClient::new(
+                        incoming_rx,
+                        outgoing_tx,
+                        cx,
+                        "client",
+                        remote_connection.has_wsl_interop(),
+                    )
+                })?;
 
                 let path_style = remote_connection.path_style();
                 let this = cx.new(|_| Self {
@@ -419,8 +428,9 @@ impl RemoteClient {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
         name: &'static str,
+        has_wsl_interop: bool,
     ) -> AnyProtoClient {
-        ChannelClient::new(incoming_rx, outgoing_tx, cx, name).into()
+        ChannelClient::new(incoming_rx, outgoing_tx, cx, name, has_wsl_interop).into()
     }
 
     pub fn shutdown_processes<T: RequestMessage>(
@@ -920,8 +930,8 @@ impl RemoteClient {
         });
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-        let server_client =
-            server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
+        let server_client = server_cx
+            .update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server", false));
         let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
             connection_options: opts.clone(),
             server_cx: fake::SendableCx::new(server_cx),
@@ -1033,6 +1043,11 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::Docker(opts) => {
+                            DockerExecConnection::new(opts, delegate, cx)
+                                .await
+                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                     };
 
                     cx.update_global(|pool: &mut Self, _| {
@@ -1068,6 +1083,7 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Docker(DockerConnectionOptions),
 }
 
 impl RemoteConnectionOptions {
@@ -1075,6 +1091,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
         }
     }
 }
@@ -1139,6 +1156,7 @@ pub trait RemoteConnection: Send + Sync {
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
+    fn has_wsl_interop(&self) -> bool;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1187,6 +1205,7 @@ struct ChannelClient {
     name: &'static str,
     task: Mutex<Task<Result<()>>>,
     remote_started: Signal<()>,
+    has_wsl_interop: bool,
 }
 
 impl ChannelClient {
@@ -1195,6 +1214,7 @@ impl ChannelClient {
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &App,
         name: &'static str,
+        has_wsl_interop: bool,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             outgoing_tx: Mutex::new(outgoing_tx),
@@ -1210,6 +1230,7 @@ impl ChannelClient {
                 &cx.to_async(),
             )),
             remote_started: Signal::new(cx),
+            has_wsl_interop,
         })
     }
 
@@ -1488,6 +1509,10 @@ impl ProtoClient for ChannelClient {
     fn is_via_collab(&self) -> bool {
         false
     }
+
+    fn has_wsl_interop(&self) -> bool {
+        self.has_wsl_interop
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1506,9 +1531,10 @@ mod fake {
         },
         select_biased,
     };
-    use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AppContext as _, AsyncApp, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
+    use semver::Version;
     use std::{path::PathBuf, sync::Arc};
     use util::paths::{PathStyle, RemotePathBuf};
 
@@ -1650,6 +1676,10 @@ mod fake {
         fn default_system_shell(&self) -> String {
             "sh".to_owned()
         }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
     }
 
     pub(super) struct Delegate;
@@ -1663,19 +1693,19 @@ mod fake {
             &self,
             _: RemotePlatform,
             _: ReleaseChannel,
-            _: Option<SemanticVersion>,
+            _: Option<Version>,
             _: &mut AsyncApp,
         ) -> Task<Result<PathBuf>> {
             unreachable!()
         }
 
-        fn get_download_params(
+        fn get_download_url(
             &self,
             _platform: RemotePlatform,
             _release_channel: ReleaseChannel,
-            _version: Option<SemanticVersion>,
+            _version: Option<Version>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<Option<(String, String)>>> {
+        ) -> Task<Result<Option<String>>> {
             unreachable!()
         }
 

@@ -168,7 +168,7 @@ impl Editor {
                     match EditorSettings::get_global(cx).go_to_definition_fallback {
                         GoToDefinitionFallback::None => None,
                         GoToDefinitionFallback::FindAllReferences => {
-                            editor.find_all_references(&FindAllReferences, window, cx)
+                            editor.find_all_references(&FindAllReferences::default(), window, cx)
                         }
                     }
                 })
@@ -735,9 +735,10 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
-    use gpui::Modifiers;
+    use gpui::{Modifiers, MousePressureEvent, PressureStage};
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use multi_buffer::MultiBufferOffset;
     use settings::InlayHintSettingsContent;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
@@ -1067,8 +1068,8 @@ mod tests {
             .clone();
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let anchor_range = snapshot.anchor_before(selection_range.start)
-                ..snapshot.anchor_after(selection_range.end);
+            let anchor_range = snapshot.anchor_before(MultiBufferOffset(selection_range.start))
+                ..snapshot.anchor_after(MultiBufferOffset(selection_range.end));
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
             });
@@ -1122,7 +1123,7 @@ mod tests {
                 }
             "})[0]
             .start;
-        let hint_position = cx.to_lsp(hint_start_offset);
+        let hint_position = cx.to_lsp(MultiBufferOffset(hint_start_offset));
         let target_range = cx.lsp_range(indoc! {"
                 struct «TestStruct»;
 
@@ -1179,8 +1180,8 @@ mod tests {
             .unwrap();
         let midpoint = cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let previous_valid = inlay_range.start.to_display_point(&snapshot);
-            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            let previous_valid = MultiBufferOffset(inlay_range.start).to_display_point(&snapshot);
+            let next_valid = MultiBufferOffset(inlay_range.end).to_display_point(&snapshot);
             assert_eq!(previous_valid.row(), next_valid.row());
             assert!(previous_valid.column() < next_valid.column());
             DisplayPoint::new(
@@ -1203,7 +1204,7 @@ mod tests {
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
-                inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
+                inlay_position: buffer_snapshot.anchor_after(MultiBufferOffset(inlay_range.start)),
                 range: 0..hint_label.len(),
             };
             assert_set_eq!(actual_highlights, vec![&expected_highlight]);
@@ -1704,5 +1705,78 @@ mod tests {
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_pressure_links(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+                    fn ˇtest() { do_work(); }
+                    fn do_work() { test(); }
+                "});
+
+        // Position the mouse over a symbol that has a definition
+        let hover_point = cx.pixel_position(indoc! {"
+                    fn test() { do_wˇork(); }
+                    fn do_work() { test(); }
+                "});
+        let symbol_range = cx.lsp_range(indoc! {"
+                    fn test() { «do_work»(); }
+                    fn do_work() { test(); }
+                "});
+        let target_range = cx.lsp_range(indoc! {"
+                    fn test() { do_work(); }
+                    fn «do_work»() { test(); }
+                "});
+
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
+
+        cx.simulate_mouse_move(hover_point, None, Modifiers::none());
+
+        // First simulate Normal pressure to set up the previous stage
+        cx.simulate_event(MousePressureEvent {
+            pressure: 0.5,
+            stage: PressureStage::Normal,
+            position: hover_point,
+            modifiers: Modifiers::none(),
+        });
+        cx.background_executor.run_until_parked();
+
+        // Now simulate Force pressure to trigger the force click and go-to definition
+        cx.simulate_event(MousePressureEvent {
+            pressure: 1.0,
+            stage: PressureStage::Force,
+            position: hover_point,
+            modifiers: Modifiers::none(),
+        });
+        requests.next().await;
+        cx.background_executor.run_until_parked();
+
+        // Assert that we navigated to the definition
+        cx.assert_editor_state(indoc! {"
+                    fn test() { do_work(); }
+                    fn «do_workˇ»() { test(); }
+                "});
     }
 }
