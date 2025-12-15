@@ -1914,16 +1914,7 @@ fn from_completion_edits(
         .collect()
 }
 
-/// Tests called sequentially to avoid concurrency errors with TEST_FORCE_CUSTOM_URL_MODE.
 #[gpui::test]
-async fn test_authentication_behavior(cx: &mut TestAppContext) {
-    test_unauthenticated_without_custom_url_blocks_prediction_impl(cx).await;
-
-    super::set_test_custom_url_mode(true);
-    test_unauthenticated_with_custom_url_allows_prediction_impl(cx).await;
-    super::set_test_custom_url_mode(false);
-}
-
 async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -1980,6 +1971,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     );
 }
 
+#[gpui::test]
 async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -2076,6 +2068,7 @@ async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut Te
     cx.background_executor.run_until_parked();
 
     let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
         ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
     });
 
