@@ -198,22 +198,22 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
-// TODO naming
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub enum SplitOperation {
-    /// clone the current pane
+    /// Clone the current pane.
     #[default]
     Clone,
-    /// create an empty new pane
+    /// Create an empty new pane.
     Clear,
-    /// move the item into a new pane
+    /// Move the item into a new pane. This will map to nop if only one pane exists.
     Move,
 }
 
 macro_rules! split_structs {
-    ($($name:ident),* $(,)?) => {
+    ($($name:ident => $direction:expr),* $(,)?) => {
         $(
+            #[doc = concat!(" Splits the pane to the ", $direction)]
             #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
             #[action(namespace = pane)]
             #[serde(deny_unknown_fields, default)]
@@ -225,12 +225,12 @@ macro_rules! split_structs {
 }
 
 split_structs!(
-    SplitLeft,
-    SplitRight,
-    SplitUp,
-    SplitDown,
-    SplitHorizontal,
-    SplitVertical
+    SplitLeft => "left",
+    SplitRight => "right",
+    SplitUp => "up",
+    SplitDown => "down",
+    SplitHorizontal => "horizontal",
+    SplitVertical => "vertical"
 );
 
 actions!(
@@ -7200,7 +7200,6 @@ mod tests {
     }
 
     // Assert the item label, with the active item label expected active index
-    // TODO dont like the duplication
     #[track_caller]
     fn assert_item_labels_active_index(
         pane: &Entity<Pane>,
