@@ -520,20 +520,53 @@ impl<T: 'static> PromptEditor<T> {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
+                self.fire_started_telemetry(cx);
                 cx.emit(PromptEditorEvent::StartRequested);
             }
             CodegenStatus::Pending => {}
             CodegenStatus::Done => {
                 if self.edited_since_done {
+                    self.fire_started_telemetry(cx);
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
                     cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
                 }
             }
             CodegenStatus::Error(_) => {
+                self.fire_started_telemetry(cx);
                 cx.emit(PromptEditorEvent::StartRequested);
             }
         }
+    }
+
+    fn fire_started_telemetry(&self, cx: &Context<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() else {
+            return;
+        };
+
+        let model_telemetry_id = model.model.telemetry_id();
+        let model_provider_id = model.provider.id().to_string();
+
+        let (kind, language_name) = match &self.mode {
+            PromptEditorMode::Buffer { codegen, .. } => {
+                let codegen = codegen.read(cx);
+                (
+                    "inline",
+                    codegen.language_name(cx).map(|name| name.to_string()),
+                )
+            }
+            PromptEditorMode::Terminal { .. } => ("inline_terminal", None),
+        };
+
+        telemetry::event!(
+            "Assistant Started",
+            session_id = self.session_state.session_id.to_string(),
+            kind = kind,
+            phase = "started",
+            model = model_telemetry_id,
+            model_provider = model_provider_id,
+            language_name = language_name,
+        );
     }
 
     fn thumbs_up(&mut self, _: &ThumbsUpResult, _window: &mut Window, cx: &mut Context<Self>) {
@@ -569,10 +602,16 @@ impl<T: 'static> PromptEditor<T> {
 
                 let prompt = self.editor.read(cx).text(cx);
 
+                let kind = match &self.mode {
+                    PromptEditorMode::Buffer { .. } => "inline",
+                    PromptEditorMode::Terminal { .. } => "inline_terminal",
+                };
+
                 telemetry::event!(
                     "Inline Assistant Rated",
                     rating = "positive",
                     session_id = self.session_state.session_id.to_string(),
+                    kind = kind,
                     model = model_id,
                     prompt = prompt,
                     completion = completion_text,
@@ -619,10 +658,16 @@ impl<T: 'static> PromptEditor<T> {
 
                 let prompt = self.editor.read(cx).text(cx);
 
+                let kind = match &self.mode {
+                    PromptEditorMode::Buffer { .. } => "inline",
+                    PromptEditorMode::Terminal { .. } => "inline_terminal",
+                };
+
                 telemetry::event!(
                     "Inline Assistant Rated",
                     rating = "negative",
                     session_id = self.session_state.session_id.to_string(),
+                    kind = kind,
                     model = model_telemetry_id,
                     prompt = prompt,
                     completion = completion_text,
@@ -1092,6 +1137,7 @@ impl PromptEditor<BufferCodegen> {
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
+        session_id: Uuid,
         fs: Arc<dyn Fs>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -1163,7 +1209,7 @@ impl PromptEditor<BufferCodegen> {
             show_rate_limit_notice: false,
             mode,
             session_state: SessionState {
-                session_id: Uuid::new_v4(),
+                session_id,
                 completion: CompletionState::Pending,
             },
             _phantom: Default::default(),
@@ -1249,6 +1295,7 @@ impl PromptEditor<TerminalCodegen> {
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<TerminalCodegen>,
+        session_id: Uuid,
         fs: Arc<dyn Fs>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -1315,7 +1362,7 @@ impl PromptEditor<TerminalCodegen> {
             mode,
             show_rate_limit_notice: false,
             session_state: SessionState {
-                session_id: Uuid::new_v4(),
+                session_id,
                 completion: CompletionState::Pending,
             },
             _phantom: Default::default(),

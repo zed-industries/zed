@@ -17,15 +17,15 @@ use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, Wea
 use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, report_assistant_event,
+    Role, report_anthropic_event_2,
 };
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore};
 use std::sync::Arc;
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
+use uuid::Uuid;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
@@ -80,13 +80,15 @@ impl TerminalInlineAssistant {
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
+        let session_id = Uuid::new_v4();
         let prompt_buffer = cx.new(|cx| {
             MultiBuffer::singleton(
                 cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx)),
                 cx,
             )
         });
-        let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
+        let codegen =
+            cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone(), session_id));
 
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new_terminal(
@@ -94,6 +96,7 @@ impl TerminalInlineAssistant {
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen,
+                session_id,
                 self.fs.clone(),
                 thread_store.clone(),
                 prompt_store.clone(),
@@ -309,27 +312,45 @@ impl TerminalInlineAssistant {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             {
                 let codegen = assist.codegen.read(cx);
-                let executor = cx.background_executor().clone();
-                report_assistant_event(
-                    AssistantEventData {
-                        conversation_id: None,
-                        kind: AssistantKind::InlineTerminal,
-                        message_id: codegen.message_id.clone(),
-                        phase: if undo {
-                            AssistantPhase::Rejected
-                        } else {
-                            AssistantPhase::Accepted
-                        },
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
+                let session_id = codegen.session_id();
+                let message_id = codegen.message_id.clone();
+                let model_telemetry_id = model.telemetry_id();
+                let model_provider_id = model.provider_id().to_string();
+
+                let (phase, event_type, anthropic_event_type) = if undo {
+                    (
+                        "rejected",
+                        "Assistant Response Rejected",
+                        language_model::AnthropicEventType::Reject,
+                    )
+                } else {
+                    (
+                        "accepted",
+                        "Assistant Response Accepted",
+                        language_model::AnthropicEventType::Accept,
+                    )
+                };
+
+                // Fire Zed telemetry
+                telemetry::event!(
+                    event_type,
+                    kind = "inline_terminal",
+                    phase = phase,
+                    model = model_telemetry_id,
+                    model_provider = model_provider_id,
+                    message_id = message_id,
+                    session_id = session_id,
+                );
+
+                report_anthropic_event_2(
+                    model,
+                    language_model::AnthropicEventData {
+                        completion_type: language_model::AnthropicCompletionType::Terminal,
+                        event: anthropic_event_type,
                         language_name: None,
+                        message_id,
                     },
-                    codegen.telemetry.clone(),
-                    cx.http_client(),
-                    model.api_key(cx),
-                    &executor,
+                    cx,
                 );
             }
 
