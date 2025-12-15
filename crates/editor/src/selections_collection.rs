@@ -419,22 +419,30 @@ impl SelectionsCollection {
             mutable_collection.disjoint.iter().for_each(|selection| {
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}",
+                    "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}",
+                    "disjoint selection end is not resolvable for the given snapshot: {selection:?}, {excerpt:?}",
+                    excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
             });
             if let Some(pending) = &mutable_collection.pending {
                 let selection = &pending.selection;
                 assert!(
                     snapshot.can_resolve(&selection.start),
-                    "pending selection start is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.start.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
                 assert!(
                     snapshot.can_resolve(&selection.end),
-                    "pending selection end is not resolvable for the given snapshot: {pending:?}",
+                    "pending selection end is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
+                    excerpt = snapshot
+                        .buffer_for_excerpt(selection.end.excerpt_id)
+                        .map(|snapshot| snapshot.remote_id()),
                 );
             }
         }
@@ -532,11 +540,18 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         };
 
         if filtered_selections.is_empty() {
-            let default_anchor = self.snapshot.anchor_before(MultiBufferOffset(0));
+            let buffer_snapshot = self.snapshot.buffer_snapshot();
+            let anchor = buffer_snapshot
+                .excerpts()
+                .find(|(_, buffer, _)| buffer.remote_id() == buffer_id)
+                .and_then(|(excerpt_id, _, range)| {
+                    buffer_snapshot.anchor_in_excerpt(excerpt_id, range.context.start)
+                })
+                .unwrap_or_else(|| self.snapshot.anchor_before(MultiBufferOffset(0)));
             self.collection.disjoint = Arc::from([Selection {
                 id: post_inc(&mut self.collection.next_selection_id),
-                start: default_anchor,
-                end: default_anchor,
+                start: anchor,
+                end: anchor,
                 reversed: false,
                 goal: SelectionGoal::None,
             }]);

@@ -10,5 +10,6 @@ pub use remote_client::{
     ConnectionIdentifier, ConnectionState, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
     RemoteConnection, RemoteConnectionOptions, RemotePlatform, connect,
 };
+pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;

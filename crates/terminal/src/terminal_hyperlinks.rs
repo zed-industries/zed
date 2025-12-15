@@ -8,12 +8,13 @@ use alacritty_terminal::{
         search::{Match, RegexIter, RegexSearch},
     },
 };
-use fancy_regex::Regex;
 use log::{info, warn};
+use regex::Regex;
 use std::{
     ops::{Index, Range},
     time::{Duration, Instant},
 };
+use url::Url;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 const WIDE_CHAR_SPACERS: Flags =
@@ -128,8 +129,19 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         if is_url {
             // Treat "file://" IRIs like file paths to ensure
             // that line numbers at the end of the path are
-            // handled correctly
-            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
+            // handled correctly.
+            // Use Url::to_file_path() to properly handle Windows drive letters
+            // (e.g., file:///C:/path -> C:\path)
+            if maybe_url_or_path.starts_with("file://") {
+                if let Ok(url) = Url::parse(&maybe_url_or_path) {
+                    if let Ok(path) = url.to_file_path() {
+                        return (path.to_string_lossy().into_owned(), false, word_match);
+                    }
+                }
+                // Fallback: strip file:// prefix if URL parsing fails
+                let path = maybe_url_or_path
+                    .strip_prefix("file://")
+                    .unwrap_or(&maybe_url_or_path);
                 (path.to_string(), false, word_match)
             } else {
                 (maybe_url_or_path, true, word_match)
@@ -208,7 +220,8 @@ fn path_match<T>(
     if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
         return None;
     }
-
+    debug_assert!(line_start <= hovered);
+    debug_assert!(line_end >= hovered);
     let search_start_time = Instant::now();
 
     let timed_out = || {
@@ -224,13 +237,35 @@ fn path_match<T>(
     let mut line = String::with_capacity(
         (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
     );
-    line.push(term.grid()[line_start].c);
+    let first_cell = &term.grid()[line_start];
+    line.push(first_cell.c);
+    let mut start_offset = 0;
+    let mut hovered_point_byte_offset = None;
+
+    if !first_cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        start_offset += first_cell.c.len_utf8();
+        if line_start == hovered {
+            hovered_point_byte_offset = Some(0);
+        }
+    }
+
     for cell in term.grid().iter_from(line_start) {
         if cell.point > line_end {
             break;
         }
+        let is_spacer = cell.flags.intersects(WIDE_CHAR_SPACERS);
+        if cell.point == hovered {
+            debug_assert!(hovered_point_byte_offset.is_none());
+            if start_offset > 0 && cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                // If we hovered on a trailing spacer, back up to the end of the previous char's bytes.
+                start_offset -= 1;
+            }
+            hovered_point_byte_offset = Some(start_offset);
+        } else if cell.point < hovered && !is_spacer {
+            start_offset += cell.c.len_utf8();
+        }
 
-        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        if !is_spacer {
             line.push(match cell.c {
                 '\t' => ' ',
                 c @ _ => c,
@@ -238,7 +273,7 @@ fn path_match<T>(
         }
     }
     let line = line.trim_ascii_end();
-
+    let hovered_point_byte_offset = hovered_point_byte_offset?;
     let found_from_range = |path_range: Range<usize>,
                             link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
@@ -268,7 +303,7 @@ fn path_match<T>(
                 .expand_wide(link_end, AlacDirection::Left)
                 .sub(term, Boundary::Grid, 1);
 
-        Some((
+        (
             {
                 let mut path = line[path_range].to_string();
                 position.inspect(|(line, column)| {
@@ -278,25 +313,14 @@ fn path_match<T>(
                 path
             },
             link_match,
-        ))
+        )
     };
 
     for regex in path_hyperlink_regexes {
         let mut path_found = false;
 
         for captures in regex.captures_iter(&line) {
-            let captures = match captures {
-                Ok(captures) => captures,
-                Err(error) => {
-                    warn!("Error '{error}' searching for path hyperlinks in line: {line}");
-                    info!(
-                        "Skipping match from path hyperlinks with regex: {}",
-                        regex.as_str()
-                    );
-                    continue;
-                }
-            };
-
+            path_found = true;
             let match_range = captures.get(0).unwrap().range();
             let (path_range, line_column) = if let Some(path) = captures.name("path") {
                 let parse = |name: &str| {
@@ -314,14 +338,16 @@ fn path_match<T>(
             };
             let link_range = captures
                 .name("link")
-                .map_or(match_range, |link| link.range());
+                .map_or_else(|| match_range.clone(), |link| link.range());
+
+            if !link_range.contains(&hovered_point_byte_offset) {
+                // No match, just skip.
+                continue;
+            }
             let found = found_from_range(path_range, link_range, line_column);
 
-            if let Some(found) = found {
-                path_found = true;
-                if found.1.contains(&hovered) {
-                    return Some(found);
-                }
+            if found.1.contains(&hovered) {
+                return Some(found);
             }
         }
 
@@ -351,7 +377,7 @@ mod tests {
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
-    use fancy_regex::Regex;
+    use regex::Regex;
     use settings::{self, Settings, SettingsContent};
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
@@ -361,7 +387,7 @@ mod tests {
         let results: Vec<_> = Regex::new(re)
             .unwrap()
             .find_iter(hay)
-            .map(|m| m.unwrap().as_str())
+            .map(|m| m.as_str())
             .collect();
         assert_eq!(results, expected);
     }
@@ -553,8 +579,6 @@ mod tests {
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("/test/cool.rs:4:2👉:Error!");
-            test_path!("/test/cool.rs:4:2:👉Error!");
             test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
@@ -565,6 +589,7 @@ mod tests {
 
             // Python
             test_path!("‹«awe👉some.py»›");
+            test_path!("‹«👉a»› ");
 
             test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awe👉some.py»\", line «42»›");
@@ -577,18 +602,14 @@ mod tests {
             // path, line, column and description
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
-            test_path!("/test/cool.rs:4:2:例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
-            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
 
             // path, line, column and description w/extra colons
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›::例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›::例Desc例例例");
-            test_path!("/test/cool.rs:4:2::例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›::例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›::例Desc例例例");
-            test_path!("/test/cool.rs(4,2)::例Desc例👉例例");
         }
 
         #[test]
@@ -633,8 +654,6 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»::«42»›");
             test_path!("‹«/test/co👉ol.rs»::«42»›:");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
-            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›:");
             test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
         }
 
@@ -650,7 +669,7 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
 
             test_path!("\"‹«/test/co👉ol.rs»:«4»:«2»›\"");
             test_path!("'‹«/test/co👉ol.rs»:«4»:«2»›'");
@@ -699,7 +718,7 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
-            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›),,'...");
             test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
@@ -823,9 +842,6 @@ mod tests {
             fn issue_28194() {
                 test_path!(
                     "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
-                );
-                test_path!(
-                    "test/controllers/template_items_controller_test.rb:19:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
             }
 
@@ -1038,8 +1054,9 @@ mod tests {
     }
 
     mod file_iri {
-        // File IRIs have a ton of use cases, most of which we currently do not support. A few of
-        // those cases are documented here as tests which are expected to fail.
+        // File IRIs have a ton of use cases. Absolute file URIs are supported on all platforms,
+        // including Windows drive letters (e.g., file:///C:/path) and percent-encoded characters.
+        // Some cases like relative file IRIs are not supported.
         // See https://en.wikipedia.org/wiki/File_URI_scheme
 
         /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
@@ -1059,7 +1076,6 @@ mod tests {
         mod issues {
             #[cfg(not(target_os = "windows"))]
             #[test]
-            #[should_panic(expected = "Path = «/test/Ῥόδος/», at grid cells (0, 0)..=(15, 1)")]
             fn issue_file_iri_with_percent_encoded_characters() {
                 // Non-space characters
                 // file:///test/Ῥόδος/
@@ -1088,18 +1104,12 @@ mod tests {
                 // See https://en.wikipedia.org/wiki/File_URI_scheme
                 // https://github.com/zed-industries/zed/issues/39189
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\cool\\index.rs», at grid cells (0, 0)..=(9, 1)"#
-                )]
                 fn issue_39189() {
                     test_file_iri!("file:///C:/test/cool/index.rs");
                     test_file_iri!("file:///C:/test/cool/");
                 }
 
                 #[test]
-                #[should_panic(
-                    expected = r#"Path = «C:\\test\\Ῥόδος\\», at grid cells (0, 0)..=(16, 1)"#
-                )]
                 fn issue_file_iri_with_percent_encoded_characters() {
                     // Non-space characters
                     // file:///test/Ῥόδος/

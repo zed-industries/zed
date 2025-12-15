@@ -11,10 +11,12 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
+    utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
@@ -46,7 +48,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
-    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator,
+    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
     PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
     right_click_menu,
 };
@@ -396,7 +398,10 @@ pub struct Pane {
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
-    welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
+
+    pub in_center_group: bool,
+    pub is_upper_left: bool,
+    pub is_upper_right: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -541,7 +546,9 @@ impl Pane {
             zoom_out_on_close: true,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
-            welcome_page: None,
+            in_center_group: false,
+            is_upper_left: false,
+            is_upper_right: false,
         }
     }
 
@@ -627,10 +634,6 @@ impl Pane {
             {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
-            }
-        } else if let Some(welcome_page) = self.welcome_page.as_ref() {
-            if self.focus_handle.is_focused(window) {
-                welcome_page.read(cx).focus_handle(cx).focus(window);
             }
         }
     }
@@ -3039,6 +3042,10 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return gpui::Empty.into_any();
+        };
+
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -3062,6 +3069,44 @@ impl Pane {
                     )
                 }
             });
+
+        let open_aside_left = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Left).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                IconButton::new("open_aside_left", toggle_icon)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        workspace_handle
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
+                            })
+                            .ok();
+                    })
+                    .into_any_element()
+            })
+        };
+
+        let open_aside_right = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Right).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                IconButton::new("open_aside_right", toggle_icon)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        workspace_handle
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
+                            })
+                            .ok();
+                    })
+                    .into_any_element()
+            })
+        };
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
@@ -3109,13 +3154,50 @@ impl Pane {
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
 
+        let render_aside_toggle_left = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_left
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Left)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
+        let render_aside_toggle_right = cx.has_flag::<AgentV2FeatureFlag>()
+            && self
+                .is_upper_right
+                .then(|| {
+                    self.workspace.upgrade().and_then(|entity| {
+                        let workspace = entity.read(cx);
+                        workspace
+                            .utility_pane(UtilityPaneSlot::Right)
+                            .map(|pane| !pane.expanded(cx))
+                    })
+                })
+                .flatten()
+                .unwrap_or(false);
+
         TabBar::new("tab_bar")
+            .map(|tab_bar| {
+                if let Some(open_aside_left) = open_aside_left
+                    && render_aside_toggle_left
+                {
+                    tab_bar.start_child(open_aside_left)
+                } else {
+                    tab_bar
+                }
+            })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
                     tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
+                        .pre_end_child(navigate_backward)
+                        .pre_end_child(navigate_forward)
                 },
             )
             .map(|tab_bar| {
@@ -3202,6 +3284,15 @@ impl Pane {
                             })),
                     ),
             )
+            .map(|tab_bar| {
+                if let Some(open_aside_right) = open_aside_right
+                    && render_aside_toggle_right
+                {
+                    tab_bar.end_child(open_aside_right)
+                } else {
+                    tab_bar
+                }
+            })
             .into_any_element()
     }
 
@@ -3921,15 +4012,10 @@ impl Render for Pane {
                             if has_worktrees {
                                 placeholder
                             } else {
-                                if self.welcome_page.is_none() {
-                                    let workspace = self.workspace.clone();
-                                    self.welcome_page = Some(cx.new(|cx| {
-                                        crate::welcome::WelcomePage::new(
-                                            workspace, true, window, cx,
-                                        )
-                                    }));
-                                }
-                                placeholder.child(self.welcome_page.clone().unwrap())
+                                placeholder.child(
+                                    Label::new("Open a file or project to get started.")
+                                        .color(Color::Muted),
+                                )
                             }
                         }
                     })
@@ -6675,8 +6761,8 @@ mod tests {
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
         assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
+        // -35.0 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-35.0));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

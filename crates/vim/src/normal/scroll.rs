@@ -294,11 +294,10 @@ mod test {
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let (line_height, visible_line_count) = cx.editor(|editor, window, _cx| {
+        let (line_height, visible_line_count) = cx.update_editor(|editor, window, cx| {
             (
                 editor
-                    .style()
-                    .unwrap()
+                    .style(cx)
                     .text
                     .line_height_in_pixels(window.rem_size()),
                 editor.visible_line_count().unwrap(),
