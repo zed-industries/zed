@@ -7077,6 +7077,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "prompt_store",
  "rand 0.9.2",
  "recent_projects",
  "remote",
