@@ -155,6 +155,18 @@ pub struct ScrollAnimation {
     pub start_time: Instant,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollAnimationPhase {
+    Intermediate,
+    Final,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollAnimationUpdate {
+    pub position: gpui::Point<ScrollOffset>,
+    pub phase: ScrollAnimationPhase,
+}
+
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: ScrollAnchor,
@@ -227,6 +239,17 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
+    pub fn set_scroll_position_visual(
+        &mut self,
+        scroll_position: gpui::Point<ScrollOffset>,
+        map: &DisplaySnapshot,
+        cx: &mut Context<Editor>,
+    ) {
+        let (anchor, _) = self.calculate_scroll_anchor(scroll_position, map, cx);
+        self.anchor = anchor;
+        cx.notify();
+    }
+
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
@@ -237,53 +260,8 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
-        let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => scroll_top,
-            ScrollBeyondLastLine::Off => {
-                if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
-                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
-                } else {
-                    scroll_top
-                }
-            }
-            ScrollBeyondLastLine::VerticalScrollMargin => {
-                if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
-                    scroll_top
-                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
-                        .max(0.)
-                } else {
-                    scroll_top
-                }
-            }
-        };
-
-        let scroll_top_row = DisplayRow(scroll_top as u32);
-        let scroll_top_buffer_point = map
-            .clip_point(
-                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
-                Bias::Left,
-            )
-            .to_point(map);
-        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
-
-        self.set_anchor(
-            ScrollAnchor {
-                anchor: top_anchor,
-                offset: point(
-                    scroll_position.x.max(0.),
-                    scroll_top - top_anchor.to_display_point(map).row().as_f64(),
-                ),
-            },
-            scroll_top_buffer_point.row,
-            local,
-            autoscroll,
-            workspace_id,
-            window,
-            cx,
-        )
+        let (anchor, top_row) = self.calculate_scroll_anchor(scroll_position, map, cx);
+        self.set_anchor(anchor, top_row, local, autoscroll, workspace_id, window, cx)
     }
 
     fn set_anchor(
@@ -336,6 +314,55 @@ impl ScrollManager {
         cx.notify();
 
         WasScrolled(true)
+    }
+
+    fn calculate_scroll_anchor(
+        &self,
+        scroll_position: gpui::Point<ScrollOffset>,
+        map: &DisplaySnapshot,
+        cx: &App,
+    ) -> (ScrollAnchor, u32) {
+        let scroll_top = scroll_position.y.max(0.);
+        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scroll_top,
+            ScrollBeyondLastLine::Off => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().as_f64();
+                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                } else {
+                    scroll_top
+                }
+            }
+            ScrollBeyondLastLine::VerticalScrollMargin => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().as_f64();
+                    scroll_top
+                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                        .max(0.)
+                } else {
+                    scroll_top
+                }
+            }
+        };
+
+        let scroll_top_row = DisplayRow(scroll_top as u32);
+        let scroll_top_buffer_point = map
+            .clip_point(
+                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
+                Bias::Left,
+            )
+            .to_point(map);
+        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
+
+        let anchor = ScrollAnchor {
+            anchor: top_anchor,
+            offset: point(
+                scroll_position.x.max(0.),
+                scroll_top - top_anchor.to_display_point(map).row().as_f64(),
+            ),
+        };
+
+        (anchor, scroll_top_buffer_point.row)
     }
 
     pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
@@ -514,10 +541,8 @@ impl ScrollManager {
         self.scroll_animation = None;
     }
 
-    pub fn update_animation(&mut self) -> Option<gpui::Point<ScrollOffset>> {
-        let Some(animation) = self.scroll_animation else {
-            return None;
-        };
+    pub fn update_animation(&mut self) -> Option<ScrollAnimationUpdate> {
+        let animation = self.scroll_animation?;
 
         let progress = {
             let elapsed = animation.start_time.elapsed().as_secs_f32();
@@ -538,9 +563,15 @@ impl ScrollManager {
         if progress >= 1.0 {
             self.cancel_animation();
 
-            Some(target)
+            Some(ScrollAnimationUpdate {
+                position: target,
+                phase: ScrollAnimationPhase::Final,
+            })
         } else {
-            Some(interpolated_position)
+            Some(ScrollAnimationUpdate {
+                position: interpolated_position,
+                phase: ScrollAnimationPhase::Intermediate,
+            })
         }
     }
 

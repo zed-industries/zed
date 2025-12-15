@@ -9074,11 +9074,24 @@ impl Element for EditorElement {
                         );
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
-                        if let Some(target) = editor.scroll_manager.update_animation() {
-                            editor.set_scroll_position(target, window, cx);
-                            // TODO: Can we find a better solution?
-                            // See: https://github.com/zed-industries/zed/pull/39095#issuecomment-3352910885
-                            window.request_animation_frame();
+                        if let Some(update) = editor.scroll_manager.update_animation() {
+                            use crate::scroll::ScrollAnimationPhase;
+
+                            let snapshot =
+                                editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+                            match update.phase {
+                                ScrollAnimationPhase::Intermediate => {
+                                    editor.scroll_manager.set_scroll_position_visual(
+                                        update.position, &snapshot, cx,
+                                    );
+
+                                    window.request_animation_frame();
+                                }
+                                ScrollAnimationPhase::Final => {
+                                    editor.set_scroll_position(update.position, window, cx);
+                                }
+                            }
                         }
 
                         if matches!(
