@@ -1,10 +1,11 @@
+use crate::{Tooltip, prelude::*};
 use gpui::{ClickEvent, IntoElement, ParentElement, SharedString};
-use ui::{Tooltip, prelude::*};
 
 #[derive(IntoElement)]
 pub struct ConfiguredApiCard {
     label: SharedString,
     button_label: Option<SharedString>,
+    button_tab_index: Option<isize>,
     tooltip_label: Option<SharedString>,
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -15,6 +16,7 @@ impl ConfiguredApiCard {
         Self {
             label: label.into(),
             button_label: None,
+            button_tab_index: None,
             tooltip_label: None,
             disabled: false,
             on_click: None,
@@ -43,6 +45,11 @@ impl ConfiguredApiCard {
         self.disabled = disabled;
         self
     }
+
+    pub fn button_tab_index(mut self, tab_index: isize) -> Self {
+        self.button_tab_index = Some(tab_index);
+        self
+    }
 }
 
 impl RenderOnce for ConfiguredApiCard {
@@ -51,23 +58,27 @@ impl RenderOnce for ConfiguredApiCard {
         let button_id = SharedString::new(format!("id-{}", button_label));
 
         h_flex()
+            .min_w_0()
             .mt_0p5()
             .p_1()
             .justify_between()
             .rounded_md()
+            .flex_wrap()
             .border_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().background)
             .child(
                 h_flex()
-                    .flex_1()
                     .min_w_0()
                     .gap_1()
                     .child(Icon::new(IconName::Check).color(Color::Success))
-                    .child(Label::new(self.label).truncate()),
+                    .child(Label::new(self.label)),
             )
             .child(
                 Button::new(button_id, button_label)
+                    .when_some(self.button_tab_index, |elem, tab_index| {
+                        elem.tab_index(tab_index)
+                    })
                     .label_size(LabelSize::Small)
                     .icon(IconName::Undo)
                     .icon_size(IconSize::Small)

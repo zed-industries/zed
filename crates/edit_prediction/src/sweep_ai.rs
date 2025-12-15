@@ -1,11 +1,11 @@
-use anyhow::{Context as _, Result};
-use credentials_provider::CredentialsProvider;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
+use anyhow::Result;
+use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Task,
+    App, AppContext as _, Entity, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
 use language::{Point, ToOffset as _};
+use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -20,21 +20,16 @@ use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredicti
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
 
 pub struct SweepAi {
-    pub api_token: Shared<Task<Option<String>>>,
+    pub api_token: Entity<ApiKeyState>,
     pub debug_info: Arc<str>,
 }
 
 impl SweepAi {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         SweepAi {
-            api_token: load_api_token(cx).shared(),
+            api_token: sweep_api_token(cx),
             debug_info: debug_info(cx),
         }
-    }
-
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
     }
 
     pub fn request_prediction_with_sweep(
@@ -43,7 +38,10 @@ impl SweepAi {
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         let debug_info = self.debug_info.clone();
-        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = inputs
@@ -270,47 +268,18 @@ impl SweepAi {
     }
 }
 
-pub const SWEEP_CREDENTIALS_URL: &str = "https://autocomplete.sweep.dev";
+pub const SWEEP_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://autocomplete.sweep.dev");
 pub const SWEEP_CREDENTIALS_USERNAME: &str = "sweep-api-token";
+pub static SWEEP_AI_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("SWEEP_AI_TOKEN");
+pub static SWEEP_API_KEY: std::sync::OnceLock<Entity<ApiKeyState>> = std::sync::OnceLock::new();
 
-pub fn load_api_token(cx: &App) -> Task<Option<String>> {
-    if let Some(api_token) = std::env::var("SWEEP_AI_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Task::ready(Some(api_token));
-    }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-    cx.spawn(async move |cx| {
-        let (_, credentials) = credentials_provider
-            .read_credentials(SWEEP_CREDENTIALS_URL, &cx)
-            .await
-            .ok()??;
-        String::from_utf8(credentials).ok()
-    })
-}
-
-fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-
-    cx.spawn(async move |cx| {
-        if let Some(api_token) = api_token {
-            credentials_provider
-                .write_credentials(
-                    SWEEP_CREDENTIALS_URL,
-                    SWEEP_CREDENTIALS_USERNAME,
-                    api_token.as_bytes(),
-                    cx,
-                )
-                .await
-                .context("Failed to save Sweep API token to system keychain")
-        } else {
-            credentials_provider
-                .delete_credentials(SWEEP_CREDENTIALS_URL, cx)
-                .await
-                .context("Failed to delete Sweep API token from system keychain")
-        }
-    })
+pub fn sweep_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    SWEEP_API_KEY
+        .get_or_init(|| {
+            cx.new(|_| ApiKeyState::new(SWEEP_CREDENTIALS_URL, SWEEP_AI_TOKEN_ENV_VAR.clone()))
+        })
+        .clone()
 }
 
 #[derive(Debug, Clone, Serialize)]

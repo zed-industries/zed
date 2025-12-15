@@ -2330,8 +2330,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
                 items.push(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER));
                 items.extend(all_language_names(cx).into_iter().map(|language_name| {
+                    let link = format!("languages.{language_name}");
                     SettingsPageItem::SubPageLink(SubPageLink {
                         title: language_name,
+                        description: None,
+                        json_path: Some(link.leak()),
+                        in_json: true,
                         files: USER | PROJECT,
                         render: Arc::new(|this, window, cx| {
                             this.render_sub_page_items(
@@ -6013,7 +6017,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             files: USER,
                         }),
                         SettingsPageItem::SettingItem(SettingItem {
-                            title: "In Text Threads",
+                            title: "Display In Text Threads",
                             description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
                             field: Box::new(SettingField {
                                 json_path: Some("edit_prediction.in_text_threads"),
@@ -6026,42 +6030,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             }),
                             metadata: None,
                             files: USER,
-                        }),
-                        SettingsPageItem::SettingItem(SettingItem {
-                            title: "Copilot Provider",
-                            description: "Use GitHub Copilot as your edit prediction provider.",
-                            field: Box::new(
-                                SettingField {
-                                    json_path: Some("edit_prediction.copilot_provider"),
-                                    pick: |settings_content| {
-                                        settings_content.project.all_languages.edit_predictions.as_ref()?.copilot.as_ref()
-                                    },
-                                    write: |settings_content, value| {
-                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().copilot = value;
-                                    },
-                                }
-                                .unimplemented(),
-                            ),
-                            metadata: None,
-                            files: USER | PROJECT,
-                        }),
-                        SettingsPageItem::SettingItem(SettingItem {
-                            title: "Codestral Provider",
-                            description: "Use Mistral's Codestral as your edit prediction provider.",
-                            field: Box::new(
-                                SettingField {
-                                    json_path: Some("edit_prediction.codestral_provider"),
-                                    pick: |settings_content| {
-                                        settings_content.project.all_languages.edit_predictions.as_ref()?.codestral.as_ref()
-                                    },
-                                    write: |settings_content, value| {
-                                        settings_content.project.all_languages.edit_predictions.get_or_insert_default().codestral = value;
-                                    },
-                                }
-                                .unimplemented(),
-                            ),
-                            metadata: None,
-                            files: USER | PROJECT,
                         }),
                     ]
                 );
@@ -7485,9 +7453,23 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
 fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
     vec![
         SettingsPageItem::SectionHeader("Edit Predictions"),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Configure Providers".into(),
+            json_path: Some("edit_predictions.providers"),
+            description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            in_json: false,
+            files: USER,
+            render: Arc::new(|_, window, cx| {
+                let settings_window = cx.entity();
+                let page = window.use_state(cx, |_, _| {
+                    crate::pages::EditPredictionSetupPage::new(settings_window)
+                });
+                page.into_any_element()
+            }),
+        }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
-            description: "Controls whether edit predictions are shown immediately or manually by triggering `editor::showeditprediction` (false).",
+            description: "Controls whether edit predictions are shown immediately or manually.",
             field: Box::new(SettingField {
                 json_path: Some("languages.$(language).show_edit_predictions"),
                 pick: |settings_content| {
@@ -7505,7 +7487,7 @@ fn edit_prediction_language_settings_section() -> Vec<SettingsPageItem> {
             files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Edit Predictions Disabled In",
+            title: "Disable in Language Scopes",
             description: "Controls whether edit predictions are shown in the given language scopes.",
             field: Box::new(
                 SettingField {
