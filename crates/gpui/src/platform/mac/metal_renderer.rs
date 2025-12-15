@@ -209,6 +209,7 @@ impl MetalRenderer {
             mem::size_of_val(&unit_vertices) as u64,
             if unified_memory {
                 MTLResourceOptions::StorageModeShared
+                    | MTLResourceOptions::CPUCacheModeWriteCombined
             } else {
                 MTLResourceOptions::StorageModeManaged
             },
