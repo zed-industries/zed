@@ -130,12 +130,8 @@ impl PtyProcessInfo {
     }
 
     pub(crate) fn kill_child_process(&mut self) -> bool {
-<<<<<<< HEAD
-        self.get_child().is_some_and(|process| process.kill_with(sysinfo::Signal::Hangup).unwrap_or(false))
-=======
         self.get_child()
             .is_some_and(|process| process.kill_with(sysinfo::Signal::Hangup).unwrap_or(false))
->>>>>>> 888efcdb71 (Update pty_info.rs)
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {
