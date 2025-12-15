@@ -282,6 +282,12 @@ pub fn sweep_api_token(cx: &mut App) -> Entity<ApiKeyState> {
         .clone()
 }
 
+pub fn load_sweep_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    sweep_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx)
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct AutocompleteRequest {
     pub debug_info: Arc<str>,

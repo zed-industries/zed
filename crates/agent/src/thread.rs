@@ -530,6 +530,7 @@ pub trait TerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+    fn kill(&self, cx: &AsyncApp) -> Result<()>;
 }
 
 pub trait ThreadEnvironment {

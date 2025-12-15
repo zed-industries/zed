@@ -1777,7 +1777,10 @@ impl App {
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at
     /// the end of the bubble phase for actions, and so will only be invoked if there are no other
     /// handlers or if they called `cx.propagate()`.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, &mut Self) + 'static,
+    ) -> &mut Self {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
@@ -1787,6 +1790,7 @@ impl App {
                     listener(action, cx)
                 }
             }));
+        self
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to

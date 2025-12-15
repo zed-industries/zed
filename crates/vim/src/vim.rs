@@ -1943,6 +1943,7 @@ impl Vim {
             editor.set_collapse_matches(collapse_matches);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
+            editor.set_cursor_offset_on_selection(vim.mode.is_visual());
             editor
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));

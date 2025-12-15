@@ -40,7 +40,7 @@ pub async fn run_prediction(
         provider,
         PredictionProvider::Teacher | PredictionProvider::TeacherNonBatching
     ) {
-        let _step_progress = Progress::global().start(Step::Predict, &example.name);
+        let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
         if example.prompt.is_none() {
             run_format_prompt(example, PromptFormat::Teacher, app_state.clone(), cx).await?;
@@ -52,7 +52,7 @@ pub async fn run_prediction(
 
     run_load_project(example, app_state.clone(), cx.clone()).await?;
 
-    let _step_progress = Progress::global().start(Step::Predict, &example.name);
+    let _step_progress = Progress::global().start(Step::Predict, &example.spec.name);
 
     if matches!(
         provider,
@@ -90,7 +90,7 @@ pub async fn run_prediction(
         store.set_edit_prediction_model(model);
     })?;
     let state = example.state.as_ref().context("state must be set")?;
-    let run_dir = RUN_DIR.join(&example.name);
+    let run_dir = RUN_DIR.join(&example.spec.name);
 
     let updated_example = Arc::new(Mutex::new(example.clone()));
     let current_run_ix = Arc::new(AtomicUsize::new(0));

@@ -3598,6 +3598,7 @@ impl GitPanel {
                         .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
+                .dismiss_button(true)
             });
             workspace.toggle_status_toast(status_toast, cx)
         });
@@ -4699,10 +4700,13 @@ impl GitPanel {
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
+        let is_created = status.is_created();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
+            } else if is_created {
+                Color::VersionControlAdded
             } else if is_modified {
                 Color::VersionControlModified
             } else if is_deleted {
@@ -4810,10 +4814,10 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .border_1()
+            .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
-                el.border_color(cx.theme().colors().border_focused)
+                el.border_color(cx.theme().colors().panel_focused_border)
             })
             .px(rems(0.75)) // ~12px
             .overflow_hidden()
@@ -4976,8 +4980,9 @@ impl GitPanel {
             .w_full()
             .items_center()
             .border_1()
+            .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
-                el.border_color(cx.theme().colors().border_focused)
+                el.border_color(cx.theme().colors().panel_focused_border)
             })
             .px(rems(0.75))
             .overflow_hidden()
