@@ -595,19 +595,6 @@ impl ProjectDiff {
         reason: RefreshReason,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let selected_buffers = this.update_in(cx, |this, window, cx| {
-            let primary_editor = this.editor.read(cx).primary_editor().clone();
-            primary_editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                editor
-                    .selections
-                    .all_anchors(&snapshot)
-                    .iter()
-                    .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
-                    .collect::<HashSet<_>>()
-            })
-        })?;
-
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
@@ -638,11 +625,9 @@ impl ProjectDiff {
                 for path in previous_paths {
                     if let Some(buffer) = multibuffer.buffer_for_path(&path, cx) {
                         let skip = match reason {
-                            RefreshReason::DiffChanged => {
+                            RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
-                                    || selected_buffers.contains(&buffer.read(cx).remote_id())
                             }
-                            RefreshReason::EditorSaved => buffer.read(cx).is_dirty(),
                             RefreshReason::StatusesChanged => false,
                         };
                         if skip {
@@ -670,11 +655,9 @@ impl ProjectDiff {
                                 .diff_for(buffer.read(cx).remote_id())
                                 .is_some_and(|prev_diff| prev_diff.entity_id() == diff.entity_id())
                             && match reason {
-                                RefreshReason::DiffChanged => {
+                                RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                     buffer.read(cx).is_dirty()
-                                        || selected_buffers.contains(&buffer.read(cx).remote_id())
                                 }
-                                RefreshReason::EditorSaved => buffer.read(cx).is_dirty(),
                                 RefreshReason::StatusesChanged => false,
                             };
                         if !skip {
