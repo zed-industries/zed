@@ -976,42 +976,36 @@ impl NativeAgentConnection {
         })
     }
 
-    fn expand_mcp_prompts(
+    fn expand_mcp_prompt(
         &self,
-        prompt: Vec<acp::ContentBlock>,
+        mut prompt: Vec<acp::ContentBlock>,
         cx: &mut App,
     ) -> Task<Result<Vec<acp::ContentBlock>>> {
         let registry = self.0.read(cx).context_server_registry.clone();
         let server_store = registry.read(cx).server_store().clone();
 
         cx.spawn(async move |mut cx| {
-            let mut result = Vec::with_capacity(prompt.len());
-
-            for block in prompt {
-                match &block {
-                    acp::ContentBlock::Text(text_content) => {
-                        if let Some(expanded) = Self::try_expand_mcp_prompt(
-                            &text_content.text,
-                            &registry,
-                            &server_store,
-                            &mut cx,
-                        )
-                        .await?
-                        {
-                            result.push(acp::ContentBlock::Text(acp::TextContent {
-                                text: expanded,
-                                annotations: text_content.annotations.clone(),
-                                meta: text_content.meta.clone(),
-                            }));
-                        } else {
-                            result.push(block);
-                        }
+            for block in prompt.iter_mut() {
+                if let acp::ContentBlock::Text(text_content) = &block {
+                    if let Some(expanded) = Self::try_expand_mcp_prompt(
+                        &text_content.text,
+                        &registry,
+                        &server_store,
+                        &mut cx,
+                    )
+                    .await?
+                    {
+                        *block = acp::ContentBlock::Text(acp::TextContent {
+                            text: expanded,
+                            annotations: text_content.annotations.clone(),
+                            meta: text_content.meta.clone(),
+                        });
                     }
-                    _ => result.push(block),
+                    break;
                 }
             }
 
-            Ok(result)
+            Ok(prompt)
         })
     }
 
@@ -1021,21 +1015,21 @@ impl NativeAgentConnection {
         server_store: &Entity<project::context_server_store::ContextServerStore>,
         cx: &mut AsyncApp,
     ) -> Result<Option<String>> {
-        let trimmed = text.trim();
-        if !trimmed.starts_with('/') {
+        let text = text.trim();
+        let Some(command) = text.strip_prefix('/') else {
             return Ok(None);
-        }
+        };
 
         let (command_name, argument) =
-            if let Some((cmd, arg)) = trimmed[1..].split_once(char::is_whitespace) {
-                (cmd.to_string(), Some(arg.trim().to_string()))
+            if let Some((command, arg)) = command.split_once(char::is_whitespace) {
+                (command.to_string(), Some(arg.trim().to_string()))
             } else {
-                (trimmed[1..].to_string(), None)
+                (command.to_string(), None)
             };
 
+        // todo! move to get_prompt?
         let prompt_info = cx.update(|cx| {
-            let registry = registry.read(cx);
-            registry.prompts().find_map(|p| {
+            registry.read(cx).prompts().find_map(|p| {
                 if p.prompt.name == command_name {
                     let argument_name = p
                         .prompt
@@ -1242,7 +1236,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Prompt blocks count: {}", params.prompt.len());
         let path_style = self.0.read(cx).project.read(cx).path_style(cx);
 
-        let mcp_prompt_expansion = self.expand_mcp_prompts(params.prompt, cx);
+        let mcp_prompt_expansion = self.expand_mcp_prompt(params.prompt, cx);
         let connection = self.clone();
 
         let turn_task = cx.spawn(async move |cx| {
