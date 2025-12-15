@@ -372,7 +372,7 @@ fn render_conflict_buttons(
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
-            Button::new("head", "Use HEAD")
+            Button::new("head", format!("Use {}", conflict.ours_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -392,7 +392,7 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            Button::new("origin", "Use Origin")
+            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();

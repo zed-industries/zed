@@ -1,11 +1,5 @@
 use crate::FeatureFlag;
 
-pub struct PredictEditsRateCompletionsFeatureFlag;
-
-impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
-    const NAME: &'static str = "predict-edits-rate-completions";
-}
-
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {
@@ -16,4 +10,14 @@ pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
+}
+
+pub struct InlineAssistantV2FeatureFlag;
+
+impl FeatureFlag for InlineAssistantV2FeatureFlag {
+    const NAME: &'static str = "inline-assistant-v2";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }

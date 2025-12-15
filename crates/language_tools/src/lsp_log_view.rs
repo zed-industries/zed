@@ -340,11 +340,11 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.status.name,
             ID = info.id,
-            BINARY = info.status.binary.as_ref().map_or_else(
-                || "Unknown".to_string(),
-                |binary| serde_json::to_string_pretty(binary)
-                    .unwrap_or_else(|e| format!("Failed to serialize binary info: {e:#}"))
-            ),
+            BINARY = info
+                .status
+                .binary
+                .as_ref()
+                .map_or_else(|| "Unknown".to_string(), |binary| format!("{:#?}", binary)),
             WORKSPACE_FOLDERS = info
                 .status
                 .workspace_folders
@@ -744,7 +744,11 @@ impl Item for LspLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -801,11 +805,13 @@ impl SearchableItem for LspLogView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.update_matches(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.update_matches(matches, active_match_index, window, cx)
+        })
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
@@ -933,7 +939,7 @@ impl Render for LspLogToolbarItemView {
             })
             .collect();
 
-        let log_toolbar_view = cx.entity();
+        let log_toolbar_view = cx.weak_entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)
@@ -1017,7 +1023,7 @@ impl Render for LspLogToolbarItemView {
                         .icon_color(Color::Muted),
                 )
                 .menu(move |window, cx| {
-                    let log_toolbar_view = log_toolbar_view.clone();
+                    let log_toolbar_view = log_toolbar_view.upgrade()?;
                     let log_view = log_view.clone();
                     Some(ContextMenu::build(window, cx, move |this, window, _| {
                         this.entry(

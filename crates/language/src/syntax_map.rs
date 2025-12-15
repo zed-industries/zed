@@ -330,7 +330,7 @@ impl SyntaxSnapshot {
                 let slice = cursor.slice(
                     &SyntaxLayerPosition {
                         depth: depth + 1,
-                        range: Anchor::MIN..Anchor::MAX,
+                        range: Anchor::min_max_range_for_buffer(text.remote_id()),
                         language: None,
                     },
                     Bias::Left,
@@ -493,7 +493,7 @@ impl SyntaxSnapshot {
                 start_point: Point::zero().to_ts_point(),
                 end_point: text.max_point().to_ts_point(),
             }],
-            range: Anchor::MIN..Anchor::MAX,
+            range: Anchor::min_max_range_for_buffer(text.remote_id()),
             mode: ParseMode::Single,
         });
 
@@ -515,7 +515,7 @@ impl SyntaxSnapshot {
             } else {
                 SyntaxLayerPosition {
                     depth: max_depth + 1,
-                    range: Anchor::MAX..Anchor::MAX,
+                    range: Anchor::min_max_range_for_buffer(text.remote_id()),
                     language: None,
                 }
             };
@@ -1215,6 +1215,19 @@ impl<'a> SyntaxMapMatches<'a> {
 
         true
     }
+
+    // pub fn set_byte_range(&mut self, range: Range<usize>) {
+    //     for layer in &mut self.layers {
+    //         layer.matches.set_byte_range(range.clone());
+    //         layer.advance();
+    //     }
+    //     self.layers.sort_unstable_by_key(|layer| layer.sort_key());
+    //     self.active_layer_count = self
+    //         .layers
+    //         .iter()
+    //         .position(|layer| !layer.has_next)
+    //         .unwrap_or(self.layers.len());
+    // }
 }
 
 impl SyntaxMapCapturesLayer<'_> {

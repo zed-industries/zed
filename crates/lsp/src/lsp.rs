@@ -667,7 +667,7 @@ impl LanguageServer {
 
         #[allow(deprecated)]
         InitializeParams {
-            process_id: None,
+            process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,

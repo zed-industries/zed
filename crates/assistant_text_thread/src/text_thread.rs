@@ -14,8 +14,9 @@ use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
-    Task,
+    Task, WeakEntity,
 };
+use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
@@ -687,7 +688,7 @@ pub struct TextThread {
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    project: Option<Entity<Project>>,
+    project: Option<WeakEntity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
     completion_mode: agent_settings::CompletionMode,
 }
@@ -707,7 +708,7 @@ impl EventEmitter<TextThreadEvent> for TextThread {}
 impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -741,7 +742,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -796,7 +797,7 @@ impl TextThread {
         });
         let message = MessageAnchor {
             id: first_message_id,
-            start: language::Anchor::MIN,
+            start: language::Anchor::min_for_buffer(this.buffer.read(cx).remote_id()),
         };
         this.messages_metadata.insert(
             first_message_id,
@@ -872,7 +873,7 @@ impl TextThread {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        project: Option<Entity<Project>>,
+        project: Option<WeakEntity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1146,12 +1147,10 @@ impl TextThread {
         cx: &App,
     ) -> bool {
         let version = &self.buffer.read(cx).version;
-        let observed_start = range.start == language::Anchor::MIN
-            || range.start == language::Anchor::MAX
-            || version.observed(range.start.timestamp);
-        let observed_end = range.end == language::Anchor::MIN
-            || range.end == language::Anchor::MAX
-            || version.observed(range.end.timestamp);
+        let observed_start =
+            range.start.is_min() || range.start.is_max() || version.observed(range.start.timestamp);
+        let observed_end =
+            range.end.is_min() || range.end.is_max() || version.observed(range.end.timestamp);
         observed_start && observed_end
     }
 
@@ -1166,10 +1165,6 @@ impl TextThread {
 
     pub fn language_registry(&self) -> Arc<LanguageRegistry> {
         self.language_registry.clone()
-    }
-
-    pub fn project(&self) -> Option<Entity<Project>> {
-        self.project.clone()
     }
 
     pub fn prompt_builder(&self) -> Arc<PromptBuilder> {
@@ -1853,14 +1848,17 @@ impl TextThread {
                         }
 
                         if ensure_trailing_newline
-                            && buffer.contains_str_at(command_range_end, "\n")
+                            && buffer
+                                .chars_at(command_range_end)
+                                .next()
+                                .is_some_and(|c| c == '\n')
                         {
-                            let newline_offset = insert_position.saturating_sub(1);
-                            if buffer.contains_str_at(newline_offset, "\n")
+                            if let Some((prev_char, '\n')) =
+                                buffer.reversed_chars_at(insert_position).next_tuple()
                                 && last_section_range.is_none_or(|last_section_range| {
                                     !last_section_range
                                         .to_offset(buffer)
-                                        .contains(&newline_offset)
+                                        .contains(&(insert_position - prev_char.len_utf8()))
                                 })
                             {
                                 deletions.push((command_range_end..command_range_end + 1, ""));
@@ -2854,7 +2852,8 @@ impl TextThread {
                         messages.next();
                     }
                 }
-                let message_end_anchor = message_end.unwrap_or(language::Anchor::MAX);
+                let message_end_anchor =
+                    message_end.unwrap_or(language::Anchor::max_for_buffer(buffer.remote_id()));
                 let message_end = message_end_anchor.to_offset(buffer);
 
                 return Some(Message {
@@ -2930,6 +2929,7 @@ impl TextThread {
                         RenameOptions {
                             overwrite: true,
                             ignore_if_exists: true,
+                            create_parents: false,
                         },
                     )
                     .await?;
@@ -2963,7 +2963,7 @@ impl TextThread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
-        let Some(project) = &self.project else {
+        let Some(project) = self.project.as_ref().and_then(|project| project.upgrade()) else {
             return;
         };
         project.read(cx).user_store().update(cx, |user_store, cx| {

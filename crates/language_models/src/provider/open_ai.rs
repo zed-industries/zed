@@ -277,6 +277,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Five
             | Model::FiveMini
             | Model::FiveNano
+            | Model::FivePointOne
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -437,7 +438,7 @@ pub fn into_open_ai(
         messages,
         stream,
         stop: request.stop,
-        temperature: request.temperature.unwrap_or(1.0),
+        temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
@@ -644,7 +645,6 @@ pub fn count_open_ai_tokens(
 ) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = collect_tiktoken_messages(request);
-
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
@@ -672,11 +672,11 @@ pub fn count_open_ai_tokens(
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
-            Model::Five | Model::FiveMini | Model::FiveNano => {
-                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
-            }
+            | Model::O4Mini
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages), // GPT-5.1 doesn't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::FivePointOne => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
         }
         .map(|tokens| tokens as u64)
     })

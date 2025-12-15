@@ -208,7 +208,8 @@ fn path_match<T>(
     if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
         return None;
     }
-
+    debug_assert!(line_start <= hovered);
+    debug_assert!(line_end >= hovered);
     let search_start_time = Instant::now();
 
     let timed_out = || {
@@ -224,13 +225,35 @@ fn path_match<T>(
     let mut line = String::with_capacity(
         (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
     );
-    line.push(term.grid()[line_start].c);
+    let first_cell = &term.grid()[line_start];
+    line.push(first_cell.c);
+    let mut start_offset = 0;
+    let mut hovered_point_byte_offset = None;
+
+    if !first_cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        start_offset += first_cell.c.len_utf8();
+        if line_start == hovered {
+            hovered_point_byte_offset = Some(0);
+        }
+    }
+
     for cell in term.grid().iter_from(line_start) {
         if cell.point > line_end {
             break;
         }
+        let is_spacer = cell.flags.intersects(WIDE_CHAR_SPACERS);
+        if cell.point == hovered {
+            debug_assert!(hovered_point_byte_offset.is_none());
+            if start_offset > 0 && cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                // If we hovered on a trailing spacer, back up to the end of the previous char's bytes.
+                start_offset -= 1;
+            }
+            hovered_point_byte_offset = Some(start_offset);
+        } else if cell.point < hovered && !is_spacer {
+            start_offset += cell.c.len_utf8();
+        }
 
-        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        if !is_spacer {
             line.push(match cell.c {
                 '\t' => ' ',
                 c @ _ => c,
@@ -238,7 +261,7 @@ fn path_match<T>(
         }
     }
     let line = line.trim_ascii_end();
-
+    let hovered_point_byte_offset = hovered_point_byte_offset?;
     let found_from_range = |path_range: Range<usize>,
                             link_range: Range<usize>,
                             position: Option<(u32, Option<u32>)>| {
@@ -268,7 +291,7 @@ fn path_match<T>(
                 .expand_wide(link_end, AlacDirection::Left)
                 .sub(term, Boundary::Grid, 1);
 
-        Some((
+        (
             {
                 let mut path = line[path_range].to_string();
                 position.inspect(|(line, column)| {
@@ -278,7 +301,7 @@ fn path_match<T>(
                 path
             },
             link_match,
-        ))
+        )
     };
 
     for regex in path_hyperlink_regexes {
@@ -296,7 +319,7 @@ fn path_match<T>(
                     continue;
                 }
             };
-
+            path_found = true;
             let match_range = captures.get(0).unwrap().range();
             let (path_range, line_column) = if let Some(path) = captures.name("path") {
                 let parse = |name: &str| {
@@ -314,14 +337,16 @@ fn path_match<T>(
             };
             let link_range = captures
                 .name("link")
-                .map_or(match_range, |link| link.range());
+                .map_or_else(|| match_range.clone(), |link| link.range());
+
+            if !link_range.contains(&hovered_point_byte_offset) {
+                // No match, just skip.
+                continue;
+            }
             let found = found_from_range(path_range, link_range, line_column);
 
-            if let Some(found) = found {
-                path_found = true;
-                if found.1.contains(&hovered) {
-                    return Some(found);
-                }
+            if found.1.contains(&hovered) {
+                return Some(found);
             }
         }
 

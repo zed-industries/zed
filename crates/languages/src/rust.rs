@@ -13,7 +13,9 @@ use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
 use settings::Settings as _;
+use smallvec::SmallVec;
 use smol::fs::{self};
+use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
 use std::{
@@ -235,7 +237,7 @@ impl LspAdapter for RustLspAdapter {
             .or(completion.detail.as_ref())
             .map(|detail| detail.trim());
         // this tends to contain alias and import information
-        let detail_left = completion
+        let mut detail_left = completion
             .label_details
             .as_ref()
             .and_then(|detail| detail.detail.as_deref());
@@ -341,31 +343,88 @@ impl LspAdapter for RustLspAdapter {
                 }
             }
             (_, kind) => {
-                let highlight_name = kind.and_then(|kind| match kind {
-                    lsp::CompletionItemKind::STRUCT
-                    | lsp::CompletionItemKind::INTERFACE
-                    | lsp::CompletionItemKind::ENUM => Some("type"),
-                    lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
-                    lsp::CompletionItemKind::KEYWORD => Some("keyword"),
-                    lsp::CompletionItemKind::VALUE | lsp::CompletionItemKind::CONSTANT => {
-                        Some("constant")
-                    }
-                    _ => None,
-                });
-
-                let label = completion.label.clone();
+                let mut label;
                 let mut runs = vec![];
-                if let Some(highlight_name) = highlight_name {
-                    let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
-                    runs.push((
-                        0..label.rfind('(').unwrap_or(completion.label.len()),
-                        highlight_id,
-                    ));
-                } else if detail_left.is_none() {
-                    return None;
+
+                if completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
+                    && let Some(
+                        lsp::CompletionTextEdit::InsertAndReplace(lsp::InsertReplaceEdit {
+                            new_text,
+                            ..
+                        })
+                        | lsp::CompletionTextEdit::Edit(lsp::TextEdit { new_text, .. }),
+                    ) = completion.text_edit.as_ref()
+                    && let Ok(mut snippet) = snippet::Snippet::parse(new_text)
+                    && !snippet.tabstops.is_empty()
+                {
+                    label = String::new();
+
+                    // we never display the final tabstop
+                    snippet.tabstops.remove(snippet.tabstops.len() - 1);
+
+                    let mut text_pos = 0;
+
+                    let mut all_stop_ranges = snippet
+                        .tabstops
+                        .into_iter()
+                        .flat_map(|stop| stop.ranges)
+                        .collect::<SmallVec<[_; 8]>>();
+                    all_stop_ranges.sort_unstable_by_key(|a| (a.start, Reverse(a.end)));
+
+                    for range in &all_stop_ranges {
+                        let start_pos = range.start as usize;
+                        let end_pos = range.end as usize;
+
+                        label.push_str(&snippet.text[text_pos..end_pos]);
+                        text_pos = end_pos;
+
+                        if start_pos == end_pos {
+                            let caret_start = label.len();
+                            label.push('…');
+                            runs.push((caret_start..label.len(), HighlightId::TABSTOP_INSERT_ID));
+                        } else {
+                            runs.push((start_pos..end_pos, HighlightId::TABSTOP_REPLACE_ID));
+                        }
+                    }
+
+                    label.push_str(&snippet.text[text_pos..]);
+
+                    if detail_left.is_some_and(|detail_left| detail_left == new_text) {
+                        // We only include the left detail if it isn't the snippet again
+                        detail_left.take();
+                    }
+
+                    runs.extend(language.highlight_text(&Rope::from(&label), 0..label.len()));
+                } else {
+                    let highlight_name = kind.and_then(|kind| match kind {
+                        lsp::CompletionItemKind::STRUCT
+                        | lsp::CompletionItemKind::INTERFACE
+                        | lsp::CompletionItemKind::ENUM => Some("type"),
+                        lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
+                        lsp::CompletionItemKind::KEYWORD => Some("keyword"),
+                        lsp::CompletionItemKind::VALUE | lsp::CompletionItemKind::CONSTANT => {
+                            Some("constant")
+                        }
+                        _ => None,
+                    });
+
+                    label = completion.label.clone();
+
+                    if let Some(highlight_name) = highlight_name {
+                        let highlight_id =
+                            language.grammar()?.highlight_id_for_name(highlight_name)?;
+                        runs.push((
+                            0..label.rfind('(').unwrap_or(completion.label.len()),
+                            highlight_id,
+                        ));
+                    } else if detail_left.is_none() {
+                        return None;
+                    }
                 }
 
-                mk_label(label, &|| 0..completion.label.len(), runs)
+                let label_len = label.len();
+
+                mk_label(label, &|| 0..label_len, runs)
             }
         };
 
@@ -379,6 +438,7 @@ impl LspAdapter for RustLspAdapter {
                 label.text.push(')');
             }
         }
+
         Some(label)
     }
 
@@ -1399,6 +1459,121 @@ mod tests {
                 "inner_value: String".to_string(),
                 6..11,
                 vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+            ))
+        );
+
+        // Snippet with insert tabstop (empty placeholder)
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "println!".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "println!(\"$1\", $2)$0".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "println!(\"…\", …)".to_string(),
+                0..8,
+                vec![
+                    (10..13, HighlightId::TABSTOP_INSERT_ID),
+                    (16..19, HighlightId::TABSTOP_INSERT_ID),
+                    (0..7, HighlightId(2)),
+                    (7..8, HighlightId(2)),
+                ],
+            ))
+        );
+
+        // Snippet with replace tabstop (placeholder with default text)
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "vec!".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "vec![${1:elem}]$0".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "vec![elem]".to_string(),
+                0..4,
+                vec![
+                    (5..9, HighlightId::TABSTOP_REPLACE_ID),
+                    (0..3, HighlightId(2)),
+                    (3..4, HighlightId(2)),
+                ],
+            ))
+        );
+
+        // Snippet with tabstop appearing more than once
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "if let".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "if let ${1:pat} = $1 {\n    $0\n}".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "if let pat = … {\n    \n}".to_string(),
+                0..6,
+                vec![
+                    (7..10, HighlightId::TABSTOP_REPLACE_ID),
+                    (13..16, HighlightId::TABSTOP_INSERT_ID),
+                    (0..2, HighlightId(1)),
+                    (3..6, HighlightId(1)),
+                ],
+            ))
+        );
+
+        // Snippet with tabstops not in left-to-right order
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::SNIPPET),
+                        label: "for".to_string(),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::default(),
+                            new_text: "for ${2:item} in ${1:iter} {\n    $0\n}".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel::new(
+                "for item in iter {\n    \n}".to_string(),
+                0..3,
+                vec![
+                    (4..8, HighlightId::TABSTOP_REPLACE_ID),
+                    (12..16, HighlightId::TABSTOP_REPLACE_ID),
+                    (0..3, HighlightId(1)),
+                    (9..11, HighlightId(1)),
+                ],
             ))
         );
     }

@@ -19,7 +19,6 @@ pub use git2 as libgit;
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
-    pub remote_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -36,7 +35,6 @@ impl Blame {
         working_directory: &Path,
         path: &RepoPath,
         content: &Rope,
-        remote_url: Option<String>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content).await?;
         let mut entries = parse_git_blame(&output)?;
@@ -53,11 +51,7 @@ impl Blame {
             .await
             .context("failed to get commit messages")?;
 
-        Ok(Self {
-            entries,
-            messages,
-            remote_url,
-        })
+        Ok(Self { entries, messages })
     }
 }
 

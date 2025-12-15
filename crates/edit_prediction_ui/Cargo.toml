@@ -1,0 +1,58 @@
+[package]
+name = "edit_prediction_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/edit_prediction_ui.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+buffer_diff.workspace = true
+client.workspace = true
+cloud_llm_client.workspace = true
+cloud_zeta2_prompt.workspace = true
+codestral.workspace = true
+command_palette_hooks.workspace = true
+copilot.workspace = true
+edit_prediction.workspace = true
+edit_prediction_types.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+indoc.workspace = true
+language.workspace = true
+markdown.workspace = true
+menu.workspace = true
+multi_buffer.workspace = true
+paths.workspace = true
+project.workspace = true
+regex.workspace = true
+settings.workspace = true
+supermaven.workspace = true
+telemetry.workspace = true
+text.workspace = true
+theme.workspace = true
+ui.workspace = true
+ui_input.workspace = true
+util.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+copilot = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+indoc.workspace = true
+lsp = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+theme = { workspace = true, features = ["test-support"] }

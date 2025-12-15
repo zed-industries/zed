@@ -524,7 +524,7 @@ impl Render for MarkdownPreviewView {
                                                         if e.checked() { "[x]" } else { "[ ]" };
 
                                                     editor.edit(
-                                                        vec![(
+                                                        [(
                                                             MultiBufferOffset(
                                                                 e.source_range().start,
                                                             )
@@ -611,6 +611,6 @@ impl Render for MarkdownPreviewView {
                     .size_full(),
                 )
             }))
-            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+            .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }

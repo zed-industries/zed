@@ -14,7 +14,7 @@ use language::{
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
-    LanguageServerSelector,
+    LanguageServerSelector, Uri,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -245,7 +245,7 @@ impl LspAdapter for ExtensionLspAdapter {
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
         if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([(LanguageName::new("PHP"), "php".into())]);
+            return HashMap::from_iter([(LanguageName::new_static("PHP"), "php".into())]);
         }
 
         self.extension
@@ -282,6 +282,7 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
+        _: Option<Uri>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
