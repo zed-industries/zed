@@ -223,11 +223,9 @@ impl RenderOnce for LabelLike {
             })
             .when(self.italic, |this| this.italic())
             .when(self.underline, |mut this| {
-                this.text_style()
-                    .get_or_insert_with(Default::default)
-                    .underline = Some(UnderlineStyle {
+                this.text_style().underline = Some(UnderlineStyle {
                     thickness: px(1.),
-                    color: None,
+                    color: Some(cx.theme().colors().text_muted.opacity(0.4)),
                     wavy: false,
                 });
                 this
