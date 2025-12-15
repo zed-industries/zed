@@ -25,7 +25,6 @@ collections.workspace = true
 credentials_provider.workspace = true
 dap.workspace = true
 dirs.workspace = true
-editor.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true

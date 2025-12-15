@@ -5878,7 +5878,6 @@ dependencies = [
  "ctor",
  "dap",
  "dirs 4.0.0",
- "editor",
  "extension",
  "fs",
  "futures 0.3.31",
