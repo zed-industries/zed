@@ -1281,9 +1281,9 @@ impl Project {
                 )
             });
 
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
             if init_worktree_trust {
-                cx.subscribe(&worktree_store, Self::on_worktree_store_event)
-                    .detach();
                 match &connection_options {
                     RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
                         trusted_worktrees::track_worktree_trust(
