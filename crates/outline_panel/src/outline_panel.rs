@@ -2610,7 +2610,7 @@ impl OutlinePanel {
             })
             .when(
                 is_active && self.focus_handle.contains_focused(window, cx),
-                |div| div.border_color(Color::Selected.color(cx)),
+                |div| div.border_color(cx.theme().colors().panel_focused_border),
             )
     }
 
