@@ -29,6 +29,8 @@ impl ExampleSpec {
         let mut markdown = String::new();
 
         _ = writeln!(markdown, "# {}", self.name);
+        markdown.push('\n');
+
         _ = writeln!(markdown, "repository_url = {}", self.repository_url);
         _ = writeln!(markdown, "revision = {}", self.revision);
         markdown.push('\n');
@@ -47,6 +49,7 @@ impl ExampleSpec {
 
         _ = writeln!(markdown, "## {}", EDIT_HISTORY_HEADING);
         _ = writeln!(markdown);
+
         if self.edit_history.is_empty() {
             _ = writeln!(markdown, "(No edit history)");
             _ = writeln!(markdown);

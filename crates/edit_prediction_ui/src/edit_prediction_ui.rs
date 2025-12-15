@@ -193,7 +193,7 @@ fn capture_edit_prediction_example(
         return;
     };
 
-    let events = ep_store.update(cx, |store, cx| {
+    let mut events = ep_store.update(cx, |store, cx| {
         store.edit_history_for_project_with_pause_split_last_event(&project, cx)
     });
 
@@ -223,7 +223,7 @@ fn capture_edit_prediction_example(
         edit_prediction::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
             cursor_point,
             &snapshot,
-            200,
+            100,
             50,
         );
 
@@ -259,47 +259,43 @@ fn capture_edit_prediction_example(
         let uncommitted_diff = match uncommitted_diff_rx.await {
             Ok(Ok(diff)) => diff,
             Ok(Err(error)) => {
-                log::error!("CaptureExampleSpec: failed to compute uncommitted diff: {error:#}");
+                log::error!("failed to compute uncommitted diff: {error:#}");
                 return Ok(());
             }
             Err(error) => {
-                log::error!("CaptureExampleSpec: uncommitted diff channel dropped: {error:#}");
+                log::error!("uncommitted diff channel dropped: {error:#}");
                 return Ok(());
             }
         };
 
         let mut edit_history = String::new();
-        for (index, event) in events.iter().enumerate() {
-            let zeta_prompt::Event::BufferChange { path, old_path, .. } = event.as_ref();
-            if path.as_ref().as_os_str().is_empty() || old_path.as_ref().as_os_str().is_empty() {
-                log::error!(
-                    "CaptureExampleSpec: event {} has empty path(s): path={:?} old_path={:?}",
-                    index + 1,
-                    path,
-                    old_path
-                );
-            }
-            zeta_prompt::write_event(&mut edit_history, event.as_ref());
-            if !edit_history.ends_with('\n') {
+        let mut expected_patch = String::new();
+        if let Some(last_event) = events.pop() {
+            for event in &events {
+                zeta_prompt::write_event(&mut edit_history, event);
+                if !edit_history.ends_with('\n') {
+                    edit_history.push('\n');
+                }
                 edit_history.push('\n');
             }
-            edit_history.push('\n');
+
+            zeta_prompt::write_event(&mut expected_patch, &last_event);
         }
 
-        let mut expected_patch = String::new();
-        zeta_prompt::write_event(
-            &mut expected_patch,
-            &zeta_prompt::Event::BufferChange {
-                path: cursor_path.clone(),
-                old_path: cursor_path.clone(),
-                diff: String::new(),
-                predicted: false,
-                in_open_source_repo: true,
-            },
-        );
+        let format =
+            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]");
+        let name = match format {
+            Ok(format) => {
+                let now = time::OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+                now.format(&format)
+                    .unwrap_or_else(|_| "unknown-time".to_string())
+            }
+            Err(_) => "unknown-time".to_string(),
+        };
 
         let markdown = ExampleSpec {
-            name: "captured".to_string(),
+            name,
             repository_url,
             revision,
             uncommitted_diff,
