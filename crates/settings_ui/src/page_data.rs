@@ -1059,16 +1059,18 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Edit Keybindings".into(),
                     description: Some("Customize key bindings in the keymap editor.".into()),
                     button_text: "Open Editor".into(),
-                    on_click: Arc::new(|settings_window, _window, cx| {
+                    on_click: Arc::new(|settings_window, window, cx| {
                         let Some(original_window) = settings_window.original_window else {
                             return;
                         };
                         original_window
-                            .update(cx, |_workspace, window, cx| {
-                                window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
-                                window.activate_window();
+                            .update(cx, |_workspace, original_window, cx| {
+                                original_window
+                                    .dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                                original_window.activate_window();
                             })
                             .ok();
+                        window.remove_window();
                     }),
                 }),
                 SettingsPageItem::SectionHeader("Base Keymap"),
