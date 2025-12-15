@@ -15,6 +15,9 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 buffer_diff.workspace = true
+git.workspace = true
+log.workspace = true
+time.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 codestral.workspace = true

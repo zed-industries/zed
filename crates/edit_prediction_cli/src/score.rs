@@ -25,9 +25,9 @@ pub async fn run_scoring(
     )
     .await?;
 
-    let _progress = Progress::global().start(Step::Score, &example.name);
+    let _progress = Progress::global().start(Step::Score, &example.spec.name);
 
-    let expected_patch = parse_patch(&example.expected_patch);
+    let expected_patch = parse_patch(&example.spec.expected_patch);
 
     let mut scores = vec![];
 
@@ -71,7 +71,7 @@ pub fn print_report(examples: &[Example]) {
 
             eprintln!(
                 "{:<30} {:>4} {:>4} {:>4} {:>9.2}% {:>7.2}% {:>7.2}% {:>9.2}",
-                truncate_name(&example.name, 30),
+                truncate_name(&example.spec.name, 30),
                 line_match.true_positives,
                 line_match.false_positives,
                 line_match.false_negatives,

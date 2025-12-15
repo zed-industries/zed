@@ -202,9 +202,11 @@ impl Render for TitleBar {
                 .children(self.render_connection_status(status, cx))
                 .when(
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
-                    |el| el.child(self.render_sign_in_button(cx)),
+                    |this| this.child(self.render_sign_in_button(cx)),
                 )
-                .child(self.render_app_menu_button(cx))
+                .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
+                    this.child(self.render_user_menu_button(cx))
+                })
                 .into_any_element(),
         );
 
@@ -685,7 +687,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_app_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         let user = user_store.current_user();
 
