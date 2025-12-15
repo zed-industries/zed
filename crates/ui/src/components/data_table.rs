@@ -29,8 +29,8 @@ struct UniformListData<const COLS: usize> {
     row_count: usize,
 }
 
-struct VariableListData<const COLS: usize> {
-    /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own width
+struct VariableRowHeightListData<const COLS: usize> {
+    /// Unlike UniformList, this closure renders only single row, allowing each one to have it's own height
     render_row_fn: Box<dyn Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS]>,
     list_state: ListState,
     row_count: usize,
@@ -39,7 +39,7 @@ struct VariableListData<const COLS: usize> {
 enum TableContents<const COLS: usize> {
     Vec(Vec<[AnyElement; COLS]>),
     UniformList(UniformListData<COLS>),
-    VariableList(VariableListData<COLS>),
+    VariableRowHeightList(VariableRowHeightListData<COLS>),
 }
 
 impl<const COLS: usize> TableContents<COLS> {
@@ -47,7 +47,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
-            TableContents::VariableList(_) => None,
+            TableContents::VariableRowHeightList(_) => None,
         }
     }
 
@@ -55,7 +55,7 @@ impl<const COLS: usize> TableContents<COLS> {
         match self {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
-            TableContents::VariableList(data) => data.row_count,
+            TableContents::VariableRowHeightList(data) => data.row_count,
         }
     }
 
@@ -536,15 +536,15 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    /// Enables variable height list rendering for tables with rows of different heights.
+    /// Enables variable row height list rendering for tables with rows of different heights.
     /// This is slower than uniform_list but supports multiline content properly.
-    pub fn variable_list(
+    pub fn variable_row_height_list(
         mut self,
         row_count: usize,
         render_row_fn: impl Fn(usize, &mut Window, &mut App) -> [AnyElement; COLS] + 'static,
     ) -> Self {
         let list_state = ListState::new(row_count, ListAlignment::Top, px(0.0));
-        self.rows = TableContents::VariableList(VariableListData {
+        self.rows = TableContents::VariableRowHeightList(VariableRowHeightListData {
             render_row_fn: Box::new(render_row_fn),
             list_state,
             row_count,
@@ -921,7 +921,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 },
                             ),
                         ),
-                        TableContents::VariableList(variable_list_data) => parent.child(
+                        TableContents::VariableRowHeightList(variable_list_data) => parent.child(
                             list(variable_list_data.list_state.clone(), {
                                 let render_item_fn = variable_list_data.render_row_fn;
                                 move |row_index: usize, window: &mut Window, cx: &mut App| {
