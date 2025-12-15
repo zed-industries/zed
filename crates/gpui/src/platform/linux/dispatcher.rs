@@ -42,43 +42,27 @@ impl LinuxDispatcher {
         // executor
         let mut background_threads = (0..thread_count)
             .map(|i| {
-                let mut receiver = background_receiver.clone();
+                let mut receiver: PriorityQueueReceiver<RunnableVariant> =
+                    background_receiver.clone();
                 std::thread::Builder::new()
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
                             let start = Instant::now();
 
-                            let mut location = match runnable {
-                                RunnableVariant::Meta(runnable) => {
-                                    let location = runnable.metadata().location;
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
-                                RunnableVariant::Compat(runnable) => {
-                                    let location = core::panic::Location::caller();
-                                    let timing = TaskTiming {
-                                        location,
-                                        start,
-                                        end: None,
-                                    };
-                                    profiler::add_task_timing(timing);
-
-                                    runnable.run();
-                                    timing
-                                }
+                            let location = runnable.metadata().location;
+                            let mut timing = TaskTiming {
+                                location,
+                                start,
+                                end: None,
                             };
+                            profiler::add_task_timing(timing);
+
+                            runnable.run();
 
                             let end = Instant::now();
-                            location.end = Some(end);
-                            profiler::add_task_timing(location);
+                            timing.end = Some(end);
+                            profiler::add_task_timing(timing);
 
                             log::trace!(
                                 "background thread {}: ran runnable. took: {:?}",
@@ -111,31 +95,15 @@ impl LinuxDispatcher {
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
                                             let start = Instant::now();
-                                            let mut timing = match runnable {
-                                                RunnableVariant::Meta(runnable) => {
-                                                    let location = runnable.metadata().location;
-                                                    let timing = TaskTiming {
-                                                        location,
-                                                        start,
-                                                        end: None,
-                                                    };
-                                                    profiler::add_task_timing(timing);
-
-                                                    runnable.run();
-                                                    timing
-                                                }
-                                                RunnableVariant::Compat(runnable) => {
-                                                    let timing = TaskTiming {
-                                                        location: core::panic::Location::caller(),
-                                                        start,
-                                                        end: None,
-                                                    };
-                                                    profiler::add_task_timing(timing);
-
-                                                    runnable.run();
-                                                    timing
-                                                }
+                                            let location = runnable.metadata().location;
+                                            let mut timing = TaskTiming {
+                                                location,
+                                                start,
+                                                end: None,
                                             };
+                                            profiler::add_task_timing(timing);
+
+                                            runnable.run();
                                             let end = Instant::now();
 
                                             timing.end = Some(end);
@@ -189,7 +157,7 @@ impl PlatformDispatcher for LinuxDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _: Option<TaskLabel>, priority: Priority) {
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));

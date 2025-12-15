@@ -492,6 +492,11 @@ impl LanguageRegistry {
         servers_rx
     }
 
+    #[cfg(any(feature = "test-support", test))]
+    pub fn has_fake_lsp_server(&self, lsp_name: &LanguageServerName) -> bool {
+        self.state.read().fake_server_entries.contains_key(lsp_name)
+    }
+
     /// Adds a language to the registry, which can be loaded if needed.
     pub fn register_language(
         &self,
@@ -1129,10 +1134,23 @@ impl LanguageRegistry {
         binary: lsp::LanguageServerBinary,
         cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
-        use gpui::AppContext as _;
+        log::warn!(
+            "[language::language_registry] create_fake_language_server: called name={} id={} path={:?} args={:?}",
+            name.0,
+            server_id,
+            binary.path,
+            binary.arguments
+        );
 
         let mut state = self.state.write();
-        let fake_entry = state.fake_server_entries.get_mut(name)?;
+        let Some(fake_entry) = state.fake_server_entries.get_mut(name) else {
+            log::warn!(
+                "[language::language_registry] create_fake_language_server: no fake server entry registered for {}",
+                name.0
+            );
+            return None;
+        };
+
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,
@@ -1146,17 +1164,18 @@ impl LanguageRegistry {
             initializer(&mut fake_server);
         }
 
-        let tx = fake_entry.tx.clone();
-        cx.background_spawn(async move {
-            if fake_server
-                .try_receive_notification::<lsp::notification::Initialized>()
-                .await
-                .is_some()
-            {
-                tx.unbounded_send(fake_server.clone()).ok();
-            }
-        })
-        .detach();
+        let server_name = name.0.to_string();
+        log::info!(
+            "[language_registry] create_fake_language_server: created fake server for {server_name}, emitting synchronously (tests must not depend on LSP task scheduling)"
+        );
+
+        // Emit synchronously so tests can reliably observe server creation even if the LSP startup
+        // task hasn't progressed to initialization yet.
+        if fake_entry.tx.unbounded_send(fake_server).is_err() {
+            log::warn!(
+                "[language_registry] create_fake_language_server: failed to send fake server for {server_name} (receiver dropped)"
+            );
+        }
 
         Some(server)
     }
