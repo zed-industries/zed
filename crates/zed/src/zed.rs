@@ -10,6 +10,7 @@ mod quick_action_bar;
 pub(crate) mod windows_only_instance;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent_ui_v2::agents_panel::AgentsPanel;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -81,8 +82,9 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
     NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
+use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
+    AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
@@ -679,7 +681,8 @@ fn initialize_panels(
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, prompt_builder, cx.clone()).map(|r| r.log_err())
+            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
+            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
         );
 
         anyhow::Ok(())
@@ -687,58 +690,65 @@ fn initialize_panels(
     .detach();
 }
 
+fn setup_or_teardown_ai_panel<P: Panel>(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+    load_panel: impl FnOnce(
+        WeakEntity<Workspace>,
+        AsyncWindowContext,
+    ) -> Task<anyhow::Result<Entity<P>>>
+    + 'static,
+) -> Task<anyhow::Result<()>> {
+    let disable_ai = SettingsStore::global(cx)
+        .get::<DisableAiSettings>(None)
+        .disable_ai
+        || cfg!(test);
+    let existing_panel = workspace.panel::<P>(cx);
+
+    match (disable_ai, existing_panel) {
+        (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+            let panel = load_panel(workspace.clone(), cx.clone()).await?;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let disable_ai = SettingsStore::global(cx)
+                    .get::<DisableAiSettings>(None)
+                    .disable_ai;
+                let have_panel = workspace.panel::<P>(cx).is_some();
+                if !disable_ai && !have_panel {
+                    workspace.add_panel(panel, window, cx);
+                }
+            })
+        }),
+        (true, Some(existing_panel)) => {
+            workspace.remove_panel::<P>(&existing_panel, window, cx);
+            Task::ready(Ok(()))
+        }
+        _ => Task::ready(Ok(())),
+    }
+}
+
 async fn initialize_agent_panel(
     workspace_handle: WeakEntity<Workspace>,
     prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncWindowContext,
 ) -> anyhow::Result<()> {
-    fn setup_or_teardown_agent_panel(
-        workspace: &mut Workspace,
-        prompt_builder: Arc<PromptBuilder>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Task<anyhow::Result<()>> {
-        let disable_ai = SettingsStore::global(cx)
-            .get::<DisableAiSettings>(None)
-            .disable_ai
-            || cfg!(test);
-        let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
-        match (disable_ai, existing_panel) {
-            (false, None) => cx.spawn_in(window, async move |workspace, cx| {
-                let panel =
-                    agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
-                        .await?;
-                workspace.update_in(cx, |workspace, window, cx| {
-                    let disable_ai = SettingsStore::global(cx)
-                        .get::<DisableAiSettings>(None)
-                        .disable_ai;
-                    let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
-                    if !disable_ai && !have_panel {
-                        workspace.add_panel(panel, window, cx);
-                    }
-                })
-            }),
-            (true, Some(existing_panel)) => {
-                workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
-                Task::ready(Ok(()))
-            }
-            _ => Task::ready(Ok(())),
-        }
-    }
-
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+            let prompt_builder = prompt_builder.clone();
+            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+            })
         })?
         .await?;
 
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
-        cx.observe_global_in::<SettingsStore>(window, {
+        let prompt_builder = prompt_builder.clone();
+        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
             let prompt_builder = prompt_builder.clone();
-            move |workspace, window, cx| {
-                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
-                    .detach_and_log_err(cx);
-            }
+            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+                agent_ui::AgentPanel::load(workspace, prompt_builder, cx)
+            })
+            .detach_and_log_err(cx);
         })
         .detach();
 
@@ -758,6 +768,31 @@ async fn initialize_agent_panel(
                 .register_action(agent_ui::AgentPanel::toggle_focus)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
+    })?;
+
+    anyhow::Ok(())
+}
+
+async fn initialize_agents_panel(
+    workspace_handle: WeakEntity<Workspace>,
+    mut cx: AsyncWindowContext,
+) -> anyhow::Result<()> {
+    workspace_handle
+        .update_in(&mut cx, |workspace, window, cx| {
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                AgentsPanel::load(workspace, cx)
+            })
+        })?
+        .await?;
+
+    workspace_handle.update_in(&mut cx, |_workspace, window, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
+            setup_or_teardown_ai_panel(workspace, window, cx, |workspace, cx| {
+                AgentsPanel::load(workspace, cx)
+            })
+            .detach_and_log_err(cx);
+        })
+        .detach();
     })?;
 
     anyhow::Ok(())
@@ -1050,6 +1085,18 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+            },
+        )
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::ToggleAgentPane,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                if let Some(panel) = workspace.panel::<AgentsPanel>(cx) {
+                    let position = panel.read(cx).position(window, cx);
+                    let slot = utility_slot_for_dock_position(position);
+                    workspace.toggle_utility_pane(slot, window, cx);
+                }
             },
         )
         .register_action({
@@ -4714,6 +4761,7 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
+                "agents",
                 #[cfg(not(target_os = "macos"))]
                 "app_menu",
                 "assistant",
@@ -4941,6 +4989,7 @@ mod tests {
                 false,
                 cx,
             );
+            agent_ui_v2::agents_panel::init(cx);
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
