@@ -70,8 +70,12 @@ mod tests {
         impl NSTextAttachment for id {}
 
         unsafe {
-            let image: id = msg_send![class!(NSImage), alloc];
-            image.initWithContentsOfFile_(ns_string("test.jpeg"));
+            let image: id = {
+                let img: id = msg_send![class!(NSImage), alloc];
+                let img: id = msg_send![img, initWithContentsOfFile: ns_string("test.jpeg")];
+                let img: id = msg_send![img, autorelease];
+                img
+            };
             let _size = image.size();
 
             let string = ns_string("Test String");
@@ -84,7 +88,7 @@ mod tests {
                 .autorelease();
             attr_string.appendAttributedString_(hello_attr_string);
 
-            let attachment = NSTextAttachment::alloc(nil);
+            let attachment: id = msg_send![NSTextAttachment::alloc(nil), autorelease];
             let _: () = msg_send![attachment, setImage: image];
             let image_attr_string =
                 msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
