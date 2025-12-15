@@ -1329,9 +1329,6 @@ impl ToolchainLister for PythonToolchainProvider {
                         .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
                 }
 
-                let env_name = toolchain.environment.name.as_deref().unwrap_or("base");
-                activation_script.push(format!("{manager} activate {env_name}"));
-
                 if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("{manager} activate {name}"));
                 } else {
