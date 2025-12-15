@@ -1961,6 +1961,8 @@ struct VimSettings {
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: settings::UseSystemClipboard,
     pub use_smartcase_find: bool,
+    /// Whether to take quotes and backticks into consideration when jumping
+    /// between matching pairs.
     pub use_match_quotes: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,

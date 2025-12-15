@@ -2382,13 +2382,18 @@ fn matching(
         line_end = map.max_point().to_point(map);
     }
 
-    let is_quote_char = |ch: Option<char>| matches!(ch, Some('\'' | '"' | '`'));
+    let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
 
     let make_range_filter = |match_quotes: bool, require_on_bracket: bool| {
         move |buffer: &language::BufferSnapshot,
               opening_range: Range<BufferOffset>,
               closing_range: Range<BufferOffset>| {
-            if !match_quotes && is_quote_char(buffer.chars_at(opening_range.start).next()) {
+            if !match_quotes
+                && buffer
+                    .chars_at(opening_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
+            {
                 return false;
             }
 
@@ -2441,7 +2446,11 @@ fn matching(
 
         for (open_range, close_range) in ranges {
             if !match_quotes
-                && is_quote_char(map.buffer_snapshot().chars_at(open_range.start).next())
+                && map
+                    .buffer_snapshot()
+                    .chars_at(open_range.start)
+                    .next()
+                    .is_some_and(is_quote_char)
             {
                 continue;
             }
