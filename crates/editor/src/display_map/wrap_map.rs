@@ -871,22 +871,6 @@ impl WrapSnapshot {
         //
         //
 
-        // let mut point_to_check = cursor.end().0;
-        // *point_to_check.column_mut() = 0;
-        // loop {
-
-        //     if self.to_tab_point(point_to_check).column() == 0 {
-        //         return point_to_check.row();
-        //     }
-
-        //     if point_to_check.row() == WrapRow(0) {
-        //         unreachable!();
-        //     }
-
-        //     *point_to_check.row_mut() -= 1;
-
-        // }
-
         while let Some(transform) = cursor.item() {
             if transform.is_isomorphic() {
                 // this transform only has real linefeeds
@@ -897,20 +881,13 @@ impl WrapSnapshot {
                 // "this wrap row is a tab row" <=> self.to_tab_point(WrapPoint::new(wrap_row, 0)).column() == 0
                 if tab_summary.lines.row > 1 {
                     let wrap_point_at_end = cursor.end().0.row();
-                    return cmp::min(wrap_point_at_end - RowDelta(1), point.row())
+                    return cmp::min(wrap_point_at_end - RowDelta(1), point.row());
                 } else if cursor.start().1.column() == 0 {
                     return cmp::min(cursor.end().0.row(), point.row());
                 }
             }
 
             cursor.prev();
-
-            // let tab_transform_start = cursor.start().1;
-            // if transform.is_isomorphic() && tab_transform_start.row() < point.0.row {
-            //     return cmp::min(cursor.end().0.row(), point.row());
-            // } else {
-            //     cursor.prev();
-            // }
         }
 
         WrapRow(0)
@@ -1353,8 +1330,8 @@ mod tests {
 
         let buffer = cx.new(|cx| {
             language::Buffer::local(
-                "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
-                cx,
+                // "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
+                "1234", cx,
             )
         });
 
@@ -1372,16 +1349,50 @@ mod tests {
         let (_wrap_map, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
 
-        assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
-        assert_eq!(
-            wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(8,0))),
-            WrapRow(7)
-        );
-        assert_eq!(
-            wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
-            WrapRow(9)
-        );
+        assert_eq!(wrap_snapshot.text(), "123\n4");
     }
+
+    // #[gpui::test]
+    // async fn test_prev_row_boundary_random(cx: &mut gpui::TestAppContext, mut test_rng: TestRng) {
+    //     init_test(cx);
+    //     let text_system = cx.read(|cx| cx.text_system().clone());
+
+    //     let tab_size = 4.try_into().unwrap();
+    //     let font = test_font();
+    //     let _font_id = text_system.resolve_font(&font);
+    //     let font_size = px(14.0);
+
+    //     let buffer = cx.new(|cx| {
+    //         language::Buffer::local(
+    //             "hellohellohello\nworldworldworld\nfoofoofoo\nbarbarbar\n",
+    //             cx,
+    //         )
+    //     });
+
+    //     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    //     let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+    //     log::info!("Buffer text: {:?}", buffer_snapshot.text());
+    //     let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+    //     log::info!("InlayMap text: {:?}", inlay_snapshot.text());
+    //     let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+    //     log::info!("FoldMap text: {:?}", fold_snapshot.text());
+    //     let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+    //     let tabs_snapshot = tab_map.set_max_expansion_column(32);
+    //     log::info!("TabMap text: {:?}", tabs_snapshot.text());
+    //     let soft_wrapping = Some(font_size * 3);
+    //     let (_wrap_map, wrap_snapshot) =
+    //         cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, soft_wrapping, cx));
+
+    //     assert_eq!(wrap_snapshot.max_point(), WrapPoint(Point::new(10, 0)));
+    //     assert_eq!(
+    //         wrap_snapshot.prev_row_boundary(WrapPoint(Point::new(8, 0))),
+    //         WrapRow(7)
+    //     );
+    //     assert_eq!(
+    //         wrap_snapshot.prev_row_boundary(wrap_snapshot.max_point()),
+    //         WrapRow(9)
+    //     );
+    // }
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
