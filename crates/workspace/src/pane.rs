@@ -3196,8 +3196,8 @@ impl Pane {
                 self.display_nav_history_buttons.unwrap_or_default(),
                 |tab_bar| {
                     tab_bar
-                        .pre_end_child(navigate_backward)
-                        .pre_end_child(navigate_forward)
+                        .start_child(navigate_backward)
+                        .start_child(navigate_forward)
                 },
             )
             .map(|tab_bar| {
