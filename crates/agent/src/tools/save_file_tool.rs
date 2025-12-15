@@ -123,78 +123,77 @@ impl AgentTool for SaveFileTool {
                 }
             }
 
-        // Save each buffer individually since there's no batch save API.
-        //
-        // Note: we keep the summary terse; failures include paths.
-        for buffer in buffers_to_save {
-            let path_for_buffer = match buffer.read_with(cx, |buffer, _| {
-                buffer
-                    .file()
-                    .map(|file| file.path().to_rel_path_buf())
-                    .map(|path| path.as_rel_path().as_unix_str().to_owned())
-            }) {
-                Ok(path) => path.unwrap_or_else(|| "<unknown>".to_string()),
-                Err(error) => {
-                    save_errors.push(("<unknown>".to_string(), error.to_string()));
-                    continue;
-                }
-            };
+            // Save each buffer individually since there's no batch save API.
+            for buffer in buffers_to_save {
+                let path_for_buffer = match buffer.read_with(cx, |buffer, _| {
+                    buffer
+                        .file()
+                        .map(|file| file.path().to_rel_path_buf())
+                        .map(|path| path.as_rel_path().as_unix_str().to_owned())
+                }) {
+                    Ok(path) => path.unwrap_or_else(|| "<unknown>".to_string()),
+                    Err(error) => {
+                        save_errors.push(("<unknown>".to_string(), error.to_string()));
+                        continue;
+                    }
+                };
 
-            let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
+                let save_task =
+                    project.update(cx, |project, cx| project.save_buffer(buffer, cx));
 
-            match save_task {
-                Ok(task) => {
-                    if let Err(error) = task.await {
+                match save_task {
+                    Ok(task) => {
+                        if let Err(error) = task.await {
+                            save_errors.push((path_for_buffer, error.to_string()));
+                        }
+                    }
+                    Err(error) => {
                         save_errors.push((path_for_buffer, error.to_string()));
                     }
                 }
-                Err(error) => {
-                    save_errors.push((path_for_buffer, error.to_string()));
+            }
+
+            let mut lines: Vec<String> = Vec::new();
+
+            if !saved_paths.is_empty() {
+                lines.push(format!("Saved {} file(s).", saved_paths.len()));
+            }
+            if !clean_paths.is_empty() {
+                lines.push(format!("{} clean.", clean_paths.len()));
+            }
+
+            if !not_found_paths.is_empty() {
+                lines.push(format!("Not found ({}):", not_found_paths.len()));
+                for path in &not_found_paths {
+                    lines.push(format!("- {}", path.display()));
                 }
             }
-        }
-
-        let mut lines: Vec<String> = Vec::new();
-
-        if !saved_paths.is_empty() {
-            lines.push(format!("Saved {} file(s).", saved_paths.len()));
-        }
-        if !clean_paths.is_empty() {
-            lines.push(format!("{} clean.", clean_paths.len()));
-        }
-
-        if !not_found_paths.is_empty() {
-            lines.push(format!("Not found ({}):", not_found_paths.len()));
-            for path in &not_found_paths {
-                lines.push(format!("- {}", path.display()));
+            if !open_errors.is_empty() {
+                lines.push(format!("Open failed ({}):", open_errors.len()));
+                for (path, error) in &open_errors {
+                    lines.push(format!("- {}: {}", path.display(), error));
+                }
             }
-        }
-        if !open_errors.is_empty() {
-            lines.push(format!("Open failed ({}):", open_errors.len()));
-            for (path, error) in &open_errors {
-                lines.push(format!("- {}: {}", path.display(), error));
+            if !dirty_check_errors.is_empty() {
+                lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
+                for (path, error) in &dirty_check_errors {
+                    lines.push(format!("- {}: {}", path.display(), error));
+                }
             }
-        }
-        if !dirty_check_errors.is_empty() {
-            lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
-            for (path, error) in &dirty_check_errors {
-                lines.push(format!("- {}: {}", path.display(), error));
+            if !save_errors.is_empty() {
+                lines.push(format!("Save failed ({}):", save_errors.len()));
+                for (path, error) in &save_errors {
+                    lines.push(format!("- {}: {}", path, error));
+                }
             }
-        }
-        if !save_errors.is_empty() {
-            lines.push(format!("Save failed ({}):", save_errors.len()));
-            for (path, error) in &save_errors {
-                lines.push(format!("- {}: {}", path, error));
-            }
-        }
 
-        if lines.is_empty() {
-            Ok("No paths provided.".to_string())
-        } else {
-            Ok(lines.join("\n"))
-        }
-    })
-}
+            if lines.is_empty() {
+                Ok("No paths provided.".to_string())
+            } else {
+                Ok(lines.join("\n"))
+            }
+        })
+    }
 }
 
 #[cfg(test)]
