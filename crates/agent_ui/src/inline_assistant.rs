@@ -1,5 +1,5 @@
 use language_model::AnthropicEventData;
-use language_model::report_anthropic_event_2;
+use language_model::report_anthropic_event;
 use std::cmp;
 use std::mem;
 use std::ops::Range;
@@ -18,7 +18,6 @@ use crate::{
 use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::EditorSnapshot;
 use editor::MultiBufferOffset;
@@ -55,13 +54,8 @@ use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenSettings;
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
-    cx: &mut App,
-) {
-    cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
+    cx.set_global(InlineAssistant::new(fs, prompt_builder));
 
     cx.observe_global::<SettingsStore>(|cx| {
         if DisableAiSettings::get_global(cx).disable_ai {
@@ -101,7 +95,6 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Entity<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
     _inline_assistant_completions: Option<mpsc::UnboundedSender<anyhow::Result<InlineAssistId>>>,
 }
@@ -109,11 +102,7 @@ pub struct InlineAssistant {
 impl Global for InlineAssistant {}
 
 impl InlineAssistant {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        prompt_builder: Arc<PromptBuilder>,
-        telemetry: Arc<Telemetry>,
-    ) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>) -> Self {
         Self {
             next_assist_id: InlineAssistId::default(),
             next_assist_group_id: InlineAssistGroupId::default(),
@@ -123,7 +112,6 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry,
             fs,
             _inline_assistant_completions: None,
         }
@@ -467,7 +455,7 @@ impl InlineAssistant {
                     language_name = buffer.language().map(|language| language.name().to_proto())
                 );
 
-                report_anthropic_event_2(
+                report_anthropic_event(
                     &model.model,
                     AnthropicEventData {
                         completion_type: language_model::AnthropicCompletionType::Editor,
@@ -519,7 +507,6 @@ impl InlineAssistant {
                     range.clone(),
                     initial_transaction_id,
                     session_id,
-                    self.telemetry.clone(),
                     self.prompt_builder.clone(),
                     cx,
                 )
@@ -1123,7 +1110,7 @@ impl InlineAssistant {
                     message_id = message_id.as_deref(),
                 );
 
-                report_anthropic_event_2(
+                report_anthropic_event(
                     &model.model,
                     language_model::AnthropicEventData {
                         completion_type: language_model::AnthropicCompletionType::Editor,
@@ -2067,8 +2054,7 @@ pub mod test {
             cx.set_http_client(http);
             Client::production(cx)
         });
-        let mut inline_assistant =
-            InlineAssistant::new(fs.clone(), prompt_builder, client.telemetry().clone());
+        let mut inline_assistant = InlineAssistant::new(fs.clone(), prompt_builder);
 
         let (tx, mut completion_rx) = mpsc::unbounded();
         inline_assistant.set_completion_receiver(tx);

@@ -1,15 +1,13 @@
 use crate::inline_prompt_editor::CodegenStatus;
-use client::telemetry::Telemetry;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequest};
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 use terminal::Terminal;
 use uuid::Uuid;
 
 pub struct TerminalCodegen {
     pub status: CodegenStatus,
-    pub telemetry: Option<Arc<Telemetry>>,
     terminal: Entity<Terminal>,
     generation: Task<()>,
     pub message_id: Option<String>,
@@ -20,14 +18,9 @@ pub struct TerminalCodegen {
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
 
 impl TerminalCodegen {
-    pub fn new(
-        terminal: Entity<Terminal>,
-        telemetry: Option<Arc<Telemetry>>,
-        session_id: Uuid,
-    ) -> Self {
+    pub fn new(terminal: Entity<Terminal>, session_id: Uuid) -> Self {
         Self {
             terminal,
-            telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             message_id: None,

@@ -232,11 +232,10 @@ pub fn init(
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
-        client.telemetry().clone(),
         cx,
     );
-    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
-    cx.observe_new(move |workspace, window, cx| {
+    terminal_inline_assistant::init(fs.clone(), prompt_builder,cx);
+    cx.observe_new(move |workspace, window, cx| { 
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
     .detach();

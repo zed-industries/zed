@@ -8,7 +8,7 @@ use crate::{
 use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
+
 use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
@@ -17,7 +17,7 @@ use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, Wea
 use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, report_anthropic_event_2,
+    Role, report_anthropic_event,
 };
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore};
@@ -28,13 +28,8 @@ use util::ResultExt;
 use uuid::Uuid;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
-    cx: &mut App,
-) {
-    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder, telemetry));
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
+    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder));
 }
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
@@ -44,7 +39,6 @@ pub struct TerminalInlineAssistant {
     next_assist_id: TerminalInlineAssistId,
     assists: HashMap<TerminalInlineAssistId, TerminalInlineAssist>,
     prompt_history: VecDeque<String>,
-    telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -52,16 +46,11 @@ pub struct TerminalInlineAssistant {
 impl Global for TerminalInlineAssistant {}
 
 impl TerminalInlineAssistant {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        prompt_builder: Arc<PromptBuilder>,
-        telemetry: Arc<Telemetry>,
-    ) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>) -> Self {
         Self {
             next_assist_id: TerminalInlineAssistId::default(),
             assists: HashMap::default(),
             prompt_history: VecDeque::default(),
-            telemetry: Some(telemetry),
             fs,
             prompt_builder,
         }
@@ -87,8 +76,7 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let codegen =
-            cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone(), session_id));
+        let codegen = cx.new(|_| TerminalCodegen::new(terminal, session_id));
 
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new_terminal(
@@ -342,8 +330,8 @@ impl TerminalInlineAssistant {
                     session_id = session_id,
                 );
 
-                report_anthropic_event_2(
-                    model,
+                report_anthropic_event(
+                    &model,
                     language_model::AnthropicEventData {
                         completion_type: language_model::AnthropicCompletionType::Terminal,
                         event: anthropic_event_type,

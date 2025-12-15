@@ -3,7 +3,6 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use uuid::Uuid;
 
-use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -77,7 +76,6 @@ pub struct BufferCodegen {
     buffer: Entity<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     pub is_insertion: bool,
     session_id: Uuid,
@@ -89,7 +87,6 @@ impl BufferCodegen {
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
         session_id: Uuid,
-        telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -98,7 +95,6 @@ impl BufferCodegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                Some(telemetry.clone()),
                 builder.clone(),
                 session_id,
                 cx,
@@ -113,7 +109,6 @@ impl BufferCodegen {
             buffer,
             range,
             initial_transaction_id,
-            telemetry,
             builder,
             session_id,
         };
@@ -200,7 +195,6 @@ impl BufferCodegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    Some(self.telemetry.clone()),
                     self.builder.clone(),
                     self.session_id,
                     cx,
@@ -284,7 +278,6 @@ pub struct CodegenAlternative {
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
-    telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
     active: bool,
@@ -305,7 +298,6 @@ impl CodegenAlternative {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
-        telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         session_id: Uuid,
         cx: &mut Context<Self>,
@@ -346,7 +338,6 @@ impl CodegenAlternative {
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
-            telemetry,
             builder,
             active: active,
             edits: Vec::new(),
@@ -1493,7 +1484,6 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
                 Uuid::new_v4(),
                 cx,
@@ -1556,7 +1546,6 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
                 Uuid::new_v4(),
                 cx,
@@ -1621,7 +1610,6 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
                 Uuid::new_v4(),
                 cx,
@@ -1686,7 +1674,6 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
                 Uuid::new_v4(),
                 cx,
@@ -1739,7 +1726,6 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 false,
-                None,
                 prompt_builder,
                 Uuid::new_v4(),
                 cx,

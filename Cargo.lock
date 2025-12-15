@@ -894,6 +894,7 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
+ "telemetry",
  "telemetry_events",
  "text",
  "ui",
