@@ -3,7 +3,6 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
-pub mod agents_panel;
 mod buffer_codegen;
 mod completion_provider;
 mod context;
@@ -226,7 +225,6 @@ pub fn init(
     }
     assistant_slash_command::init(cx);
     agent_panel::init(cx);
-    agents_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
 

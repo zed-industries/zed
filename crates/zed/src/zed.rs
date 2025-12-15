@@ -9,8 +9,8 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_ui::agents_panel::AgentsPanel;
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent_ui_v2::agents_panel::AgentsPanel;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -4988,6 +4988,7 @@ mod tests {
                 false,
                 cx,
             );
+            agent_ui_v2::agents_panel::init(cx);
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
