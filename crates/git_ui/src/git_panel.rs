@@ -2525,31 +2525,23 @@ impl GitPanel {
 
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
-                let content = match (&rules_content, text_empty) {
-                    (Some(rules), true) => {
-                        format!(
-                            "{PROMPT}\n\n\
-                            The user has provided the following project rules that you should follow when writing the commit message:\n\
-                            <project_rules>\n{rules}\n</project_rules>\n\n\
-                            Here are the changes in this commit:\n{diff_text}"
-                        )
-                    }
-                    (Some(rules), false) => {
-                        format!(
-                            "{PROMPT}\n\n\
-                            The user has provided the following project rules that you should follow when writing the commit message:\n\
-                            <project_rules>\n{rules}\n</project_rules>\n\n\
-                            Here is the user's subject line:\n{subject}\n\
-                            Here are the changes in this commit:\n{diff_text}\n"
-                        )
-                    }
-                    (None, true) => {
-                        format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                    }
-                    (None, false) => {
-                        format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
-                    }
+                let rules_section = match &rules_content {
+                    Some(rules) => format!(
+                        "\n\nThe user has provided the following project rules that you should follow when writing the commit message:\n\
+                        <project_rules>\n{rules}\n</project_rules>\n"
+                    ),
+                    None => String::new(),
                 };
+
+                let subject_section = if text_empty {
+                    String::new()
+                } else {
+                    format!("\nHere is the user's subject line:\n{subject}")
+                };
+
+                let content = format!(
+                    "{PROMPT}{rules_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+                );
 
                 let request = LanguageModelRequest {
                     thread_id: None,
