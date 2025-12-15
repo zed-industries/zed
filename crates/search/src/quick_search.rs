@@ -1481,8 +1481,10 @@ impl PickerDelegate for QuickSearchDelegate {
             );
         }
 
-        if self.match_count > 0 && !self.is_searching {
-            let results_text = if self.is_limited {
+        if self.match_count > 0 || self.is_searching {
+            let results_text = if self.is_searching {
+                "Searching…".to_string()
+            } else if self.is_limited {
                 format!("{}+ results (limited)", self.match_count)
             } else {
                 let result_word = if self.match_count == 1 {
@@ -1514,7 +1516,18 @@ impl PickerDelegate for QuickSearchDelegate {
             );
         }
 
-        None
+        Some(
+            h_flex()
+                .w_full()
+                .px_3()
+                .py_1()
+                .child(
+                    Label::new("0 results")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any(),
+        )
     }
 
     fn render_footer(
