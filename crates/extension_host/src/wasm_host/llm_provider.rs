@@ -142,7 +142,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName::from(format!("(Extension) {}", self.provider_info.name))
+        LanguageModelProviderName::from(self.provider_info.name.clone())
     }
 
     fn icon(&self) -> ui::IconName {
