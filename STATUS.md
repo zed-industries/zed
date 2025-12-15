@@ -75,6 +75,125 @@ At the time of writing:
 
 ---
 
+## CRITICAL ISSUE: extension_host test hang (UNRESOLVED)
+
+**Test**: `extension_host::extension_store_test::test_extension_store_with_test_extension`
+
+**Symptom**: Test hangs indefinitely awaiting `fake_servers.next()` for the first fake LSP server spawn. This causes CI timeouts (60min) on all platforms.
+
+### What we've learned
+
+#### 1) The scheduler semantic change broke `run_until_parked`
+With the new `TestScheduler`, `tick()` only processes runnable tasks and expired timers but **does not advance time**. This meant:
+- `run_until_parked` (which loops `while tick() {}`) would stop when no runnables remain
+- but `has_pending_tasks()` would still be true if timers were pending
+- tests expecting "drain all progress" semantics would stall
+
+**Fix applied**: `gpui::BackgroundExecutor::run_until_parked` now:
+- ticks all runnable work
+- calls `advance_clock_to_next_timer()` when no runnables remain
+- repeats until no runnables and no timers
+- this restores historical "drain everything that can make progress" semantics
+
+#### 2) The LSP startup task IS running and calling `create_fake_language_server`
+Instrumentation shows:
+- `[project::lsp_store][start_language_server] attempting name="gleam"`
+- `[project::lsp_store][start_language_server] resolved_binary ...`
+- `[project::lsp_store][start_language_server] attempting_fake ...`
+- `[project::lsp_store][start_language_server] using_fake ...`
+- `[language::language_registry] create_fake_language_server: called name=gleam id=0 generation=0 ...`
+
+So the scheduler IS progressing the task. The fake server IS being created.
+
+#### 3) The fake server registration is NOT being overwritten
+Added a `generation: u64` counter to `FakeLanguageServerEntry` to detect overwrites:
+- test registers: `generation=0`
+- `create_fake_language_server` uses: `generation=0`
+- no "overwriting existing fake server registration" warnings appeared
+
+So it's the same entry.
+
+#### 4) But the receiver still gets nothing
+The test's `await fake_servers.next()` times out after 10s, even though:
+- `create_fake_language_server` is called
+- it does `tx.unbounded_send(fake_server.clone())`
+
+This points to: **the sender and receiver are not paired** (different channels).
+
+### Leading hypothesis: Two LanguageRegistry instances
+
+The most likely explanation:
+
+1. Test calls `Project::test(...)` which creates a `LanguageRegistry` internally (`LanguageRegistry::test(cx.executor())`)
+2. Test extracts `language_registry = project.languages().clone()` — this is an `Arc<LanguageRegistry>`, so it's a reference to the same registry
+3. Test calls `language_registry.register_fake_lsp_server(...)` on that registry, getting a receiver
+4. **Somewhere during extension initialization or LSP startup**, a NEW `LanguageRegistry` is created (or the project's registry gets replaced)
+5. When `LocalLspStore::start_language_server` calls `this.languages.create_fake_language_server(...)`, it's using a **different** registry instance
+6. That different registry has no fake server entries, OR has a different channel pair
+
+Result: sender and receiver are on different channels → send succeeds (or returns None) but receiver never gets the value.
+
+### Next steps for investigation
+
+#### STEP 1: Prove/disprove the "two registries" hypothesis
+
+Add a unique identity marker to each `LanguageRegistry` instance:
+
+```rust
+// In LanguageRegistry or LanguageRegistryState
+#[cfg(any(test, feature = "test-support"))]
+registry_id: u64,  // assigned from AtomicU64::fetch_add
+```
+
+Log it in:
+- `LanguageRegistry::new()` / `LanguageRegistry::test()` (when created)
+- `register_fake_lsp_server` (when test registers)
+- `create_fake_language_server` (when LSP store creates)
+- In the test, right after `let language_registry = project.languages().clone()`
+
+If registry IDs differ between registration and creation: **confirmed different instances**.
+
+#### STEP 2: If confirmed, trace where the new registry comes from
+
+Likely suspects:
+- `language_extension::init(...)` — check if it creates or replaces the language registry
+- Extension loading / reloading paths in `ExtensionStore`
+- Project initialization race: does something async replace `project.languages` after `Project::test` returns?
+
+Key code paths to audit:
+- `crates/language_extension/src/language_extension.rs` — does `init` create a new registry?
+- `crates/extension_host/src/extension_store.rs` — does extension loading mutate/replace the language registry?
+- `crates/project/src/lsp_store.rs` — is `this.languages` actually a stable reference to the project's registry?
+
+#### STEP 3: Fix options (once root cause is known)
+
+**Option A**: If extension init replaces the registry:
+- Ensure test uses the registry **after** extension init, not before
+- Or ensure extension init mutates the existing registry instead of replacing it
+
+**Option B**: If LSP store has a stale/cloned registry:
+- Ensure `LspStore` holds an `Arc<LanguageRegistry>` that points to the same instance the test registered with
+- Avoid cloning registries; always pass `Arc<LanguageRegistry>` by reference
+
+**Option C**: If the issue is test ordering:
+- Move `register_fake_lsp_server` to happen AFTER all initialization (extension load, language_extension::init, etc.)
+- Currently test does: register → install_dev_extension → open_buffer
+- Try: install_dev_extension → register → open_buffer
+
+### Files with instrumentation added (can be cleaned up after fix)
+
+- `crates/gpui/src/executor.rs` — `GPUI_RUN_UNTIL_PARKED_LOG=1` logging (keep minimal version)
+- `crates/language/src/language_registry.rs` — generation counter, registration/creation logs
+- `crates/project/src/lsp_store.rs` — LSP startup detailed logs
+- `crates/extension_host/src/extension_store_test.rs` — per-await timeouts, progress markers
+
+### Reference logs
+
+Detailed logs captured in `/tmp/ci-hang/`:
+- `generation_debug.log` — shows generation=0 on both registration and creation
+- `generation_debug2.log` — includes scheduler debug output
+- `run_until_parked_debug.log` — shows run_until_parked correctly draining after fix
+
 ## Review guidance / things to focus on
 - Verify scheduler integration preserves expected semantics for:
   - blocking (`block_on`, `block_with_timeout`)
