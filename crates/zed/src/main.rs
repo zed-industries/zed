@@ -1159,20 +1159,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 |workspace, window, cx| {
                     let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
                     match restore_on_startup {
-                        workspace::RestoreOnStartupBehavior::Welcome => {
-                            workspace.add_item_to_center(
-                                Box::new(cx.new(|cx| {
-                                    workspace::welcome::WelcomePage::new(
-                                        workspace.weak_handle(),
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                })),
-                                window,
-                                cx,
-                            );
-                        }
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
                         _ => {
                             Editor::new_file(workspace, &Default::default(), window, cx);
                         }

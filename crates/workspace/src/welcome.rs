@@ -355,6 +355,12 @@ impl Render for WelcomePage {
                 .into_any_element()
         };
 
+        let welcome_label = if self.fallback_to_recent_projects {
+            "Welcome back to Zed"
+        } else {
+            "Welcome to Zed"
+        };
+
         h_flex()
             .key_context("Welcome")
             .track_focus(&self.focus_handle(cx))
@@ -387,7 +393,7 @@ impl Render for WelcomePage {
                                     .gap_4()
                                     .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
                                     .child(
-                                        v_flex().child(Headline::new("Welcome to Zed")).child(
+                                        v_flex().child(Headline::new(welcome_label)).child(
                                             Label::new("The editor for what's next")
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted)
