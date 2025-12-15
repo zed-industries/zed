@@ -834,7 +834,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
- "globset",
  "gpui",
  "html_to_markdown",
  "http_client",
