@@ -252,7 +252,6 @@ impl Markdown {
         self.pending_parse = None;
         self.should_reparse = false;
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
-
         self.parse(cx);
     }
 

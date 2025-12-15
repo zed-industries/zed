@@ -1155,7 +1155,6 @@ impl CodegenAlternative {
             let chars_read_so_far = Arc::new(Mutex::new(0usize));
             let process_tool_use = move |tool_use: LanguageModelToolUse| -> Option<ToolUseOutput> {
                 let mut chars_read_so_far = chars_read_so_far.lock();
-                let is_complete = tool_use.is_input_complete;
                 match tool_use.name.as_ref() {
                     "rewrite_section" => {
                         let Ok(input) =
