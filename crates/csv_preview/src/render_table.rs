@@ -159,22 +159,24 @@ impl CsvPreviewView {
                 let row_identifier_text_color = cx.theme().colors().editor_line_number;
                 let selected_bg = cx.theme().colors().element_selected;
                 match self.settings.rendering_with {
-                    RowRenderMechanism::VariableList => table.variable_list(row_count, {
-                        cx.processor(move |this, display_index: usize, _window, cx| {
-                            // Record this display index for performance metrics
-                            this.performance_metrics
-                                .rendered_indices
-                                .push(display_index);
+                    RowRenderMechanism::VariableList => {
+                        table.variable_row_height_list(row_count, {
+                            cx.processor(move |this, display_index: usize, _window, cx| {
+                                // Record this display index for performance metrics
+                                this.performance_metrics
+                                    .rendered_indices
+                                    .push(display_index);
 
-                            Self::render_table_row_for_variable_list::<COLS>(
-                                this,
-                                display_index,
-                                row_identifier_text_color,
-                                selected_bg,
-                                cx,
-                            )
+                                Self::render_table_row_for_variable_row_height_list::<COLS>(
+                                    this,
+                                    display_index,
+                                    row_identifier_text_color,
+                                    selected_bg,
+                                    cx,
+                                )
+                            })
                         })
-                    }),
+                    }
                     RowRenderMechanism::UniformList => {
                         table.uniform_list("csv-table", row_count, {
                             cx.processor(move |this, range: Range<usize>, _window, cx| {
@@ -198,7 +200,7 @@ impl CsvPreviewView {
             .into_any_element()
     }
 
-    /// Render a single row for variable_list (supports variable heights)
+    /// Render a single row for variable_row_height_list (supports variable heights)
     fn render_single_table_row<const COLS: usize>(
         this: &CsvPreviewView,
         display_index: usize,
@@ -261,7 +263,7 @@ impl CsvPreviewView {
         Some(elements_array)
     }
 
-    fn render_table_row_for_variable_list<const COLS: usize>(
+    fn render_table_row_for_variable_row_height_list<const COLS: usize>(
         this: &CsvPreviewView,
         display_index: usize,
         row_identifier_text_color: gpui::Hsla,
