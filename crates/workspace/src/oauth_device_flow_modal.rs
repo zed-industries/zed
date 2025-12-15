@@ -2,11 +2,11 @@ use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent, Element, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseDownEvent,
     ParentElement, Render, SharedString, Styled, Subscription, Transformation, Window, div,
-    percentage, svg,
+    percentage, rems, svg,
 };
 use menu;
 use std::time::Duration;
-use ui::{Button, Icon, IconName, Label, prelude::*};
+use ui::{Button, Icon, IconName, Label, Vector, VectorName, prelude::*};
 
 use crate::ModalView;
 
@@ -103,13 +103,36 @@ impl OAuthDeviceFlowModal {
 
     fn render_icon(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
+        let icon_color = Color::Custom(cx.theme().colors().icon);
+        // Match ZedXCopilot visual appearance
+        let icon_size = rems(2.5);
+        let plus_size = rems(0.875);
+        // The "+" in ZedXCopilot SVG has fill-opacity="0.5"
+        let plus_color = cx.theme().colors().icon.opacity(0.5);
+
         if let Some(icon_path) = &state.config.icon_path {
-            Icon::from_external_svg(icon_path.clone())
-                .size(ui::IconSize::XLarge)
-                .color(Color::Custom(cx.theme().colors().icon))
+            // Show "[Provider Icon] + [Zed Logo]" format to match built-in Copilot modal
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    Icon::from_external_svg(icon_path.clone())
+                        .size(ui::IconSize::Custom(icon_size))
+                        .color(icon_color),
+                )
+                .child(
+                    svg()
+                        .size(plus_size)
+                        .path("icons/plus.svg")
+                        .text_color(plus_color),
+                )
+                .child(Vector::new(VectorName::ZedLogo, icon_size, icon_size).color(icon_color))
                 .into_any_element()
         } else {
-            div().into_any_element()
+            // Fallback to just Zed logo if no provider icon
+            Vector::new(VectorName::ZedLogo, icon_size, icon_size)
+                .color(icon_color)
+                .into_any_element()
         }
     }
 
