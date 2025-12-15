@@ -1933,7 +1933,7 @@
       },
     },
     "Proto": {
-      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."]
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
     },
     "Python": {
       "code_actions_on_format": {
