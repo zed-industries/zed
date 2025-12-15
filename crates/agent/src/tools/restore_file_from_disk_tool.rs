@@ -165,7 +165,10 @@ impl AgentTool for RestoreFileFromDiskTool {
                 }
             }
             if !dirty_check_errors.is_empty() {
-                lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
+                lines.push(format!(
+                    "Dirty check failed ({}):",
+                    dirty_check_errors.len()
+                ));
                 for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
