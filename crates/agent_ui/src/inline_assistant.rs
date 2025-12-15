@@ -2027,8 +2027,10 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod test {
+
     use std::sync::Arc;
 
     use agent::HistoryStore;
@@ -2211,7 +2213,8 @@ pub mod test {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "unit-eval"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod evals {
     use std::str::FromStr;
 
