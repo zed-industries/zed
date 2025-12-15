@@ -1102,6 +1102,36 @@ impl gpui::Render for ExtensionProviderConfigurationView {
             }
         }
 
+        // Show OpenAI-compatible models notification for OpenAI extension
+        if self.extension_provider_id == "openai" {
+            content = content.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        ui::Icon::new(ui::IconName::Info)
+                            .size(ui::IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Zed also supports OpenAI-compatible models.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        ui::Button::new("learn-more", "Learn More")
+                            .style(ui::ButtonStyle::Subtle)
+                            .label_size(LabelSize::Small)
+                            .icon(ui::IconName::ArrowUpRight)
+                            .icon_size(ui::IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .icon_position(ui::IconPosition::End)
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://zed.dev/docs/configuring-llm-providers#openai-compatible-providers");
+                            }),
+                    ),
+            );
+        }
+
         content.into_any_element()
     }
 }
