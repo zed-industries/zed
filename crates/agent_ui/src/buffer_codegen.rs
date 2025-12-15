@@ -1171,9 +1171,6 @@ impl CodegenAlternative {
                         })
                     }
                     "failure_message" => {
-                        if !is_complete {
-                            return None;
-                        }
                         let Ok(mut input) =
                             serde_json::from_value::<FailureMessageInput>(tool_use.input)
                         else {
