@@ -369,6 +369,8 @@ impl TerminalBuilder {
             last_content: Default::default(),
             last_mouse: None,
             matches: Vec::new(),
+            killed_active_task: false,
+            last_child_exit_code: None,
             selection_head: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
@@ -595,6 +597,8 @@ impl TerminalBuilder {
                 last_content: Default::default(),
                 last_mouse: None,
                 matches: Vec::new(),
+                killed_active_task: false,
+                last_child_exit_code: None,
                 selection_head: None,
                 breadcrumb_text: String::new(),
                 scroll_px: px(0.),
@@ -826,6 +830,11 @@ pub struct Terminal {
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
+
+    // When Alacritty emits `Exit` without `ChildExit`, we otherwise lose the exit status.
+    // Track whether we initiated a kill and whether we observed a child exit code.
+    killed_active_task: bool,
+    last_child_exit_code: Option<i32>,
     pub breadcrumb_text: String,
     title_override: Option<String>,
     scroll_px: Pixels,
@@ -939,7 +948,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => self.register_task_finished(None, cx),
+            AlacTermEvent::Exit => self.register_task_finished(Some(9), cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -966,6 +975,7 @@ impl Terminal {
                 self.write_to_pty(format(color).into_bytes());
             }
             AlacTermEvent::ChildExit(error_code) => {
+                self.last_child_exit_code = Some(error_code);
                 self.register_task_finished(Some(error_code), cx);
             }
         }
@@ -2065,6 +2075,11 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
+            // Alacritty can emit `Exit` without `ChildExit`, which would otherwise
+            // cause us to lose the exit status. Track that we initiated a kill so
+            // we can synthesize an appropriate non-zero status (e.g. 9) on `Exit`.
+            self.killed_active_task = true;
+
             if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
                 info.kill_current_process();
             }
