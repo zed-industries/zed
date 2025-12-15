@@ -1,4 +1,5 @@
 use crate::ExtensionSettings;
+use crate::LEGACY_LLM_EXTENSION_IDS;
 use crate::wasm_host::WasmExtension;
 use collections::HashSet;
 
@@ -69,11 +70,20 @@ impl ExtensionLanguageModelProvider {
 
         // Build set of allowed env vars for this provider
         let settings = ExtensionSettings::get_global(cx);
+        let is_legacy_extension =
+            LEGACY_LLM_EXTENSION_IDS.contains(&extension.manifest.id.as_ref());
+
         let mut allowed_env_vars = HashSet::default();
         if let Some(env_vars) = auth_config.as_ref().and_then(|c| c.env_vars.as_ref()) {
             for env_var_name in env_vars {
                 let key = format!("{}:{}", provider_id_string, env_var_name);
-                if settings.allowed_env_vars.contains(key.as_str()) {
+                // For legacy extensions, auto-allow if env var is set (migration will persist this)
+                let env_var_is_set = std::env::var(env_var_name)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
+                if settings.allowed_env_var_providers.contains(key.as_str())
+                    || (is_legacy_extension && env_var_is_set)
+                {
                     allowed_env_vars.insert(env_var_name.clone());
                 }
             }
@@ -201,10 +211,18 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
             if let Some(ref env_vars) = auth_config.env_vars {
                 let provider_id_string = self.provider_id_string();
                 let settings = ExtensionSettings::get_global(cx);
+                let is_legacy_extension =
+                    LEGACY_LLM_EXTENSION_IDS.contains(&self.extension.manifest.id.as_ref());
 
                 for env_var_name in env_vars {
                     let key = format!("{}:{}", provider_id_string, env_var_name);
-                    if settings.allowed_env_vars.contains(key.as_str()) {
+                    // For legacy extensions, auto-allow if env var is set
+                    let env_var_is_set = std::env::var(env_var_name)
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false);
+                    if settings.allowed_env_var_providers.contains(key.as_str())
+                        || (is_legacy_extension && env_var_is_set)
+                    {
                         if let Ok(value) = std::env::var(env_var_name) {
                             if !value.is_empty() {
                                 return true;
@@ -474,7 +492,7 @@ impl ExtensionProviderConfigurationView {
             move |settings, _| {
                 let allowed = settings
                     .extension
-                    .allowed_env_vars
+                    .allowed_env_var_providers
                     .get_or_insert_with(Vec::new);
 
                 if currently_allowed {

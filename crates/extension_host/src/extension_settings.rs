@@ -19,7 +19,7 @@ pub struct ExtensionSettings {
     /// The extension language model providers that are allowed to read API keys
     /// from environment variables. Each entry is in the format
     /// "extension_id:provider_id:ENV_VAR_NAME".
-    pub allowed_env_vars: HashSet<Arc<str>>,
+    pub allowed_env_var_providers: HashSet<Arc<str>>,
 }
 
 impl ExtensionSettings {
@@ -64,9 +64,9 @@ impl Settings for ExtensionSettings {
                     }
                 })
                 .collect(),
-            allowed_env_vars: content
+            allowed_env_var_providers: content
                 .extension
-                .allowed_env_vars
+                .allowed_env_var_providers
                 .clone()
                 .unwrap_or_default()
                 .into_iter()

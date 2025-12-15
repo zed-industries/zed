@@ -88,7 +88,7 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// Extension IDs that are being migrated from hardcoded LLM providers.
 /// For backwards compatibility, if the user has the corresponding env var set,
 /// we automatically enable env var reading for these extensions on first install.
-const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
+pub const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
     "anthropic",
     "copilot-chat",
     "google-ai",
@@ -133,7 +133,7 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
 
             // Check if already enabled in settings
             let already_enabled = ExtensionSettings::get_global(cx)
-                .allowed_env_vars
+                .allowed_env_var_providers
                 .contains(settings_key.as_ref());
 
             if already_enabled {
@@ -146,7 +146,7 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
                 move |settings, _| {
                     let allowed = settings
                         .extension
-                        .allowed_env_vars
+                        .allowed_env_var_providers
                         .get_or_insert_with(Vec::new);
 
                     if !allowed
@@ -1192,8 +1192,15 @@ impl ExtensionStore {
                 }
             }
 
-            fs.create_symlink(output_path, extension_source_path)
+            fs.create_symlink(output_path, extension_source_path.clone())
                 .await?;
+
+            // Re-load manifest and run migration before reload so settings are updated before providers are registered
+            let manifest_for_migration =
+                ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
+            this.update(cx, |_this, cx| {
+                migrate_legacy_llm_provider_env_var(&manifest_for_migration, cx);
+            })?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
             this.update(cx, |this, cx| {

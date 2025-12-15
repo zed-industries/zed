@@ -1114,6 +1114,7 @@ impl ExtensionImports for WasmState {
 impl llm_provider::Host for WasmState {
     async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
+        let is_legacy_extension = crate::LEGACY_LLM_EXTENSION_IDS.contains(&extension_id.as_ref());
 
         // Check if this provider has env vars configured and if the user has allowed any of them
         let env_vars = self
@@ -1131,6 +1132,11 @@ impl llm_provider::Host for WasmState {
                 let settings_key: Arc<str> =
                     format!("{}:{}", full_provider_id, env_var_name).into();
 
+                // For legacy extensions, auto-allow if env var is set
+                let env_var_is_set = env::var(env_var_name)
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false);
+
                 let is_allowed = self
                     .on_main_thread({
                         let settings_key = settings_key.clone();
@@ -1138,7 +1144,7 @@ impl llm_provider::Host for WasmState {
                             async move {
                                 cx.update(|cx| {
                                     crate::extension_settings::ExtensionSettings::get_global(cx)
-                                        .allowed_env_vars
+                                        .allowed_env_var_providers
                                         .contains(&settings_key)
                                 })
                             }
@@ -1148,7 +1154,7 @@ impl llm_provider::Host for WasmState {
                     .await
                     .unwrap_or(false);
 
-                if is_allowed {
+                if is_allowed || (is_legacy_extension && env_var_is_set) {
                     if let Ok(value) = env::var(env_var_name) {
                         if !value.is_empty() {
                             return Ok(Some(value));
@@ -1247,6 +1253,11 @@ impl llm_provider::Host for WasmState {
 
         // Check if the user has allowed this specific env var
         let settings_key: Arc<str> = format!("{}:{}:{}", extension_id, provider_id, name).into();
+        let is_legacy_extension = crate::LEGACY_LLM_EXTENSION_IDS.contains(&extension_id.as_ref());
+
+        // For legacy extensions, auto-allow if env var is set
+        let env_var_is_set = env::var(&name).map(|v| !v.is_empty()).unwrap_or(false);
+
         let is_allowed = self
             .on_main_thread({
                 let settings_key = settings_key.clone();
@@ -1254,7 +1265,7 @@ impl llm_provider::Host for WasmState {
                     async move {
                         cx.update(|cx| {
                             crate::extension_settings::ExtensionSettings::get_global(cx)
-                                .allowed_env_vars
+                                .allowed_env_var_providers
                                 .contains(&settings_key)
                         })
                     }
@@ -1264,7 +1275,7 @@ impl llm_provider::Host for WasmState {
             .await
             .unwrap_or(false);
 
-        if !is_allowed {
+        if !is_allowed && !(is_legacy_extension && env_var_is_set) {
             log::debug!(
                 "Extension {} provider {} is not allowed to read env var {}",
                 extension_id,

@@ -25,7 +25,7 @@ pub struct ExtensionSettingsContent {
     /// "extension_id:provider_id:ENV_VAR_NAME" (e.g., "google-ai:google-ai:GEMINI_API_KEY").
     ///
     /// Default: []
-    pub allowed_env_vars: Option<Vec<Arc<str>>>,
+    pub allowed_env_var_providers: Option<Vec<Arc<str>>>,
 }
 
 /// A capability for an extension.
