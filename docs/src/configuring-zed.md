@@ -1480,7 +1480,7 @@ or
 
 If this is true, user won't be prompted whether to save/discard dirty files when closing the application.
 
-2. Whether or not to skip worktree trust checks:
+2. Whether or not to skip worktree and workspace trust checks:
 
 ```json [settings]
 {
