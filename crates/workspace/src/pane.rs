@@ -3042,6 +3042,10 @@ impl Pane {
     }
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return gpui::Empty.into_any();
+        };
+
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -3066,31 +3070,43 @@ impl Pane {
                 }
             });
 
-        let open_aside_left = IconButton::new("open_aside_left", IconName::Thread)
-            .icon_size(IconSize::Small)
-            .on_click({
-                let workspace = self.workspace.clone();
-                move |_, window, cx| {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
-                        })
-                        .ok();
-                }
-            });
+        let open_aside_left = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Left).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
 
-        let open_aside_right = IconButton::new("open_aside_right", IconName::Thread)
-            .icon_size(IconSize::Small)
-            .on_click({
-                let workspace = self.workspace.clone();
-                move |_, window, cx| {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
-                        })
-                        .ok();
-                }
-            });
+                IconButton::new("open_aside_left", toggle_icon)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        workspace_handle
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_utility_pane(UtilityPaneSlot::Left, window, cx)
+                            })
+                            .ok();
+                    })
+                    .into_any_element()
+            })
+        };
+
+        let open_aside_right = {
+            let workspace = workspace.read(cx);
+            workspace.utility_pane(UtilityPaneSlot::Right).map(|pane| {
+                let toggle_icon = pane.toggle_icon(cx);
+                let workspace_handle = self.workspace.clone();
+
+                IconButton::new("open_aside_right", toggle_icon)
+                    .icon_size(IconSize::Small)
+                    .on_click(move |_, window, cx| {
+                        workspace_handle
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_utility_pane(UtilityPaneSlot::Right, window, cx)
+                            })
+                            .ok();
+                    })
+                    .into_any_element()
+            })
+        };
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
@@ -3167,8 +3183,14 @@ impl Pane {
                 .unwrap_or(false);
 
         TabBar::new("tab_bar")
-            .when(render_aside_toggle_left, |tab_bar| {
-                tab_bar.start_child(open_aside_left)
+            .map(|tab_bar| {
+                if let Some(open_aside_left) = open_aside_left
+                    && render_aside_toggle_left
+                {
+                    tab_bar.end_child(open_aside_left)
+                } else {
+                    tab_bar
+                }
             })
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
@@ -3188,9 +3210,6 @@ impl Pane {
                 } else {
                     tab_bar
                 }
-            })
-            .when(render_aside_toggle_right, |tab_bar| {
-                tab_bar.end_child(open_aside_right)
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
                 let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
@@ -3265,6 +3284,15 @@ impl Pane {
                             })),
                     ),
             )
+            .map(|tab_bar| {
+                if let Some(open_aside_right) = open_aside_right
+                    && render_aside_toggle_right
+                {
+                    tab_bar.end_child(open_aside_right)
+                } else {
+                    tab_bar
+                }
+            })
             .into_any_element()
     }
 

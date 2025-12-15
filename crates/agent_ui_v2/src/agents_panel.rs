@@ -1,32 +1,31 @@
+use agent::{HistoryEntry, HistoryStore};
 use agent_settings::AgentSettings;
 use anyhow::Result;
+use assistant_text_thread::TextThreadStore;
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
-    Action, AnyElement, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Subscription,
-    Task, WeakEntity, actions, prelude::*, px,
+    Action, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Subscription, Task,
+    WeakEntity, actions, prelude::*,
 };
+use project::Project;
+use prompt_store::{PromptBuilder, PromptStore};
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
 use std::sync::Arc;
-use ui::{
-    App, Context, IconName, IntoElement, Label, LabelCommon as _, LabelSize, ListItem,
-    ListItemSpacing, ParentElement, Render, RenderOnce, Styled, Window, div, h_flex,
-};
+use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
 use util::ResultExt;
 use workspace::{
     Panel, Workspace,
-    dock::{ClosePane, DockPosition, MinimizePane, PanelEvent, UtilityPane, UtilityPanePosition},
+    dock::{DockPosition, PanelEvent, UtilityPane},
 };
 
-const AGENTS_PANEL_KEY: &str = "agents_panel";
-const DEFAULT_UTILITY_PANE_WIDTH: Pixels = px(400.0);
+use crate::agent_thread_pane::{
+    AgentThreadPane, AgentsUtilityPaneEvent, SerializedAgentThreadPane,
+};
+use crate::thread_history::{AcpThreadHistory, ThreadHistoryEvent};
 
-#[derive(Serialize, Deserialize, Debug)]
-struct SerializedAgentThreadPane {
-    expanded: bool,
-    width: Option<Pixels>,
-}
+const AGENTS_PANEL_KEY: &str = "agents_panel";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentsPanel {
@@ -53,7 +52,12 @@ pub fn init(cx: &mut App) {
 
 pub struct AgentsPanel {
     focus_handle: gpui::FocusHandle,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     agent_thread_pane: Entity<AgentThreadPane>,
+    history: Entity<AcpThreadHistory>,
+    history_store: Entity<HistoryStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
@@ -78,10 +82,40 @@ impl AgentsPanel {
                 })
                 .await;
 
-            workspace.update_in(cx, |workspace, _window, cx| {
+            let (fs, project, prompt_builder) = workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
+                let project = workspace.project().clone();
+                let prompt_builder = PromptBuilder::load(fs.clone(), false, cx);
+                (fs, project, prompt_builder)
+            })?;
+
+            let text_thread_store = workspace
+                .update(cx, |_, cx| {
+                    TextThreadStore::new(
+                        project.clone(),
+                        prompt_builder.clone(),
+                        Default::default(),
+                        cx,
+                    )
+                })?
+                .await?;
+
+            let prompt_store = workspace
+                .update(cx, |_, cx| PromptStore::global(cx))?
+                .await
+                .log_err();
+
+            workspace.update_in(cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let mut panel = Self::new(fs, cx);
+                    let mut panel = Self::new(
+                        workspace.clone(),
+                        fs,
+                        project,
+                        prompt_store,
+                        text_thread_store,
+                        window,
+                        cx,
+                    );
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
                         panel
@@ -94,15 +128,34 @@ impl AgentsPanel {
         })
     }
 
-    fn new(fs: Arc<dyn Fs>, cx: &mut ui::Context<Self>) -> Self {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        fs: Arc<dyn Fs>,
+        project: Entity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
+        text_thread_store: Entity<TextThreadStore>,
+        window: &mut Window,
+        cx: &mut ui::Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
-        let agent_thread_pane = cx.new(|cx| AgentThreadPane::new(cx));
+        let agent_thread_pane = cx.new(|cx| AgentThreadPane::new(workspace.clone(), cx));
 
-        let subscriptions = vec![cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event)];
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
+
+        let subscriptions = vec![
+            cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event),
+            cx.subscribe_in(&history, window, Self::handle_history_event),
+        ];
 
         Self {
             focus_handle,
+            workspace,
+            project,
             agent_thread_pane,
+            history,
+            history_store,
+            prompt_store,
             fs,
             width: None,
             pending_serialization: Task::ready(None),
@@ -122,6 +175,42 @@ impl AgentsPanel {
                 cx.notify();
             }
         }
+    }
+
+    fn handle_history_event(
+        &mut self,
+        _history: &Entity<AcpThreadHistory>,
+        event: &ThreadHistoryEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ThreadHistoryEvent::Open(entry) => {
+                self.open_thread(entry.clone(), window, cx);
+            }
+        }
+    }
+
+    fn open_thread(&mut self, entry: HistoryEntry, window: &mut Window, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        let history_store = self.history_store.clone();
+        let prompt_store = self.prompt_store.clone();
+
+        self.agent_thread_pane.update(cx, |pane, cx| {
+            pane.open_thread(
+                entry,
+                fs,
+                workspace,
+                project,
+                history_store,
+                prompt_store,
+                window,
+                cx,
+            );
+            pane.set_expanded(true, cx);
+        });
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
@@ -224,152 +313,6 @@ impl Panel for AgentsPanel {
 
 impl Render for AgentsPanel {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_threads = vec![
-            AgentThreadSummary {
-                title: "Building the agents panel".into(),
-                worktree_branch: Some("new-threads-pane".into()),
-                diff: AgentThreadDiff {
-                    removed: 0,
-                    modified: 0,
-                    added: 1,
-                },
-            },
-            AgentThreadSummary {
-                title: "Integrate Delta DB".into(),
-                worktree_branch: Some("integrate-deltadb".into()),
-                diff: AgentThreadDiff {
-                    removed: 2,
-                    modified: 10,
-                    added: 3,
-                },
-            },
-        ];
-
-        div().size_full().children(agent_threads)
-    }
-}
-
-#[derive(IntoElement)]
-struct AgentThreadSummary {
-    title: gpui::SharedString,
-    worktree_branch: Option<gpui::SharedString>,
-    diff: AgentThreadDiff,
-}
-
-impl RenderOnce for AgentThreadSummary {
-    fn render(self, _window: &mut Window, _cx: &mut ui::App) -> impl IntoElement {
-        ListItem::new("list-item")
-            .rounded()
-            .spacing(ListItemSpacing::Sparse)
-            .start_slot(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_between()
-                    .child(Label::new(self.title).size(LabelSize::Default).truncate())
-                    .children(
-                        self.worktree_branch
-                            .map(|branch| Label::new(branch).size(LabelSize::Small).truncate()),
-                    )
-                    .child(self.diff),
-            )
-    }
-}
-
-#[derive(IntoElement)]
-struct AgentThreadDiff {
-    removed: usize,
-    modified: usize,
-    added: usize,
-}
-
-impl RenderOnce for AgentThreadDiff {
-    fn render(self, _window: &mut Window, _cx: &mut ui::App) -> impl IntoElement {
-        Label::new(format!("{}:{}:{}", self.added, self.modified, self.removed))
-    }
-}
-
-pub enum AgentsUtilityPaneEvent {
-    StateChanged,
-}
-
-impl EventEmitter<AgentsUtilityPaneEvent> for AgentThreadPane {}
-impl EventEmitter<MinimizePane> for AgentThreadPane {}
-impl EventEmitter<ClosePane> for AgentThreadPane {}
-
-pub struct AgentThreadPane {
-    focus_handle: gpui::FocusHandle,
-    expanded: bool,
-    width: Option<Pixels>,
-}
-
-impl AgentThreadPane {
-    pub fn new(cx: &mut ui::Context<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
-        Self {
-            focus_handle,
-            expanded: false,
-            width: None,
-        }
-    }
-
-    fn load(&mut self, serialized_pane: SerializedAgentThreadPane, _cx: &mut Context<Self>) {
-        self.expanded = serialized_pane.expanded;
-        self.width = serialized_pane.width;
-    }
-
-    fn serialize(&self) -> SerializedAgentThreadPane {
-        SerializedAgentThreadPane {
-            expanded: self.expanded,
-            width: self.width,
-        }
-    }
-}
-
-impl Focusable for AgentThreadPane {
-    fn focus_handle(&self, _cx: &ui::App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl UtilityPane for AgentThreadPane {
-    fn position(&self, _window: &Window, cx: &App) -> UtilityPanePosition {
-        let dock_position = AgentSettings::get_global(cx).dock.into();
-        match dock_position {
-            DockPosition::Left | DockPosition::Bottom => UtilityPanePosition::Left,
-            DockPosition::Right => UtilityPanePosition::Right,
-        }
-    }
-
-    fn toggle_button(&self, _cx: &App) -> AnyElement {
-        Label::new("Toggle Utility Pane").into_any_element()
-    }
-
-    fn expanded(&self, _cx: &App) -> bool {
-        self.expanded
-    }
-
-    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
-        self.expanded = expanded;
-        cx.emit(AgentsUtilityPaneEvent::StateChanged);
-        cx.notify();
-    }
-
-    fn width(&self, _cx: &App) -> Pixels {
-        self.width.unwrap_or(DEFAULT_UTILITY_PANE_WIDTH)
-    }
-
-    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
-        self.width = width;
-        cx.emit(AgentsUtilityPaneEvent::StateChanged);
-        cx.notify();
-    }
-}
-
-impl Render for AgentThreadPane {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(Label::new("Thread Details (Placeholder)").size(LabelSize::Default))
+        gpui::div().size_full().child(self.history.clone())
     }
 }

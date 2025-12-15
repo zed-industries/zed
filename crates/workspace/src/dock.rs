@@ -33,8 +33,8 @@ pub struct ClosePane;
 
 pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
     fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    /// The element to render in the adjacent pane's tab bar when this utility pane is minimized
-    fn toggle_button(&self, cx: &App) -> AnyElement;
+    /// The icon to render in the adjacent pane's tab bar for toggling this utility pane
+    fn toggle_icon(&self, cx: &App) -> IconName;
     fn expanded(&self, cx: &App) -> bool;
     fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>);
     fn width(&self, cx: &App) -> Pixels;
@@ -43,7 +43,7 @@ pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Re
 
 pub trait UtilityPaneHandle: 'static + Send + Sync {
     fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    fn toggle_button(&self, cx: &App) -> AnyElement;
+    fn toggle_icon(&self, cx: &App) -> IconName;
     fn expanded(&self, cx: &App) -> bool;
     fn set_expanded(&self, expanded: bool, cx: &mut App);
     fn width(&self, cx: &App) -> Pixels;
@@ -60,8 +60,8 @@ where
         self.read(cx).position(window, cx)
     }
 
-    fn toggle_button(&self, cx: &App) -> AnyElement {
-        self.read(cx).toggle_button(cx)
+    fn toggle_icon(&self, cx: &App) -> IconName {
+        self.read(cx).toggle_icon(cx)
     }
 
     fn expanded(&self, cx: &App) -> bool {

@@ -1,11 +1,10 @@
 use gpui::{
-    AppContext, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement, WeakEntity,
+    AppContext as _, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement, WeakEntity,
     deferred, px,
 };
 use ui::{
-    ActiveTheme as _, Clickable, Context, DynamicSpacing, FluentBuilder as _, IconButton, IconName,
-    IconSize, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, Styled as _,
-    Tab, Window, div,
+    ActiveTheme as _, Context, FluentBuilder as _, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, Styled as _, Window, div,
 };
 
 use crate::{DockPosition, Workspace, dock::UtilityPaneHandle};
@@ -251,50 +250,6 @@ impl RenderOnce for UtilityPaneFrame {
             .when(self.slot == UtilityPaneSlot::Right, |this| {
                 this.border_l_1()
             })
-            .child(
-                div()
-                    .pt_1()
-                    .id(match self.slot {
-                        UtilityPaneSlot::Left => "utility-pane-left",
-                        UtilityPaneSlot::Right => "utility-pane-right",
-                    })
-                    .flex()
-                    .flex_none()
-                    .w_full()
-                    .h(Tab::container_height(cx))
-                    .when(self.slot == UtilityPaneSlot::Left, |this| {
-                        let workspace = workspace.clone();
-                        this.child(
-                            div().px(DynamicSpacing::Base06.rems(cx)).child(
-                                IconButton::new("open_utility_pane", IconName::Thread)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(move |_, window, cx| {
-                                        workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace.toggle_utility_pane(slot, window, cx)
-                                            })
-                                            .ok();
-                                    }),
-                            ),
-                        )
-                    })
-                    .when(self.slot == UtilityPaneSlot::Right, |this| {
-                        let workspace = workspace.clone();
-                        this.flex_row_reverse().child(
-                            div().px(DynamicSpacing::Base06.rems(cx)).child(
-                                IconButton::new("open_utility_pane", IconName::Thread)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(move |_, window, cx| {
-                                        workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace.toggle_utility_pane(slot, window, cx)
-                                            })
-                                            .ok();
-                                    }),
-                            ),
-                        )
-                    }),
-            )
             .child(create_resize_handle())
             .child(self.handle.to_any())
             .into_any_element()

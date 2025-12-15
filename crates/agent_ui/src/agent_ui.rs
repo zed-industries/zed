@@ -1,4 +1,4 @@
-mod acp;
+pub mod acp;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
