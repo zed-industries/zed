@@ -10,4 +10,4 @@ repository = "https://github.com/zed-industries/zed"
 name = "Google AI"
 
 [language_model_providers.google-ai.auth]
-env_var = "GEMINI_API_KEY"
+env_vars = ["GEMINI_API_KEY", "GOOGLE_AI_API_KEY"]

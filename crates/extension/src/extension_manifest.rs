@@ -330,9 +330,10 @@ pub struct LanguageModelManifestEntry {
 pub struct LanguageModelAuthConfig {
     /// Human-readable name for the credential shown in the UI input field (e.g. "API Key", "Access Token").
     pub credential_label: Option<String>,
-    /// Environment variable name for the API key (if env var auth supported).
+    /// Environment variable names for the API key (if env var auth supported).
+    /// Multiple env vars can be specified; they will be checked in order.
     #[serde(default)]
-    pub env_var: Option<String>,
+    pub env_vars: Option<Vec<String>>,
     /// OAuth configuration for web-based authentication flows.
     #[serde(default)]
     pub oauth: Option<OAuthConfig>,

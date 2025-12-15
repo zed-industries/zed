@@ -10,4 +10,4 @@ repository = "https://github.com/zed-industries/zed"
 name = "OpenRouter"
 
 [language_model_providers.openrouter.auth]
-env_var = "OPENROUTER_API_KEY"
+env_vars = ["OPENROUTER_API_KEY"]

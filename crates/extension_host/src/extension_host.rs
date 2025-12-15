@@ -99,7 +99,7 @@ const LEGACY_LLM_EXTENSION_IDS: &[&str] = &[
 /// Migrates legacy LLM provider extensions by auto-enabling env var reading
 /// if the env var is currently present in the environment.
 ///
-/// This is idempotent: if the provider is already in `allowed_env_var_providers`,
+/// This is idempotent: if the env var is already in `allowed_env_vars`,
 /// we skip. This means if a user explicitly removes it, it will be re-added on
 /// next launch if the env var is still set - but that's predictable behavior.
 fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut App) {
@@ -113,48 +113,51 @@ fn migrate_legacy_llm_provider_env_var(manifest: &ExtensionManifest, cx: &mut Ap
         let Some(auth_config) = &provider_entry.auth else {
             continue;
         };
-        let Some(env_var_name) = &auth_config.env_var else {
+        let Some(env_vars) = &auth_config.env_vars else {
             continue;
         };
 
-        let full_provider_id: Arc<str> = format!("{}:{}", manifest.id, provider_id).into();
+        let full_provider_id = format!("{}:{}", manifest.id, provider_id);
 
-        // Check if the env var is present and non-empty
-        let env_var_is_set = std::env::var(env_var_name)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+        // For each env var, check if it's set and enable it if so
+        for env_var_name in env_vars {
+            let env_var_is_set = std::env::var(env_var_name)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
 
-        // If env var isn't set, no need to do anything
-        if !env_var_is_set {
-            continue;
-        }
-
-        // Check if already enabled in settings
-        let already_enabled = ExtensionSettings::get_global(cx)
-            .allowed_env_var_providers
-            .contains(full_provider_id.as_ref());
-
-        if already_enabled {
-            continue;
-        }
-
-        // Enable env var reading since the env var is set
-        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
-            let full_provider_id = full_provider_id.clone();
-            move |settings, _| {
-                let providers = settings
-                    .extension
-                    .allowed_env_var_providers
-                    .get_or_insert_with(Vec::new);
-
-                if !providers
-                    .iter()
-                    .any(|id| id.as_ref() == full_provider_id.as_ref())
-                {
-                    providers.push(full_provider_id);
-                }
+            if !env_var_is_set {
+                continue;
             }
-        });
+
+            let settings_key: Arc<str> = format!("{}:{}", full_provider_id, env_var_name).into();
+
+            // Check if already enabled in settings
+            let already_enabled = ExtensionSettings::get_global(cx)
+                .allowed_env_vars
+                .contains(settings_key.as_ref());
+
+            if already_enabled {
+                continue;
+            }
+
+            // Enable env var reading since the env var is set
+            settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
+                let settings_key = settings_key.clone();
+                move |settings, _| {
+                    let allowed = settings
+                        .extension
+                        .allowed_env_vars
+                        .get_or_insert_with(Vec::new);
+
+                    if !allowed
+                        .iter()
+                        .any(|id| id.as_ref() == settings_key.as_ref())
+                    {
+                        allowed.push(settings_key);
+                    }
+                }
+            });
+        }
     }
 }
 

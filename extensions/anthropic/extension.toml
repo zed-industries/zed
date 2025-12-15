@@ -10,4 +10,4 @@ repository = "https://github.com/zed-industries/zed"
 name = "Anthropic"
 
 [language_model_providers.anthropic.auth]
-env_var = "ANTHROPIC_API_KEY"
+env_vars = ["ANTHROPIC_API_KEY"]

@@ -10,4 +10,4 @@ repository = "https://github.com/zed-industries/zed"
 name = "OpenAI"
 
 [language_model_providers.openai.auth]
-env_var = "OPENAI_API_KEY"
+env_vars = ["OPENAI_API_KEY"]

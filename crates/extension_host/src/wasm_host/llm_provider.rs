@@ -1,5 +1,6 @@
 use crate::ExtensionSettings;
 use crate::wasm_host::WasmExtension;
+use collections::HashSet;
 
 use crate::wasm_host::wit::{
     LlmCompletionEvent, LlmCompletionRequest, LlmImageData, LlmMessageContent, LlmMessageRole,
@@ -46,8 +47,10 @@ pub struct ExtensionLanguageModelProvider {
 pub struct ExtensionLlmProviderState {
     is_authenticated: bool,
     available_models: Vec<LlmModelInfo>,
-    env_var_allowed: bool,
-    api_key_from_env: bool,
+    /// Set of env var names that are allowed to be read for this provider.
+    allowed_env_vars: HashSet<String>,
+    /// If authenticated via env var, which one was used.
+    env_var_name_used: Option<String>,
 }
 
 impl EventEmitter<()> for ExtensionLlmProviderState {}
@@ -63,31 +66,40 @@ impl ExtensionLanguageModelProvider {
         cx: &mut App,
     ) -> Self {
         let provider_id_string = format!("{}:{}", extension.manifest.id, provider_info.id);
-        let env_var_allowed = ExtensionSettings::get_global(cx)
-            .allowed_env_var_providers
-            .contains(provider_id_string.as_str());
 
-        let (is_authenticated, api_key_from_env) =
-            if env_var_allowed && auth_config.as_ref().is_some_and(|c| c.env_var.is_some()) {
-                let env_var_name = auth_config.as_ref().unwrap().env_var.as_ref().unwrap();
-                if let Ok(value) = std::env::var(env_var_name) {
-                    if !value.is_empty() {
-                        (true, true)
-                    } else {
-                        (is_authenticated, false)
-                    }
-                } else {
-                    (is_authenticated, false)
+        // Build set of allowed env vars for this provider
+        let settings = ExtensionSettings::get_global(cx);
+        let mut allowed_env_vars = HashSet::default();
+        if let Some(env_vars) = auth_config.as_ref().and_then(|c| c.env_vars.as_ref()) {
+            for env_var_name in env_vars {
+                let key = format!("{}:{}", provider_id_string, env_var_name);
+                if settings.allowed_env_vars.contains(key.as_str()) {
+                    allowed_env_vars.insert(env_var_name.clone());
                 }
-            } else {
-                (is_authenticated, false)
-            };
+            }
+        }
+
+        // Check if any allowed env var is set
+        let env_var_name_used = allowed_env_vars.iter().find_map(|env_var_name| {
+            if let Ok(value) = std::env::var(env_var_name) {
+                if !value.is_empty() {
+                    return Some(env_var_name.clone());
+                }
+            }
+            None
+        });
+
+        let is_authenticated = if env_var_name_used.is_some() {
+            true
+        } else {
+            is_authenticated
+        };
 
         let state = cx.new(|_| ExtensionLlmProviderState {
             is_authenticated,
             available_models: models,
-            env_var_allowed,
-            api_key_from_env,
+            allowed_env_vars,
+            env_var_name_used,
         });
 
         Self {
@@ -184,18 +196,19 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
             return true;
         }
 
-        // Also check env var dynamically (in case migration happened after provider creation)
+        // Also check env var dynamically (in case settings changed after provider creation)
         if let Some(ref auth_config) = self.auth_config {
-            if let Some(ref env_var_name) = auth_config.env_var {
+            if let Some(ref env_vars) = auth_config.env_vars {
                 let provider_id_string = self.provider_id_string();
-                let env_var_allowed = ExtensionSettings::get_global(cx)
-                    .allowed_env_var_providers
-                    .contains(provider_id_string.as_str());
+                let settings = ExtensionSettings::get_global(cx);
 
-                if env_var_allowed {
-                    if let Ok(value) = std::env::var(env_var_name) {
-                        if !value.is_empty() {
-                            return true;
+                for env_var_name in env_vars {
+                    let key = format!("{}:{}", provider_id_string, env_var_name);
+                    if settings.allowed_env_vars.contains(key.as_str()) {
+                        if let Ok(value) = std::env::var(env_var_name) {
+                            if !value.is_empty() {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -409,11 +422,11 @@ impl ExtensionProviderConfigurationView {
         let state = self.state.clone();
 
         // Check if we should use env var (already set in state during provider construction)
-        let api_key_from_env = self.state.read(cx).api_key_from_env;
+        let using_env_var = self.state.read(cx).env_var_name_used.is_some();
 
         cx.spawn(async move |this, cx| {
             // If using env var, we're already authenticated
-            if api_key_from_env {
+            if using_env_var {
                 this.update(cx, |this, cx| {
                     this.loading_credentials = false;
                     cx.notify();
@@ -448,76 +461,72 @@ impl ExtensionProviderConfigurationView {
         .detach();
     }
 
-    fn toggle_env_var_permission(&mut self, cx: &mut Context<Self>) {
-        let full_provider_id: Arc<str> = self.full_provider_id.clone().into();
-        let env_var_name = match &self.auth_config {
-            Some(config) => config.env_var.clone(),
-            None => return,
-        };
+    fn toggle_env_var_permission(&mut self, env_var_name: String, cx: &mut Context<Self>) {
+        let full_provider_id = self.full_provider_id.clone();
+        let settings_key: Arc<str> = format!("{}:{}", full_provider_id, env_var_name).into();
 
         let state = self.state.clone();
-        let currently_allowed = self.state.read(cx).env_var_allowed;
+        let currently_allowed = self.state.read(cx).allowed_env_vars.contains(&env_var_name);
 
         // Update settings file
-        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, move |settings, _| {
-            let providers = settings
-                .extension
-                .allowed_env_var_providers
-                .get_or_insert_with(Vec::new);
+        settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
+            let settings_key = settings_key.clone();
+            move |settings, _| {
+                let allowed = settings
+                    .extension
+                    .allowed_env_vars
+                    .get_or_insert_with(Vec::new);
 
-            if currently_allowed {
-                providers.retain(|id| id.as_ref() != full_provider_id.as_ref());
-            } else {
-                if !providers
-                    .iter()
-                    .any(|id| id.as_ref() == full_provider_id.as_ref())
-                {
-                    providers.push(full_provider_id.clone());
+                if currently_allowed {
+                    allowed.retain(|id| id.as_ref() != settings_key.as_ref());
+                } else {
+                    if !allowed
+                        .iter()
+                        .any(|id| id.as_ref() == settings_key.as_ref())
+                    {
+                        allowed.push(settings_key.clone());
+                    }
                 }
             }
         });
 
         // Update local state
         let new_allowed = !currently_allowed;
-        let new_from_env = if new_allowed {
-            if let Some(var_name) = &env_var_name {
-                if let Ok(value) = std::env::var(var_name) {
-                    !value.is_empty()
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        let env_var_name_clone = env_var_name.clone();
 
         state.update(cx, |state, cx| {
-            state.env_var_allowed = new_allowed;
-            state.api_key_from_env = new_from_env;
-            if new_from_env {
-                state.is_authenticated = true;
+            if new_allowed {
+                state.allowed_env_vars.insert(env_var_name_clone.clone());
+                // Check if this env var is set and update env_var_name_used
+                if let Ok(value) = std::env::var(&env_var_name_clone) {
+                    if !value.is_empty() && state.env_var_name_used.is_none() {
+                        state.env_var_name_used = Some(env_var_name_clone);
+                        state.is_authenticated = true;
+                    }
+                }
+            } else {
+                state.allowed_env_vars.remove(&env_var_name_clone);
+                // If this was the env var being used, clear it and find another
+                if state.env_var_name_used.as_ref() == Some(&env_var_name_clone) {
+                    state.env_var_name_used = state.allowed_env_vars.iter().find_map(|var| {
+                        if let Ok(value) = std::env::var(var) {
+                            if !value.is_empty() {
+                                return Some(var.clone());
+                            }
+                        }
+                        None
+                    });
+                    if state.env_var_name_used.is_none() {
+                        // No env var auth available, need to check keychain
+                        state.is_authenticated = false;
+                    }
+                }
             }
             cx.notify();
         });
 
-        // If env var is being enabled, clear any stored keychain credentials
-        // so there's only one source of truth for the API key
-        if new_allowed {
-            let credential_key = self.credential_key.clone();
-            let credentials_provider = <dyn CredentialsProvider>::global(cx);
-            cx.spawn(async move |_this, cx| {
-                credentials_provider
-                    .delete_credentials(&credential_key, cx)
-                    .await
-                    .log_err();
-            })
-            .detach();
-        }
-
-        // If env var is being disabled, reload credentials from keychain
-        if !new_allowed {
+        // If all env vars are being disabled, reload credentials from keychain
+        if !new_allowed && self.state.read(cx).allowed_env_vars.is_empty() {
             self.reload_keychain_credentials(cx);
         }
 
@@ -760,8 +769,8 @@ impl gpui::Render for ExtensionProviderConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_loading = self.loading_settings || self.loading_credentials;
         let is_authenticated = self.is_authenticated(cx);
-        let env_var_allowed = self.state.read(cx).env_var_allowed;
-        let api_key_from_env = self.state.read(cx).api_key_from_env;
+        let allowed_env_vars = self.state.read(cx).allowed_env_vars.clone();
+        let env_var_name_used = self.state.read(cx).env_var_name_used.clone();
         let has_oauth = self.has_oauth_config();
         let has_api_key = self.has_api_key_config();
 
@@ -780,95 +789,83 @@ impl gpui::Render for ExtensionProviderConfigurationView {
             content = content.child(MarkdownElement::new(markdown.clone(), style));
         }
 
-        // Render env var checkbox if the extension specifies an env var
+        // Render env var checkboxes - one for each env var the extension declares
         if let Some(auth_config) = &self.auth_config {
-            if let Some(env_var_name) = &auth_config.env_var {
-                let env_var_name = env_var_name.clone();
-                let checkbox_label =
-                    format!("Read API key from {} environment variable", env_var_name);
+            if let Some(env_vars) = &auth_config.env_vars {
+                for env_var_name in env_vars {
+                    let is_allowed = allowed_env_vars.contains(env_var_name);
+                    let checkbox_label =
+                        format!("Read API key from {} environment variable", env_var_name);
+                    let env_var_for_click = env_var_name.clone();
 
-                content = content.child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            ui::Checkbox::new("env-var-permission", env_var_allowed.into())
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.toggle_env_var_permission(cx);
-                                })),
-                        )
-                        .child(Label::new(checkbox_label).size(LabelSize::Small)),
-                );
+                    content = content.child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                ui::Checkbox::new(
+                                    SharedString::from(format!("env-var-{}", env_var_name)),
+                                    is_allowed.into(),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _window, cx| {
+                                        this.toggle_env_var_permission(
+                                            env_var_for_click.clone(),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .child(Label::new(checkbox_label).size(LabelSize::Small)),
+                    );
+                }
 
-                // Show status if env var is allowed
-                if env_var_allowed {
-                    if api_key_from_env {
-                        let tooltip_label = format!(
-                            "To reset this API key, unset the {} environment variable.",
-                            env_var_name
-                        );
-                        content = content.child(
-                            h_flex()
-                                .mt_0p5()
-                                .p_1()
-                                .justify_between()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().background)
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap_1()
-                                        .child(
-                                            ui::Icon::new(ui::IconName::Check)
-                                                .color(Color::Success),
-                                        )
-                                        .child(
-                                            Label::new(format!(
-                                                "API key set in {} environment variable",
-                                                env_var_name
-                                            ))
-                                            .truncate(),
-                                        ),
-                                )
-                                .child(
-                                    ui::Button::new("reset-key", "Reset Key")
-                                        .label_size(LabelSize::Small)
-                                        .icon(ui::IconName::Undo)
-                                        .icon_size(ui::IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(ui::IconPosition::Start)
-                                        .disabled(true)
-                                        .tooltip(ui::Tooltip::text(tooltip_label)),
-                                ),
-                        );
-                        return content.into_any_element();
-                    } else {
-                        content = content.child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    ui::Icon::new(ui::IconName::Warning)
-                                        .color(Color::Warning)
-                                        .size(ui::IconSize::Small),
-                                )
-                                .child(
-                                    Label::new(format!(
-                                        "{} is not set or empty. You can set it and restart Zed, or use another authentication method below.",
-                                        env_var_name
-                                    ))
-                                    .color(Color::Warning)
-                                    .size(LabelSize::Small),
-                                ),
-                        );
-                    }
+                // Show status if any env var is being used
+                if let Some(used_var) = &env_var_name_used {
+                    let tooltip_label = format!(
+                        "To reset this API key, unset the {} environment variable.",
+                        used_var
+                    );
+                    content = content.child(
+                        h_flex()
+                            .mt_0p5()
+                            .p_1()
+                            .justify_between()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().background)
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(ui::Icon::new(ui::IconName::Check).color(Color::Success))
+                                    .child(
+                                        Label::new(format!(
+                                            "API key set in {} environment variable",
+                                            used_var
+                                        ))
+                                        .truncate(),
+                                    ),
+                            )
+                            .child(
+                                ui::Button::new("reset-key", "Reset Key")
+                                    .label_size(LabelSize::Small)
+                                    .icon(ui::IconName::Undo)
+                                    .icon_size(ui::IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .icon_position(ui::IconPosition::Start)
+                                    .disabled(true)
+                                    .tooltip(ui::Tooltip::text(tooltip_label)),
+                            ),
+                    );
+                    return content.into_any_element();
                 }
             }
         }
 
         // If authenticated, show success state with sign out option
-        if is_authenticated && !api_key_from_env {
+        if is_authenticated && env_var_name_used.is_none() {
             let reset_label = if has_oauth && !has_api_key {
                 "Sign Out"
             } else {
@@ -915,7 +912,7 @@ impl gpui::Render for ExtensionProviderConfigurationView {
         }
 
         // Not authenticated - show available auth options
-        if !api_key_from_env {
+        if env_var_name_used.is_none() {
             // Render OAuth sign-in button if configured
             if has_oauth {
                 let oauth_config = self.oauth_config();

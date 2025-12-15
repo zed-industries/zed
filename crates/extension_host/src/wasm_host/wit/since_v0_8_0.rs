@@ -1115,38 +1115,44 @@ impl llm_provider::Host for WasmState {
     async fn get_credential(&mut self, provider_id: String) -> wasmtime::Result<Option<String>> {
         let extension_id = self.manifest.id.clone();
 
-        // Check if this provider has an env var configured and if the user has allowed it
-        let env_var_name = self
+        // Check if this provider has env vars configured and if the user has allowed any of them
+        let env_vars = self
             .manifest
             .language_model_providers
             .get(&Arc::<str>::from(provider_id.as_str()))
             .and_then(|entry| entry.auth.as_ref())
-            .and_then(|auth| auth.env_var.clone());
+            .and_then(|auth| auth.env_vars.clone());
 
-        if let Some(env_var_name) = env_var_name {
-            let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
-            // Read settings dynamically to get current allowed_env_var_providers
-            let is_allowed = self
-                .on_main_thread({
-                    let full_provider_id = full_provider_id.clone();
-                    move |cx| {
-                        async move {
-                            cx.update(|cx| {
-                                crate::extension_settings::ExtensionSettings::get_global(cx)
-                                    .allowed_env_var_providers
-                                    .contains(&full_provider_id)
-                            })
+        if let Some(env_vars) = env_vars {
+            let full_provider_id = format!("{}:{}", extension_id, provider_id);
+
+            // Check each env var to see if it's allowed and set
+            for env_var_name in &env_vars {
+                let settings_key: Arc<str> =
+                    format!("{}:{}", full_provider_id, env_var_name).into();
+
+                let is_allowed = self
+                    .on_main_thread({
+                        let settings_key = settings_key.clone();
+                        move |cx| {
+                            async move {
+                                cx.update(|cx| {
+                                    crate::extension_settings::ExtensionSettings::get_global(cx)
+                                        .allowed_env_vars
+                                        .contains(&settings_key)
+                                })
+                            }
+                            .boxed_local()
                         }
-                        .boxed_local()
-                    }
-                })
-                .await
-                .unwrap_or(false);
+                    })
+                    .await
+                    .unwrap_or(false);
 
-            if is_allowed {
-                if let Ok(value) = env::var(&env_var_name) {
-                    if !value.is_empty() {
-                        return Ok(Some(value));
+                if is_allowed {
+                    if let Ok(value) = env::var(env_var_name) {
+                        if !value.is_empty() {
+                            return Ok(Some(value));
+                        }
                     }
                 }
             }
@@ -1220,9 +1226,11 @@ impl llm_provider::Host for WasmState {
         let mut allowed_provider_id: Option<Arc<str>> = None;
         for (provider_id, provider_entry) in &self.manifest.language_model_providers {
             if let Some(auth_config) = &provider_entry.auth {
-                if auth_config.env_var.as_deref() == Some(&name) {
-                    allowed_provider_id = Some(provider_id.clone());
-                    break;
+                if let Some(env_vars) = &auth_config.env_vars {
+                    if env_vars.iter().any(|v| v == &name) {
+                        allowed_provider_id = Some(provider_id.clone());
+                        break;
+                    }
                 }
             }
         }
@@ -1237,18 +1245,17 @@ impl llm_provider::Host for WasmState {
             return Ok(None);
         };
 
-        // Check if the user has allowed this provider to read env vars
-        // Read settings dynamically to get current allowed_env_var_providers
-        let full_provider_id: Arc<str> = format!("{}:{}", extension_id, provider_id).into();
+        // Check if the user has allowed this specific env var
+        let settings_key: Arc<str> = format!("{}:{}:{}", extension_id, provider_id, name).into();
         let is_allowed = self
             .on_main_thread({
-                let full_provider_id = full_provider_id.clone();
+                let settings_key = settings_key.clone();
                 move |cx| {
                     async move {
                         cx.update(|cx| {
                             crate::extension_settings::ExtensionSettings::get_global(cx)
-                                .allowed_env_var_providers
-                                .contains(&full_provider_id)
+                                .allowed_env_vars
+                                .contains(&settings_key)
                         })
                     }
                     .boxed_local()
