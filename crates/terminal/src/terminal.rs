@@ -1450,13 +1450,8 @@ impl Terminal {
         };
 
         if let Some(motion) = motion {
-            let cursor = self.last_content.cursor.point;
-            let cursor_pos = Point {
-                x: cursor.column.0 as f32 * self.last_content.terminal_bounds.cell_width,
-                y: cursor.line.0 as f32 * self.last_content.terminal_bounds.line_height,
-            };
-            self.events
-                .push_back(InternalEvent::UpdateSelection(cursor_pos));
+            // Clear selection when moving in normal mode
+            self.events.push_back(InternalEvent::SetSelection(None));
             self.events.push_back(InternalEvent::ViMotion(motion));
             return;
         }
