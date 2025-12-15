@@ -1,6 +1,7 @@
 use crate::ExtensionSettings;
 use crate::LEGACY_LLM_EXTENSION_IDS;
 use crate::wasm_host::WasmExtension;
+use crate::wasm_host::wit::LlmDeviceFlowPromptInfo;
 use collections::HashSet;
 
 use crate::wasm_host::wit::{
@@ -18,8 +19,8 @@ use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::Focusable;
 use gpui::{
-    AnyView, App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
-    MouseButton, Subscription, Task, TextStyleRefinement, UnderlineStyle, Window, px,
+    AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
+    TextStyleRefinement, UnderlineStyle, Window, px,
 };
 use language_model::tool_schema::LanguageModelToolSchemaFormat;
 use language_model::{
@@ -35,6 +36,10 @@ use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{Label, LabelSize, prelude::*};
 use util::ResultExt as _;
+use workspace::Workspace;
+use workspace::oauth_device_flow_modal::{
+    OAuthDeviceFlowModal, OAuthDeviceFlowModalConfig, OAuthDeviceFlowState, OAuthDeviceFlowStatus,
+};
 
 /// An extension-based language model provider.
 pub struct ExtensionLanguageModelProvider {
@@ -259,6 +264,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
         let state = self.state.clone();
         let auth_config = self.auth_config.clone();
 
+        let icon_path = self.icon_path.clone();
         cx.new(|cx| {
             ExtensionProviderConfigurationView::new(
                 credential_key,
@@ -267,6 +273,7 @@ impl LanguageModelProvider for ExtensionLanguageModelProvider {
                 full_provider_id,
                 auth_config,
                 state,
+                icon_path,
                 window,
                 cx,
             )
@@ -348,7 +355,7 @@ struct ExtensionProviderConfigurationView {
     loading_credentials: bool,
     oauth_in_progress: bool,
     oauth_error: Option<String>,
-    device_user_code: Option<String>,
+    icon_path: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -360,6 +367,7 @@ impl ExtensionProviderConfigurationView {
         full_provider_id: String,
         auth_config: Option<LanguageModelAuthConfig>,
         state: Entity<ExtensionLlmProviderState>,
+        icon_path: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -388,7 +396,7 @@ impl ExtensionProviderConfigurationView {
             loading_credentials: true,
             oauth_in_progress: false,
             oauth_error: None,
-            device_user_code: None,
+            icon_path,
             _subscriptions: vec![state_subscription],
         };
 
@@ -488,7 +496,6 @@ impl ExtensionProviderConfigurationView {
 
         // Update settings file
         settings::update_settings_file(<dyn fs::Fs>::global(cx), cx, {
-            let settings_key = settings_key.clone();
             move |settings, _| {
                 let allowed = settings
                     .extension
@@ -510,22 +517,21 @@ impl ExtensionProviderConfigurationView {
 
         // Update local state
         let new_allowed = !currently_allowed;
-        let env_var_name_clone = env_var_name.clone();
 
         state.update(cx, |state, cx| {
             if new_allowed {
-                state.allowed_env_vars.insert(env_var_name_clone.clone());
+                state.allowed_env_vars.insert(env_var_name.clone());
                 // Check if this env var is set and update env_var_name_used
-                if let Ok(value) = std::env::var(&env_var_name_clone) {
+                if let Ok(value) = std::env::var(&env_var_name) {
                     if !value.is_empty() && state.env_var_name_used.is_none() {
-                        state.env_var_name_used = Some(env_var_name_clone);
+                        state.env_var_name_used = Some(env_var_name.clone());
                         state.is_authenticated = true;
                     }
                 }
             } else {
-                state.allowed_env_vars.remove(&env_var_name_clone);
+                state.allowed_env_vars.remove(&env_var_name);
                 // If this was the env var being used, clear it and find another
-                if state.env_var_name_used.as_ref() == Some(&env_var_name_clone) {
+                if state.env_var_name_used.as_ref() == Some(&env_var_name) {
                     state.env_var_name_used = state.allowed_env_vars.iter().find_map(|var| {
                         if let Ok(value) = std::env::var(var) {
                             if !value.is_empty() {
@@ -637,22 +643,33 @@ impl ExtensionProviderConfigurationView {
         .detach();
     }
 
-    fn start_oauth_sign_in(&mut self, cx: &mut Context<Self>) {
+    fn start_oauth_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.oauth_in_progress {
             return;
         }
 
         self.oauth_in_progress = true;
         self.oauth_error = None;
-        self.device_user_code = None;
         cx.notify();
 
         let extension = self.extension.clone();
         let provider_id = self.extension_provider_id.clone();
         let state = self.state.clone();
+        let icon_path = self.icon_path.clone();
+        let this_handle = cx.weak_entity();
 
-        cx.spawn(async move |this, cx| {
-            // Step 1: Start device flow - opens browser and returns user code
+        // Get workspace to show modal
+        let Some(workspace) = window.root::<Workspace>().flatten() else {
+            self.oauth_in_progress = false;
+            self.oauth_error = Some("Could not access workspace to show sign-in modal".to_string());
+            cx.notify();
+            return;
+        };
+
+        let workspace = workspace.downgrade();
+        let state = state.downgrade();
+        cx.spawn_in(window, async move |_this, cx| {
+            // Step 1: Start device flow - get prompt info from extension
             let start_result = extension
                 .call({
                     let provider_id = provider_id.clone();
@@ -666,38 +683,67 @@ impl ExtensionProviderConfigurationView {
                 })
                 .await;
 
-            let user_code = match start_result {
-                Ok(Ok(Ok(code))) => code,
+            let prompt_info: LlmDeviceFlowPromptInfo = match start_result {
+                Ok(Ok(Ok(info))) => info,
                 Ok(Ok(Err(e))) => {
                     log::error!("Device flow start failed: {}", e);
-                    this.update(cx, |this, cx| {
-                        this.oauth_in_progress = false;
-                        this.oauth_error = Some(e);
-                        cx.notify();
-                    })
-                    .log_err();
+                    this_handle
+                        .update_in(cx, |this, _window, cx| {
+                            this.oauth_in_progress = false;
+                            this.oauth_error = Some(e);
+                            cx.notify();
+                        })
+                        .log_err();
                     return;
                 }
                 Ok(Err(e)) | Err(e) => {
                     log::error!("Device flow start error: {}", e);
-                    this.update(cx, |this, cx| {
-                        this.oauth_in_progress = false;
-                        this.oauth_error = Some(e.to_string());
-                        cx.notify();
-                    })
-                    .log_err();
+                    this_handle
+                        .update_in(cx, |this, _window, cx| {
+                            this.oauth_in_progress = false;
+                            this.oauth_error = Some(e.to_string());
+                            cx.notify();
+                        })
+                        .log_err();
                     return;
                 }
             };
 
-            // Update UI to show the user code before polling
-            this.update(cx, |this, cx| {
-                this.device_user_code = Some(user_code);
-                cx.notify();
-            })
-            .log_err();
+            // Step 2: Create state entity and show the modal
+            let modal_config = OAuthDeviceFlowModalConfig {
+                user_code: prompt_info.user_code,
+                verification_url: prompt_info.verification_url,
+                headline: prompt_info.headline,
+                description: prompt_info.description,
+                connect_button_label: prompt_info.connect_button_label,
+                success_headline: prompt_info.success_headline,
+                success_message: prompt_info.success_message,
+                icon_path,
+            };
 
-            // Step 2: Poll for authentication completion
+            let flow_state: Option<Entity<OAuthDeviceFlowState>> = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let flow_state = cx.new(|_cx| OAuthDeviceFlowState::new(modal_config));
+                    let flow_state_clone = flow_state.clone();
+                    workspace.toggle_modal(window, cx, |_window, cx| {
+                        OAuthDeviceFlowModal::new(flow_state_clone, cx)
+                    });
+                    flow_state
+                })
+                .ok();
+
+            let Some(flow_state) = flow_state else {
+                this_handle
+                    .update_in(cx, |this, _window, cx| {
+                        this.oauth_in_progress = false;
+                        this.oauth_error = Some("Failed to show sign-in modal".to_string());
+                        cx.notify();
+                    })
+                    .log_err();
+                return;
+            };
+
+            // Step 3: Poll for authentication completion
             let poll_result = extension
                 .call({
                     let provider_id = provider_id.clone();
@@ -711,7 +757,7 @@ impl ExtensionProviderConfigurationView {
                 })
                 .await;
 
-            let error_message = match poll_result {
+            match poll_result {
                 Ok(Ok(Ok(()))) => {
                     // After successful auth, refresh the models list
                     let models_result = extension
@@ -731,33 +777,61 @@ impl ExtensionProviderConfigurationView {
                         _ => Vec::new(),
                     };
 
-                    cx.update(|cx| {
-                        state.update(cx, |state, cx| {
+                    state
+                        .update_in(cx, |state, _window, cx| {
                             state.is_authenticated = true;
                             state.available_models = new_models;
                             cx.notify();
-                        });
-                    })
-                    .log_err();
-                    None
+                        })
+                        .log_err();
+
+                    // Update flow state to show success
+                    flow_state
+                        .update_in(cx, |state, _window, cx| {
+                            state.set_status(OAuthDeviceFlowStatus::Authorized, cx);
+                        })
+                        .log_err();
                 }
                 Ok(Ok(Err(e))) => {
                     log::error!("Device flow poll failed: {}", e);
-                    Some(e)
+                    flow_state
+                        .update_in(cx, |state, _window, cx| {
+                            state.set_status(OAuthDeviceFlowStatus::Failed(e.clone()), cx);
+                        })
+                        .log_err();
+                    this_handle
+                        .update_in(cx, |this, _window, cx| {
+                            this.oauth_error = Some(e);
+                            cx.notify();
+                        })
+                        .log_err();
                 }
                 Ok(Err(e)) | Err(e) => {
                     log::error!("Device flow poll error: {}", e);
-                    Some(e.to_string())
+                    let error_string = e.to_string();
+                    flow_state
+                        .update_in(cx, |state, _window, cx| {
+                            state.set_status(
+                                OAuthDeviceFlowStatus::Failed(error_string.clone()),
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    this_handle
+                        .update_in(cx, |this, _window, cx| {
+                            this.oauth_error = Some(error_string);
+                            cx.notify();
+                        })
+                        .log_err();
                 }
             };
 
-            this.update(cx, |this, cx| {
-                this.oauth_in_progress = false;
-                this.oauth_error = error_message;
-                this.device_user_code = None;
-                cx.notify();
-            })
-            .log_err();
+            this_handle
+                .update_in(cx, |this, _window, cx| {
+                    this.oauth_in_progress = false;
+                    cx.notify();
+                })
+                .log_err();
         })
         .detach();
     }
@@ -784,7 +858,7 @@ impl ExtensionProviderConfigurationView {
 }
 
 impl gpui::Render for ExtensionProviderConfigurationView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_loading = self.loading_settings || self.loading_credentials;
         let is_authenticated = self.is_authenticated(cx);
         let allowed_env_vars = self.state.read(cx).allowed_env_vars.clone();
@@ -803,7 +877,7 @@ impl gpui::Render for ExtensionProviderConfigurationView {
 
         // Render settings markdown if available
         if let Some(markdown) = &self.settings_markdown {
-            let style = settings_markdown_style(_window, cx);
+            let style = settings_markdown_style(window, cx);
             content = content.child(MarkdownElement::new(markdown.clone(), style));
         }
 
@@ -948,90 +1022,30 @@ impl gpui::Render for ExtensionProviderConfigurationView {
 
                 let oauth_error = self.oauth_error.clone();
 
+                let mut button = ui::Button::new("oauth-sign-in", button_label)
+                    .full_width()
+                    .style(ui::ButtonStyle::Outlined)
+                    .disabled(oauth_in_progress)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.start_oauth_sign_in(window, cx);
+                    }));
+                if let Some(icon) = button_icon {
+                    button = button
+                        .icon(icon)
+                        .icon_position(ui::IconPosition::Start)
+                        .icon_size(ui::IconSize::Small)
+                        .icon_color(Color::Muted);
+                }
+
                 content = content.child(
                     v_flex()
                         .gap_2()
-                        .child({
-                            let mut button = ui::Button::new("oauth-sign-in", button_label)
-                                .full_width()
-                                .style(ui::ButtonStyle::Outlined)
-                                .disabled(oauth_in_progress)
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.start_oauth_sign_in(cx);
-                                }));
-                            if let Some(icon) = button_icon {
-                                button = button
-                                    .icon(icon)
-                                    .icon_position(ui::IconPosition::Start)
-                                    .icon_size(ui::IconSize::Small)
-                                    .icon_color(Color::Muted);
-                            }
-                            button
-                        })
+                        .child(button)
                         .when(oauth_in_progress, |this| {
-                            let user_code = self.device_user_code.clone();
                             this.child(
-                                v_flex()
-                                    .gap_1()
-                                    .when_some(user_code, |this, code| {
-                                        let copied = cx
-                                            .read_from_clipboard()
-                                            .map(|item| item.text().as_ref() == Some(&code))
-                                            .unwrap_or(false);
-                                        let code_for_click = code.clone();
-                                        this.child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Label::new("Enter code:")
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                                .child(
-                                                    h_flex()
-                                                        .gap_1()
-                                                        .px_1()
-                                                        .border_1()
-                                                        .border_color(cx.theme().colors().border)
-                                                        .rounded_sm()
-                                                        .cursor_pointer()
-                                                        .on_mouse_down(
-                                                            MouseButton::Left,
-                                                            move |_, window, cx| {
-                                                                cx.write_to_clipboard(
-                                                                    ClipboardItem::new_string(
-                                                                        code_for_click.clone(),
-                                                                    ),
-                                                                );
-                                                                window.refresh();
-                                                            },
-                                                        )
-                                                        .child(
-                                                            Label::new(code)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Accent),
-                                                        )
-                                                        .child(
-                                                            ui::Icon::new(if copied {
-                                                                ui::IconName::Check
-                                                            } else {
-                                                                ui::IconName::Copy
-                                                            })
-                                                            .size(ui::IconSize::Small)
-                                                            .color(if copied {
-                                                                Color::Success
-                                                            } else {
-                                                                Color::Muted
-                                                            }),
-                                                        ),
-                                                ),
-                                        )
-                                    })
-                                    .child(
-                                        Label::new("Waiting for authorization in browser...")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                Label::new("Sign-in in progress...")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             )
                         })
                         .when_some(oauth_error, |this, error| {

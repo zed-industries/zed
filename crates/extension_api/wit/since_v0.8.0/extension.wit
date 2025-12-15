@@ -18,7 +18,8 @@ world extension {
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
     use llm-provider.{
         provider-info, model-info, completion-request,
-        cache-configuration, completion-event, token-usage
+        cache-configuration, completion-event, token-usage,
+        device-flow-prompt-info
     };
 
     /// Initializes the extension.
@@ -188,15 +189,14 @@ world extension {
     ///
     /// The device flow works as follows:
     /// 1. Extension requests a device code from the OAuth provider
-    /// 2. Extension opens the verification URL in the browser
-    /// 3. Extension returns the user code to display to the user
-    /// 4. Host displays the user code and calls llm-provider-poll-device-flow-sign-in
+    /// 2. Extension returns prompt info including user code and verification URL
+    /// 3. Host displays a modal with the prompt info
+    /// 4. Host calls llm-provider-poll-device-flow-sign-in
     /// 5. Extension polls for the access token while user authorizes in browser
     /// 6. Once authorized, extension stores the credential and returns success
     ///
-    /// Returns the user code that should be displayed to the user while they
-    /// complete authorization in the browser.
-    export llm-provider-start-device-flow-sign-in: func(provider-id: string) -> result<string, string>;
+    /// Returns information needed to display the device flow prompt modal.
+    export llm-provider-start-device-flow-sign-in: func(provider-id: string) -> result<device-flow-prompt-info, string>;
 
     /// Poll for device flow sign-in completion.
     /// This is called after llm-provider-start-device-flow-sign-in returns the user code.

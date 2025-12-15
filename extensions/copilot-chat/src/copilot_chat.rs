@@ -454,7 +454,7 @@ impl zed::Extension for CopilotChatProvider {
     fn llm_provider_start_device_flow_sign_in(
         &mut self,
         _provider_id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<LlmDeviceFlowPromptInfo, String> {
         // Step 1: Request device and user verification codes
         let device_code_response = llm_oauth_send_http_request(&LlmOauthHttpRequest {
             url: GITHUB_DEVICE_CODE_URL.to_string(),
@@ -497,7 +497,7 @@ impl zed::Extension for CopilotChatProvider {
             expires_in: device_info.expires_in,
         });
 
-        // Step 2: Open browser to verification URL
+        // Step 2: Construct verification URL
         // Use verification_uri_complete if available (has code pre-filled), otherwise construct URL
         let verification_url = device_info.verification_uri_complete.unwrap_or_else(|| {
             format!(
@@ -505,10 +505,19 @@ impl zed::Extension for CopilotChatProvider {
                 device_info.verification_uri, &device_info.user_code
             )
         });
-        llm_oauth_open_browser(&verification_url)?;
 
-        // Return the user code for the host to display
-        Ok(device_info.user_code)
+        // Return prompt info for the host to display in the modal
+        Ok(LlmDeviceFlowPromptInfo {
+            user_code: device_info.user_code,
+            verification_url,
+            headline: "Use GitHub Copilot in Zed.".to_string(),
+            description: "Using Copilot requires an active subscription on GitHub.".to_string(),
+            connect_button_label: "Connect to GitHub".to_string(),
+            success_headline: "Copilot Enabled!".to_string(),
+            success_message:
+                "You can update your settings or sign out from the Copilot menu in the status bar."
+                    .to_string(),
+        })
     }
 
     fn llm_provider_poll_device_flow_sign_in(&mut self, _provider_id: &str) -> Result<(), String> {

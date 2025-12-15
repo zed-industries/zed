@@ -4,6 +4,7 @@ pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
+pub mod oauth_device_flow_modal;
 pub mod pane;
 pub mod pane_group;
 mod path_list;

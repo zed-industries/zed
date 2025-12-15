@@ -328,4 +328,22 @@ interface llm-provider {
     /// Useful for OAuth flows that need to open a browser but handle the
     /// callback differently (e.g., polling-based flows).
     oauth-open-browser: func(url: string) -> result<_, string>;
+
+    /// Information needed to display the device flow prompt modal to the user.
+    record device-flow-prompt-info {
+        /// The user code to display (e.g., "ABC-123").
+        user-code: string,
+        /// The URL the user needs to visit to authorize (for the "Connect" button).
+        verification-url: string,
+        /// The headline text for the modal (e.g., "Use GitHub Copilot in Zed.").
+        headline: string,
+        /// A description to show below the headline (e.g., "Using Copilot requires an active subscription on GitHub.").
+        description: string,
+        /// Label for the connect button (e.g., "Connect to GitHub").
+        connect-button-label: string,
+        /// Success headline shown when authorization completes.
+        success-headline: string,
+        /// Success message shown when authorization completes.
+        success-message: string,
+    }
 }

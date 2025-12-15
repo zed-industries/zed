@@ -5889,6 +5889,7 @@ dependencies = [
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
+ "workspace",
  "zlog",
 ]
 

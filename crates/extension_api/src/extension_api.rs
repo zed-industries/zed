@@ -31,17 +31,18 @@ pub use wit::{
     },
     zed::extension::llm_provider::{
         CacheConfiguration as LlmCacheConfiguration, CompletionEvent as LlmCompletionEvent,
-        CompletionRequest as LlmCompletionRequest, ImageData as LlmImageData,
-        MessageContent as LlmMessageContent, MessageRole as LlmMessageRole,
-        ModelCapabilities as LlmModelCapabilities, ModelInfo as LlmModelInfo,
-        OauthHttpRequest as LlmOauthHttpRequest, OauthHttpResponse as LlmOauthHttpResponse,
-        OauthWebAuthConfig as LlmOauthWebAuthConfig, OauthWebAuthResult as LlmOauthWebAuthResult,
-        ProviderInfo as LlmProviderInfo, RequestMessage as LlmRequestMessage,
-        StopReason as LlmStopReason, ThinkingContent as LlmThinkingContent,
-        TokenUsage as LlmTokenUsage, ToolChoice as LlmToolChoice,
-        ToolDefinition as LlmToolDefinition, ToolInputFormat as LlmToolInputFormat,
-        ToolResult as LlmToolResult, ToolResultContent as LlmToolResultContent,
-        ToolUse as LlmToolUse, ToolUseJsonParseError as LlmToolUseJsonParseError,
+        CompletionRequest as LlmCompletionRequest, DeviceFlowPromptInfo as LlmDeviceFlowPromptInfo,
+        ImageData as LlmImageData, MessageContent as LlmMessageContent,
+        MessageRole as LlmMessageRole, ModelCapabilities as LlmModelCapabilities,
+        ModelInfo as LlmModelInfo, OauthHttpRequest as LlmOauthHttpRequest,
+        OauthHttpResponse as LlmOauthHttpResponse, OauthWebAuthConfig as LlmOauthWebAuthConfig,
+        OauthWebAuthResult as LlmOauthWebAuthResult, ProviderInfo as LlmProviderInfo,
+        RequestMessage as LlmRequestMessage, StopReason as LlmStopReason,
+        ThinkingContent as LlmThinkingContent, TokenUsage as LlmTokenUsage,
+        ToolChoice as LlmToolChoice, ToolDefinition as LlmToolDefinition,
+        ToolInputFormat as LlmToolInputFormat, ToolResult as LlmToolResult,
+        ToolResultContent as LlmToolResultContent, ToolUse as LlmToolUse,
+        ToolUseJsonParseError as LlmToolUseJsonParseError,
         delete_credential as llm_delete_credential, get_credential as llm_get_credential,
         get_env_var as llm_get_env_var, oauth_open_browser as llm_oauth_open_browser,
         oauth_send_http_request as llm_oauth_send_http_request,
@@ -301,12 +302,11 @@ pub trait Extension: Send + Sync {
 
     /// Start an OAuth device flow sign-in.
     /// This is called when the user explicitly clicks "Sign in with GitHub" or similar.
-    /// Opens the browser to the verification URL and returns the user code that should
-    /// be displayed to the user.
+    /// Returns information needed to display the device flow prompt modal to the user.
     fn llm_provider_start_device_flow_sign_in(
         &mut self,
         _provider_id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<LlmDeviceFlowPromptInfo, String> {
         Err("`llm_provider_start_device_flow_sign_in` not implemented".to_string())
     }
 
@@ -641,7 +641,9 @@ impl wit::Guest for Component {
         extension().llm_provider_is_authenticated(&provider_id)
     }
 
-    fn llm_provider_start_device_flow_sign_in(provider_id: String) -> Result<String, String> {
+    fn llm_provider_start_device_flow_sign_in(
+        provider_id: String,
+    ) -> Result<LlmDeviceFlowPromptInfo, String> {
         extension().llm_provider_start_device_flow_sign_in(&provider_id)
     }
 
