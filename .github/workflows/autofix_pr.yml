@@ -72,9 +72,9 @@ jobs:
       shell: bash -euxo pipefail {0}
       env:
         GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: hi@zed.dev
+        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GIT_AUTHOR_NAME: Zed Zippy
-        GIT_AUTHOR_EMAIL: hi@zed.dev
+        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: steps::cleanup_cargo_config
       if: always()

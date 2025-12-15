@@ -60,9 +60,15 @@ fn run_autofix(pr_number: &WorkflowInput) -> NamedJob {
             fi
         "#})
         .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+        .add_env((
+            "GIT_COMMITTER_EMAIL",
+            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        ))
         .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env(("GIT_AUTHOR_EMAIL", "hi@zed.dev"))
+        .add_env((
+            "GIT_AUTHOR_EMAIL",
+            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        ))
         .add_env(("GITHUB_TOKEN", token))
     }
 
