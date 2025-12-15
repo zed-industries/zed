@@ -34,13 +34,16 @@
           lib = pkgs.lib;
           rustBin = rust-overlay.lib.mkRustBin { } pkgs;
         in
-        pkgs.callPackage ./nix/build.nix ({
-          crane = crane.mkLib pkgs;
-          rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
-        } // (lib.optionalAttrs (pkgs.cargo-about.version != "0.8.2") {
-          # Only vendor the build of cargo-about if the input nixpkgs has the wrong version.
-          cargo-about = mkCargoAbout pkgs;
-        }));
+        pkgs.callPackage ./nix/build.nix (
+          {
+            crane = crane.mkLib pkgs;
+            rustToolchain = rustBin.fromRustupToolchainFile ./rust-toolchain.toml;
+          }
+          // (lib.optionalAttrs (pkgs.cargo-about.version != "0.8.2") {
+            # Only vendor the build of cargo-about if the input nixpkgs has the wrong version.
+            cargo-about = mkCargoAbout pkgs;
+          })
+        );
     in
     rec {
       packages = forAllSystems (pkgs: rec {

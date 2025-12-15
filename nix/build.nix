@@ -83,70 +83,68 @@ let
 
       cargoLock = ../Cargo.lock;
 
-      nativeBuildInputs =
-        [
-          cmake
-          copyDesktopItems
-          curl
-          perl
-          pkg-config
-          protobuf
-          cargo-about
-          rustPlatform.bindgenHook
-        ]
-        ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
-        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-          (cargo-bundle.overrideAttrs (
-            new: old: {
-              version = "0.6.1-zed";
-              src = fetchFromGitHub {
-                owner = "zed-industries";
-                repo = "cargo-bundle";
-                rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
-                hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
-              };
-              cargoHash = "sha256-urn+A3yuw2uAO4HGmvQnKvWtHqvG9KHxNCCWTiytE4k=";
+      nativeBuildInputs = [
+        cmake
+        copyDesktopItems
+        curl
+        perl
+        pkg-config
+        protobuf
+        cargo-about
+        rustPlatform.bindgenHook
+      ]
+      ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
+      ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        (cargo-bundle.overrideAttrs (
+          new: old: {
+            version = "0.6.1-zed";
+            src = fetchFromGitHub {
+              owner = "zed-industries";
+              repo = "cargo-bundle";
+              rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
+              hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
+            };
+            cargoHash = "sha256-urn+A3yuw2uAO4HGmvQnKvWtHqvG9KHxNCCWTiytE4k=";
 
-              # NOTE: can drop once upstream uses `finalAttrs` here:
-              # https://github.com/NixOS/nixpkgs/blob/10214747f5e6e7cb5b9bdf9e018a3c7b3032f5af/pkgs/build-support/rust/build-rust-package/default.nix#L104
-              #
-              # See (for context): https://github.com/NixOS/nixpkgs/pull/382550
-              cargoDeps = rustPlatform.fetchCargoVendor {
-                inherit (new) src;
-                hash = new.cargoHash;
-                patches = new.cargoPatches or [];
-                name = new.cargoDepsName or new.finalPackage.name;
-              };
-            }
-          ))
-        ];
+            # NOTE: can drop once upstream uses `finalAttrs` here:
+            # https://github.com/NixOS/nixpkgs/blob/10214747f5e6e7cb5b9bdf9e018a3c7b3032f5af/pkgs/build-support/rust/build-rust-package/default.nix#L104
+            #
+            # See (for context): https://github.com/NixOS/nixpkgs/pull/382550
+            cargoDeps = rustPlatform.fetchCargoVendor {
+              inherit (new) src;
+              hash = new.cargoHash;
+              patches = new.cargoPatches or [ ];
+              name = new.cargoDepsName or new.finalPackage.name;
+            };
+          }
+        ))
+      ];
 
-      buildInputs =
-        [
-          curl
-          fontconfig
-          freetype
-          # TODO: need staticlib of this for linking the musl remote server.
-          # should make it a separate derivation/flake output
-          # see https://crane.dev/examples/cross-musl.html
-          libgit2
-          openssl
-          sqlite
-          zlib
-          zstd
-        ]
-        ++ lib.optionals stdenv'.hostPlatform.isLinux [
-          alsa-lib
-          libxkbcommon
-          wayland
-          gpu-lib
-          xorg.libX11
-          xorg.libxcb
-        ]
-        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-          apple-sdk_15
-          (darwinMinVersionHook "10.15")
-        ];
+      buildInputs = [
+        curl
+        fontconfig
+        freetype
+        # TODO: need staticlib of this for linking the musl remote server.
+        # should make it a separate derivation/flake output
+        # see https://crane.dev/examples/cross-musl.html
+        libgit2
+        openssl
+        sqlite
+        zlib
+        zstd
+      ]
+      ++ lib.optionals stdenv'.hostPlatform.isLinux [
+        alsa-lib
+        libxkbcommon
+        wayland
+        gpu-lib
+        xorg.libX11
+        xorg.libxcb
+      ]
+      ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        apple-sdk_15
+        (darwinMinVersionHook "10.15")
+      ];
 
       cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
 
@@ -177,7 +175,7 @@ let
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         LK_CUSTOM_WEBRTC = livekit-libwebrtc;
-        PROTOC="${protobuf}/bin/protoc";
+        PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;
         # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
@@ -217,14 +215,13 @@ let
             # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
             # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
             # TODO: send livekit sdk a PR to make this configurable
-            postPatch =
-              ''
-                substituteInPlace webrtc-sys/build.rs --replace-fail \
-                  "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-              ''
-              + lib.optionalString withGLES ''
-                cat ${glesConfig} >> .cargo/config/config.toml
-              '';
+            postPatch = ''
+              substituteInPlace webrtc-sys/build.rs --replace-fail \
+                "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+            ''
+            + lib.optionalString withGLES ''
+              cat ${glesConfig} >> .cargo/config/config.toml
+            '';
           in
           crates: drv:
           if hasWebRtcSys crates then
