@@ -193,7 +193,8 @@ async fn build_remote_server_from_source(
             .await?;
         anyhow::ensure!(
             output.status.success(),
-            "Failed to run command: {command:?}"
+            "Failed to run command: {command:?}: output: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }
@@ -210,7 +211,9 @@ async fn build_remote_server_from_source(
                     "unknown-linux-gnu"
                 },
             "macos" => "apple-darwin",
-            _ => anyhow::bail!("can't cross compile for: {:?}", platform),
+            "windows" if cfg!(windows) => "pc-windows-msvc",
+            "windows" => "pc-windows-gnu",
+            _ => anyhow::bail!("can't compile for: {:?}", platform),
         }
     );
     let mut rust_flags = match std::env::var("RUSTFLAGS") {
@@ -308,7 +311,8 @@ async fn build_remote_server_from_source(
         .join("remote_server")
         .join(&triple)
         .join("debug")
-        .join("remote_server");
+        .join("remote_server")
+        .with_extension(if platform.os == "windows" { "exe" } else { "" });
 
     let path = if !build_remote_server.contains("nocompress") {
         delegate.set_status(Some("Compressing binary"), cx);
