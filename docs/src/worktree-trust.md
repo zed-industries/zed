@@ -20,9 +20,10 @@ Zed tracks trust information per host.
 ## What is restricted
 
 Restricted Mode prevents:
- - Project settings (`.zed/settings.json`) from being parsed and applied
- - Language servers from being installed and spawned
- - MCP Server integrations from being installed and spawned
+
+- Project settings (`.zed/settings.json`) from being parsed and applied
+- Language servers from being installed and spawned
+- MCP Server integrations from being installed and spawned
 
 ## Configuring worktree trust
 
@@ -43,7 +44,7 @@ The auto trusted worktrees are not persisted between restarts, only the manually
 These are mostly internal details and may change in the future, but are helpful to understand how multiple different trust requests can be approved at once.
 Zed has multiple layers of trust, based on the requests, from the least to the most trust level:
 
-* "single file worktree"
+- "single file worktree"
 
 After opening an empty Zed it's possible to open just a file, same as after opening a directory in Zed it's possible to open a file outside of this directory.
 Usual scenario for both cases is opening Zed's settings.json file via `zed: open settings file` command: that starts a language server for a new file open, which originates from a newly created, single file worktree.
@@ -51,7 +52,7 @@ Usual scenario for both cases is opening Zed's settings.json file via `zed: open
 Spawning a language server is potentially dangerous, and Zed needs to restrict that by default.
 Each single file worktree requires a separate trust permission, unless a more global level is trusted.
 
-* "global"
+- "global"
 
 Even an empty Zed instance with no files or directories open is potentially dangerous: opening an Assistant Panel and creating new external agent thread might require installing and running [Model Context Protocol servers](./ai/mcp.md).
 
@@ -63,14 +64,14 @@ Given that those servers are not tied to any particular worktree, this level of 
 
 Global level of trust assumes all single file worktrees are trusted too, for the same host: if we allow global MCP server-related functionality, we can already allow spawning language servers for single file worktrees as well.
 
-* "directory worktree"
+- "directory worktree"
 
 If a directory is open in Zed, it's a full worktree which may spawn multiple language servers associated with it.
 Each such worktree requires a separate trust permission, so each separate directory worktree has to be trusted separately, unless a more global level is trusted.
 
 When a directory worktree is trusted and language servers are allowed to be downloaded and started, hence we also allow "global" level of trust (hence, "single file worktree" level of trust also).
 
-* "path override"
+- "path override"
 
 To ease trusting multiple directory worktrees at once, it's possible to trust a parent directory of a certain directory worktree opened in Zed.
 Trusting a directory means trusting all its subdirectories as well, including all current and potential directory worktrees.
