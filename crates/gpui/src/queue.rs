@@ -58,8 +58,7 @@ impl<T> PriorityQueueState<T> {
             return Err(crate::queue::RecvError);
         }
 
-        // parking_lot doesn't do spurious wakeups so an if is fine
-        if queues.is_empty() {
+        while queues.is_empty() {
             self.condvar.wait(&mut queues);
         }
 
@@ -265,7 +264,7 @@ impl<T> Iterator for Iter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.pop_inner(true).ok().flatten()
+        self.0.pop().ok()
     }
 }
 impl<T> FusedIterator for Iter<T> {}
@@ -283,7 +282,7 @@ impl<T> Iterator for TryIter<T> {
             return None;
         }
 
-        let res = self.receiver.pop_inner(false);
+        let res = self.receiver.try_pop();
         self.ended = res.is_err();
 
         res.transpose()
