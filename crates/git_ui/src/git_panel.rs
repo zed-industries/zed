@@ -319,7 +319,6 @@ impl TreeViewState {
         &mut self,
         section: Section,
         mut entries: Vec<GitStatusEntry>,
-        repo: &Repository,
         seen_directories: &mut HashSet<TreeKey>,
     ) -> Vec<(GitListEntry, bool)> {
         if entries.is_empty() {
@@ -364,7 +363,7 @@ impl TreeViewState {
             }
         }
 
-        let (flattened, _) = self.flatten_tree(&root, section, 0, repo, seen_directories);
+        let (flattened, _) = self.flatten_tree(&root, section, 0, seen_directories);
         flattened
     }
 
@@ -373,7 +372,6 @@ impl TreeViewState {
         node: &TreeNode,
         section: Section,
         depth: usize,
-        repo: &Repository,
         seen_directories: &mut HashSet<TreeKey>,
     ) -> (Vec<(GitListEntry, bool)>, Vec<GitStatusEntry>) {
         let mut all_statuses = Vec::new();
@@ -385,7 +383,7 @@ impl TreeViewState {
                 continue;
             };
             let (child_flattened, mut child_statuses) =
-                self.flatten_tree(terminal, section, depth + 1, repo, seen_directories);
+                self.flatten_tree(terminal, section, depth + 1, seen_directories);
             let key = TreeKey { section, path };
             let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
             self.expanded_dirs.entry(key.clone()).or_insert(true);
@@ -1513,7 +1511,7 @@ impl GitPanel {
         .detach();
     }
 
-    fn stage_status_for_entry(entry: &GitStatusEntry, repo: &Repository) -> Option<StageStatus> {
+    fn stage_status_for_entry(entry: &GitStatusEntry, repo: &Repository) -> StageStatus {
         // Checking for current staged/unstaged file status is a chained operation:
         // 1. first, we check for any pending operation recorded in repository
         // 2. if there are no pending ops either running or finished, we then ask the repository
@@ -1534,37 +1532,48 @@ impl GitPanel {
                 repo.status_for_path(&entry.repo_path)
                     .map(|status| status.status.staging())
             })
+            .unwrap_or(entry.staging)
     }
 
-    fn toggle_state_for_directory(
+    fn stage_status_for_directory(
         &self,
         entry: &GitTreeDirEntry,
         repo: &Repository,
-    ) -> ToggleState {
+    ) -> StageStatus {
         let GitPanelViewMode::Tree(tree_state) = &self.view_mode else {
             util::debug_panic!("We should never render a directory entry while in flat view mode");
-            return ToggleState::Unselected;
+            return StageStatus::Unstaged;
         };
 
-        tree_state
-            .directory_descendants
-            .get(&entry.key)
-            .map(|children| {
-                if children.iter().any(|status| {
-                    GitPanel::stage_status_for_entry(&status, repo)
-                        .is_some_and(|status| status == StageStatus::PartiallyStaged)
-                }) {
-                    ToggleState::Indeterminate
-                } else if children.iter().any(|status| {
-                    GitPanel::stage_status_for_entry(&status, repo)
-                        .is_none_or(|status| status == StageStatus::Unstaged)
-                }) {
-                    ToggleState::Unselected
-                } else {
-                    ToggleState::Selected
+        let Some(descendants) = tree_state.directory_descendants.get(&entry.key) else {
+            return StageStatus::Unstaged;
+        };
+
+        let mut fully_staged_count = 0usize;
+        let mut any_staged_or_partially_staged = false;
+
+        for descendant in descendants {
+            match GitPanel::stage_status_for_entry(descendant, repo) {
+                StageStatus::Staged => {
+                    fully_staged_count += 1;
+                    any_staged_or_partially_staged = true;
                 }
-            })
-            .unwrap_or(ToggleState::Unselected)
+                StageStatus::PartiallyStaged => {
+                    any_staged_or_partially_staged = true;
+                }
+                StageStatus::Unstaged => {}
+            }
+        }
+
+        if descendants.is_empty() {
+            StageStatus::Unstaged
+        } else if fully_staged_count == descendants.len() {
+            StageStatus::Staged
+        } else if any_staged_or_partially_staged {
+            StageStatus::PartiallyStaged
+        } else {
+            StageStatus::Unstaged
+        }
     }
 
     pub fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1592,37 +1601,37 @@ impl GitPanel {
             match entry {
                 GitListEntry::Status(status_entry) => {
                     let repo_paths = vec![status_entry.clone()];
-                    let stage = if GitPanel::stage_status_for_entry(status_entry, &repo)
-                        .and_then(|status| status.as_bool())
-                        .unwrap_or(status_entry.staging.has_staged())
-                    {
-                        if let Some(op) = self.bulk_staging.clone()
-                            && op.anchor == status_entry.repo_path
-                        {
-                            clear_anchor = Some(op.anchor);
+                    let stage = match GitPanel::stage_status_for_entry(status_entry, &repo) {
+                        StageStatus::Staged => {
+                            if let Some(op) = self.bulk_staging.clone()
+                                && op.anchor == status_entry.repo_path
+                            {
+                                clear_anchor = Some(op.anchor);
+                            }
+                            false
                         }
-                        false
-                    } else {
-                        set_anchor = Some(status_entry.repo_path.clone());
-                        true
+                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
+                            set_anchor = Some(status_entry.repo_path.clone());
+                            true
+                        }
                     };
                     (stage, repo_paths)
                 }
                 GitListEntry::TreeStatus(status_entry) => {
                     let repo_paths = vec![status_entry.entry.clone()];
-                    let stage = if GitPanel::stage_status_for_entry(&status_entry.entry, &repo)
-                        .and_then(|status| status.as_bool())
-                        .unwrap_or(status_entry.entry.staging.has_staged())
-                    {
-                        if let Some(op) = self.bulk_staging.clone()
-                            && op.anchor == status_entry.entry.repo_path
-                        {
-                            clear_anchor = Some(op.anchor);
+                    let stage = match GitPanel::stage_status_for_entry(&status_entry.entry, &repo) {
+                        StageStatus::Staged => {
+                            if let Some(op) = self.bulk_staging.clone()
+                                && op.anchor == status_entry.entry.repo_path
+                            {
+                                clear_anchor = Some(op.anchor);
+                            }
+                            false
                         }
-                        false
-                    } else {
-                        set_anchor = Some(status_entry.entry.repo_path.clone());
-                        true
+                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
+                            set_anchor = Some(status_entry.entry.repo_path.clone());
+                            true
+                        }
                     };
                     (stage, repo_paths)
                 }
@@ -1634,7 +1643,8 @@ impl GitPanel {
                         .filter_map(|entry| entry.status_entry())
                         .filter(|status_entry| {
                             section.contains(status_entry, &repo)
-                                && status_entry.staging.as_bool() != Some(goal_staged_state)
+                                && GitPanel::stage_status_for_entry(status_entry, &repo).as_bool()
+                                    != Some(goal_staged_state)
                         })
                         .cloned()
                         .collect::<Vec<_>>();
@@ -1642,8 +1652,12 @@ impl GitPanel {
                     (goal_staged_state, entries)
                 }
                 GitListEntry::Directory(entry) => {
-                    let goal_staged_state =
-                        self.toggle_state_for_directory(&entry, repo) != ToggleState::Selected;
+                    let goal_staged_state = match self.stage_status_for_directory(entry, repo) {
+                        StageStatus::Staged => StageStatus::Unstaged,
+                        StageStatus::Unstaged | StageStatus::PartiallyStaged => StageStatus::Staged,
+                    };
+                    let goal_stage = goal_staged_state == StageStatus::Staged;
+
                     let entries = self
                         .view_mode
                         .tree_state()
@@ -1653,11 +1667,10 @@ impl GitPanel {
                         .into_iter()
                         .filter(|status_entry| {
                             GitPanel::stage_status_for_entry(status_entry, &repo)
-                                .and_then(|status| status.as_bool())
-                                != Some(goal_staged_state)
+                                != goal_staged_state
                         })
                         .collect::<Vec<_>>();
-                    (goal_staged_state, entries)
+                    (goal_stage, entries)
                 }
             }
         };
@@ -3305,12 +3318,9 @@ impl GitPanel {
                         Some(&mut tree_state.logical_indices),
                     );
 
-                    for (entry, is_visible) in tree_state.build_tree_entries(
-                        section,
-                        entries,
-                        &repo,
-                        &mut seen_directories,
-                    ) {
+                    for (entry, is_visible) in
+                        tree_state.build_tree_entries(section, entries, &mut seen_directories)
+                    {
                         push_entry(
                             self,
                             entry,
@@ -3360,8 +3370,8 @@ impl GitPanel {
             && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
             && GitPanel::stage_status_for_entry(entry, &repo)
-                .and_then(|staging| staging.as_bool())
-                .unwrap_or(entry.staging.has_staged())
+                .as_bool()
+                .unwrap_or(false)
         {
             self.bulk_staging = bulk_staging;
         }
@@ -3406,8 +3416,8 @@ impl GitPanel {
         for status_entry in self.entries.iter().filter_map(|entry| entry.status_entry()) {
             self.entry_count += 1;
             let is_staging_or_staged = GitPanel::stage_status_for_entry(status_entry, repo)
-                .and_then(|staging| staging.as_bool())
-                .unwrap_or(status_entry.staging.has_staged());
+                .as_bool()
+                .unwrap_or(false);
 
             if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
@@ -4640,15 +4650,12 @@ impl GitPanel {
             .active_repository(cx)
             .expect("active repository must be set");
         let repo = active_repo.read(cx);
-        let is_staging_or_staged = repo
-            .pending_ops_for_path(&entry.repo_path)
-            .map(|ops| ops.staging() || ops.staged())
-            .or_else(|| {
-                repo.status_for_path(&entry.repo_path)
-                    .and_then(|status| status.status.staging().as_bool())
-            })
-            .or_else(|| entry.staging.as_bool());
-        let mut is_staged: ToggleState = is_staging_or_staged.into();
+        let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
+        let mut is_staged: ToggleState = match stage_status {
+            StageStatus::Staged => ToggleState::Selected,
+            StageStatus::Unstaged => ToggleState::Unselected,
+            StageStatus::PartiallyStaged => ToggleState::Indeterminate,
+        };
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
@@ -4805,12 +4812,9 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                // If is_staging_or_staged is None, this implies the file was partially staged, and so
-                                // we allow the user to stage it in full by displaying `Stage` in the tooltip.
-                                let action = if is_staging_or_staged.unwrap_or(false) {
-                                    "Unstage"
-                                } else {
-                                    "Stage"
+                                let action = match stage_status {
+                                    StageStatus::Staged => "Unstage",
+                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
                                 };
                                 let tooltip_name = action.to_string();
 
@@ -4871,13 +4875,19 @@ impl GitPanel {
             IconName::Folder
         };
 
-        let toggle_state = if let Some(repo) = &self.active_repository {
-            self.toggle_state_for_directory(entry, repo.read(cx))
+        let stage_status = if let Some(repo) = &self.active_repository {
+            self.stage_status_for_directory(entry, repo.read(cx))
         } else {
             util::debug_panic!(
                 "Won't have entries to render without an active repository in Git Panel"
             );
-            ToggleState::Indeterminate
+            StageStatus::PartiallyStaged
+        };
+
+        let toggle_state: ToggleState = match stage_status {
+            StageStatus::Staged => ToggleState::Selected,
+            StageStatus::Unstaged => ToggleState::Unselected,
+            StageStatus::PartiallyStaged => ToggleState::Indeterminate,
         };
 
         let name_row = h_flex()
@@ -4946,10 +4956,9 @@ impl GitPanel {
                                 }
                             })
                             .tooltip(move |_window, cx| {
-                                let action = if toggle_state.selected() {
-                                    "Unstage"
-                                } else {
-                                    "Stage"
+                                let action = match stage_status {
+                                    StageStatus::Staged => "Unstage",
+                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
                                 };
                                 Tooltip::simple(format!("{action} folder"), cx)
                             }),
