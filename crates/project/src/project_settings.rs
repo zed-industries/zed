@@ -1270,14 +1270,10 @@ fn apply_local_settings(
                     InvalidSettingsError::LocalSettings { path, message },
                 )));
             }
-            Err(e) => {
-                log::error!("Failed to set local settings: {e}");
-            }
-            Ok(()) => {
-                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
-                    .as_std_path()
-                    .join(local_settings_file_relative_path().as_std_path()))));
-            }
+            Err(e) => log::error!("Failed to set local settings: {e}"),
+            Ok(()) => cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
+                .as_std_path()
+                .join(local_settings_file_relative_path().as_std_path())))),
         }
     })
 }

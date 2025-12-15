@@ -925,7 +925,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
                     );
                 }
             })),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 

@@ -288,8 +288,7 @@ actions!(
         Unfollow,
         /// Restores the banner.
         RestoreBanner,
-        /// Toggles expansion of
-        ///  the selected item.
+        /// Toggles expansion of the selected item.
         ToggleExpandItem,
     ]
 );
@@ -1493,9 +1492,9 @@ impl Workspace {
             }),
         ];
 
-        cx.defer_in(window, move |workspace, window, cx| {
-            workspace.update_window_title(window, cx);
-            workspace.show_initial_notifications(cx);
+        cx.defer_in(window, move |this, window, cx| {
+            this.update_window_title(window, cx);
+            this.show_initial_notifications(cx);
         });
 
         let mut center = PaneGroup::new(center_pane.clone());
@@ -1554,7 +1553,6 @@ impl Workspace {
 
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
-
             removing: false,
             utility_panes: UtilityPaneState::default(),
         }
