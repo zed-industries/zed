@@ -1372,7 +1372,7 @@ impl AcpThread {
         let path_style = self.project.read(cx).path_style(cx);
         let id = update.tool_call_id.clone();
 
-        let agent = self.connection().telemetry_id();
+        let agent_telemetry_id = self.connection().telemetry_id();
         let session = self.session_id();
         if let ToolCallStatus::Completed | ToolCallStatus::Failed = status {
             let status = if matches!(status, ToolCallStatus::Completed) {
@@ -1380,7 +1380,12 @@ impl AcpThread {
             } else {
                 "failed"
             };
-            telemetry::event!("Agent Tool Call Completed", agent, session, status);
+            telemetry::event!(
+                "Agent Tool Call Completed",
+                agent_telemetry_id,
+                session,
+                status
+            );
         }
 
         if let Some(ix) = self.index_for_tool_call(&id) {
@@ -3556,8 +3561,8 @@ mod tests {
     }
 
     impl AgentConnection for FakeAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "fake"
+        fn telemetry_id(&self) -> SharedString {
+            "fake".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {

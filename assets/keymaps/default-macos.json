@@ -878,7 +878,9 @@
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "cmd-shift-enter": "inline_assistant::ThumbsUpResult",
+      "cmd-shift-backspace": "inline_assistant::ThumbsDownResult"
     }
   },
   {
@@ -1294,8 +1296,12 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
-      "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown"
+      "pageup": "markdown::ScrollPageUp",
+      "pagedown": "markdown::ScrollPageDown",
+      "up": "markdown::ScrollUp",
+      "down": "markdown::ScrollDown",
+      "alt-up": "markdown::ScrollUpByItem",
+      "alt-down": "markdown::ScrollDownByItem"
     }
   },
   {
