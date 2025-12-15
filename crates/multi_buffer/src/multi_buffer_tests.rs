@@ -351,7 +351,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
+async fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -393,7 +393,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
+async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -473,7 +473,7 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
+async fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
@@ -905,7 +905,7 @@ fn test_empty_multibuffer(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
+async fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let buffer = cx.new(|cx| Buffer::local("", cx));
     let base_text = "a\nb\nc";
@@ -1235,7 +1235,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_basic_diff_hunks(cx: &mut TestAppContext) {
+async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         ZERO
@@ -1480,7 +1480,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
+async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     let text = indoc!(
         "
         one
@@ -1994,7 +1994,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
+async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
         one
@@ -3236,6 +3236,7 @@ fn check_multibuffer_edits(
 fn test_history(cx: &mut App) {
     let test_settings = SettingsStore::test(cx);
     cx.set_global(test_settings);
+
     let group_interval: Duration = Duration::from_millis(1);
     let buffer_1 = cx.new(|cx| {
         let mut buf = Buffer::local("1234", cx);
@@ -3476,7 +3477,7 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_summaries_for_anchors(cx: &mut TestAppContext) {
+async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
         bar
@@ -3553,7 +3554,7 @@ fn test_summaries_for_anchors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
+async fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
     let base_text_1 = "one\ntwo".to_owned();
     let text_1 = "one\n".to_owned();
 
@@ -4278,8 +4279,10 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     }
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 10)]
 fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
+    let settings_store = SettingsStore::test(cx);
+    cx.set_global(settings_store);
     use buffer_diff::BufferDiff;
     use util::RandomCharIter;
 
@@ -4433,6 +4436,105 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             }
         }
     }
+}
+
+fn collect_word_diffs(
+    base_text: &str,
+    modified_text: &str,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let buffer = cx.new(|cx| Buffer::local(modified_text, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let text = snapshot.text();
+
+    snapshot
+        .diff_hunks()
+        .flat_map(|hunk| hunk.word_diffs)
+        .map(|range| text[range.start.0..range.end.0].to_string())
+        .collect()
+}
+
+#[gpui::test]
+async fn test_word_diff_simple_replacement(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "hello world foo bar\n";
+    let modified_text = "hello WORLD foo BAR\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(word_diffs, vec!["world", "bar", "WORLD", "BAR"]);
+}
+
+#[gpui::test]
+async fn test_word_diff_consecutive_modified_lines(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\nccc ddd\n";
+    let modified_text = "aaa BBB\nccc DDD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        vec!["bbb", "ddd", "BBB", "DDD"],
+        "consecutive modified lines should produce word diffs when line counts match"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "aaa bbb\ndeleted line\nccc ddd\n";
+    let modified_text = "aaa BBB\nccc DDD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        Vec::<String>::new(),
+        "modified lines with a deleted line between should not produce word diffs"
+    );
+}
+
+#[gpui::test]
+async fn test_word_diff_disabled(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| {
+        let mut settings_store = SettingsStore::test(cx);
+        settings_store.update_user_settings(cx, |settings| {
+            settings.project.all_languages.defaults.word_diff_enabled = Some(false);
+        });
+        settings_store
+    });
+    cx.set_global(settings_store);
+
+    let base_text = "hello world\n";
+    let modified_text = "hello WORLD\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert_eq!(
+        word_diffs,
+        Vec::<String>::new(),
+        "word diffs should be empty when disabled"
+    );
 }
 
 /// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)

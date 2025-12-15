@@ -41,6 +41,7 @@
 - [Debugger](./debugger.md)
 - [Diagnostics](./diagnostics.md)
 - [Tasks](./tasks.md)
+- [Tab Switcher](./tab-switcher.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
@@ -84,6 +85,10 @@
 - [Slash Command Extensions](./extensions/slash-commands.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
+
+# Migrate
+
+- [VS Code](./migrate/vs-code.md)
 
 # Language Support
 

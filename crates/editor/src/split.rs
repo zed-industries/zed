@@ -194,7 +194,7 @@ impl SplittableEditor {
         });
         let primary_pane = self.panes.first_pane();
         self.panes
-            .split(&primary_pane, &secondary_pane, SplitDirection::Left)
+            .split(&primary_pane, &secondary_pane, SplitDirection::Left, cx)
             .unwrap();
         cx.notify();
     }
@@ -203,7 +203,7 @@ impl SplittableEditor {
         let Some(secondary) = self.secondary.take() else {
             return;
         };
-        self.panes.remove(&secondary.pane).unwrap();
+        self.panes.remove(&secondary.pane, cx).unwrap();
         self.primary_editor.update(cx, |primary, cx| {
             primary.buffer().update(cx, |buffer, _| {
                 buffer.set_filter_mode(None);
@@ -243,20 +243,25 @@ impl Render for SplittableEditor {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let Some(active) = self.panes.panes().into_iter().next() else {
-            return div().into_any_element();
+        let inner = if self.secondary.is_none() {
+            self.primary_editor.clone().into_any_element()
+        } else if let Some(active) = self.panes.panes().into_iter().next() {
+            self.panes
+                .render(
+                    None,
+                    &ActivePaneDecorator::new(active, &self.workspace),
+                    window,
+                    cx,
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
         };
         div()
             .id("splittable-editor")
             .on_action(cx.listener(Self::split))
             .on_action(cx.listener(Self::unsplit))
             .size_full()
-            .child(self.panes.render(
-                None,
-                &ActivePaneDecorator::new(active, &self.workspace),
-                window,
-                cx,
-            ))
-            .into_any_element()
+            .child(inner)
     }
 }

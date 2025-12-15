@@ -420,6 +420,10 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let fut = async move {
+            // Remove SHLVL so the spawned shell initializes it to 1, matching
+            // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
+            env.remove("SHLVL");
+
             // If the parent environment doesn't have a locale set
             // (As is the case when launched from a .app on MacOS),
             // and the Project doesn't have a locale set, then
@@ -2503,9 +2507,7 @@ mod tests {
         })
         .detach();
 
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);

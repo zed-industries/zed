@@ -7,6 +7,7 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use ui::Checkbox;
 
 use std::borrow::Cow;
 use std::iter;
@@ -250,7 +251,7 @@ impl Markdown {
         self.autoscroll_request = None;
         self.pending_parse = None;
         self.should_reparse = false;
-        self.parsed_markdown = ParsedMarkdown::default();
+        // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
 
@@ -795,7 +796,7 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
-        for (range, event) in parsed_markdown.events.iter() {
+        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -837,8 +838,7 @@ impl Element for MarkdownElement {
 
                             heading.style().refine(&self.style.heading);
 
-                            let text_style =
-                                self.style.heading.text_style().clone().unwrap_or_default();
+                            let text_style = self.style.heading.text_style().clone();
 
                             builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
@@ -932,10 +932,7 @@ impl Element for MarkdownElement {
                                             }
                                         });
 
-                                    if let Some(code_block_text_style) = &self.style.code_block.text
-                                    {
-                                        builder.push_text_style(code_block_text_style.to_owned());
-                                    }
+                                    builder.push_text_style(self.style.code_block.text.to_owned());
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
@@ -945,13 +942,29 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_4(), range, markdown_end);
+                            builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet = if let Some(bullet_index) = builder.next_bullet_index() {
-                                format!("{}.", bullet_index)
+                            let bullet = if let Some((_, MarkdownEvent::TaskListMarker(checked))) =
+                                parsed_markdown.events.get(index.saturating_add(1))
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+
+                                Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    if *checked {
+                                        ToggleState::Selected
+                                    } else {
+                                        ToggleState::Unselected
+                                    },
+                                )
+                                .fill()
+                                .visualization_only(true)
+                                .into_any_element()
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
                             } else {
-                                "•".to_string()
+                                div().child("•").into_any_element()
                             };
                             builder.push_div(
                                 div()
@@ -1074,9 +1087,7 @@ impl Element for MarkdownElement {
 
                         builder.pop_div();
                         builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
+                        builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
                             copy_button: true, ..
@@ -1202,6 +1213,15 @@ impl Element for MarkdownElement {
                     builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<code>") {
+                        builder.push_text_style(self.style.inline_code.clone());
+                        continue;
+                    }
+                    if html.trim_end().starts_with("</code>") {
+                        builder.pop_text_style();
+                        continue;
+                    }
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {
@@ -1217,6 +1237,9 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::TaskListMarker(_) => {
+                    // handled inside the `MarkdownTag::Item` case
+                }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }
         }
@@ -1317,7 +1340,7 @@ fn apply_heading_style(
         };
 
         if let Some(style) = style_opt {
-            heading.style().text = Some(style.clone());
+            heading.style().text = style.clone();
         }
     }
 

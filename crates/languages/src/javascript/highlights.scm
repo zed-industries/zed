@@ -2,6 +2,40 @@
 
 (identifier) @variable
 
+(call_expression
+  function: (member_expression
+    object: (identifier) @type.builtin
+    (#any-of?
+      @type.builtin
+      "Promise"
+      "Array"
+      "Object"
+      "Map"
+      "Set"
+      "WeakMap"
+      "WeakSet"
+      "Date"
+      "Error"
+      "TypeError"
+      "RangeError"
+      "SyntaxError"
+      "ReferenceError"
+      "EvalError"
+      "URIError"
+      "RegExp"
+      "Function"
+      "Number"
+      "String"
+      "Boolean"
+      "Symbol"
+      "BigInt"
+      "Proxy"
+      "ArrayBuffer"
+      "DataView"
+    )
+  )
+)
+
 ; Properties
 
 (property_identifier) @property
@@ -17,6 +51,12 @@
 (call_expression
   function: (member_expression
       property: [(property_identifier) (private_property_identifier)] @function.method))
+
+(new_expression
+  constructor: (identifier) @type)
+
+(nested_type_identifier
+  module: (identifier) @type)
 
 ; Function and method definitions
 
@@ -47,10 +87,45 @@
   left: (identifier) @function
   right: [(function_expression) (arrow_function)])
 
-; Special identifiers
+; Parameters
 
-((identifier) @type
- (#match? @type "^[A-Z]"))
+(required_parameter
+  (identifier) @variable.parameter)
+
+(required_parameter
+  (_
+    ([
+      (identifier)
+      (shorthand_property_identifier_pattern)
+    ]) @variable.parameter))
+
+(optional_parameter
+  (identifier) @variable.parameter)
+
+(optional_parameter
+  (_
+    ([
+      (identifier)
+      (shorthand_property_identifier_pattern)
+    ]) @variable.parameter))
+
+(catch_clause
+  parameter: (identifier) @variable.parameter)
+
+(index_signature
+  name: (identifier) @variable.parameter)
+
+(arrow_function
+  parameter: (identifier) @variable.parameter)
+
+; Special identifiers
+;
+(class_declaration
+  (type_identifier) @type.class)
+
+(extends_clause
+  value: (identifier) @type.class)
+
 (type_identifier) @type
 (predefined_type) @type.builtin
 
@@ -250,6 +325,34 @@
 (jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 (jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+
+(jsx_opening_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
+(jsx_closing_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
+(jsx_self_closing_element
+  [
+    (identifier) @type
+    (member_expression
+      object: (identifier) @type
+      property: (property_identifier) @type
+    )
+  ]
+)
 
 (jsx_attribute (property_identifier) @attribute.jsx)
 (jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)

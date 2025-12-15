@@ -7,13 +7,16 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
-use git2::BranchType;
+use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use text::LineEnding;
+
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::process::{ExitStatus, Stdio};
 use std::{
@@ -53,6 +56,12 @@ impl Branch {
 
     pub fn is_remote(&self) -> bool {
         self.ref_name.starts_with("refs/remotes/")
+    }
+
+    pub fn remote_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split("/").next())
     }
 
     pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
@@ -205,6 +214,22 @@ pub struct CommitDetails {
     pub commit_timestamp: i64,
     pub author_email: SharedString,
     pub author_name: SharedString,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FileHistoryEntry {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileHistory {
+    pub entries: Vec<FileHistoryEntry>,
+    pub path: RepoPath,
 }
 
 #[derive(Debug)]
@@ -404,7 +429,7 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
-    fn remote_url(&self, name: &str) -> Option<String>;
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>>;
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -463,7 +488,19 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -567,6 +604,10 @@ pub trait GitRepository: Send + Sync {
 
     fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>>;
 
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>>;
+
     /// returns a list of remote branches that contain HEAD
     fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
 
@@ -617,6 +658,7 @@ pub struct RealGitRepository {
     pub repository: Arc<Mutex<git2::Repository>>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
+    any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
 }
 
@@ -635,6 +677,7 @@ impl RealGitRepository {
             system_git_binary_path,
             any_git_binary_path,
             executor,
+            any_git_binary_help_output: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -644,6 +687,27 @@ impl RealGitRepository {
             .workdir()
             .context("failed to read git work directory")
             .map(Path::to_path_buf)
+    }
+
+    async fn any_git_binary_help_output(&self) -> SharedString {
+        if let Some(output) = self.any_git_binary_help_output.lock().clone() {
+            return output;
+        }
+        let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
+        let working_directory = self.working_directory();
+        let output: SharedString = self
+            .executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(["help", "-a"])
+                    .await
+            })
+            .await
+            .unwrap_or_default()
+            .into();
+        *self.any_git_binary_help_output.lock() = Some(output.clone());
+        output
     }
 }
 
@@ -944,7 +1008,15 @@ impl GitRepository for RealGitRepository {
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path.as_std_path(), STAGE_NORMAL) {
+                    let path = path.as_std_path();
+                    // `RepoPath` contains a `RelPath` which normalizes `.` into an empty path
+                    // `get_path` unwraps on empty paths though, so undo that normalization here
+                    let path = if path.components().next().is_none() {
+                        ".".as_ref()
+                    } else {
+                        path
+                    };
+                    let oid = match index.get_path(path, STAGE_NORMAL) {
                         Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                         _ => return Ok(None),
                     };
@@ -1054,10 +1126,16 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn remote_url(&self, name: &str) -> Option<String> {
-        let repo = self.repository.lock();
-        let remote = repo.find_remote(name).ok()?;
-        remote.url().map(|url| url.to_string())
+    fn remote_url(&self, name: &str) -> BoxFuture<'_, Option<String>> {
+        let repo = self.repository.clone();
+        let name = name.to_owned();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                let remote = repo.find_remote(&name).ok()?;
+                remote.url().map(|url| url.to_string())
+            })
+            .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -1348,9 +1426,19 @@ impl GitRepository for RealGitRepository {
                 branch
             } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                let mut branch = match repo.branch(&branch_name, &branch_commit, false) {
+                    Ok(branch) => branch,
+                    Err(err) if err.code() == ErrorCode::Exists => {
+                        repo.find_branch(&branch_name, BranchType::Local)?
+                    }
+                    Err(err) => {
+                        return Err(err.into());
+                    }
+                };
+
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
@@ -1366,7 +1454,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let branch = branch.await?;
-
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
@@ -1431,25 +1518,116 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+    fn blame(
+        &self,
+        path: RepoPath,
+        content: Rope,
+        line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
+        let executor = self.executor.clone();
 
-        let remote_url = self
-            .remote_url("upstream")
-            .or_else(|| self.remote_url("origin"));
+        executor
+            .spawn(async move {
+                crate::blame::Blame::for_path(
+                    &git_binary_path,
+                    &working_directory?,
+                    &path,
+                    &content,
+                    line_ending,
+                )
+                .await
+            })
+            .boxed()
+    }
 
-        async move {
-            crate::blame::Blame::for_path(
-                &git_binary_path,
-                &working_directory?,
-                &path,
-                &content,
-                remote_url,
-            )
-            .await
-        }
-        .boxed()
+    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
+        self.file_history_paginated(path, 0, None)
+    }
+
+    fn file_history_paginated(
+        &self,
+        path: RepoPath,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<FileHistory>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.any_git_binary_path.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                // Use a unique delimiter with a hardcoded UUID to separate commits
+                // This essentially eliminates any chance of encountering the delimiter in actual commit data
+                let commit_delimiter =
+                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
+
+                let format_string = format!(
+                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
+                    commit_delimiter
+                );
+
+                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = skip.to_string();
+                    args.push("--skip");
+                    args.push(&skip_str);
+                }
+                if let Some(n) = limit {
+                    limit_str = n.to_string();
+                    args.push("-n");
+                    args.push(&limit_str);
+                }
+
+                args.push("--");
+
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(&args)
+                    .arg(path.as_unix_str())
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut entries = Vec::new();
+
+                for commit_block in stdout.split(commit_delimiter) {
+                    let commit_block = commit_block.trim();
+                    if commit_block.is_empty() {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = commit_block.split('\0').collect();
+                    if fields.len() >= 6 {
+                        let sha = fields[0].trim().to_string().into();
+                        let subject = fields[1].trim().to_string().into();
+                        let message = fields[2].trim().to_string().into();
+                        let commit_timestamp = fields[3].trim().parse().unwrap_or(0);
+                        let author_name = fields[4].trim().to_string().into();
+                        let author_email = fields[5].trim().to_string().into();
+
+                        entries.push(FileHistoryEntry {
+                            sha,
+                            subject,
+                            message,
+                            commit_timestamp,
+                            author_name,
+                            author_email,
+                        });
+                    }
+                }
+
+                Ok(FileHistory { entries, path })
+            })
+            .boxed()
     }
 
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
@@ -1667,6 +1845,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let mut cmd = new_smol_command(git_binary_path);
             cmd.current_dir(&working_directory?)
@@ -1709,6 +1889,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't push")?;
             let working_directory = working_directory?;
@@ -1744,6 +1926,8 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't pull")?;
             let mut command = new_smol_command(git_binary_path);
@@ -1778,6 +1962,8 @@ impl GitRepository for RealGitRepository {
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
+        // Note: Do not spawn this command on the background thread, it might pop open the credential helper
+        // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't fetch")?;
             let mut command = new_smol_command(git_binary_path);
@@ -1852,7 +2038,7 @@ impl GitRepository for RealGitRepository {
                 let working_directory = working_directory?;
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
-                    .args(["remote"])
+                    .args(["remote", "-v"])
                     .output()
                     .await?;
 
@@ -1861,14 +2047,43 @@ impl GitRepository for RealGitRepository {
                     "Failed to get all remotes:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                let remote_names = String::from_utf8_lossy(&output.stdout)
-                    .split('\n')
-                    .filter(|name| !name.is_empty())
-                    .map(|name| Remote {
-                        name: name.trim().to_string().into(),
+                let remote_names: HashSet<Remote> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .filter_map(|line| {
+                        let mut split_line = line.split_whitespace();
+                        let remote_name = split_line.next()?;
+
+                        Some(Remote {
+                            name: remote_name.trim().to_string().into(),
+                        })
                     })
                     .collect();
-                Ok(remote_names)
+
+                Ok(remote_names.into_iter().collect())
+            })
+            .boxed()
+    }
+
+    fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                repo.remote_delete(&name)?;
+
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                let repo = repo.lock();
+                repo.remote(&name, url.as_ref())?;
+                Ok(())
             })
             .boxed()
     }
@@ -2110,18 +2325,47 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
+        let repository = self.repository.clone();
         let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor)
-                    .envs(HashMap::clone(&env));
-                git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                    .await?;
-                Ok(())
-            })
-            .boxed()
+        let help_output = self.any_git_binary_help_output();
+
+        // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
+        async move {
+            let working_directory = working_directory?;
+            if !help_output
+                .await
+                .lines()
+                .any(|line| line.trim().starts_with("hook "))
+            {
+                let hook_abs_path = repository.lock().path().join("hooks").join(hook.as_str());
+                if hook_abs_path.is_file() {
+                    let output = new_smol_command(&hook_abs_path)
+                        .envs(env.iter())
+                        .current_dir(&working_directory)
+                        .output()
+                        .await?;
+
+                    if !output.status.success() {
+                        return Err(GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                            status: output.status,
+                        }
+                        .into());
+                    }
+                }
+
+                return Ok(());
+            }
+
+            let git = GitBinary::new(git_binary_path, working_directory, executor)
+                .envs(HashMap::clone(&env));
+            git.run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                .await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
