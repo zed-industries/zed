@@ -119,14 +119,19 @@ pub fn track_worktree_trust(
 }
 
 /// Waits until at least [`PathTrust::Global`] level of trust is granted for the host the [`TrustedWorktrees`] was initialized with.
-pub fn wait_for_default_global_trust(cx: &mut App) -> Option<Task<()>> {
+pub fn wait_for_default_global_trust(what_waits: &'static str, cx: &mut App) -> Option<Task<()>> {
     let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
-    wait_for_global_trust(trusted_worktrees.read(cx).remote_host.clone(), cx)
+    wait_for_global_trust(
+        trusted_worktrees.read(cx).remote_host.clone(),
+        what_waits,
+        cx,
+    )
 }
 
 /// Waits until at least [`PathTrust::Global`] level of trust is granted for a particular host.
 pub fn wait_for_global_trust(
     remote_host: Option<impl Into<RemoteHostLocation>>,
+    what_waits: &'static str,
     cx: &mut App,
 ) -> Option<Task<()>> {
     let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
@@ -141,12 +146,13 @@ pub fn wait_for_global_trust(
     }?;
 
     Some(cx.spawn(async move |cx| {
-        log::info!("Waiting for global startup to be trusted before starting context servers");
+        log::info!("Waiting for global startup to be trusted before starting {what_waits}");
         let (tx, restricted_worktrees_task) = smol::channel::bounded::<()>(1);
         let Ok(_subscription) = cx.update(|cx| {
             cx.subscribe(&trusted_worktrees, move |_, e, _| {
                 if let TrustedWorktreesEvent::Trusted(trusted_host, trusted_paths) = e {
                     if trusted_host == &remote_host && trusted_paths.contains(&PathTrust::Global) {
+                        log::info!("Global startup is trusted for {what_waits}");
                         tx.send_blocking(()).ok();
                     }
                 }
@@ -1618,7 +1624,7 @@ mod tests {
             store.trust(HashSet::from_iter([PathTrust::Global]), None, cx);
         });
 
-        let task = cx.update(|cx| wait_for_global_trust(None::<RemoteHostLocation>, cx));
+        let task = cx.update(|cx| wait_for_global_trust(None::<RemoteHostLocation>, "test", cx));
         assert!(task.is_none(), "should return None when already trusted");
     }
 
@@ -1635,7 +1641,7 @@ mod tests {
 
         let trusted_worktrees = init_trust_global(worktree_store, cx);
 
-        let task = cx.update(|cx| wait_for_global_trust(None::<RemoteHostLocation>, cx));
+        let task = cx.update(|cx| wait_for_global_trust(None::<RemoteHostLocation>, "test", cx));
         assert!(
             task.is_some(),
             "should return Some(Task) when not yet trusted"

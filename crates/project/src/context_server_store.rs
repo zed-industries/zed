@@ -336,7 +336,7 @@ impl ContextServerStore {
             let wait_task = this.update(cx, |context_server_store, cx| {
                 context_server_store.project.update(cx, |project, cx| {
                     let remote_host = project.remote_connection_options(cx);
-                    wait_for_global_trust(remote_host, cx)
+                    wait_for_global_trust(remote_host, "context servers", cx)
                 })
             })??;
             if let Some(wait_task) = wait_task {
@@ -585,7 +585,7 @@ impl ContextServerStore {
         let wait_task = this.update(cx, |context_server_store, cx| {
             context_server_store.project.update(cx, |project, cx| {
                 let remote_host = project.remote_connection_options(cx);
-                wait_for_global_trust(remote_host, cx)
+                wait_for_global_trust(remote_host, "context servers", cx)
             })
         })??;
         if let Some(wait_task) = wait_task {

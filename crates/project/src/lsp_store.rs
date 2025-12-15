@@ -628,6 +628,10 @@ impl LocalLspStore {
                         adapter.name(),
                     );
                     untrusted_worktree_task.recv().await.ok();
+                    log::info!(
+                        "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
+                        adapter.name(),
+                    );
                     languages
                         .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
                 }
@@ -667,6 +671,10 @@ impl LocalLspStore {
                     adapter.name(),
                 );
                 untrusted_worktree_task.recv().await.ok();
+                log::info!(
+                    "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
+                    adapter.name(),
+                );
             }
 
             let (existing_binary, maybe_download_binary) = adapter

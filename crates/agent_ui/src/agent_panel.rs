@@ -948,7 +948,11 @@ impl AgentPanel {
             if ext_agent.is_mcp() {
                 let wait_task = this.update(cx, |agent_panel, cx| {
                     agent_panel.project.update(cx, |project, cx| {
-                        wait_for_global_trust(project.remote_connection_options(cx), cx)
+                        wait_for_global_trust(
+                            project.remote_connection_options(cx),
+                            "context servers",
+                            cx,
+                        )
                     })
                 })?;
                 if let Some(wait_task) = wait_task {
@@ -1508,7 +1512,7 @@ impl AgentPanel {
     ) {
         let wait_task = if agent.is_mcp() {
             self.project.update(cx, |project, cx| {
-                wait_for_global_trust(project.remote_connection_options(cx), cx)
+                wait_for_global_trust(project.remote_connection_options(cx), "context servers", cx)
             })
         } else {
             None
