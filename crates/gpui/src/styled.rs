@@ -595,9 +595,7 @@ pub trait Styled: Sized {
 
     /// Sets the font features of this element and its children.
     fn font_features(mut self, features: FontFeatures) -> Self {
-        self.text_style()
-            .get_or_insert_with(Default::default)
-            .font_features = Some(features);
+        self.text_style().font_features = Some(features);
         self
     }
 
