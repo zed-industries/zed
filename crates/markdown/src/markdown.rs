@@ -1087,9 +1087,7 @@ impl Element for MarkdownElement {
 
                         builder.pop_div();
                         builder.pop_code_block();
-                        if self.style.code_block.text.is_some() {
-                            builder.pop_text_style();
-                        }
+                        builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
                             copy_button: true, ..
