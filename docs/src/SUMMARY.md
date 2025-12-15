@@ -86,7 +86,7 @@
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
-# Migrate
+# Coming From...
 
 - [VS Code](./migrate/vs-code.md)
 - [IntelliJ IDEA](./migrate/intellij.md)

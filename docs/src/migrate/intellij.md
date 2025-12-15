@@ -299,17 +299,12 @@ If you're used to AI assistants in IntelliJ (like GitHub Copilot or JetBrains AI
 
 ### Configuring GitHub Copilot
 
-Sign in to GitHub Copilot by clicking on the Zeta icon in the status bar and following the setup instructions. You can also add this to your settings:
+1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+2. Navigate to **AI → Edit Predictions**
+3. Click **Configure** next to "Configure Providers"
+4. Under **GitHub Copilot**, click **Sign in to GitHub**
 
-```json
-{
-  "features": {
-    "edit_prediction_provider": "copilot"
-  }
-}
-```
-
-To invoke completions, just start typing. Zed will offer suggestions inline for you to accept.
+Once signed in, just start typing. Zed will offer suggestions inline for you to accept.
 
 ### Additional AI Options
 
