@@ -35,7 +35,58 @@ pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Re
     fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
     /// The element to render in the adjacent pane's tab bar when this utility pane is minimized
     fn toggle_button(&self, cx: &App) -> AnyElement;
-    fn minimized(&self, cx: &App) -> bool;
+    fn expanded(&self, cx: &App) -> bool;
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>);
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
+}
+
+pub trait UtilityPaneHandle: 'static + Send + Sync {
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
+    fn toggle_button(&self, cx: &App) -> AnyElement;
+    fn expanded(&self, cx: &App) -> bool;
+    fn set_expanded(&self, expanded: bool, cx: &mut App);
+    fn width(&self, cx: &App) -> Pixels;
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn to_any(&self) -> AnyView;
+    fn box_clone(&self) -> Box<dyn UtilityPaneHandle>;
+}
+
+impl<T> UtilityPaneHandle for Entity<T>
+where
+    T: UtilityPane,
+{
+    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition {
+        self.read(cx).position(window, cx)
+    }
+
+    fn toggle_button(&self, cx: &App) -> AnyElement {
+        self.read(cx).toggle_button(cx)
+    }
+
+    fn expanded(&self, cx: &App) -> bool {
+        self.read(cx).expanded(cx)
+    }
+
+    fn set_expanded(&self, expanded: bool, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_expanded(expanded, cx))
+    }
+
+    fn width(&self, cx: &App) -> Pixels {
+        self.read(cx).width(cx)
+    }
+
+    fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn to_any(&self) -> AnyView {
+        self.clone().into()
+    }
+
+    fn box_clone(&self) -> Box<dyn UtilityPaneHandle> {
+        Box::new(self.clone())
+    }
 }
 
 pub enum UtilityPanePosition {
@@ -76,17 +127,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         true
     }
 
-    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
+    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<Box<dyn UtilityPaneHandle>> {
         None
     }
-    fn utility_pane_expanded(&self, _cx: &App) -> bool {
-        false
-    }
-    fn set_utility_pane_expanded(&mut self, _expanded: bool, _cx: &mut Context<Self>) {}
-    fn utility_pane_width(&self, _cx: &App) -> Pixels {
-        px(400.0)
-    }
-    fn set_utility_pane_width(&mut self, _width: Option<Pixels>, _cx: &mut Context<Self>) {}
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -111,11 +154,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
-    fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView>;
-    fn utility_pane_expanded(&self, cx: &App) -> bool;
-    fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App);
-    fn utility_pane_width(&self, cx: &App) -> Pixels;
-    fn set_utility_pane_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn utility_pane(&self, window: &Window, cx: &App) -> Option<Box<dyn UtilityPaneHandle>>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -221,24 +260,8 @@ where
         self.read(cx).enabled(cx)
     }
 
-    fn utility_pane(&self, window: &Window, cx: &App) -> Option<AnyView> {
+    fn utility_pane(&self, window: &Window, cx: &App) -> Option<Box<dyn UtilityPaneHandle>> {
         self.read(cx).utility_pane(window, cx)
-    }
-
-    fn utility_pane_expanded(&self, cx: &App) -> bool {
-        self.read(cx).utility_pane_expanded(cx)
-    }
-
-    fn set_utility_pane_expanded(&self, expanded: bool, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_utility_pane_expanded(expanded, cx))
-    }
-
-    fn utility_pane_width(&self, cx: &App) -> Pixels {
-        self.read(cx).utility_pane_width(cx)
-    }
-
-    fn set_utility_pane_width(&self, width: Option<Pixels>, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_utility_pane_width(width, cx))
     }
 }
 
@@ -659,14 +682,14 @@ impl Dock {
         self.restore_state(window, cx);
 
         if cx.has_flag::<AgentV2FeatureFlag>() {
-            if panel.utility_pane(window, cx).is_some() {
+            if let Some(handle) = panel.utility_pane(window, cx) {
                 let slot = utility_slot_for_dock_position(self.position);
                 let workspace = self.workspace.clone();
-                let id = Entity::entity_id(&panel);
+                let panel_id = Entity::entity_id(&panel);
                 cx.defer(move |cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.register_utility_pane(slot, id, cx);
+                            workspace.register_utility_pane(slot, panel_id, handle, cx);
                         });
                     }
                 });

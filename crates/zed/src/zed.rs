@@ -690,7 +690,6 @@ fn initialize_panels(
     .detach();
 }
 
-/// Generic helper function to setup or teardown a panel based on disable_ai setting
 fn setup_or_teardown_ai_panel<P: Panel>(
     workspace: &mut Workspace,
     window: &mut Window,

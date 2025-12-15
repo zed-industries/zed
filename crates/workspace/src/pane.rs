@@ -3145,8 +3145,8 @@ impl Pane {
                     self.workspace.upgrade().and_then(|entity| {
                         let workspace = entity.read(cx);
                         workspace
-                            .utility_pane_for_slot(UtilityPaneSlot::Left, window, cx)
-                            .map(|info| !info.expanded)
+                            .utility_pane(UtilityPaneSlot::Left)
+                            .map(|pane| !pane.expanded(cx))
                     })
                 })
                 .flatten()
@@ -3159,8 +3159,8 @@ impl Pane {
                     self.workspace.upgrade().and_then(|entity| {
                         let workspace = entity.read(cx);
                         workspace
-                            .utility_pane_for_slot(UtilityPaneSlot::Right, window, cx)
-                            .map(|info| !info.expanded)
+                            .utility_pane(UtilityPaneSlot::Right)
+                            .map(|pane| !pane.expanded(cx))
                     })
                 })
                 .flatten()

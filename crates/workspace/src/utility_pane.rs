@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use gpui::{
-    AnyView, App, AppContext, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement,
-    WeakEntity, deferred, px,
+    AppContext, EntityId, MouseButton, Pixels, Render, StatefulInteractiveElement, WeakEntity,
+    deferred, px,
 };
 use ui::{
     ActiveTheme as _, Clickable, Context, DynamicSpacing, FluentBuilder as _, IconButton, IconName,
@@ -10,7 +8,7 @@ use ui::{
     Tab, Window, div,
 };
 
-use crate::{DockPosition, PanelHandle, Workspace};
+use crate::{DockPosition, Workspace, dock::UtilityPaneHandle};
 
 pub(crate) const UTILITY_PANE_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 pub(crate) const UTILITY_PANE_MIN_WIDTH: Pixels = px(20.0);
@@ -21,10 +19,15 @@ pub enum UtilityPaneSlot {
     Right,
 }
 
-#[derive(Debug, Default, Clone)]
+struct UtilityPaneSlotState {
+    panel_id: EntityId,
+    utility_pane: Box<dyn UtilityPaneHandle>,
+}
+
+#[derive(Default)]
 pub struct UtilityPaneState {
-    pub left_slot: Option<EntityId>,
-    pub right_slot: Option<EntityId>,
+    left_slot: Option<UtilityPaneSlotState>,
+    right_slot: Option<UtilityPaneSlotState>,
 }
 
 #[derive(Clone)]
@@ -36,12 +39,6 @@ impl Render for DraggedUtilityPane {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct UtilityPane {
-    pub view: AnyView,
-    pub expanded: bool,
-}
-
 pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot {
     match position {
         DockPosition::Left => UtilityPaneSlot::Left,
@@ -51,34 +48,19 @@ pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot
 }
 
 impl Workspace {
-    pub fn panel_for_utility_slot(
-        &self,
-        slot: UtilityPaneSlot,
-        cx: &App,
-    ) -> Option<Arc<dyn PanelHandle>> {
-        let panel_id = match slot {
-            UtilityPaneSlot::Left => self.utility_pane_state.left_slot?,
-            UtilityPaneSlot::Right => self.utility_pane_state.right_slot?,
-        };
-
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-            if let Some(panel) = dock.read(cx).panel_for_id(panel_id) {
-                return Some(panel.clone());
-            }
+    pub fn utility_pane(&self, slot: UtilityPaneSlot) -> Option<&dyn UtilityPaneHandle> {
+        match slot {
+            UtilityPaneSlot::Left => self
+                .utility_panes
+                .left_slot
+                .as_ref()
+                .map(|s| s.utility_pane.as_ref()),
+            UtilityPaneSlot::Right => self
+                .utility_panes
+                .right_slot
+                .as_ref()
+                .map(|s| s.utility_pane.as_ref()),
         }
-        None
-    }
-
-    pub fn utility_pane_for_slot(
-        &self,
-        slot: UtilityPaneSlot,
-        window: &Window,
-        cx: &App,
-    ) -> Option<UtilityPane> {
-        let panel = self.panel_for_utility_slot(slot, cx)?;
-        let view = panel.utility_pane(window, cx)?;
-        let expanded = panel.utility_pane_expanded(cx);
-        Some(UtilityPane { view, expanded })
     }
 
     pub fn toggle_utility_pane(
@@ -87,9 +69,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
-            let current = panel.utility_pane_expanded(cx);
-            panel.set_utility_pane_expanded(!current, cx);
+        if let Some(handle) = self.utility_pane(slot) {
+            let current = handle.expanded(cx);
+            handle.set_expanded(!current, cx);
         }
         cx.notify();
         self.serialize_workspace(window, cx);
@@ -98,15 +80,22 @@ impl Workspace {
     pub fn register_utility_pane(
         &mut self,
         slot: UtilityPaneSlot,
-        provider_panel_id: EntityId,
+        panel: EntityId,
+        handle: Box<dyn UtilityPaneHandle>,
         cx: &mut Context<Self>,
     ) {
         match slot {
             UtilityPaneSlot::Left => {
-                self.utility_pane_state.left_slot = Some(provider_panel_id);
+                self.utility_panes.left_slot = Some(UtilityPaneSlotState {
+                    panel_id: panel,
+                    utility_pane: handle,
+                });
             }
             UtilityPaneSlot::Right => {
-                self.utility_pane_state.right_slot = Some(provider_panel_id);
+                self.utility_panes.right_slot = Some(UtilityPaneSlotState {
+                    panel_id: panel,
+                    utility_pane: handle,
+                });
             }
         }
         cx.notify();
@@ -120,22 +109,24 @@ impl Workspace {
     ) {
         let should_clear = match slot {
             UtilityPaneSlot::Left => self
-                .utility_pane_state
+                .utility_panes
                 .left_slot
-                .is_some_and(|id| id == provider_panel_id),
+                .as_ref()
+                .is_some_and(|slot| slot.panel_id == provider_panel_id),
             UtilityPaneSlot::Right => self
-                .utility_pane_state
+                .utility_panes
                 .right_slot
-                .is_some_and(|id| id == provider_panel_id),
+                .as_ref()
+                .is_some_and(|slot| slot.panel_id == provider_panel_id),
         };
 
         if should_clear {
             match slot {
                 UtilityPaneSlot::Left => {
-                    self.utility_pane_state.left_slot = None;
+                    self.utility_panes.left_slot = None;
                 }
                 UtilityPaneSlot::Right => {
-                    self.utility_pane_state.right_slot = None;
+                    self.utility_panes.right_slot = None;
                 }
             }
             cx.notify();
@@ -149,10 +140,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
+        if let Some(handle) = self.utility_pane(slot) {
             let max_width = self.max_utility_pane_width(window, cx);
             let width = new_width.max(UTILITY_PANE_MIN_WIDTH).min(max_width);
-            panel.set_utility_pane_width(Some(width), cx);
+            handle.set_width(Some(width), cx);
             cx.notify();
             self.serialize_workspace(window, cx);
         }
@@ -164,8 +155,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(panel) = self.panel_for_utility_slot(slot, cx) {
-            panel.set_utility_pane_width(None, cx);
+        if let Some(handle) = self.utility_pane(slot) {
+            handle.set_width(None, cx);
             cx.notify();
             self.serialize_workspace(window, cx);
         }
@@ -176,16 +167,20 @@ impl Workspace {
 pub struct UtilityPaneFrame {
     workspace: WeakEntity<Workspace>,
     slot: UtilityPaneSlot,
-    view: AnyView,
+    handle: Box<dyn UtilityPaneHandle>,
 }
 
 impl UtilityPaneFrame {
-    pub fn new(slot: UtilityPaneSlot, view: AnyView, cx: &mut Context<Workspace>) -> Self {
+    pub fn new(
+        slot: UtilityPaneSlot,
+        handle: Box<dyn UtilityPaneHandle>,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
         let workspace = cx.weak_entity();
         Self {
             workspace,
             slot,
-            view,
+            handle,
         }
     }
 }
@@ -194,15 +189,7 @@ impl RenderOnce for UtilityPaneFrame {
     fn render(self, _window: &mut Window, cx: &mut ui::App) -> impl IntoElement {
         let workspace = self.workspace.clone();
         let slot = self.slot;
-
-        let Some(width) = workspace.upgrade().and_then(|ws| {
-            ws.read_with(cx, |ws, cx| {
-                ws.panel_for_utility_slot(slot, cx)
-                    .map(|panel| panel.utility_pane_width(cx))
-            })
-        }) else {
-            return gpui::Empty.into_any_element();
-        };
+        let width = self.handle.width(cx);
 
         let create_resize_handle = || {
             let workspace_handle = workspace.clone();
@@ -309,7 +296,7 @@ impl RenderOnce for UtilityPaneFrame {
                     }),
             )
             .child(create_resize_handle())
-            .child(self.view)
+            .child(self.handle.to_any())
             .into_any_element()
     }
 }

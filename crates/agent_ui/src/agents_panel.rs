@@ -3,8 +3,8 @@ use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Task, WeakEntity,
-    actions, prelude::*, px,
+    Action, AnyElement, AsyncWindowContext, Entity, EventEmitter, Focusable, Pixels, Subscription,
+    Task, WeakEntity, actions, prelude::*, px,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
@@ -16,10 +16,11 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     Panel, Workspace,
-    dock::{DockPosition, PanelEvent},
+    dock::{ClosePane, DockPosition, MinimizePane, PanelEvent, UtilityPane, UtilityPanePosition},
 };
 
 const AGENTS_PANEL_KEY: &str = "agents_panel";
+const DEFAULT_UTILITY_PANE_WIDTH: Pixels = px(400.0);
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentsPanel {
@@ -49,12 +50,11 @@ pub fn init(cx: &mut App) {
 
 pub struct AgentsPanel {
     focus_handle: gpui::FocusHandle,
-    utility_pane_view: Entity<AgentsUtilityPane>,
+    utility_pane_view: Entity<AgentThreadPane>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
-    utility_pane_expanded: bool,
-    utility_pane_width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AgentsPanel {
@@ -78,11 +78,16 @@ impl AgentsPanel {
             workspace.update_in(cx, |workspace, _window, cx| {
                 let fs = workspace.app_state().fs.clone();
                 cx.new(|cx| {
-                    let mut panel = Self::new(fs, cx);
+                    let utility_pane_expanded = serialized_panel
+                        .as_ref()
+                        .map(|s| s.utility_pane_expanded)
+                        .unwrap_or(false);
+                    let utility_pane_width =
+                        serialized_panel.as_ref().and_then(|s| s.utility_pane_width);
+
+                    let mut panel = Self::new(fs, utility_pane_expanded, utility_pane_width, cx);
                     if let Some(serialized_panel) = serialized_panel {
                         panel.width = serialized_panel.width;
-                        panel.utility_pane_expanded = serialized_panel.utility_pane_expanded;
-                        panel.utility_pane_width = serialized_panel.utility_pane_width;
                     }
                     panel
                 })
@@ -90,24 +95,47 @@ impl AgentsPanel {
         })
     }
 
-    fn new(fs: Arc<dyn Fs>, cx: &mut ui::Context<Self>) -> Self {
+    fn new(
+        fs: Arc<dyn Fs>,
+        utility_pane_expanded: bool,
+        utility_pane_width: Option<Pixels>,
+        cx: &mut ui::Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
-        let utility_pane_view = cx.new(|cx| AgentsUtilityPane::new(cx));
+        let agent_thread_pane =
+            cx.new(|cx| AgentThreadPane::new(utility_pane_expanded, utility_pane_width, cx));
+
+        let subscriptions = vec![cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event)];
+
         Self {
             focus_handle,
-            utility_pane_view,
+            utility_pane_view: agent_thread_pane,
             fs,
             width: None,
-            utility_pane_expanded: false,
-            utility_pane_width: None,
             pending_serialization: Task::ready(None),
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn handle_utility_pane_event(
+        &mut self,
+        _utility_pane: Entity<AgentThreadPane>,
+        event: &AgentsUtilityPaneEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            AgentsUtilityPaneEvent::StateChanged => {
+                self.serialize(cx);
+                cx.notify();
+            }
         }
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        let utility_pane_expanded = self.utility_pane_expanded;
-        let utility_pane_width = self.utility_pane_width;
+        let utility_pane_expanded = self.utility_pane_view.read(cx).expanded(cx);
+        let utility_pane_width = self.utility_pane_view.read(cx).width;
+
         self.pending_serialization = cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
@@ -198,28 +226,12 @@ impl Panel for AgentsPanel {
         AgentSettings::get_global(cx).enabled(cx)
     }
 
-    fn utility_pane(&self, _window: &Window, _cx: &App) -> Option<AnyView> {
-        Some(self.utility_pane_view.clone().into())
-    }
-
-    fn utility_pane_expanded(&self, _cx: &App) -> bool {
-        self.utility_pane_expanded
-    }
-
-    fn set_utility_pane_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
-        self.utility_pane_expanded = expanded;
-        self.serialize(cx);
-        cx.notify();
-    }
-
-    fn utility_pane_width(&self, _cx: &App) -> Pixels {
-        self.utility_pane_width.unwrap_or(px(400.0))
-    }
-
-    fn set_utility_pane_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
-        self.utility_pane_width = width;
-        self.serialize(cx);
-        cx.notify();
+    fn utility_pane(
+        &self,
+        _window: &Window,
+        _cx: &App,
+    ) -> Option<Box<dyn workspace::dock::UtilityPaneHandle>> {
+        Some(Box::new(self.utility_pane_view.clone()))
     }
 }
 
@@ -290,24 +302,72 @@ impl RenderOnce for AgentThreadDiff {
     }
 }
 
-pub struct AgentsUtilityPane {
-    focus_handle: gpui::FocusHandle,
+pub enum AgentsUtilityPaneEvent {
+    StateChanged,
 }
 
-impl AgentsUtilityPane {
-    pub fn new(cx: &mut ui::Context<Self>) -> Self {
+impl EventEmitter<AgentsUtilityPaneEvent> for AgentThreadPane {}
+impl EventEmitter<MinimizePane> for AgentThreadPane {}
+impl EventEmitter<ClosePane> for AgentThreadPane {}
+
+pub struct AgentThreadPane {
+    focus_handle: gpui::FocusHandle,
+    expanded: bool,
+    width: Option<Pixels>,
+}
+
+impl AgentThreadPane {
+    pub fn new(expanded: bool, width: Option<Pixels>, cx: &mut ui::Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        Self { focus_handle }
+        Self {
+            focus_handle,
+            expanded,
+            width,
+        }
     }
 }
 
-impl Focusable for AgentsUtilityPane {
+impl Focusable for AgentThreadPane {
     fn focus_handle(&self, _cx: &ui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for AgentsUtilityPane {
+impl UtilityPane for AgentThreadPane {
+    fn position(&self, _window: &Window, cx: &App) -> UtilityPanePosition {
+        let dock_position = AgentSettings::get_global(cx).dock.into();
+        match dock_position {
+            DockPosition::Left | DockPosition::Bottom => UtilityPanePosition::Left,
+            DockPosition::Right => UtilityPanePosition::Right,
+        }
+    }
+
+    fn toggle_button(&self, _cx: &App) -> AnyElement {
+        Label::new("Toggle Utility Pane").into_any_element()
+    }
+
+    fn expanded(&self, _cx: &App) -> bool {
+        self.expanded
+    }
+
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.expanded = expanded;
+        cx.emit(AgentsUtilityPaneEvent::StateChanged);
+        cx.notify();
+    }
+
+    fn width(&self, _cx: &App) -> Pixels {
+        self.width.unwrap_or(DEFAULT_UTILITY_PANE_WIDTH)
+    }
+
+    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+        self.width = width;
+        cx.emit(AgentsUtilityPaneEvent::StateChanged);
+        cx.notify();
+    }
+}
+
+impl Render for AgentThreadPane {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
