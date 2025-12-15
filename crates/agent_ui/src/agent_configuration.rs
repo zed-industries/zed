@@ -35,7 +35,7 @@ use project::{
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
-    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, SwitchColor, Tooltip,
+    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
     WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
@@ -883,7 +883,6 @@ impl AgentConfiguration {
                             .child(context_server_configuration_menu)
                             .child(
                             Switch::new("context-server-switch", is_running.into())
-                                .color(SwitchColor::Accent)
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();

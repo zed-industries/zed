@@ -12,16 +12,15 @@ use crate::wasm_host::wit::{
 };
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
-use editor::Editor;
 use extension::{LanguageModelAuthConfig, OAuthConfig};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
-use gpui::Focusable;
+
 use gpui::{
-    AnyView, App, AppContext as _, AsyncApp, ClipboardItem, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, MouseDownEvent, Subscription, Task, TextStyleRefinement,
-    UnderlineStyle, Window, WindowBounds, WindowOptions, point, px, rems,
+    AnyView, App, AsyncApp, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseDownEvent, Subscription, Task, TextStyleRefinement, UnderlineStyle, Window,
+    WindowBounds, WindowOptions, point, prelude::*, px,
 };
 use language_model::tool_schema::LanguageModelToolSchemaFormat;
 use language_model::{
@@ -31,14 +30,15 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, StopReason, TokenUsage,
 };
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{
-    Button, ButtonLike, ButtonSize, ButtonStyle, ConfiguredApiCard, Headline, HeadlineSize, Icon,
-    Label, LabelSize, Vector, VectorName, prelude::*,
+    ButtonLike, ButtonLink, Checkbox, ConfiguredApiCard, SpinnerLabel, ToggleState, Vector,
+    VectorName, prelude::*,
 };
+use ui_input::InputField;
 use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::oauth_device_flow_modal::{
@@ -355,7 +355,7 @@ struct ExtensionProviderConfigurationView {
     auth_config: Option<LanguageModelAuthConfig>,
     state: Entity<ExtensionLlmProviderState>,
     settings_markdown: Option<Entity<Markdown>>,
-    api_key_editor: Entity<Editor>,
+    api_key_editor: Entity<InputField>,
     loading_settings: bool,
     loading_credentials: bool,
     oauth_in_progress: bool,
@@ -378,16 +378,17 @@ impl ExtensionProviderConfigurationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Subscribe to state changes
         let state_subscription = cx.subscribe(&state, |_, _, _, cx| {
             cx.notify();
         });
 
-        // Create API key editor
+        let credential_label = auth_config
+            .as_ref()
+            .and_then(|c| c.credential_label.clone())
+            .unwrap_or_else(|| "API Key".to_string());
+
         let api_key_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter API key...", window, cx);
-            editor
+            InputField::new(window, cx, "Enter API key and hit enter").label(credential_label)
         });
 
         let mut this = Self {
@@ -408,12 +409,8 @@ impl ExtensionProviderConfigurationView {
             _subscriptions: vec![state_subscription],
         };
 
-        // Load settings text from extension
         this.load_settings_text(cx);
-
-        // Load existing credentials
         this.load_credentials(cx);
-
         this
     }
 
@@ -598,7 +595,7 @@ impl ExtensionProviderConfigurationView {
 
         // Clear the editor
         self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
+            .update(cx, |input, cx| input.clear(window, cx));
 
         let credential_key = self.credential_key.clone();
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
@@ -626,7 +623,7 @@ impl ExtensionProviderConfigurationView {
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Clear the editor
         self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
+            .update(cx, |input, cx| input.clear(window, cx));
 
         let credential_key = self.credential_key.clone();
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
@@ -1067,9 +1064,8 @@ impl ExtensionProviderConfigurationView {
     }
 }
 
-impl gpui::Render for ExtensionProviderConfigurationView {
+impl Render for ExtensionProviderConfigurationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Use simplified horizontal layout for edit prediction mode
         if self.is_edit_prediction_mode() {
             return self
                 .render_for_edit_prediction(window, cx)
@@ -1084,96 +1080,70 @@ impl gpui::Render for ExtensionProviderConfigurationView {
         let has_api_key = self.has_api_key_config();
 
         if is_loading {
-            return v_flex()
+            return h_flex()
                 .gap_2()
-                .child(Label::new("Loading...").color(Color::Muted))
+                .child(
+                    h_flex()
+                        .w_2()
+                        .child(SpinnerLabel::sand().size(LabelSize::Small)),
+                )
+                .child(LoadingLabel::new("Loading").size(LabelSize::Small))
                 .into_any_element();
         }
 
-        let mut content = v_flex().gap_4().size_full();
+        let mut content = v_flex().size_full().gap_2();
 
-        // Render settings markdown if available
         if let Some(markdown) = &self.settings_markdown {
-            let style = settings_markdown_style(window, cx);
-            content = content.child(MarkdownElement::new(markdown.clone(), style));
+            content = content.text_sm().child(MarkdownElement::new(
+                markdown.clone(),
+                markdown_styles(window, cx),
+            ));
         }
 
-        // Render env var checkboxes - one for each env var the extension declares
         if let Some(auth_config) = &self.auth_config {
             if let Some(env_vars) = &auth_config.env_vars {
                 for env_var_name in env_vars {
                     let is_allowed = allowed_env_vars.contains(env_var_name);
                     let checkbox_label =
-                        format!("Read API key from {} environment variable", env_var_name);
+                        format!("Read API key from {} environment variable.", env_var_name);
                     let env_var_for_click = env_var_name.clone();
 
                     content = content.child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                ui::Checkbox::new(
-                                    SharedString::from(format!("env-var-{}", env_var_name)),
-                                    is_allowed.into(),
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _window, cx| {
-                                        this.toggle_env_var_permission(
-                                            env_var_for_click.clone(),
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .child(Label::new(checkbox_label).size(LabelSize::Small)),
+                        Checkbox::new(
+                            SharedString::from(format!("env-var-{}", env_var_name)),
+                            if is_allowed {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                        )
+                        .label(checkbox_label)
+                        .on_click(cx.listener(
+                            move |this, _, _window, cx| {
+                                this.toggle_env_var_permission(env_var_for_click.clone(), cx);
+                            },
+                        )),
                     );
                 }
 
-                // Show status if any env var is being used
                 if let Some(used_var) = &env_var_name_used {
-                    let tooltip_label = format!(
-                        "To reset this API key, unset the {} environment variable.",
-                        used_var
-                    );
                     content = content.child(
-                        h_flex()
-                            .mt_0p5()
-                            .p_1()
-                            .justify_between()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().background)
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .gap_1()
-                                    .child(ui::Icon::new(ui::IconName::Check).color(Color::Success))
-                                    .child(
-                                        Label::new(format!(
-                                            "API key set in {} environment variable",
-                                            used_var
-                                        ))
-                                        .truncate(),
-                                    ),
-                            )
-                            .child(
-                                ui::Button::new("reset-key", "Reset Key")
-                                    .label_size(LabelSize::Small)
-                                    .icon(ui::IconName::Undo)
-                                    .icon_size(ui::IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(ui::IconPosition::Start)
-                                    .disabled(true)
-                                    .tooltip(ui::Tooltip::text(tooltip_label)),
-                            ),
+                        ConfiguredApiCard::new(format!(
+                            "API key set in {} environment variable",
+                            used_var
+                        ))
+                        .tooltip_label(format!(
+                            "To reset this API key, unset the {} environment variable.",
+                            used_var
+                        ))
+                        .disabled(true),
                     );
+
                     return content.into_any_element();
                 }
             }
         }
 
-        // If authenticated, show success state with sign out option
         if is_authenticated && env_var_name_used.is_none() {
             let (status_label, button_label) = if has_oauth && !has_api_key {
                 ("Signed in", "Sign Out")
@@ -1211,9 +1181,9 @@ impl gpui::Render for ExtensionProviderConfigurationView {
 
                 let oauth_error = self.oauth_error.clone();
 
-                let mut button = ui::Button::new("oauth-sign-in", button_label)
+                let mut button = Button::new("oauth-sign-in", button_label)
                     .full_width()
-                    .style(ui::ButtonStyle::Outlined)
+                    .style(ButtonStyle::Outlined)
                     .disabled(oauth_in_progress)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.start_oauth_sign_in(window, cx);
@@ -1221,8 +1191,8 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                 if let Some(icon) = button_icon {
                     button = button
                         .icon(icon)
-                        .icon_position(ui::IconPosition::Start)
-                        .icon_size(ui::IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted);
                 }
 
@@ -1245,9 +1215,9 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                                         h_flex()
                                             .gap_2()
                                             .child(
-                                                ui::Icon::new(ui::IconName::Warning)
+                                                Icon::new(IconName::Warning)
                                                     .color(Color::Error)
-                                                    .size(ui::IconSize::Small),
+                                                    .size(IconSize::Small),
                                             )
                                             .child(
                                                 Label::new("Authentication failed")
@@ -1274,45 +1244,27 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                         h_flex()
                             .gap_2()
                             .items_center()
-                            .child(div().h_px().flex_1().bg(cx.theme().colors().border))
+                            .child(div().h_px().flex_1().bg(cx.theme().colors().border_variant))
                             .child(Label::new("or").size(LabelSize::Small).color(Color::Muted))
-                            .child(div().h_px().flex_1().bg(cx.theme().colors().border)),
+                            .child(div().h_px().flex_1().bg(cx.theme().colors().border_variant)),
                     );
                 }
 
-                let credential_label = self
-                    .auth_config
-                    .as_ref()
-                    .and_then(|c| c.credential_label.clone())
-                    .unwrap_or_else(|| "API Key".to_string());
-
                 content = content.child(
-                    v_flex()
-                        .gap_2()
+                    div()
                         .on_action(cx.listener(Self::save_api_key))
-                        .child(
-                            Label::new(credential_label)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(self.api_key_editor.clone())
-                        .child(
-                            Label::new("Enter your API key and press Enter to save")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        .child(self.api_key_editor.clone()),
                 );
             }
         }
 
-        // Show OpenAI-compatible models notification for OpenAI extension
         if self.extension_provider_id == "openai" {
             content = content.child(
                 h_flex()
                     .gap_1()
                     .child(
-                        ui::Icon::new(ui::IconName::Info)
-                            .size(ui::IconSize::Small)
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
                     .child(
@@ -1321,16 +1273,11 @@ impl gpui::Render for ExtensionProviderConfigurationView {
                             .color(Color::Muted),
                     )
                     .child(
-                        ui::Button::new("learn-more", "Learn More")
-                            .style(ui::ButtonStyle::Subtle)
-                            .label_size(LabelSize::Small)
-                            .icon(ui::IconName::ArrowUpRight)
-                            .icon_size(ui::IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(ui::IconPosition::End)
-                            .on_click(|_, _, cx| {
-                                cx.open_url("https://zed.dev/docs/configuring-llm-providers#openai-compatible-providers");
-                            }),
+                        ButtonLink::new(
+                            "Learn More",
+                            "https://zed.dev/docs/configuring-llm-providers#openai-compatible-providers",
+                        )
+                        .label_size(LabelSize::Small),
                     ),
             );
         }
@@ -1340,8 +1287,8 @@ impl gpui::Render for ExtensionProviderConfigurationView {
 }
 
 impl Focusable for ExtensionProviderConfigurationView {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.api_key_editor.focus_handle(cx)
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.api_key_editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -1414,7 +1361,7 @@ impl OAuthCodeVerificationWindow {
                 .items_center()
                 .child(
                     Icon::from_external_svg(icon_path.clone())
-                        .size(ui::IconSize::Custom(icon_size))
+                        .size(IconSize::Custom(icon_size))
                         .color(icon_color),
                 )
                 .child(
@@ -1534,7 +1481,7 @@ impl OAuthCodeVerificationWindow {
     }
 }
 
-impl gpui::Render for OAuthCodeVerificationWindow {
+impl Render for OAuthCodeVerificationWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prompt = match &self.status {
             OAuthDeviceFlowStatus::Prompting | OAuthDeviceFlowStatus::WaitingForAuthorization => {
@@ -1569,26 +1516,61 @@ impl gpui::Render for OAuthCodeVerificationWindow {
     }
 }
 
-fn settings_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
-    let theme_settings = ThemeSettings::get_global(cx);
+fn markdown_styles(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
+
     let mut text_style = window.text_style();
     text_style.refine(&TextStyleRefinement {
-        font_family: Some(theme_settings.ui_font.family.clone()),
-        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-        font_features: Some(theme_settings.ui_font.features.clone()),
-        color: Some(colors.text),
+        font_family: Some(settings.ui_font.family.clone()),
+        font_fallbacks: settings.ui_font.fallbacks.clone(),
+        font_features: Some(settings.ui_font.features.clone()),
+        font_size: Some(settings.ui_font_size(cx).into()),
+        line_height: Some(relative(1.5)),
+        color: Some(colors.text_muted),
         ..Default::default()
     });
 
     MarkdownStyle {
-        base_text_style: text_style,
+        base_text_style: text_style.clone(),
+        syntax: cx.theme().syntax().clone(),
         selection_background_color: colors.element_selection_background,
+        heading_level_styles: Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.15).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.05).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.875).into()),
+                ..Default::default()
+            }),
+        }),
         inline_code: TextStyleRefinement {
-            background_color: Some(colors.editor_background),
+            font_family: Some(settings.buffer_font.family.clone()),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: Some(settings.buffer_font.features.clone()),
+            font_size: Some(settings.buffer_font_size(cx).into()),
+            background_color: Some(colors.editor_foreground.opacity(0.08)),
             ..Default::default()
         },
         link: TextStyleRefinement {
+            background_color: Some(colors.editor_foreground.opacity(0.025)),
             color: Some(colors.text_accent),
             underline: Some(UnderlineStyle {
                 color: Some(colors.text_accent.opacity(0.5)),
@@ -1597,7 +1579,6 @@ fn settings_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             }),
             ..Default::default()
         },
-        syntax: cx.theme().syntax().clone(),
         ..Default::default()
     }
 }

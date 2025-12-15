@@ -5914,6 +5914,7 @@ dependencies = [
  "theme_extension",
  "toml 0.8.23",
  "ui",
+ "ui_input",
  "url",
  "util",
  "wasmparser 0.221.3",

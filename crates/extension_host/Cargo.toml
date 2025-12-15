@@ -56,6 +56,7 @@ tempfile.workspace = true
 theme.workspace = true
 toml.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 url.workspace = true
 workspace.workspace = true
 util.workspace = true
