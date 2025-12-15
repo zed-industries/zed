@@ -18138,6 +18138,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "nvim-rs",
+ "outline_panel",
  "parking_lot",
  "perf",
  "picker",
