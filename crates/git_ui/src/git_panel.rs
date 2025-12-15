@@ -4965,29 +4965,73 @@ impl GitPanel {
             .flex_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
             .child(
-                h_flex()
-                    .items_center()
-                    .flex_1()
-                    .w_0()
-                    .min_w_0()
-                    .overflow_hidden()
+                Icon::new(folder_icon)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(self.entry_label(entry.name.clone(), label_color).truncate());
+
+        h_flex()
+            .id(id)
+            .h(self.list_item_height())
+            .w_full()
+            .items_center()
+            .border_1()
+            .border_r_2()
+            .when(selected && self.focus_handle.is_focused(window), |el| {
+                el.border_color(cx.theme().colors().panel_focused_border)
+            })
+            .px(rems(0.75))
+            .overflow_hidden()
+            .flex_none()
+            .gap_1p5()
+            .bg(base_bg)
+            .hover(|this| this.bg(hover_bg))
+            .active(|this| this.bg(active_bg))
+            .on_click({
+                let key = entry.key.clone();
+                cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    this.toggle_directory(&key, window, cx);
+                })
+            })
+            .child(name_row)
+            .child(
+                div()
+                    .id(checkbox_wrapper_id)
+                    .flex_none()
+                    .occlude()
+                    .cursor_pointer()
                     .child(
-                        h_flex()
-                            .items_center()
-                            .flex_1()
-                            .w_full()
-                            .min_w_0()
-                            .map(|this| {
-                                self.path_formatted(
-                                    this,
-                                    entry.parent_dir(path_style),
-                                    path_color,
-                                    display_name,
-                                    label_color,
-                                    path_style,
-                                    git_path_style,
-                                    status.is_deleted(),
-                                )
+                        Checkbox::new(checkbox_id, staged_state)
+                            .disabled(!has_write_access)
+                            .fill()
+                            .elevation(ElevationIndex::Surface)
+                            .on_click({
+                                let entry = entry.clone();
+                                let this = cx.weak_entity();
+                                move |_, window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        if !has_write_access {
+                                            return;
+                                        }
+                                        this.toggle_staged_for_entry(
+                                            &GitListEntry::Directory(entry.clone()),
+                                            window,
+                                            cx,
+                                        );
+                                        cx.stop_propagation();
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .tooltip(move |_window, cx| {
+                                let action = if staged_state.selected() {
+                                    "Unstage"
+                                } else {
+                                    "Stage"
+                                };
+                                Tooltip::simple(format!("{action} folder"), cx)
                             }),
                     ),
             )
