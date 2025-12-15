@@ -1035,12 +1035,8 @@ impl GitStore {
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
 
-        let repo = repo.downgrade();
-        cx.spawn(async move |_, cx| {
-            let repository_state = repo
-                .update(cx, |repo, _| repo.repository_state.clone())?
-                .await
-                .map_err(|err| anyhow::anyhow!(err))?;
+        let repository_state = repo.read(cx).repository_state.clone();
+        cx.background_spawn(async move {
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
                     .blame(repo_path.clone(), content, line_ending)
