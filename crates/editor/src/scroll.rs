@@ -814,7 +814,8 @@ impl Editor {
                 amount.columns(visible_column_count),
                 amount.lines(visible_line_count),
             );
-        self.set_scroll_position(new_position, window, cx);
+
+        self.scroll(new_position, None, window, cx);
     }
 
     /// Returns an ordering. The newest selection is:
