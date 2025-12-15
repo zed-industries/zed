@@ -1053,8 +1053,8 @@ impl EditPredictionStore {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         cx.spawn(async move |this, cx| {
-            let (url, require_auth) = if let Some(predict_edits_url) = custom_accept_url {
-                (http_client::Url::parse(&predict_edits_url)?, false)
+            let (url, require_auth) = if let Some(accept_edits_url) = custom_accept_url {
+                (http_client::Url::parse(&accept_edits_url)?, false)
             } else {
                 (
                     client
