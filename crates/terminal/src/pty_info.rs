@@ -130,7 +130,7 @@ impl PtyProcessInfo {
     }
 
     pub(crate) fn kill_child_process(&mut self) -> bool {
-        self.get_child().is_some_and(|process| process.kill())
+        self.get_child().is_some_and(|process| process.kill_with(sysinfo::Signal::Hangup).unwrap_or(false))
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {
