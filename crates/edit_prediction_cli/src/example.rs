@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::{Read, Write},
-    mem,
     path::{Path, PathBuf},
 };
 use zeta_prompt::RelatedFile;
@@ -237,141 +236,15 @@ pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>
     examples_by_repo.into_values().collect()
 }
 
-fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
-    use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
-
-    const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
-    const EDIT_HISTORY_HEADING: &str = "Edit History";
-    const CURSOR_POSITION_HEADING: &str = "Cursor Position";
-    const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-    const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
-    const REPOSITORY_URL_FIELD: &str = "repository_url";
-    const REVISION_FIELD: &str = "revision";
-
-    let parser = Parser::new(input);
-
-    let mut example = Example {
-        spec: ExampleSpec {
-            name: id,
-            repository_url: String::new(),
-            revision: String::new(),
-            uncommitted_diff: String::new(),
-            cursor_path: PathBuf::new().into(),
-            cursor_position: String::new(),
-            edit_history: String::new(),
-            expected_patch: String::new(),
-        },
+fn parse_markdown_example(name: String, input: &str) -> Result<Example> {
+    let spec = ExampleSpec::from_markdown(name, input)?;
+    Ok(Example {
+        spec,
         buffer: None,
         context: None,
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
         state: None,
-    };
-
-    let mut text = String::new();
-    let mut block_info: CowStr = "".into();
-
-    #[derive(PartialEq)]
-    enum Section {
-        Start,
-        UncommittedDiff,
-        EditHistory,
-        CursorPosition,
-        ExpectedExcerpts,
-        ExpectedPatch,
-        Other,
-    }
-
-    let mut current_section = Section::Start;
-
-    for event in parser {
-        match event {
-            Event::Text(line) => {
-                text.push_str(&line);
-
-                if let Section::Start = current_section
-                    && let Some((field, value)) = line.split_once('=')
-                {
-                    match field.trim() {
-                        REPOSITORY_URL_FIELD => {
-                            example.spec.repository_url = value.trim().to_string();
-                        }
-                        REVISION_FIELD => {
-                            example.spec.revision = value.trim().to_string();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
-                let title = mem::take(&mut text);
-                current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
-                    Section::UncommittedDiff
-                } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                    Section::EditHistory
-                } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                    Section::CursorPosition
-                } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
-                    Section::ExpectedPatch
-                } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
-                    Section::ExpectedExcerpts
-                } else {
-                    Section::Other
-                };
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
-                mem::take(&mut text);
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
-                mem::take(&mut text);
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                anyhow::bail!("Unexpected heading level: {level}");
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                match kind {
-                    CodeBlockKind::Fenced(info) => {
-                        block_info = info;
-                    }
-                    CodeBlockKind::Indented => {
-                        anyhow::bail!("Unexpected indented codeblock");
-                    }
-                };
-            }
-            Event::Start(_) => {
-                text.clear();
-                block_info = "".into();
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                let block_info = block_info.trim();
-                match current_section {
-                    Section::UncommittedDiff => {
-                        example.spec.uncommitted_diff = mem::take(&mut text);
-                    }
-                    Section::EditHistory => {
-                        example.spec.edit_history.push_str(&mem::take(&mut text));
-                    }
-                    Section::CursorPosition => {
-                        example.spec.cursor_path = Path::new(block_info).into();
-                        example.spec.cursor_position = mem::take(&mut text);
-                    }
-                    Section::ExpectedExcerpts => {
-                        mem::take(&mut text);
-                    }
-                    Section::ExpectedPatch => {
-                        example.spec.expected_patch = mem::take(&mut text);
-                    }
-                    Section::Start | Section::Other => {}
-                }
-            }
-            _ => {}
-        }
-    }
-    if example.spec.cursor_path.as_ref() == Path::new("") || example.spec.cursor_position.is_empty()
-    {
-        anyhow::bail!("Missing cursor position codeblock");
-    }
-
-    Ok(example)
+    })
 }

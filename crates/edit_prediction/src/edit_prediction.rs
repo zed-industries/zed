@@ -47,7 +47,7 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-mod cursor_excerpt;
+pub mod cursor_excerpt;
 pub mod example_spec;
 mod license_detection;
 pub mod mercury;
