@@ -4810,7 +4810,6 @@ impl GitPanel {
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
