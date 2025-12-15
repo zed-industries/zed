@@ -16224,7 +16224,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         fn a() {
             // b();
             «// c();
-        ˇ»    //  d();
+        ˇ»     // d();
         }
     "});
 
@@ -16234,7 +16234,7 @@ async fn test_toggle_comment(cx: &mut TestAppContext) {
         fn a() {
             // b();
             «c();
-        ˇ»    //  d();
+        ˇ»     // d();
         }
     "});
 
