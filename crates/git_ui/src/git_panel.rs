@@ -1642,7 +1642,6 @@ impl GitPanel {
                     (goal_staged_state, entries)
                 }
                 GitListEntry::Directory(entry) => {
-                    // FIXME do the same thing here (maybe we should have a function)
                     let goal_staged_state =
                         self.toggle_state_for_directory(&entry, repo) != ToggleState::Selected;
                     let entries = self
