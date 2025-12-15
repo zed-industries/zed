@@ -947,8 +947,8 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 }
 
 impl acp_thread::AgentConnection for NativeAgentConnection {
-    fn telemetry_id(&self) -> &'static str {
-        "zed"
+    fn telemetry_id(&self) -> SharedString {
+        "zed".into()
     }
 
     fn new_thread(
@@ -1218,6 +1218,15 @@ impl TerminalHandle for AcpTerminalHandle {
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
         self.terminal
             .read_with(cx, |term, cx| term.current_output(cx))
+    }
+
+    fn kill(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.kill(cx);
+            });
+        })?;
+        Ok(())
     }
 }
 

@@ -217,6 +217,12 @@ impl VariableList {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, event, cx| match event {
+                SessionEvent::HistoricSnapshotSelected => {
+                    this.selection.take();
+                    this.edited_path.take();
+                    this.selected_stack_frame_id.take();
+                    this.build_entries(cx);
+                }
                 SessionEvent::Stopped(_) => {
                     this.selection.take();
                     this.edited_path.take();
@@ -225,7 +231,6 @@ impl VariableList {
                 SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
-
                 _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {

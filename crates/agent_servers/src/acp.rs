@@ -9,6 +9,8 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use settings::Settings as _;
+use task::ShellBuilder;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -21,7 +23,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape};
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -29,7 +31,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
-    telemetry_id: &'static str,
+    telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
@@ -54,7 +56,6 @@ pub struct AcpSession {
 
 pub async fn connect(
     server_name: SharedString,
-    telemetry_id: &'static str,
     command: AgentServerCommand,
     root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
@@ -64,7 +65,6 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
-        telemetry_id,
         command.clone(),
         root_dir,
         default_mode,
@@ -81,7 +81,6 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
-        telemetry_id: &'static str,
         command: AgentServerCommand,
         root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
@@ -89,9 +88,11 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(&command.path);
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let mut child =
+            builder.build_command(Some(command.path.display().to_string()), &command.args);
         child
-            .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -173,10 +174,6 @@ impl AcpConnection {
             });
         })?;
 
-        let mut client_info = acp::Implementation::new("zed", version);
-        if let Some(release_channel) = release_channel {
-            client_info = client_info.title(release_channel);
-        }
         let response = connection
             .initialize(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
@@ -192,13 +189,23 @@ impl AcpConnection {
                                 ("terminal-auth".into(), true.into()),
                             ])),
                     )
-                    .client_info(client_info),
+                    .client_info(
+                        acp::Implementation::new("zed", version)
+                            .title(release_channel.map(ToOwned::to_owned)),
+                    ),
             )
             .await?;
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
         }
+
+        let telemetry_id = response
+            .agent_info
+            // Use the one the agent provides if we have one
+            .map(|info| info.name.into())
+            // Otherwise, just use the name
+            .unwrap_or_else(|| server_name.clone());
 
         Ok(Self {
             auth_methods: response.auth_methods,
@@ -234,8 +241,8 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
-    fn telemetry_id(&self) -> &'static str {
-        self.telemetry_id
+    fn telemetry_id(&self) -> SharedString {
+        self.telemetry_id.clone()
     }
 
     fn new_thread(
@@ -302,10 +309,10 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
                 .await
                 .map_err(|err| {
-                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AuthRequired {
                         let mut error = AuthRequired::new();
 
-                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                        if err.message != acp::ErrorCode::AuthRequired.to_string() {
                             error = error.with_description(err.message);
                         }
 
@@ -467,11 +474,11 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AuthRequired {
                         return Err(anyhow!(acp::Error::auth_required()));
                     }
 
-                    if err.code != ErrorCode::INTERNAL_ERROR.code {
+                    if err.code != ErrorCode::InternalError {
                         anyhow::bail!(err)
                     }
 
@@ -838,13 +845,18 @@ impl acp::Client for ClientDelegate {
                 if let Some(term_exit) = meta.get("terminal_exit") {
                     if let Some(id_str) = term_exit.get("terminal_id").and_then(|v| v.as_str()) {
                         let terminal_id = acp::TerminalId::new(id_str);
-                        let mut status = acp::TerminalExitStatus::new();
-                        if let Some(code) = term_exit.get("exit_code").and_then(|v| v.as_u64()) {
-                            status = status.exit_code(code as u32)
-                        }
-                        if let Some(signal) = term_exit.get("signal").and_then(|v| v.as_str()) {
-                            status = status.signal(signal);
-                        }
+                        let status = acp::TerminalExitStatus::new()
+                            .exit_code(
+                                term_exit
+                                    .get("exit_code")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|i| i as u32),
+                            )
+                            .signal(
+                                term_exit
+                                    .get("signal")
+                                    .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            );
 
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                             thread.on_terminal_provider_event(

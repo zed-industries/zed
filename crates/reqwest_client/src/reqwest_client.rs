@@ -270,26 +270,6 @@ impl http_client::HttpClient for ReqwestClient {
         }
         .boxed()
     }
-
-    fn send_multipart_form<'a>(
-        &'a self,
-        url: &str,
-        form: reqwest::multipart::Form,
-    ) -> futures::future::BoxFuture<'a, anyhow::Result<http_client::Response<http_client::AsyncBody>>>
-    {
-        let response = self.client.post(url).multipart(form).send();
-        self.handle
-            .spawn(async move {
-                let response = response.await?;
-                let mut builder = http::response::Builder::new().status(response.status());
-                for (k, v) in response.headers() {
-                    builder = builder.header(k, v)
-                }
-                Ok(builder.body(response.bytes().await?.into())?)
-            })
-            .map(|e| e?)
-            .boxed()
-    }
 }
 
 #[cfg(test)]

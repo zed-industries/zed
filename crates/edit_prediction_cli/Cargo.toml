@@ -9,36 +9,37 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "ep_cli"
+name = "ep"
 path = "src/main.rs"
 
 [dependencies]
-
 anyhow.workspace = true
+anthropic.workspace = true
+http_client.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 cloud_llm_client.workspace= true
-cloud_zeta2_prompt.workspace = true
 collections.workspace = true
 debug_adapter_extension.workspace = true
-edit_prediction_context.workspace = true
+dirs.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
+indoc.workspace = true
 language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+libc.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-pulldown-cmark.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
@@ -46,12 +47,22 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
+sqlez.workspace = true
+sqlez_macros.workspace = true
 terminal_view.workspace = true
-toml.workspace = true
 util.workspace = true
 watch.workspace = true
-edit_prediction = { workspace = true, features = ["eval-support"] }
-zlog.workspace = true
+edit_prediction = { workspace = true, features = ["cli-support"] }
+wasmtime.workspace = true
+zeta_prompt.workspace = true
+
+# Wasmtime is included as a dependency in order to enable the same
+# features that are enabled in Zed.
+#
+# If we don't enable these features we get crashes when creating
+# a Tree-sitter WasmStore.
+[package.metadata.cargo-machete]
+ignored = ["wasmtime"]
 
 [dev-dependencies]
 indoc.workspace = true
