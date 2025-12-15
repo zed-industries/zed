@@ -1932,6 +1932,9 @@
         "words": "disabled",
       },
     },
+    "Proto": {
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."]
+    },
     "Python": {
       "code_actions_on_format": {
         "source.organizeImports.ruff": true,
