@@ -351,8 +351,8 @@ pub fn init(cx: &mut App) {
             )
             .detach();
         }
-    });
-    cx.on_action(move |_: &workspace::NewWindow, cx| {
+    })
+    .on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(
