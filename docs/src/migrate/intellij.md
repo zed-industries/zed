@@ -345,26 +345,3 @@ Here are a few useful tweaks:
   }
 }
 ```
-
-## What You'll Miss (and What You'll Gain)
-
-### What IntelliJ Does Better
-
-- **Deep JVM language support**: IntelliJ's Java, Kotlin, Scala, and Groovy support is unmatched
-- **Framework integration**: Spring, Jakarta EE, Android Studio integration
-- **Database tools**: Built-in database client and SQL support
-- **Refactoring depth**: More refactoring options, especially for JVM languages
-- **Run configurations**: Sophisticated run/debug configuration management
-- **Built-in version control UI**: More feature-rich Git integration
-
-### What Zed Does Better
-
-- **Speed**: Zed is significantly faster to launch and navigate
-- **Simplicity**: No project configuration, no SDK setup, just open a folder
-- **Built-in collaboration**: Real-time multiplayer editing with voice chat
-- **AI integration**: Native AI assistance without plugins
-- **Resource usage**: Lower memory footprint
-- **Modern UI**: Clean, distraction-free interface
-
-Zed may not replace IntelliJ for heavy JVM development, but it excels as a fast, focused editor for polyglot development, quick edits, and collaborative work. Many
- developers use both: IntelliJ for deep project work and Zed for everything else.
