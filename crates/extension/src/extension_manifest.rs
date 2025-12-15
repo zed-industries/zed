@@ -347,6 +347,9 @@ pub struct OAuthConfig {
     /// The Zed icon path to display on the sign-in button (e.g. "github").
     #[serde(default)]
     pub sign_in_button_icon: Option<String>,
+    /// The description text shown next to the sign-in button in edit prediction settings.
+    #[serde(default)]
+    pub sign_in_description: Option<String>,
 }
 
 impl ExtensionManifest {

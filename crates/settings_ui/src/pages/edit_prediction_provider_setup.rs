@@ -85,11 +85,11 @@ impl EditPredictionSetupPage {
             return;
         };
 
-        let provider_name = provider.name().0.clone();
+        let provider_name = provider.name().0;
         let provider_icon = provider.icon();
         let provider_icon_path = provider.icon_path();
         let configuration_view =
-            provider.configuration_view(ConfigurationViewTargetAgent::ZedAgent, window, cx);
+            provider.configuration_view(ConfigurationViewTargetAgent::EditPrediction, window, cx);
 
         self.extension_oauth_views.insert(
             provider_id.clone(),
