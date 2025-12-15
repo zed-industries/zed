@@ -807,9 +807,8 @@ impl CodegenAlternative {
                         let result = diff.await;
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
-                        let event_type = "Assistant Responded";
                         telemetry::event!(
-                            event_type,
+                            "Assistant Responded",
                             kind = "inline",
                             phase = "response",
                             session_id = session_id.to_string(),
