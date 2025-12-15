@@ -211,9 +211,9 @@ pub enum SplitOperation {
 }
 
 macro_rules! split_structs {
-    ($($name:ident => $direction:expr),* $(,)?) => {
+    ($($name:ident => $doc:literal),* $(,)?) => {
         $(
-            #[doc = concat!(" Splits the pane to the ", $direction)]
+            #[doc = $doc]
             #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
             #[action(namespace = pane)]
             #[serde(deny_unknown_fields, default)]
@@ -225,12 +225,12 @@ macro_rules! split_structs {
 }
 
 split_structs!(
-    SplitLeft => "left",
-    SplitRight => "right",
-    SplitUp => "up",
-    SplitDown => "down",
-    SplitHorizontal => "horizontal",
-    SplitVertical => "vertical"
+    SplitLeft => "Splits the pane to the left.",
+    SplitRight => "Splits the pane to the right.",
+    SplitUp => "Splits the pane upward.",
+    SplitDown => "Splits the pane downward.",
+    SplitHorizontal => "Splits the pane horizontally.",
+    SplitVertical => "Splits the pane vertically."
 );
 
 actions!(
