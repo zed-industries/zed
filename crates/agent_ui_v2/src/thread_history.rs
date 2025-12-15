@@ -15,7 +15,7 @@ use ui::{
 };
 
 actions!(
-    thread_history,
+    agents,
     [
         /// Removes all thread history.
         RemoveHistory,

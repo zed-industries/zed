@@ -282,6 +282,7 @@ fn update_command_palette_filter(cx: &mut App) {
 
         if disable_ai {
             filter.hide_namespace("agent");
+            filter.hide_namespace("agents");
             filter.hide_namespace("assistant");
             filter.hide_namespace("copilot");
             filter.hide_namespace("supermaven");
@@ -293,8 +294,10 @@ fn update_command_palette_filter(cx: &mut App) {
         } else {
             if agent_enabled {
                 filter.show_namespace("agent");
+                filter.show_namespace("agents");
             } else {
                 filter.hide_namespace("agent");
+                filter.hide_namespace("agents");
             }
 
             filter.show_namespace("assistant");
