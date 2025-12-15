@@ -116,7 +116,10 @@ impl OpenRequest {
                     ZedLink::Channel { channel_id } => {
                         this.join_channel = Some(channel_id);
                     }
-                    ZedLink::ChannelNotes { channel_id, heading } => {
+                    ZedLink::ChannelNotes {
+                        channel_id,
+                        heading,
+                    } => {
                         this.open_channel_notes.push((channel_id, heading));
                     }
                 }
