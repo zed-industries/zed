@@ -2068,8 +2068,6 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-
-
             if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
                 info.kill_current_process();
             }

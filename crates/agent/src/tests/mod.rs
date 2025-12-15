@@ -183,6 +183,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
         handle: handle.clone(),
     });
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -249,6 +250,7 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
         handle: handle.clone(),
     });
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
