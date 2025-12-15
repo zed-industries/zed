@@ -21,7 +21,6 @@ default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
-    "rand",
     "util/test-support",
     "http_client/test-support",
     "wayland",
@@ -109,7 +108,7 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-rand = { optional = true, workspace = true }
+rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
@@ -158,8 +157,10 @@ media.workspace = true
 objc.workspace = true
 objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
+mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
+flume = "0.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"

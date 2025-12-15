@@ -174,17 +174,13 @@ impl Render for QuickActionBar {
                     .as_ref()
                     .is_some_and(|menu| matches!(menu.origin(), ContextMenuOrigin::QuickActionBar))
             };
-            let code_action_element = if is_deployed {
-                editor.update(cx, |editor, cx| {
-                    if let Some(style) = editor.style() {
-                        editor.render_context_menu(style, MAX_CODE_ACTION_MENU_LINES, window, cx)
-                    } else {
-                        None
-                    }
+            let code_action_element = is_deployed
+                .then(|| {
+                    editor.update(cx, |editor, cx| {
+                        editor.render_context_menu(MAX_CODE_ACTION_MENU_LINES, window, cx)
+                    })
                 })
-            } else {
-                None
-            };
+                .flatten();
             v_flex()
                 .child(
                     IconButton::new("toggle_code_actions_icon", IconName::BoltOutlined)

@@ -286,8 +286,8 @@ impl LspAdapter for JsonLspAdapter {
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         [
-            (LanguageName::new("JSON"), "json".into()),
-            (LanguageName::new("JSONC"), "jsonc".into()),
+            (LanguageName::new_static("JSON"), "json".into()),
+            (LanguageName::new_static("JSONC"), "jsonc".into()),
         ]
         .into_iter()
         .collect()

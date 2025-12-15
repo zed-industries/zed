@@ -151,7 +151,7 @@ fn test_select_language(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: LanguageName::new("Rust"),
+            name: LanguageName::new_static("Rust"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
@@ -173,7 +173,7 @@ fn test_select_language(cx: &mut App) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
-            name: LanguageName::new("Make"),
+            name: LanguageName::new_static("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
@@ -3728,7 +3728,7 @@ fn ruby_lang() -> Language {
 fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
-            name: LanguageName::new("HTML"),
+            name: LanguageName::new_static("HTML"),
             block_comment: Some(BlockCommentConfig {
                 start: "<!--".into(),
                 prefix: "".into(),

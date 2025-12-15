@@ -542,7 +542,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                 let is_active = active_id == candidate.id;
 
                 Some(
-                    ListItem::new(SharedString::from(candidate.id.0.clone()))
+                    ListItem::new(candidate.id.0.clone())
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)

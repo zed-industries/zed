@@ -1,30 +1,34 @@
 use collections::{HashMap, HashSet};
 use edit_prediction::udiff::DiffLine;
+use serde::{Deserialize, Serialize};
 
 type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
 
-#[derive(Default, Debug, Clone)]
-pub struct Scores {
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationMetrics {
     pub true_positives: usize,
     pub false_positives: usize,
     pub false_negatives: usize,
 }
 
-impl Scores {
-    pub fn from_sets(expected: &HashSet<String>, actual: &HashSet<String>) -> Scores {
+impl ClassificationMetrics {
+    pub fn from_sets(
+        expected: &HashSet<String>,
+        actual: &HashSet<String>,
+    ) -> ClassificationMetrics {
         let true_positives = expected.intersection(actual).count();
         let false_positives = actual.difference(expected).count();
         let false_negatives = expected.difference(actual).count();
 
-        Scores {
+        ClassificationMetrics {
             true_positives,
             false_positives,
             false_negatives,
         }
     }
 
-    pub fn from_counts(expected: &Counts, actual: &Counts) -> Scores {
+    pub fn from_counts(expected: &Counts, actual: &Counts) -> ClassificationMetrics {
         let mut true_positives = 0;
         let mut false_positives = 0;
         let mut false_negatives = 0;
@@ -45,32 +49,16 @@ impl Scores {
             }
         }
 
-        Scores {
+        ClassificationMetrics {
             true_positives,
             false_positives,
             false_negatives,
         }
     }
 
-    pub fn to_markdown(&self) -> String {
-        format!(
-            "
-Precision       : {:.4}
-Recall          : {:.4}
-F1 Score        : {:.4}
-True Positives  : {}
-False Positives : {}
-False Negatives : {}",
-            self.precision(),
-            self.recall(),
-            self.f1_score(),
-            self.true_positives,
-            self.false_positives,
-            self.false_negatives
-        )
-    }
-
-    pub fn aggregate<'a>(scores: impl Iterator<Item = &'a Scores>) -> Scores {
+    pub fn aggregate<'a>(
+        scores: impl Iterator<Item = &'a ClassificationMetrics>,
+    ) -> ClassificationMetrics {
         let mut true_positives = 0;
         let mut false_positives = 0;
         let mut false_negatives = 0;
@@ -81,7 +69,7 @@ False Negatives : {}",
             false_negatives += score.false_negatives;
         }
 
-        Scores {
+        ClassificationMetrics {
             true_positives,
             false_positives,
             false_negatives,
@@ -115,7 +103,10 @@ False Negatives : {}",
     }
 }
 
-pub fn line_match_score(expected_patch: &[DiffLine], actual_patch: &[DiffLine]) -> Scores {
+pub fn line_match_score(
+    expected_patch: &[DiffLine],
+    actual_patch: &[DiffLine],
+) -> ClassificationMetrics {
     let expected_change_lines = expected_patch
         .iter()
         .filter(|line| matches!(line, DiffLine::Addition(_) | DiffLine::Deletion(_)))
@@ -128,7 +119,7 @@ pub fn line_match_score(expected_patch: &[DiffLine], actual_patch: &[DiffLine]) 
         .map(|line| line.to_string())
         .collect();
 
-    Scores::from_sets(&expected_change_lines, &actual_change_lines)
+    ClassificationMetrics::from_sets(&expected_change_lines, &actual_change_lines)
 }
 
 enum ChrfWhitespace {
@@ -204,7 +195,7 @@ pub fn delta_chr_f(expected: &[DiffLine], actual: &[DiffLine]) -> f64 {
         let expected_counts = ngram_delta_to_counts(&expected_delta);
         let actual_counts = ngram_delta_to_counts(&actual_delta);
 
-        let score = Scores::from_counts(&expected_counts, &actual_counts);
+        let score = ClassificationMetrics::from_counts(&expected_counts, &actual_counts);
         total_precision += score.precision();
         total_recall += score.recall();
     }
