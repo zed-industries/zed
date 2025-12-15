@@ -3,6 +3,7 @@ use edit_prediction::{
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
+use extension_host::ExtensionStore;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, ScrollHandle, prelude::*};
 use language_models::provider::mistral::{CODESTRAL_API_URL, codestral_api_key};
@@ -31,8 +32,14 @@ impl Render for EditPredictionSetupPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings_window = self.settings_window.clone();
 
+        let copilot_extension_installed = ExtensionStore::global(cx)
+            .read(cx)
+            .installed_extensions()
+            .contains_key("copilot-chat");
+
         let providers = [
-            Some(render_github_copilot_provider(window, cx).into_any_element()),
+            (!copilot_extension_installed)
+                .then(|| render_github_copilot_provider(window, cx).into_any_element()),
             cx.has_flag::<Zeta2FeatureFlag>().then(|| {
                 render_api_key_provider(
                     IconName::Inception,

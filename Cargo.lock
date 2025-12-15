@@ -14823,6 +14823,7 @@ dependencies = [
  "copilot",
  "edit_prediction",
  "editor",
+ "extension_host",
  "feature_flags",
  "fs",
  "futures 0.3.31",
