@@ -553,7 +553,6 @@ impl BreakpointStore {
                     .bp
                     .to_proto(&abs_path, &breakpoint.position, &HashMap::default())
             {
-                dbg!(remote.upstream_project_id);
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote.upstream_project_id,
                     path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
