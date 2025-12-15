@@ -72,7 +72,7 @@ impl AgentTool for SaveFileTool {
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
-            let mut save_errors: Vec<String> = Vec::new();
+            let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
                 let project_path =
@@ -123,76 +123,78 @@ impl AgentTool for SaveFileTool {
                 }
             }
 
-            // Save each buffer individually since there's no batch save API
-            for buffer in buffers_to_save {
-                let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
+        // Save each buffer individually since there's no batch save API.
+        //
+        // Note: we keep the summary terse; failures include paths.
+        for buffer in buffers_to_save {
+            let path_for_buffer = match buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .file()
+                    .map(|file| file.path().to_rel_path_buf())
+                    .map(|path| path.as_rel_path().as_unix_str().to_owned())
+            }) {
+                Ok(path) => path.unwrap_or_else(|| "<unknown>".to_string()),
+                Err(error) => {
+                    save_errors.push(("<unknown>".to_string(), error.to_string()));
+                    continue;
+                }
+            };
 
-                match save_task {
-                    Ok(task) => {
-                        if let Err(error) = task.await {
-                            save_errors.push(error.to_string());
-                        }
+            let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
+
+            match save_task {
+                Ok(task) => {
+                    if let Err(error) = task.await {
+                        save_errors.push((path_for_buffer, error.to_string()));
                     }
-                    Err(error) => {
-                        save_errors.push(error.to_string());
-                    }
+                }
+                Err(error) => {
+                    save_errors.push((path_for_buffer, error.to_string()));
                 }
             }
+        }
 
-            let mut lines: Vec<String> = Vec::new();
-            if !saved_paths.is_empty() {
-                lines.push(format!("Saved {} file(s).", saved_paths.len()));
-            }
-            if !clean_paths.is_empty() {
-                lines.push(format!(
-                    "{} file(s) had no unsaved changes.",
-                    clean_paths.len()
-                ));
-            }
-            if !not_found_paths.is_empty() {
-                lines.push(format!(
-                    "{} path(s) were not found in the project:",
-                    not_found_paths.len()
-                ));
-                for path in &not_found_paths {
-                    lines.push(format!("- {}", path.display()));
-                }
-            }
-            if !open_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while opening buffers:",
-                    open_errors.len()
-                ));
-                for (path, error) in &open_errors {
-                    lines.push(format!("- {}: {}", path.display(), error));
-                }
-            }
-            if !dirty_check_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while checking for unsaved changes:",
-                    dirty_check_errors.len()
-                ));
-                for (path, error) in &dirty_check_errors {
-                    lines.push(format!("- {}: {}", path.display(), error));
-                }
-            }
-            if !save_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while saving files:",
-                    save_errors.len()
-                ));
-                for error in &save_errors {
-                    lines.push(format!("- {}", error));
-                }
-            }
+        let mut lines: Vec<String> = Vec::new();
 
-            if lines.is_empty() {
-                Ok("No paths provided.".to_string())
-            } else {
-                Ok(lines.join("\n"))
+        if !saved_paths.is_empty() {
+            lines.push(format!("Saved {} file(s).", saved_paths.len()));
+        }
+        if !clean_paths.is_empty() {
+            lines.push(format!("{} clean.", clean_paths.len()));
+        }
+
+        if !not_found_paths.is_empty() {
+            lines.push(format!("Not found ({}):", not_found_paths.len()));
+            for path in &not_found_paths {
+                lines.push(format!("- {}", path.display()));
             }
-        })
-    }
+        }
+        if !open_errors.is_empty() {
+            lines.push(format!("Open failed ({}):", open_errors.len()));
+            for (path, error) in &open_errors {
+                lines.push(format!("- {}: {}", path.display(), error));
+            }
+        }
+        if !dirty_check_errors.is_empty() {
+            lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
+            for (path, error) in &dirty_check_errors {
+                lines.push(format!("- {}: {}", path.display(), error));
+            }
+        }
+        if !save_errors.is_empty() {
+            lines.push(format!("Save failed ({}):", save_errors.len()));
+            for (path, error) in &save_errors {
+                lines.push(format!("- {}: {}", path, error));
+            }
+        }
+
+        if lines.is_empty() {
+            Ok("No paths provided.".to_string())
+        } else {
+            Ok(lines.join("\n"))
+        }
+    })
+}
 }
 
 #[cfg(test)]
@@ -290,7 +292,7 @@ mod tests {
             "expected saved count line, got:\n{output}"
         );
         assert!(
-            output.contains("1 file(s) had no unsaved changes."),
+            output.contains("1 clean."),
             "expected clean count line, got:\n{output}"
         );
 
@@ -337,7 +339,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            output.contains("1 path(s) were not found in the project:"),
+            output.contains("Not found (1):"),
             "expected not-found header line, got:\n{output}"
         );
         assert!(

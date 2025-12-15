@@ -144,50 +144,34 @@ impl AgentTool for RestoreFileFromDiskTool {
             }
 
             let mut lines: Vec<String> = Vec::new();
+
             if !restored_paths.is_empty() {
-                lines.push(format!(
-                    "Restored {} file(s) from disk (discarded unsaved changes).",
-                    restored_paths.len()
-                ));
+                lines.push(format!("Restored {} file(s).", restored_paths.len()));
             }
             if !clean_paths.is_empty() {
-                lines.push(format!(
-                    "{} file(s) had no unsaved changes.",
-                    clean_paths.len()
-                ));
+                lines.push(format!("{} clean.", clean_paths.len()));
             }
+
             if !not_found_paths.is_empty() {
-                lines.push(format!(
-                    "{} path(s) were not found in the project:",
-                    not_found_paths.len()
-                ));
+                lines.push(format!("Not found ({}):", not_found_paths.len()));
                 for path in &not_found_paths {
                     lines.push(format!("- {}", path.display()));
                 }
             }
             if !open_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while opening buffers:",
-                    open_errors.len()
-                ));
+                lines.push(format!("Open failed ({}):", open_errors.len()));
                 for (path, error) in &open_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
             if !dirty_check_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while checking for unsaved changes:",
-                    dirty_check_errors.len()
-                ));
+                lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
                 for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
             if !reload_errors.is_empty() {
-                lines.push(format!(
-                    "{} error(s) occurred while reloading buffers:",
-                    reload_errors.len()
-                ));
+                lines.push(format!("Reload failed ({}):", reload_errors.len()));
                 for error in &reload_errors {
                     lines.push(format!("- {}", error));
                 }
@@ -294,16 +278,16 @@ mod tests {
 
         // Output should mention restored + clean.
         assert!(
-            output.contains("Restored 1 file(s) from disk (discarded unsaved changes)."),
+            output.contains("Restored 1 file(s)."),
             "expected restored count line, got:\n{output}"
         );
         assert!(
-            output.contains("1 file(s) had no unsaved changes."),
+            output.contains("1 clean."),
             "expected clean count line, got:\n{output}"
         );
 
         // Effect: dirty buffer should be restored back to disk content and become clean.
-        let dirty_text = dirty_buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+        let dirty_text = dirty_buffer.read_with(cx, |buffer, _| buffer.text());
         assert_eq!(
             dirty_text, "on disk: dirty\n",
             "dirty.txt buffer should be restored to disk contents"
@@ -318,7 +302,7 @@ mod tests {
         assert_eq!(disk_dirty, "on disk: dirty\n");
 
         // Sanity: clean buffer should remain clean and unchanged.
-        let clean_text = clean_buffer.read_with(cx, |buffer, _| buffer.text().to_string());
+        let clean_text = clean_buffer.read_with(cx, |buffer, _| buffer.text());
         assert_eq!(clean_text, "on disk: clean\n");
         assert!(
             !clean_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
@@ -352,7 +336,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            output.contains("1 path(s) were not found in the project:"),
+            output.contains("Not found (1):"),
             "expected not-found header line, got:\n{output}"
         );
         assert!(
