@@ -161,15 +161,15 @@ pub fn init(cx: &mut App) {
             || flag.await
         {
             cx.update(|cx| {
-                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
-                cx.on_action(|_: &TestCrash, _| {
-                    unsafe extern "C" {
-                        fn puts(s: *const i8);
-                    }
-                    unsafe {
-                        puts(0xabad1d3a as *const i8);
-                    }
-                });
+                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"))
+                    .on_action(|_: &TestCrash, _| {
+                        unsafe extern "C" {
+                            fn puts(s: *const i8);
+                        }
+                        unsafe {
+                            puts(0xabad1d3a as *const i8);
+                        }
+                    });
             })
             .ok();
         };
@@ -179,11 +179,11 @@ pub fn init(cx: &mut App) {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_log_file(workspace, window, cx);
         });
-    });
-    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
+    })
+    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
         cx.reveal_path(paths::log_file().as_path());
-    });
-    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -194,13 +194,13 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_telemetry_log_file(workspace, window, cx);
         });
-    });
-    cx.on_action(|&zed_actions::OpenKeymapFile, cx| {
+    })
+    .on_action(|&zed_actions::OpenKeymapFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
@@ -209,8 +209,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenSettingsFile, cx| {
+    })
+    .on_action(|_: &OpenSettingsFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
@@ -219,13 +219,13 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenAccountSettings, cx| {
+    })
+    .on_action(|_: &OpenAccountSettings, cx| {
         with_active_or_new_workspace(cx, |_, _, cx| {
             cx.open_url(&zed_urls::account_url(cx));
         });
-    });
-    cx.on_action(|_: &OpenTasks, cx| {
+    })
+    .on_action(|_: &OpenTasks, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
@@ -234,8 +234,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenDebugTasks, cx| {
+    })
+    .on_action(|_: &OpenDebugTasks, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
@@ -244,8 +244,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &OpenDefaultSettings, cx| {
+    })
+    .on_action(|_: &OpenDefaultSettings, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -256,8 +256,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+    })
+    .on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -268,8 +268,8 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
-    });
-    cx.on_action(|_: &zed_actions::About, cx| {
+    })
+    .on_action(|_: &zed_actions::About, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             about(workspace, window, cx);
         });
