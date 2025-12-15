@@ -523,7 +523,7 @@ impl zed::Extension for AnthropicProvider {
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            "To use Anthropic, you need an API key. You can create one [here](https://console.anthropic.com/settings/keys).".to_string(),
+            "[Create an API key](https://console.anthropic.com/settings/keys) to use Anthropic as your LLM provider.".to_string(),
         )
     }
 

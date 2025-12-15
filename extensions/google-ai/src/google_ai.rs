@@ -600,7 +600,7 @@ impl zed::Extension for GoogleAiProvider {
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            "To use Google AI, you need an API key. You can create one [here](https://aistudio.google.com/apikey).".to_string(),
+            "[Create an API key](https://aistudio.google.com/apikey) to use Google AI as your LLM provider.".to_string(),
         )
     }
 

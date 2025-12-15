@@ -568,7 +568,7 @@ impl zed::Extension for OpenRouterProvider {
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            "To use OpenRouter, you need an API key. You can create one [here](https://openrouter.ai/keys).".to_string(),
+            "[Create an API key](https://openrouter.ai/keys) to use OpenRouter as your LLM provider.".to_string(),
         )
     }
 

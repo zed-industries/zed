@@ -478,7 +478,7 @@ impl zed::Extension for OpenAiProvider {
 
     fn llm_provider_settings_markdown(&self, _provider_id: &str) -> Option<String> {
         Some(
-            "To use OpenAI, you need an API key. You can create one [here](https://platform.openai.com/api-keys).".to_string(),
+            "[Create an API key](https://platform.openai.com/api-keys) to use OpenAI as your LLM provider.".to_string(),
         )
     }
 
