@@ -714,7 +714,8 @@ impl BlockMap {
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if let BlockPlacement::Above(row) = placement
-                            && row < new_start // this will be true more often now
+                            && row < new_start
+                        // this will be true more often now
                         {
                             return None;
                         }
