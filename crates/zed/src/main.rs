@@ -27,7 +27,10 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
+use project::{
+    project_settings::ProjectSettings,
+    trusted_worktrees::{self, RemoteHostLocation},
+};
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -36,6 +39,7 @@ use std::{
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
+    pin::Pin,
     process,
     sync::{Arc, OnceLock},
     time::Instant,
@@ -474,7 +478,15 @@ pub fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+
+        let trust_task = trusted_worktrees::wait_for_global_trust(None::<RemoteHostLocation>, cx)
+            .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
+        let node_runtime = NodeRuntime::new(
+            client.http_client(),
+            Some(shell_env_loaded_rx),
+            rx,
+            trust_task,
+        );
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
