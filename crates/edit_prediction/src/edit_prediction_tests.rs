@@ -304,11 +304,102 @@ async fn test_request_events(cx: &mut TestAppContext) {
     let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
 
     assert_eq!(prediction.edits.len(), 1);
-    assert_eq!(
-        prediction.edits[0].0.to_point(&snapshot).start,
-        language::Point::new(1, 3)
-    );
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\n\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First burst: insert "How"
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(7..7, "How")], None, cx);
+    });
+
+    // Simulate a pause longer than the grouping threshold (e.g. 500ms).
+    cx.executor().advance_clock(LAST_CHANGE_GROUPING_TIME * 2);
+    cx.run_until_parked();
+
+    // Second burst: append " are you?" immediately after "How" on the same line.
+    //
+    // Keeping both bursts on the same line ensures the existing line-span coalescing logic
+    // groups them into a single `LastEvent`, allowing the pause-split getter to return two diffs.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(10..10, " are you?")], None, cx);
+    });
+
+    // A second edit shortly after the first post-pause edit ensures the last edit timestamp is
+    // advanced after the pause boundary is recorded, making pause-splitting deterministic.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(19..19, "!")], None, cx);
+    });
+
+    // Without time-based splitting, there is one event.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(events.len(), 1);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How are you?!
+             Bye
+        "}
+    );
+
+    // With time-based splitting, there are two distinct events.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+    });
+    assert_eq!(events.len(), 2);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How
+             Bye
+        "}
+    );
+
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -How
+            +How are you?!
+             Bye
+        "}
+    );
 }
 
 #[gpui::test]

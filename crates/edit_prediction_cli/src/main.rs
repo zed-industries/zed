@@ -267,7 +267,7 @@ fn main() {
                             if let Err(e) = result {
                                 Progress::global().increment_failed();
                                 let failed_example_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example.name));
+                                    FAILED_EXAMPLES_DIR.join(format!("{}.json", example.spec.name));
                                 app_state
                                     .fs
                                     .write(
@@ -276,8 +276,8 @@ fn main() {
                                     )
                                     .await
                                     .unwrap();
-                                let err_path =
-                                    FAILED_EXAMPLES_DIR.join(format!("{}_err.txt", example.name));
+                                let err_path = FAILED_EXAMPLES_DIR
+                                    .join(format!("{}_err.txt", example.spec.name));
                                 app_state
                                     .fs
                                     .write(&err_path, e.to_string().as_bytes())
@@ -298,7 +298,7 @@ fn main() {
                                         Re-run this example with:
                                             cargo run -p edit_prediction_cli -- {} \x1b[36m{}\x1b[0m
                                     "},
-                                    example.name,
+                                    example.spec.name,
                                     e,
                                     err_path.display(),
                                     failed_example_path.display(),

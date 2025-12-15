@@ -46,7 +46,9 @@ use workspace::{
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
-use crate::{RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag};
+use crate::{
+    CaptureExample, RatePredictions, rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag,
+};
 
 actions!(
     edit_prediction,
@@ -899,7 +901,13 @@ impl EditPredictionButton {
                 .context(editor_focus_handle)
                 .when(
                     cx.has_flag::<PredictEditsRatePredictionsFeatureFlag>(),
-                    |this| this.action("Rate Predictions", RatePredictions.boxed_clone()),
+                    |this| {
+                        this.action(
+                            "Capture Edit Prediction Example",
+                            CaptureExample.boxed_clone(),
+                        )
+                        .action("Rate Predictions", RatePredictions.boxed_clone())
+                    },
                 );
         }
 
