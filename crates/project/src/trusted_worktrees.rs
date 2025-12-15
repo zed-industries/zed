@@ -1683,6 +1683,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_wait_for_default_global_trust_resolves_on_directory_worktree_trust(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            let worktree = store.worktrees().next().unwrap();
+            assert!(!worktree.read(cx).is_single_file());
+            worktree.read(cx).id()
+        });
+
+        let trusted_worktrees = init_trust_global(worktree_store, cx);
+
+        let task = cx.update(|cx| wait_for_default_global_trust("test", cx));
+        assert!(
+            task.is_some(),
+            "should return Some(Task) when not yet trusted"
+        );
+
+        let task = task.unwrap();
+
+        cx.executor().run_until_parked();
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                None,
+                cx,
+            );
+        });
+
+        cx.executor().run_until_parked();
+        task.await;
+    }
+
+    #[gpui::test]
     async fn test_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
         init_test(cx);
 
