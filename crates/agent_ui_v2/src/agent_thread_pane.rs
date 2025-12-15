@@ -13,10 +13,7 @@ use settings::DockSide;
 use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{
-    App, Clickable as _, Context, DynamicSpacing, IconButton, IconName, IconSize, IntoElement,
-    Label, LabelCommon as _, LabelSize, Render, Tab, Window, div,
-};
+use ui::{Context, DynamicSpacing, IconButton, Tab, prelude::*};
 use workspace::Workspace;
 use workspace::dock::{ClosePane, MinimizePane, UtilityPane, UtilityPanePosition};
 use workspace::utility_pane::UtilityPaneSlot;
@@ -202,13 +199,13 @@ impl AgentThreadPane {
                 .child(Label::new(title).size(LabelSize::Small))
         };
 
-        div()
+        h_flex()
             .id("utility-pane-header")
-            .flex()
-            .flex_none()
-            .items_center()
             .w_full()
             .h(Tab::container_height(cx))
+            .flex_none()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .when(slot == UtilityPaneSlot::Left, |this| {
                 this.child(make_toggle_button(workspace.clone(), cx))
                     .child(make_title_label(title.clone(), cx))
