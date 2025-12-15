@@ -216,7 +216,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    assistant_text_thread::init(client.clone(), cx);
+    assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -229,13 +229,8 @@ pub fn init(
     TextThreadEditor::init(cx);
 
     register_slash_commands(cx);
-    inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
+    inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })

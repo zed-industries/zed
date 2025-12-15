@@ -1,8 +1,8 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
+use uuid::Uuid;
 
-use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -15,12 +15,12 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
-use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
+use language::{Buffer, IndentKind, LanguageName, Point, TransactionId, line_diff};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
-    LanguageModelToolUse, Role, TokenUsage, report_assistant_event,
+    LanguageModelToolUse, Role, TokenUsage,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -41,7 +41,6 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use ui::SharedString;
 
 /// Use this tool to provide a message to the user when you're unable to complete a task.
@@ -77,9 +76,9 @@ pub struct BufferCodegen {
     buffer: Entity<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     pub is_insertion: bool,
+    session_id: Uuid,
 }
 
 impl BufferCodegen {
@@ -87,7 +86,7 @@ impl BufferCodegen {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        telemetry: Arc<Telemetry>,
+        session_id: Uuid,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -96,8 +95,8 @@ impl BufferCodegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                Some(telemetry.clone()),
                 builder.clone(),
+                session_id,
                 cx,
             )
         });
@@ -110,8 +109,8 @@ impl BufferCodegen {
             buffer,
             range,
             initial_transaction_id,
-            telemetry,
             builder,
+            session_id,
         };
         this.activate(0, cx);
         this
@@ -132,6 +131,10 @@ impl BufferCodegen {
 
     pub fn active_alternative(&self) -> &Entity<CodegenAlternative> {
         &self.alternatives[self.active_alternative]
+    }
+
+    pub fn language_name(&self, cx: &App) -> Option<LanguageName> {
+        self.active_alternative().read(cx).language_name(cx)
     }
 
     pub fn status<'a>(&self, cx: &'a App) -> &'a CodegenStatus {
@@ -192,8 +195,8 @@ impl BufferCodegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    Some(self.telemetry.clone()),
                     self.builder.clone(),
+                    self.session_id,
                     cx,
                 )
             }));
@@ -256,6 +259,10 @@ impl BufferCodegen {
     pub fn selected_text<'a>(&self, cx: &'a App) -> Option<&'a str> {
         self.active_alternative().read(cx).selected_text()
     }
+
+    pub fn session_id(&self) -> Uuid {
+        self.session_id
+    }
 }
 
 impl EventEmitter<CodegenEvent> for BufferCodegen {}
@@ -271,7 +278,6 @@ pub struct CodegenAlternative {
     status: CodegenStatus,
     generation: Task<()>,
     diff: Diff,
-    telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
     active: bool,
@@ -282,6 +288,7 @@ pub struct CodegenAlternative {
     selected_text: Option<String>,
     pub message_id: Option<String>,
     pub model_explanation: Option<SharedString>,
+    session_id: Uuid,
 }
 
 impl EventEmitter<CodegenEvent> for CodegenAlternative {}
@@ -291,8 +298,8 @@ impl CodegenAlternative {
         buffer: Entity<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
-        telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
+        session_id: Uuid,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
@@ -331,7 +338,6 @@ impl CodegenAlternative {
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             diff: Diff::default(),
-            telemetry,
             builder,
             active: active,
             edits: Vec::new(),
@@ -341,8 +347,16 @@ impl CodegenAlternative {
             completion: None,
             selected_text: None,
             model_explanation: None,
+            session_id,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
         }
+    }
+
+    pub fn language_name(&self, cx: &App) -> Option<LanguageName> {
+        self.old_buffer
+            .read(cx)
+            .language()
+            .map(|language| language.name())
     }
 
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
@@ -407,34 +421,28 @@ impl CodegenAlternative {
 
         self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
-        let api_key = model.api_key(cx);
-        let telemetry_id = model.telemetry_id();
-        let provider_id = model.provider_id();
-
         if Self::use_streaming_tools(model.as_ref(), cx) {
             let request = self.build_request(&model, user_prompt, context_task, cx)?;
-            let completion_events =
-                cx.spawn(async move |_, cx| model.stream_completion(request.await, cx).await);
-            self.generation = self.handle_completion(
-                telemetry_id,
-                provider_id.to_string(),
-                api_key,
-                completion_events,
-                cx,
-            );
+            let completion_events = cx.spawn({
+                let model = model.clone();
+                async move |_, cx| model.stream_completion(request.await, cx).await
+            });
+            self.generation = self.handle_completion(model, completion_events, cx);
         } else {
             let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
                 if user_prompt.trim().to_lowercase() == "delete" {
                     async { Ok(LanguageModelTextStream::default()) }.boxed_local()
                 } else {
                     let request = self.build_request(&model, user_prompt, context_task, cx)?;
-                    cx.spawn(async move |_, cx| {
-                        Ok(model.stream_completion_text(request.await, cx).await?)
+                    cx.spawn({
+                        let model = model.clone();
+                        async move |_, cx| {
+                            Ok(model.stream_completion_text(request.await, cx).await?)
+                        }
                     })
                     .boxed_local()
                 };
-            self.generation =
-                self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
+            self.generation = self.handle_stream(model, stream, cx);
         }
 
         Ok(())
@@ -621,12 +629,14 @@ impl CodegenAlternative {
 
     pub fn handle_stream(
         &mut self,
-        model_telemetry_id: String,
-        model_provider_id: String,
-        model_api_key: Option<String>,
+        model: Arc<dyn LanguageModel>,
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        let anthropic_reporter = language_model::AnthropicEventReporter::new(&model, cx);
+        let session_id = self.session_id;
+        let model_telemetry_id = model.telemetry_id();
+        let model_provider_id = model.provider_id().to_string();
         let start_time = Instant::now();
 
         // Make a new snapshot and re-resolve anchor in case the document was modified.
@@ -664,8 +674,6 @@ impl CodegenAlternative {
             }
         }
 
-        let http_client = cx.http_client();
-        let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
@@ -698,10 +706,11 @@ impl CodegenAlternative {
                 let model_telemetry_id = model_telemetry_id.clone();
                 let model_provider_id = model_provider_id.clone();
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
-                let executor = cx.background_executor().clone();
                 let message_id = message_id.clone();
-                let line_based_stream_diff: Task<anyhow::Result<()>> =
-                    cx.background_spawn(async move {
+                let line_based_stream_diff: Task<anyhow::Result<()>> = cx.background_spawn({
+                    let anthropic_reporter = anthropic_reporter.clone();
+                    let language_name = language_name.clone();
+                    async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
@@ -798,27 +807,30 @@ impl CodegenAlternative {
                         let result = diff.await;
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
-                        report_assistant_event(
-                            AssistantEventData {
-                                conversation_id: None,
-                                message_id,
-                                kind: AssistantKind::Inline,
-                                phase: AssistantPhase::Response,
-                                model: model_telemetry_id,
-                                model_provider: model_provider_id,
-                                response_latency,
-                                error_message,
-                                language_name: language_name.map(|name| name.to_proto()),
-                            },
-                            telemetry,
-                            http_client,
-                            model_api_key,
-                            &executor,
+                        telemetry::event!(
+                            "Assistant Responded",
+                            kind = "inline",
+                            phase = "response",
+                            session_id = session_id.to_string(),
+                            model = model_telemetry_id,
+                            model_provider = model_provider_id,
+                            language_name = language_name.as_ref().map(|n| n.to_string()),
+                            message_id = message_id.as_deref(),
+                            response_latency = response_latency,
+                            error_message = error_message.as_deref(),
                         );
+
+                        anthropic_reporter.report(language_model::AnthropicEventData {
+                            completion_type: language_model::AnthropicCompletionType::Editor,
+                            event: language_model::AnthropicEventType::Response,
+                            language_name: language_name.map(|n| n.to_string()),
+                            message_id,
+                        });
 
                         result?;
                         Ok(())
-                    });
+                    }
+                });
 
                 while let Some((char_ops, line_ops)) = diff_rx.next().await {
                     codegen.update(cx, |codegen, cx| {
@@ -1086,9 +1098,7 @@ impl CodegenAlternative {
 
     fn handle_completion(
         &mut self,
-        telemetry_id: String,
-        provider_id: String,
-        api_key: Option<String>,
+        model: Arc<dyn LanguageModel>,
         completion_stream: Task<
             Result<
                 BoxStream<
@@ -1270,13 +1280,7 @@ impl CodegenAlternative {
 
             let Some(task) = codegen
                 .update(cx, move |codegen, cx| {
-                    codegen.handle_stream(
-                        telemetry_id,
-                        provider_id,
-                        api_key,
-                        async { Ok(language_model_text_stream) },
-                        cx,
-                    )
+                    codegen.handle_stream(model, async { Ok(language_model_text_stream) }, cx)
                 })
                 .ok()
             else {
@@ -1448,6 +1452,7 @@ mod tests {
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{Buffer, Point};
+    use language_model::fake_provider::FakeLanguageModel;
     use language_model::{LanguageModelRegistry, TokenUsage};
     use languages::rust_lang;
     use rand::prelude::*;
@@ -1478,8 +1483,8 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
+                Uuid::new_v4(),
                 cx,
             )
         });
@@ -1540,8 +1545,8 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
+                Uuid::new_v4(),
                 cx,
             )
         });
@@ -1604,8 +1609,8 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
+                Uuid::new_v4(),
                 cx,
             )
         });
@@ -1668,8 +1673,8 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 true,
-                None,
                 prompt_builder,
+                Uuid::new_v4(),
                 cx,
             )
         });
@@ -1720,8 +1725,8 @@ mod tests {
                 buffer.clone(),
                 range.clone(),
                 false,
-                None,
                 prompt_builder,
+                Uuid::new_v4(),
                 cx,
             )
         });
@@ -1810,11 +1815,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> mpsc::UnboundedSender<String> {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let model = Arc::new(FakeLanguageModel::default());
         codegen.update(cx, |codegen, cx| {
             codegen.generation = codegen.handle_stream(
-                String::new(),
-                String::new(),
-                None,
+                model,
                 future::ready(Ok(LanguageModelTextStream {
                     message_id: None,
                     stream: chunks_rx.map(Ok).boxed(),

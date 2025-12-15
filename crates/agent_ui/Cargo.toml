@@ -84,7 +84,6 @@ smol.workspace = true
 streaming_diff.workspace = true
 task.workspace = true
 telemetry.workspace = true
-telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
