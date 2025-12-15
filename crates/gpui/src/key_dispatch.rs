@@ -909,16 +909,24 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-b");
 
+        let count_after_pending = Rc::new(RefCell::new(0usize));
+        let count_after_pending_for_assertion = count_after_pending.clone();
+
         cx.update(|window, cx| {
             assert!(window.has_pending_keystrokes());
-            let count_after_pending = *pending_input_changed_count.borrow();
-            assert!(count_after_pending > 0);
+            *count_after_pending.borrow_mut() = *pending_input_changed_count.borrow();
+            assert!(*count_after_pending.borrow() > 0);
 
             window.focus(&cx.focus_handle(), cx);
 
             assert!(!window.has_pending_keystrokes());
+        });
+
+        // Focus-triggered pending-input notifications are deferred to the end of the current
+        // effect cycle, so the observer callback should run after the focus update completes.
+        cx.update(|_, _| {
             let count_after_focus_change = *pending_input_changed_count.borrow();
-            assert!(count_after_focus_change > count_after_pending);
+            assert!(count_after_focus_change > *count_after_pending_for_assertion.borrow());
         });
     }
 

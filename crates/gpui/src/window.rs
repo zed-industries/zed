@@ -1442,7 +1442,18 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.clear_pending_keystrokes();
-        self.pending_input_changed(cx);
+
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+
         self.refresh();
     }
 
