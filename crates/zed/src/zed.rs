@@ -6,6 +6,8 @@ pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
+mod send_to_terminal;
+use send_to_terminal::send_to_terminal;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -98,6 +100,8 @@ use zed_actions::{
 actions!(
     zed,
     [
+        /// Sends the current expression to the active terminal.
+        SendToTerminal,
         /// Opens the element inspector for debugging UI.
         DebugElements,
         /// Hides the application window.
@@ -232,6 +236,9 @@ pub fn init(cx: &mut App) {
                 cx,
             );
         });
+    });
+    cx.on_action(|_: &SendToTerminal, cx| {
+        send_to_terminal(cx);
     });
     cx.on_action(|_: &OpenDebugTasks, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
