@@ -34,8 +34,4 @@ RUN apt-get update; \
     linux-perf binutils
 WORKDIR app
 COPY --from=builder /app/collab /app/collab
-COPY --from=builder /app/crates/collab/migrations /app/migrations
-COPY --from=builder /app/crates/collab/migrations_llm /app/migrations_llm
-ENV MIGRATIONS_PATH=/app/migrations
-ENV LLM_DATABASE_MIGRATIONS_PATH=/app/migrations_llm
 ENTRYPOINT ["/app/collab"]

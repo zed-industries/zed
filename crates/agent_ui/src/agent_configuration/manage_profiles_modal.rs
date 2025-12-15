@@ -422,7 +422,7 @@ impl ManageProfilesModal {
         let is_focused = profile.navigation.focus_handle.contains_focused(window, cx);
 
         div()
-            .id(SharedString::from(format!("profile-{}", profile.id)))
+            .id(format!("profile-{}", profile.id))
             .track_focus(&profile.navigation.focus_handle)
             .on_action({
                 let profile_id = profile.id.clone();
@@ -431,7 +431,7 @@ impl ManageProfilesModal {
                 })
             })
             .child(
-                ListItem::new(SharedString::from(format!("profile-{}", profile.id)))
+                ListItem::new(format!("profile-{}", profile.id))
                     .toggle_state(is_focused)
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)

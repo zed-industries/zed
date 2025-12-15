@@ -39,3 +39,6 @@ xcuserdata/
 # Don't commit any secrets to the repo.
 .env
 .env.secret.toml
+
+# `nix build` output
+/result 

@@ -970,6 +970,14 @@ impl DirectoryLister {
             }
         }
     }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        match self {
+            Self::Local(project, ..) | Self::Project(project, ..) => {
+                project.read(cx).path_style(cx)
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -2624,6 +2632,12 @@ impl Project {
             self.is_via_collab() || self.is_via_remote_server()
         );
         !self.is_local()
+    }
+
+    pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
+        self.worktree_store.update(cx, |worktree_store, _cx| {
+            worktree_store.disable_scanner();
+        });
     }
 
     #[inline]
@@ -5195,7 +5209,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
+            this.running_language_servers_for_local_buffer(buffer, cx)
                 .next()
                 .is_some()
         })
