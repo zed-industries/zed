@@ -452,7 +452,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -476,7 +476,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
                 ..FakeLspAdapter::default()
             },
         );
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("fake-analyzer".into()),
             lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions::default()),
@@ -669,7 +669,7 @@ async fn test_remote_cancel_language_server_work(
     });
 
     let mut fake_lsp = server_cx.update(|cx| {
-        headless.read(cx).languages.register_fake_language_server(
+        headless.read(cx).languages.register_fake_lsp_server(
             LanguageServerName("rust-analyzer".into()),
             Default::default(),
             None,

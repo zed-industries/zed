@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Timer,
-    Window, WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Timer, Window,
+    WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
@@ -9,7 +9,7 @@ struct SubWindow {
 
 fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
     div()
-        .id(SharedString::from(text.to_string()))
+        .id(text.to_string())
         .flex_none()
         .px_2()
         .bg(rgb(0xf7f7f7))

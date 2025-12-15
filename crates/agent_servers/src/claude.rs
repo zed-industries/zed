@@ -22,10 +22,6 @@ pub struct AgentServerLoginCommand {
 }
 
 impl AgentServer for ClaudeCode {
-    fn telemetry_id(&self) -> &'static str {
-        "claude-code"
-    }
-
     fn name(&self) -> SharedString {
         "Claude Code".into()
     }
@@ -83,7 +79,6 @@ impl AgentServer for ClaudeCode {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let telemetry_id = self.telemetry_id();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
@@ -108,7 +103,6 @@ impl AgentServer for ClaudeCode {
                 .await?;
             let connection = crate::acp::connect(
                 name,
-                telemetry_id,
                 command,
                 root_dir.as_ref(),
                 default_mode,

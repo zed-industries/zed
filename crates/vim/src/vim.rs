@@ -924,6 +924,7 @@ impl Vim {
                 |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
                     Mode::Replace => vim.paste_replace(window, cx),
                     Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        vim.selected_register.replace('+');
                         vim.paste(&VimPaste::default(), window, cx);
                     }
                     _ => {

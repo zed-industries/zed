@@ -47,14 +47,17 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
-            CommitAvatar::new(
-                &blame_entry.sha.to_string().into(),
-                details.as_ref().and_then(|it| it.remote.as_ref()),
+            Some(
+                CommitAvatar::new(
+                    &blame_entry.sha.to_string().into(),
+                    details.as_ref().and_then(|it| it.remote.as_ref()),
+                )
+                .render(window, cx),
             )
-            .render(window, cx)
         } else {
             None
         };
+
         Some(
             div()
                 .mr_2()
@@ -64,7 +67,7 @@ impl BlameRenderer for GitBlameRenderer {
                         .w_full()
                         .gap_2()
                         .justify_between()
-                        .font_family(style.font().family)
+                        .font(style.font())
                         .line_height(style.line_height)
                         .text_color(cx.theme().status().hint)
                         .child(
@@ -80,7 +83,10 @@ impl BlameRenderer for GitBlameRenderer {
                         .on_mouse_down(MouseButton::Right, {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
+                            let editor = editor.clone();
                             move |event, window, cx| {
+                                cx.stop_propagation();
+
                                 deploy_blame_entry_context_menu(
                                     &blame_entry,
                                     details.as_ref(),
@@ -107,17 +113,19 @@ impl BlameRenderer for GitBlameRenderer {
                                 )
                             }
                         })
-                        .hoverable_tooltip(move |_window, cx| {
-                            cx.new(|cx| {
-                                CommitTooltip::blame_entry(
-                                    &blame_entry,
-                                    details.clone(),
-                                    repository.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )
+                        .when(!editor.read(cx).has_mouse_context_menu(), |el| {
+                            el.hoverable_tooltip(move |_window, cx| {
+                                cx.new(|cx| {
+                                    CommitTooltip::blame_entry(
+                                        &blame_entry,
+                                        details.clone(),
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                })
+                                .into()
                             })
-                            .into()
                         }),
                 )
                 .into_any(),
@@ -148,7 +156,7 @@ impl BlameRenderer for GitBlameRenderer {
             h_flex()
                 .id("inline-blame")
                 .w_full()
-                .font_family(style.font().family)
+                .font(style.font())
                 .text_color(cx.theme().status().hint)
                 .line_height(style.line_height)
                 .child(Icon::new(IconName::FileGit).color(Color::Hint))
@@ -258,7 +266,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     .flex_wrap()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border_variant)
-                                    .children(avatar)
+                                    .child(avatar)
                                     .child(author)
                                     .when(!author_email.is_empty(), |this| {
                                         this.child(
@@ -396,6 +404,7 @@ fn deploy_blame_entry_context_menu(
     });
 
     editor.update(cx, move |editor, cx| {
+        editor.hide_blame_popover(false, cx);
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });

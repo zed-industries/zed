@@ -47,7 +47,7 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-z": "edit_prediction::RateCompletions",
+      "ctrl-cmd-z": "edit_prediction::RatePredictions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
@@ -684,8 +684,8 @@
       "ctrl-alt-cmd-p": "settings_profile_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
-      "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
+      "ctrl-tab": "tab_switcher::Toggle",
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -878,7 +878,9 @@
     "bindings": {
       "cmd-alt-/": "agent::ToggleModelSelector",
       "ctrl-[": "agent::CyclePreviousInlineAssist",
-      "ctrl-]": "agent::CycleNextInlineAssist"
+      "ctrl-]": "agent::CycleNextInlineAssist",
+      "cmd-shift-enter": "inline_assistant::ThumbsUpResult",
+      "cmd-shift-backspace": "inline_assistant::ThumbsDownResult"
     }
   },
   {
@@ -1294,8 +1296,12 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
-      "pageup": "markdown::MovePageUp",
-      "pagedown": "markdown::MovePageDown"
+      "pageup": "markdown::ScrollPageUp",
+      "pagedown": "markdown::ScrollPageDown",
+      "up": "markdown::ScrollUp",
+      "down": "markdown::ScrollDown",
+      "alt-up": "markdown::ScrollUpByItem",
+      "alt-down": "markdown::ScrollDownByItem"
     }
   },
   {
@@ -1427,25 +1433,18 @@
     }
   },
   {
-    "context": "Zeta2Feedback > Editor",
+    "context": "EditPredictionContext > Editor",
     "bindings": {
-      "enter": "editor::Newline",
-      "cmd-enter up": "dev::Zeta2RatePredictionPositive",
-      "cmd-enter down": "dev::Zeta2RatePredictionNegative"
-    }
-  },
-  {
-    "context": "Zeta2Context > Editor",
-    "bindings": {
-      "alt-left": "dev::Zeta2ContextGoBack",
-      "alt-right": "dev::Zeta2ContextGoForward"
+      "alt-left": "dev::EditPredictionContextGoBack",
+      "alt-right": "dev::EditPredictionContextGoForward"
     }
   },
   {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-backspace": "branch_picker::DeleteBranch"
+      "cmd-shift-backspace": "branch_picker::DeleteBranch",
+      "cmd-shift-i": "branch_picker::FilterRemotes"
     }
   }
 ]
