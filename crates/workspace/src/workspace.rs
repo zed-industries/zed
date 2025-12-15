@@ -8554,10 +8554,7 @@ pub fn remote_workspace_position_from_db(
             let restorable_bounds = serialized_workspace
                 .as_ref()
                 .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
-                .or_else(|| {
-                    let (display, window_bounds) = DB.last_window().log_err()?;
-                    Some((display?, window_bounds?))
-                });
+                .or_else(|| persistence::read_no_project_window_bounds());
 
             if let Some((serialized_display, serialized_status)) = restorable_bounds {
                 (Some(serialized_status.0), Some(serialized_display))
