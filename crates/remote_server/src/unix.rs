@@ -2,7 +2,7 @@ use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use client::ProxySettings;
-use project::trusted_worktrees::{self, RemoteHostLocation};
+use project::trusted_worktrees;
 use util::ResultExt;
 
 use extension::ExtensionHostProxy;
@@ -419,6 +419,7 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
+        trusted_worktrees::init(Some((session.clone(), REMOTE_SERVER_PROJECT_ID)), None, cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
@@ -451,7 +452,7 @@ pub fn execute_run(
                 )
             };
 
-            let trust_task = trusted_worktrees::wait_for_global_trust(None::<RemoteHostLocation>, cx)
+            let trust_task = trusted_worktrees::wait_for_default_global_trust(cx)
                 .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
             let node_runtime = NodeRuntime::new(
                 http_client.clone(),

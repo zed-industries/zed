@@ -8,16 +8,11 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::{
-    Project,
-    project_settings::ProjectSettings,
-    trusted_worktrees::{self, RemoteHostLocation},
-};
+use project::{Project, project_settings::ProjectSettings};
 use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use util::ResultExt as _;
 
@@ -119,9 +114,7 @@ pub fn init(cx: &mut App) -> EpAppState {
         tx.send(Some(options)).log_err();
     })
     .detach();
-    let trust_task = trusted_worktrees::wait_for_global_trust(None::<RemoteHostLocation>, cx)
-        .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
-    let node_runtime = NodeRuntime::new(client.http_client(), None, rx, trust_task);
+    let node_runtime = NodeRuntime::new(client.http_client(), None, rx, None);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 

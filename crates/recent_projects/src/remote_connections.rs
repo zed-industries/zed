@@ -795,7 +795,7 @@ pub async fn open_remote_project(
                         if created_new_window {
                             window.remove_window();
                         }
-                        trusted_worktrees::init_global(
+                        trusted_worktrees::track_worktree_trust(
                             workspace.project().read(cx).worktree_store(),
                             None,
                             None,

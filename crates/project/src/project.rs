@@ -10,7 +10,6 @@ pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
-#[cfg(not(any(test, feature = "test-support")))]
 mod persistence;
 pub mod prettier_store;
 mod project_search;
@@ -1075,7 +1074,13 @@ impl Project {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
             if init_worktree_trust {
-                trusted_worktrees::init_global(worktree_store.clone(), None, None, None, cx);
+                trusted_worktrees::track_worktree_trust(
+                    worktree_store.clone(),
+                    None,
+                    None,
+                    None,
+                    cx,
+                );
             }
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
@@ -1281,7 +1286,7 @@ impl Project {
                     .detach();
                 match &connection_options {
                     RemoteConnectionOptions::Wsl(..) | RemoteConnectionOptions::Ssh(..) => {
-                        trusted_worktrees::init_global(
+                        trusted_worktrees::track_worktree_trust(
                             worktree_store.clone(),
                             Some(RemoteHostLocation::from(connection_options)),
                             None,

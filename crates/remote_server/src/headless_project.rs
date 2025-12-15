@@ -101,7 +101,7 @@ impl HeadlessProject {
         });
 
         if init_worktree_trust {
-            project::trusted_worktrees::init_global(
+            project::trusted_worktrees::track_worktree_trust(
                 worktree_store.clone(),
                 None::<RemoteHostLocation>,
                 Some((session.clone(), REMOTE_SERVER_PROJECT_ID)),

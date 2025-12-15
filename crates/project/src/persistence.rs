@@ -16,8 +16,10 @@ use crate::{
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
 // > which defaults to <..> 32766 for SQLite versions after 3.32.0.
+#[allow(unused)]
 const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 
+#[allow(unused)]
 pub struct ProjectDb(ThreadSafeConnection);
 
 impl Domain for ProjectDb {
@@ -115,7 +117,7 @@ VALUES {placeholders};"#
 
     pub(crate) fn fetch_trusted_worktrees(
         &self,
-        worktree_store: Entity<WorktreeStore>,
+        worktree_store: Option<Entity<WorktreeStore>>,
         host: Option<RemoteHostLocation>,
         cx: &App,
     ) -> anyhow::Result<HashMap<Option<RemoteHostLocation>, HashSet<PathTrust>>> {
@@ -139,11 +141,13 @@ VALUES {placeholders};"#
                     Some(abs_path) => {
                         if db_host != host {
                             (db_host, PathTrust::AbsPath(abs_path))
-                        } else {
+                        } else if let Some(worktree_store) = &worktree_store {
                             find_worktree_in_store(worktree_store.read(cx), &abs_path, cx)
                                 .map(PathTrust::Worktree)
                                 .map(|trusted_worktree| (host.clone(), trusted_worktree))
                                 .unwrap_or_else(|| (db_host.clone(), PathTrust::AbsPath(abs_path)))
+                        } else {
+                            (db_host, PathTrust::AbsPath(abs_path))
                         }
                     }
                     None => (db_host, PathTrust::Global),
@@ -173,12 +177,13 @@ VALUES {placeholders};"#
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Mutex};
+    use std::path::PathBuf;
 
     use collections::{HashMap, HashSet};
     use gpui::{SharedString, TestAppContext};
     use serde_json::json;
     use settings::SettingsStore;
+    use smol::lock::Mutex;
     use util::path;
 
     use crate::{
@@ -191,11 +196,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_and_fetch_trusted_worktrees(cx: &mut TestAppContext) {
-        let executor = cx.executor();
-        {
-            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
-        }
+        cx.executor().allow_parking();
+        let _guard = TEST_LOCK.lock().await;
+        PROJECT_DB.clear_trusted_worktrees().await.unwrap();
         cx.update(|cx| {
             if cx.try_global::<SettingsStore>().is_none() {
                 let settings = SettingsStore::test(cx);
@@ -203,7 +206,7 @@ mod tests {
             }
         });
 
-        let fs = FakeFs::new(executor.clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/"),
             json!({
@@ -231,12 +234,14 @@ mod tests {
             ]),
         );
 
-        executor
-            .block(PROJECT_DB.save_trusted_worktrees(trusted_paths, HashSet::default()))
+        PROJECT_DB
+            .save_trusted_worktrees(trusted_paths, HashSet::default())
+            .await
             .unwrap();
 
-        let fetched =
-            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = cx.update(|cx| {
+            PROJECT_DB.fetch_trusted_worktrees(Some(worktree_store.clone()), None, cx)
+        });
         let fetched = fetched.unwrap();
 
         let local_trust = fetched.get(&None).expect("should have local host entry");
@@ -246,15 +251,26 @@ mod tests {
                 .iter()
                 .all(|p| matches!(p, PathTrust::Worktree(_)))
         );
+
+        let fetched_no_store = cx
+            .update(|cx| PROJECT_DB.fetch_trusted_worktrees(None, None, cx))
+            .unwrap();
+        let local_trust_no_store = fetched_no_store
+            .get(&None)
+            .expect("should have local host entry");
+        assert_eq!(local_trust_no_store.len(), 2);
+        assert!(
+            local_trust_no_store
+                .iter()
+                .all(|p| matches!(p, PathTrust::AbsPath(_)))
+        );
     }
 
     #[gpui::test]
     async fn test_save_and_fetch_global_trust(cx: &mut TestAppContext) {
-        let executor = cx.executor();
-        {
-            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
-        }
+        cx.executor().allow_parking();
+        let _guard = TEST_LOCK.lock().await;
+        PROJECT_DB.clear_trusted_worktrees().await.unwrap();
         cx.update(|cx| {
             if cx.try_global::<SettingsStore>().is_none() {
                 let settings = SettingsStore::test(cx);
@@ -262,7 +278,7 @@ mod tests {
             }
         });
 
-        let fs = FakeFs::new(executor.clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
             .await;
 
@@ -270,25 +286,33 @@ mod tests {
         let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
 
         let trusted_globals = HashSet::from_iter([None]);
-        executor
-            .block(PROJECT_DB.save_trusted_worktrees(HashMap::default(), trusted_globals))
+        PROJECT_DB
+            .save_trusted_worktrees(HashMap::default(), trusted_globals)
+            .await
             .unwrap();
 
-        let fetched =
-            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = cx.update(|cx| {
+            PROJECT_DB.fetch_trusted_worktrees(Some(worktree_store.clone()), None, cx)
+        });
         let fetched = fetched.unwrap();
 
         let local_trust = fetched.get(&None).expect("should have local host entry");
         assert!(local_trust.contains(&PathTrust::Global));
+
+        let fetched_no_store = cx
+            .update(|cx| PROJECT_DB.fetch_trusted_worktrees(None, None, cx))
+            .unwrap();
+        let local_trust_no_store = fetched_no_store
+            .get(&None)
+            .expect("should have local host entry");
+        assert!(local_trust_no_store.contains(&PathTrust::Global));
     }
 
     #[gpui::test]
     async fn test_save_and_fetch_remote_host_trust(cx: &mut TestAppContext) {
-        let executor = cx.executor();
-        {
-            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
-        }
+        cx.executor().allow_parking();
+        let _guard = TEST_LOCK.lock().await;
+        PROJECT_DB.clear_trusted_worktrees().await.unwrap();
         cx.update(|cx| {
             if cx.try_global::<SettingsStore>().is_none() {
                 let settings = SettingsStore::test(cx);
@@ -296,7 +320,7 @@ mod tests {
             }
         });
 
-        let fs = FakeFs::new(executor.clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
             .await;
 
@@ -315,12 +339,14 @@ mod tests {
             HashSet::from_iter([PathBuf::from("/home/testuser/project")]),
         );
 
-        executor
-            .block(PROJECT_DB.save_trusted_worktrees(trusted_paths, HashSet::default()))
+        PROJECT_DB
+            .save_trusted_worktrees(trusted_paths, HashSet::default())
+            .await
             .unwrap();
 
-        let fetched =
-            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = cx.update(|cx| {
+            PROJECT_DB.fetch_trusted_worktrees(Some(worktree_store.clone()), None, cx)
+        });
         let fetched = fetched.unwrap();
 
         let remote_trust = fetched
@@ -330,15 +356,24 @@ mod tests {
         assert!(remote_trust
             .iter()
             .any(|p| matches!(p, PathTrust::AbsPath(path) if path == &PathBuf::from("/home/testuser/project"))));
+
+        let fetched_no_store = cx
+            .update(|cx| PROJECT_DB.fetch_trusted_worktrees(None, None, cx))
+            .unwrap();
+        let remote_trust_no_store = fetched_no_store
+            .get(&remote_host)
+            .expect("should have remote host entry");
+        assert_eq!(remote_trust_no_store.len(), 1);
+        assert!(remote_trust_no_store
+            .iter()
+            .any(|p| matches!(p, PathTrust::AbsPath(path) if path == &PathBuf::from("/home/testuser/project"))));
     }
 
     #[gpui::test]
     async fn test_clear_trusted_worktrees(cx: &mut TestAppContext) {
-        let executor = cx.executor();
-        {
-            let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = executor.block(PROJECT_DB.clear_trusted_worktrees());
-        }
+        cx.executor().allow_parking();
+        let _guard = TEST_LOCK.lock().await;
+        PROJECT_DB.clear_trusted_worktrees().await.unwrap();
         cx.update(|cx| {
             if cx.try_global::<SettingsStore>().is_none() {
                 let settings = SettingsStore::test(cx);
@@ -346,7 +381,7 @@ mod tests {
             }
         });
 
-        let fs = FakeFs::new(executor.clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
             .await;
 
@@ -354,18 +389,23 @@ mod tests {
         let worktree_store = project.read_with(cx, |p, _| p.worktree_store());
 
         let trusted_globals = HashSet::from_iter([None]);
-        executor
-            .block(PROJECT_DB.save_trusted_worktrees(HashMap::default(), trusted_globals))
+        PROJECT_DB
+            .save_trusted_worktrees(HashMap::default(), trusted_globals)
+            .await
             .unwrap();
 
-        executor
-            .block(PROJECT_DB.clear_trusted_worktrees())
-            .unwrap();
+        PROJECT_DB.clear_trusted_worktrees().await.unwrap();
 
-        let fetched =
-            cx.update(|cx| PROJECT_DB.fetch_trusted_worktrees(worktree_store.clone(), None, cx));
+        let fetched = cx.update(|cx| {
+            PROJECT_DB.fetch_trusted_worktrees(Some(worktree_store.clone()), None, cx)
+        });
         let fetched = fetched.unwrap();
 
         assert!(fetched.is_empty(), "should be empty after clear");
+
+        let fetched_no_store = cx
+            .update(|cx| PROJECT_DB.fetch_trusted_worktrees(None, None, cx))
+            .unwrap();
+        assert!(fetched_no_store.is_empty(), "should be empty after clear");
     }
 }

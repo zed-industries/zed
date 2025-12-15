@@ -27,10 +27,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::{
-    project_settings::ProjectSettings,
-    trusted_worktrees::{self, RemoteHostLocation},
-};
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -410,6 +407,7 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        trusted_worktrees::init(None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -479,7 +477,7 @@ pub fn main() {
         })
         .detach();
 
-        let trust_task = trusted_worktrees::wait_for_global_trust(None::<RemoteHostLocation>, cx)
+        let trust_task = trusted_worktrees::wait_for_default_global_trust(cx)
             .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
         let node_runtime = NodeRuntime::new(
             client.http_client(),

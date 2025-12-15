@@ -74,8 +74,21 @@ use crate::persistence::PROJECT_DB;
 #[cfg(not(any(test, feature = "test-support")))]
 use util::ResultExt as _;
 
+pub fn init(
+    downstream_client: Option<(AnyProtoClient, u64)>,
+    upstream_client: Option<(AnyProtoClient, u64)>,
+    cx: &mut App,
+) {
+    if TrustedWorktrees::try_get_global(cx).is_none() {
+        let trusted_worktrees = cx.new(|cx| {
+            TrustedWorktreesStore::new(None, None, downstream_client, upstream_client, cx)
+        });
+        cx.set_global(TrustedWorktrees(trusted_worktrees))
+    }
+}
+
 /// An initialization call to set up trust global for a particular project (remote or local).
-pub fn init_global(
+pub fn track_worktree_trust(
     worktree_store: Entity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     downstream_client: Option<(AnyProtoClient, u64)>,
@@ -85,13 +98,15 @@ pub fn init_global(
     match TrustedWorktrees::try_get_global(cx) {
         Some(trusted_worktrees) => {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.downstream_client = downstream_client;
+                trusted_worktrees.upstream_client = upstream_client;
                 trusted_worktrees.add_worktree_store(worktree_store, remote_host, cx);
             });
         }
         None => {
             let trusted_worktrees = cx.new(|cx| {
                 TrustedWorktreesStore::new(
-                    worktree_store.clone(),
+                    Some(worktree_store.clone()),
                     remote_host,
                     downstream_client,
                     upstream_client,
@@ -101,6 +116,12 @@ pub fn init_global(
             cx.set_global(TrustedWorktrees(trusted_worktrees))
         }
     }
+}
+
+/// Waits until at least [`PathTrust::Global`] level of trust is granted for the host the [`TrustedWorktrees`] was initialized with.
+pub fn wait_for_default_global_trust(cx: &mut App) -> Option<Task<()>> {
+    let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
+    wait_for_global_trust(trusted_worktrees.read(cx).remote_host.clone(), cx)
 }
 
 /// Waits until at least [`PathTrust::Global`] level of trust is granted for a particular host.
@@ -255,7 +276,7 @@ impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStore {}
 
 impl TrustedWorktreesStore {
     fn new(
-        worktree_store: Entity<WorktreeStore>,
+        worktree_store: Option<Entity<WorktreeStore>>,
         remote_host: Option<RemoteHostLocation>,
         downstream_client: Option<(AnyProtoClient, u64)>,
         upstream_client: Option<(AnyProtoClient, u64)>,
@@ -298,16 +319,23 @@ impl TrustedWorktreesStore {
             }
         }
 
+        let worktree_stores = match worktree_store {
+            Some(worktree_store) => {
+                HashMap::from_iter([(worktree_store.downgrade(), remote_host.clone())])
+            }
+            None => HashMap::default(),
+        };
+
         Self {
             trusted_paths,
             downstream_client,
             upstream_client,
-            remote_host: remote_host.clone(),
+            remote_host,
             restricted_globals: HashSet::default(),
             restricted: HashSet::default(),
             #[cfg(not(any(test, feature = "test-support")))]
             serialization_task: Task::ready(()),
-            worktree_stores: HashMap::from_iter([(worktree_store.downgrade(), remote_host)]),
+            worktree_stores,
         }
     }
 
@@ -824,7 +852,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Entity<TrustedWorktreesStore> {
         cx.update(|cx| {
-            init_global(worktree_store, None, None, None, cx);
+            track_worktree_trust(worktree_store, None, None, None, cx);
             TrustedWorktrees::try_get_global(cx).expect("global should be set")
         })
     }
