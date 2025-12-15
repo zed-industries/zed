@@ -1,5 +1,6 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob, Workflow,
+    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob,
+    Workflow, WorkflowDispatch,
 };
 use indexmap::IndexMap;
 use indoc::indoc;
@@ -18,8 +19,13 @@ pub(crate) fn bump_version() -> Workflow {
 
     named::workflow()
         .on(Event::default()
-            .push(Push::default().add_branch("main"))
-            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled)))
+            .push(
+                Push::default()
+                    .add_branch("main")
+                    .add_ignored_path(".github/**"),
+            )
+            .pull_request(PullRequest::default().add_type(PullRequestType::Labeled))
+            .workflow_dispatch(WorkflowDispatch::default()))
         .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)

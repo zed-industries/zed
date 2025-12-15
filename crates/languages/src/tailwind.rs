@@ -140,13 +140,6 @@ impl LspAdapter for TailwindLspAdapter {
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true,
-            "userLanguages": {
-                "html": "html",
-                "css": "css",
-                "javascript": "javascript",
-                "typescript": "typescript",
-                "typescriptreact": "typescriptreact",
-            },
         })))
     }
 
@@ -167,28 +160,49 @@ impl LspAdapter for TailwindLspAdapter {
             tailwind_user_settings["emmetCompletions"] = Value::Bool(true);
         }
 
+        if tailwind_user_settings.get("includeLanguages").is_none() {
+            tailwind_user_settings["includeLanguages"] = json!({
+                "html": "html",
+                "css": "css",
+                "javascript": "javascript",
+                "typescript": "typescript",
+                "typescriptreact": "typescriptreact",
+            });
+        }
+
         Ok(json!({
-            "tailwindCSS": tailwind_user_settings,
+            "tailwindCSS": tailwind_user_settings
         }))
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            (LanguageName::new("Astro"), "astro".to_string()),
-            (LanguageName::new("HTML"), "html".to_string()),
-            (LanguageName::new("Gleam"), "html".to_string()),
-            (LanguageName::new("CSS"), "css".to_string()),
-            (LanguageName::new("JavaScript"), "javascript".to_string()),
-            (LanguageName::new("TypeScript"), "typescript".to_string()),
-            (LanguageName::new("TSX"), "typescriptreact".to_string()),
-            (LanguageName::new("Svelte"), "svelte".to_string()),
-            (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
-            (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
-            (LanguageName::new("ERB"), "erb".to_string()),
-            (LanguageName::new("HTML+ERB"), "erb".to_string()),
-            (LanguageName::new("HTML/ERB"), "erb".to_string()),
-            (LanguageName::new("PHP"), "php".to_string()),
-            (LanguageName::new("Vue.js"), "vue".to_string()),
+            (LanguageName::new_static("Astro"), "astro".to_string()),
+            (LanguageName::new_static("HTML"), "html".to_string()),
+            (LanguageName::new_static("Gleam"), "html".to_string()),
+            (LanguageName::new_static("CSS"), "css".to_string()),
+            (
+                LanguageName::new_static("JavaScript"),
+                "javascript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TypeScript"),
+                "typescript".to_string(),
+            ),
+            (
+                LanguageName::new_static("TSX"),
+                "typescriptreact".to_string(),
+            ),
+            (LanguageName::new_static("Svelte"), "svelte".to_string()),
+            (
+                LanguageName::new_static("Elixir"),
+                "phoenix-heex".to_string(),
+            ),
+            (LanguageName::new_static("HEEX"), "phoenix-heex".to_string()),
+            (LanguageName::new_static("ERB"), "erb".to_string()),
+            (LanguageName::new_static("HTML+ERB"), "erb".to_string()),
+            (LanguageName::new_static("PHP"), "php".to_string()),
+            (LanguageName::new_static("Vue.js"), "vue".to_string()),
         ])
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
-use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use edit_prediction_types::{Direction, EditPrediction, EditPredictionDelegate};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
@@ -43,17 +43,17 @@ impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
     /// Returns None if the user's edits conflict with the predicted edits.
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+        edit_prediction_types::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
 
-pub struct CodestralCompletionProvider {
+pub struct CodestralEditPredictionDelegate {
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
 }
 
-impl CodestralCompletionProvider {
+impl CodestralEditPredictionDelegate {
     pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             http_client,
@@ -165,7 +165,7 @@ impl CodestralCompletionProvider {
     }
 }
 
-impl EditPredictionProvider for CodestralCompletionProvider {
+impl EditPredictionDelegate for CodestralEditPredictionDelegate {
     fn name() -> &'static str {
         "codestral"
     }
@@ -174,7 +174,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         "Codestral"
     }
 
-    fn show_completions_in_menu() -> bool {
+    fn show_predictions_in_menu() -> bool {
         true
     }
 
@@ -239,7 +239,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 cursor_point,
                 &snapshot,
                 &EXCERPT_OPTIONS,
-                None,
             )
             .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 
