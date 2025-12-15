@@ -659,14 +659,14 @@ pub(crate) async fn find_file(
 // (literally, [LinkTitle](link_file.txt)) as a candidate.
 fn link_pattern_file_candidates(candidate: &str) -> Vec<(String, Range<usize>)> {
     static MD_LINK_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"([^\]]*)\]\(([^)]*)\)").expect("Failed to create REGEX"));
+        LazyLock::new(|| Regex::new(r"\(([^)]*)\)").expect("Failed to create REGEX"));
 
     let candidate_len = candidate.len();
 
     let mut candidates = vec![(candidate.to_string(), 0..candidate_len)];
 
     if let Some(captures) = MD_LINK_REGEX.captures(candidate) {
-        if let Some(link) = captures.get(2) {
+        if let Some(link) = captures.get(1) {
             candidates.push((link.as_str().to_string(), link.range()));
         }
     }
@@ -1385,6 +1385,26 @@ mod tests {
         assert_eq!(
             candidates,
             vec!["LinkTitle](link\\ _file.txt)", "link\\ _file.txt",]
+        );
+        //
+        // Square brackets not strictly necessary
+        let candidates: Vec<String> = link_pattern_file_candidates("(link_file.txt)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+
+        assert_eq!(candidates, vec!["(link_file.txt)", "link_file.txt",]);
+
+        // No nesting
+        let candidates: Vec<String> =
+            link_pattern_file_candidates("LinkTitle](link_(link_file)file.txt)")
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
+
+        assert_eq!(
+            candidates,
+            vec!["LinkTitle](link_(link_file)file.txt)", "link_(link_file",]
         )
     }
 
