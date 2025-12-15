@@ -22,7 +22,7 @@ use windows::{
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
-    RealtimePriority, RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
+    RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
     WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
@@ -122,7 +122,6 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         let priority = match priority {
-            Priority::Realtime(_) => unreachable!(),
             Priority::High => WorkItemPriority::High,
             Priority::Medium => WorkItemPriority::Normal,
             Priority::Low => WorkItemPriority::Low,
@@ -161,29 +160,5 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         self.dispatch_on_threadpool_after(runnable, duration);
-    }
-
-    fn spawn_realtime(&self, priority: RealtimePriority, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            // SAFETY: always safe to call
-            let thread_handle = unsafe { GetCurrentThread() };
-
-            let thread_priority = match priority {
-                RealtimePriority::Audio => THREAD_PRIORITY_TIME_CRITICAL,
-                RealtimePriority::Other => THREAD_PRIORITY_HIGHEST,
-            };
-
-            // SAFETY: thread_handle is a valid handle to a thread
-            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
-                .context("thread priority class")
-                .log_err();
-
-            // SAFETY: thread_handle is a valid handle to a thread
-            unsafe { SetThreadPriority(thread_handle, thread_priority) }
-                .context("thread priority")
-                .log_err();
-
-            f();
-        });
     }
 }

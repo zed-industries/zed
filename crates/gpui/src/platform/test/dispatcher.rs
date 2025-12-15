@@ -114,13 +114,4 @@ impl PlatformDispatcher for TestDispatcher {
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
     }
-
-    fn spawn_realtime(&self, _priority: crate::RealtimePriority, _f: Box<dyn FnOnce() + Send>) {
-        panic!(
-            "spawn_realtime is not supported in TestDispatcher. \
-            Real OS threads break test determinism - tests would become \
-            flaky and unreproducible even with the same SEED. \
-            Use a different Priority (High, Medium, Low) instead."
-        );
-    }
 }

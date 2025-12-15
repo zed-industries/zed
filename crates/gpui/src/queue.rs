@@ -41,7 +41,6 @@ impl<T> PriorityQueueState<T> {
 
         let mut queues = self.queues.lock();
         match priority {
-            Priority::Realtime(_) => unreachable!(),
             Priority::High => queues.high_priority.push(item),
             Priority::Medium => queues.medium_priority.push(item),
             Priority::Low => queues.low_priority.push(item),

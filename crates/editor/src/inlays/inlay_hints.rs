@@ -3661,9 +3661,8 @@ let c = 3;"#
 
         // Use a VisualTestContext and explicitly establish a viewport on the editor (the production
         // trigger for `NewLinesShown` / inlay hint refresh) by setting visible line/column counts.
-        let (editor_entity, cx) = cx.add_window_view(|window, cx| {
-            Editor::for_buffer(buffer, Some(project), window, cx)
-        });
+        let (editor_entity, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         editor_entity.update_in(cx, |editor, window, cx| {
             // Establish a viewport. The exact values are not important for this test; we just need

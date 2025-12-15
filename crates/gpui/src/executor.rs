@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher, PlatformScheduler, RunnableMeta, TaskTiming, profiler};
+use crate::{App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
 use scheduler::Scheduler;
 use smol::prelude::*;
@@ -14,7 +14,7 @@ use std::{
 };
 use util::TryFutureExt;
 
-pub use scheduler::{Priority, RealtimePriority};
+pub use scheduler::Priority;
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -124,12 +124,13 @@ impl BackgroundExecutor {
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
     ///
-    /// For `Priority::Realtime`, the task runs on a dedicated OS thread with elevated priority
-    /// (suitable for audio workloads). This spawns a new thread that persists for the lifetime
-    /// of the task, using a channel to send runnables to the thread.
+    /// `Priority::Realtime` is currently treated as `Priority::High`.
     ///
-    /// **Note**: `Priority::Realtime` will panic in tests because real OS threads break test
-    /// determinism. Use `Priority::High` in tests instead.
+    /// This is intentionally *not* a "downgrade" feature: realtime execution is effectively
+    /// disabled until we have an in-tree use case and are confident about the semantics and
+    /// failure modes (especially around channel backpressure and the risk of blocking
+    /// latency-sensitive threads). It should be straightforward to add a true realtime
+    /// implementation back once those constraints are well-defined.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
@@ -139,49 +140,8 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        if let Priority::Realtime(realtime) = priority {
-            // Realtime tasks run on dedicated OS threads with elevated priority.
-            // We create a channel to send runnables to the dedicated thread.
-            let dispatcher = self.dispatcher.clone();
-            let location = std::panic::Location::caller();
-            let (tx, rx) = flume::bounded::<async_task::Runnable<RunnableMeta>>(1);
-
-            dispatcher.spawn_realtime(
-                realtime,
-                Box::new(move || {
-                    while let Ok(runnable) = rx.recv() {
-                        let start = Instant::now();
-                        let location = runnable.metadata().location;
-                        let mut timing = TaskTiming {
-                            location,
-                            start,
-                            end: None,
-                        };
-                        profiler::add_task_timing(timing);
-
-                        runnable.run();
-
-                        let end = Instant::now();
-                        timing.end = Some(end);
-                        profiler::add_task_timing(timing);
-                    }
-                }),
-            );
-
-            let (runnable, task) = async_task::Builder::new()
-                .metadata(RunnableMeta { location })
-                .spawn(
-                    move |_| future,
-                    move |runnable| {
-                        let _ = tx.send(runnable);
-                    },
-                );
-            runnable.schedule();
-            Task::from_scheduler(scheduler::Task::from_async_task(task))
-        } else {
-            let inner = scheduler::BackgroundExecutor::new(self.scheduler.clone());
-            Task::from_scheduler(inner.spawn_with_priority(priority, future))
-        }
+        let inner = scheduler::BackgroundExecutor::new(self.scheduler.clone());
+        Task::from_scheduler(inner.spawn_with_priority(priority, future))
     }
 
     /// Enqueues the given future to be run to completion on a background thread and blocking the current task on it.

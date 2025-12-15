@@ -230,7 +230,10 @@ impl TestScheduler {
             if std::env::var("DEBUG_SCHEDULER").is_ok() {
                 eprintln!(
                     "[scheduler] Expired {} timers at {:?}, runnables: {} -> {}",
-                    elapsed_count, self.clock.now(), runnables_before, runnables_after
+                    elapsed_count,
+                    self.clock.now(),
+                    runnables_before,
+                    runnables_after
                 );
             }
             return true;
@@ -343,7 +346,8 @@ impl TestScheduler {
                 if debug {
                     eprintln!(
                         "[scheduler] Advancing clock {:?} -> {:?} for timer",
-                        self.clock.now(), advance_to
+                        self.clock.now(),
+                        advance_to
                     );
                 }
                 self.clock.advance(advance_to - self.clock.now());
@@ -353,7 +357,10 @@ impl TestScheduler {
         }
         self.clock.advance(next_now - self.clock.now());
         if debug {
-            eprintln!("[scheduler] advance_clock done, now at {:?}", self.clock.now());
+            eprintln!(
+                "[scheduler] advance_clock done, now at {:?}",
+                self.clock.now()
+            );
         }
     }
 

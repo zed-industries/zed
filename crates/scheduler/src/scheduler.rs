@@ -19,17 +19,6 @@ use std::{
     time::Duration,
 };
 
-/// Realtime task priority for tasks that need dedicated OS threads.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum RealtimePriority {
-    /// Audio task - highest realtime priority
-    Audio,
-    /// Other realtime task
-    #[default]
-    Other,
-}
-
 /// Task priority for background tasks.
 ///
 /// Higher priority tasks are more likely to be scheduled before lower priority tasks,
@@ -38,9 +27,6 @@ pub enum RealtimePriority {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Priority {
-    /// Realtime priority - spawns on a dedicated OS thread.
-    /// Not suitable for TestScheduler (will panic in tests).
-    Realtime(RealtimePriority),
     /// High priority - use for tasks critical to user experience/responsiveness.
     High,
     /// Medium priority - suitable for most use cases.
@@ -55,7 +41,6 @@ impl Priority {
     /// Used by schedulers to determine task selection probability.
     pub const fn weight(self) -> u32 {
         match self {
-            Priority::Realtime(_) => 0, // Realtime tasks run on dedicated threads
             Priority::High => 60,
             Priority::Medium => 30,
             Priority::Low => 10,
