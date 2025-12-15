@@ -396,7 +396,7 @@ impl CodegenAlternative {
         &self.last_equal_ranges
     }
 
-    fn use_streaming_tools(model: &dyn LanguageModel, cx: &App) -> bool {
+    pub fn use_streaming_tools(model: &dyn LanguageModel, cx: &App) -> bool {
         model.supports_streaming_tools()
             && cx.has_flag::<InlineAssistantUseToolFeatureFlag>()
             && AgentSettings::get_global(cx).inline_assistant_use_streaming_tools
