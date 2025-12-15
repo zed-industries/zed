@@ -138,8 +138,7 @@ impl AgentTool for SaveFileTool {
                     }
                 };
 
-                let save_task =
-                    project.update(cx, |project, cx| project.save_buffer(buffer, cx));
+                let save_task = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
 
                 match save_task {
                     Ok(task) => {
@@ -175,7 +174,10 @@ impl AgentTool for SaveFileTool {
                 }
             }
             if !dirty_check_errors.is_empty() {
-                lines.push(format!("Dirty check failed ({}):", dirty_check_errors.len()));
+                lines.push(format!(
+                    "Dirty check failed ({}):",
+                    dirty_check_errors.len()
+                ));
                 for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
