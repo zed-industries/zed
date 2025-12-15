@@ -1751,7 +1751,6 @@ pub enum ZedLink {
 /// Returns [`None`] for links that should be opened in the browser.
 pub fn parse_zed_link(link: &str, cx: &App) -> Option<ZedLink> {
     let server_url = &ClientSettings::get_global(cx).server_url;
-
     let path = link
         .strip_prefix(server_url)
         .and_then(|result| result.strip_prefix('/'))
