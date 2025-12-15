@@ -347,7 +347,6 @@ impl AgentTool for EditFileTool {
                }
             });
 
-
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
                 .background_spawn({
