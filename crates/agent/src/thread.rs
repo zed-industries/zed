@@ -1095,6 +1095,28 @@ impl Thread {
         })
     }
 
+    /// Get the total input token count as of the message before the given message.
+    ///
+    /// Returns `None` if:
+    /// - `target_id` is the first message (no previous message)
+    /// - The previous message hasn't received a response yet (no usage data)
+    /// - `target_id` is not found in the messages
+    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&UserMessageId> = None;
+
+        for message in &self.messages {
+            if let Message::User(user_msg) = message {
+                if &user_msg.id == target_id {
+                    let prev_id = previous_user_message_id?;
+                    let usage = self.request_token_usage.get(prev_id)?;
+                    return Some(usage.input_tokens);
+                }
+                previous_user_message_id = Some(&user_msg.id);
+            }
+        }
+        None
+    }
+
     /// Look up the active profile and resolve its preferred model if one is configured.
     fn resolve_profile_model(
         profile_id: &AgentProfileId,
