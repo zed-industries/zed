@@ -484,14 +484,6 @@ impl TerminalDb {
     }
 
     query! {
-        pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
-            SELECT working_directory
-            FROM terminals
-            WHERE item_id = ? AND workspace_id = ?
-        }
-    }
-
-    query! {
         pub fn get_terminal(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(PathBuf, Option<String>)>> {
             SELECT working_directory, custom_name
             FROM terminals
