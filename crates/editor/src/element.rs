@@ -7618,6 +7618,7 @@ impl EditorElement {
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;
 
+                        let is_precise = delta.precise();
                         let line_height = position_map.line_height;
                         let max_glyph_advance = position_map.em_advance;
                         let (delta, axis) = match delta {
@@ -7637,11 +7638,16 @@ impl EditorElement {
 
                         let current_scroll_position = position_map.snapshot.scroll_position();
 
-                        let base_scroll_position = editor
-                            .scroll_manager
-                            .scroll_animation()
-                            .map(|a| a.target_position)
-                            .unwrap_or(current_scroll_position);
+                        let base_scroll_position = if is_precise {
+                            editor.scroll_manager.cancel_animation();
+                            current_scroll_position
+                        } else {
+                            editor
+                                .scroll_manager
+                                .scroll_animation()
+                                .map(|a| a.target_position)
+                                .unwrap_or(current_scroll_position)
+                        };
 
                         let x = (base_scroll_position.x
                             * ScrollPixelOffset::from(max_glyph_advance)
@@ -7658,7 +7664,12 @@ impl EditorElement {
                         }
 
                         if scroll_position != base_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
+                            if is_precise {
+                                editor.scroll(scroll_position, axis, window, cx);
+                            } else {
+                                editor.scroll_animated(scroll_position, axis, cx);
+                            }
+
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
