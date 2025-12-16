@@ -1947,6 +1947,8 @@ impl RenderedText {
             accumulator.push_str(&text[start..end]);
             accumulator.push('\n');
         }
+        // Remove trailing newline
+        accumulator.pop();
         accumulator
     }
 

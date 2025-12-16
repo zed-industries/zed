@@ -620,6 +620,8 @@ impl TextLayout {
             accumulator.push_str(&wrapped.text[seen..]);
             accumulator.push('\n');
         }
+        // Remove trailing newline
+        accumulator.pop();
         accumulator
     }
 }
