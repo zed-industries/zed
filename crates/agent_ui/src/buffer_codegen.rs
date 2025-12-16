@@ -627,9 +627,6 @@ impl CodegenAlternative {
         }))
     }
 
-    /// * strip_invalid_spans: this should be `true` for the older text stream of the inline
-    ///     assistant, and `false` for the tool using stream. If the older text stream implementation is removed,
-    ///     this parameter can be removed, as presumably can the StripInvalidSpans implementation.
     pub fn handle_stream(
         &mut self,
         model: Arc<dyn LanguageModel>,
@@ -723,7 +720,6 @@ impl CodegenAlternative {
                             let stripped;
                             let mut chunks: Pin<Box<dyn Stream<Item = Result<String>> + Send>> =
                                 if strip_invalid_spans {
-                                    // Process the older text streamed format, which expects ``` delimiters.
                                     stripped = StripInvalidSpans::new(raw_stream);
                                     Box::pin(stripped)
                                 } else {
