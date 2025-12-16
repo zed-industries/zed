@@ -1295,6 +1295,11 @@
       "ctrl-+": ["zed::IncreaseUiFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseUiFontSize", { "persist": false }],
       "ctrl-0": ["zed::ResetUiFontSize", { "persist": false }],
+      "ctrl-1": ["welcome::OpenRecentProject", 0],
+      "ctrl-2": ["welcome::OpenRecentProject", 1],
+      "ctrl-3": ["welcome::OpenRecentProject", 2],
+      "ctrl-4": ["welcome::OpenRecentProject", 3],
+      "ctrl-5": ["welcome::OpenRecentProject", 4],
     },
   },
   {
