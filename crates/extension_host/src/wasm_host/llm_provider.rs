@@ -1811,8 +1811,8 @@ fn convert_request_to_wit(request: LanguageModelRequest) -> LlmCompletionRequest
                     MessageContent::Text(text) => LlmMessageContent::Text(text),
                     MessageContent::Image(image) => LlmMessageContent::Image(LlmImageData {
                         source: image.source.to_string(),
-                        width: Some(image.size.width.0 as u32),
-                        height: Some(image.size.height.0 as u32),
+                        width: image.size.map(|s| s.width.0 as u32),
+                        height: image.size.map(|s| s.height.0 as u32),
                     }),
                     MessageContent::ToolUse(tool_use) => LlmMessageContent::ToolUse(LlmToolUse {
                         id: tool_use.id.to_string(),
@@ -1829,8 +1829,8 @@ fn convert_request_to_wit(request: LanguageModelRequest) -> LlmCompletionRequest
                             language_model::LanguageModelToolResultContent::Image(image) => {
                                 LlmToolResultContent::Image(LlmImageData {
                                     source: image.source.to_string(),
-                                    width: Some(image.size.width.0 as u32),
-                                    height: Some(image.size.height.0 as u32),
+                                    width: image.size.map(|s| s.width.0 as u32),
+                                    height: image.size.map(|s| s.height.0 as u32),
                                 })
                             }
                         };
