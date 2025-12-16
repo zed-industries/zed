@@ -63,14 +63,11 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::{
-    AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
-    UsageCallout,
-};
+use crate::ui::{AgentNotification, AgentNotificationEvent, BurnModeTooltip, UsageCallout};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
-    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAgentDiff, OpenHistory,
-    RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
+    CycleFavoriteModels, CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, NewThread,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -100,7 +97,7 @@ impl ThreadError {
         {
             Self::ModelRequestLimitReached(error.plan)
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
-            && acp_error.code == acp::ErrorCode::AUTH_REQUIRED.code
+            && acp_error.code == acp::ErrorCode::AuthRequired
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
         } else {
@@ -170,7 +167,7 @@ impl ThreadFeedbackState {
             }
         }
         let session_id = thread.read(cx).session_id().clone();
-        let agent = thread.read(cx).connection().telemetry_id();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         let rating = match feedback {
             ThreadFeedback::Positive => "positive",
@@ -180,7 +177,7 @@ impl ThreadFeedbackState {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Rated",
-                agent = agent,
+                agent = agent_telemetry_id,
                 session_id = session_id,
                 rating = rating,
                 thread = thread
@@ -207,13 +204,13 @@ impl ThreadFeedbackState {
         self.comments_editor.take();
 
         let session_id = thread.read(cx).session_id().clone();
-        let agent = thread.read(cx).connection().telemetry_id();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         cx.background_spawn(async move {
             let thread = task.await?;
             telemetry::event!(
                 "Agent Thread Feedback Comments",
-                agent = agent,
+                agent = agent_telemetry_id,
                 session_id = session_id,
                 comments = comments,
                 thread = thread
@@ -333,6 +330,7 @@ impl AcpThreadView {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -344,7 +342,7 @@ impl AcpThreadView {
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
@@ -369,7 +367,7 @@ impl AcpThreadView {
         let entry_view_state = cx.new(|_| {
             EntryViewState::new(
                 workspace.clone(),
-                project.clone(),
+                project.downgrade(),
                 history_store.clone(),
                 prompt_store.clone(),
                 prompt_capabilities.clone(),
@@ -391,8 +389,20 @@ impl AcpThreadView {
             ),
         ];
 
-        let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
-            == Some(crate::ExternalAgent::Codex);
+        cx.on_release(|this, cx| {
+            for window in this.notifications.drain(..) {
+                window
+                    .update(cx, |_, window, _| {
+                        window.remove_window();
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
+        let show_codex_windows_warning = cfg!(windows)
+            && project.read(cx).is_local()
+            && agent.clone().downcast::<agent_servers::Codex>().is_some();
 
         Self {
             agent: agent.clone(),
@@ -404,6 +414,7 @@ impl AcpThreadView {
                 resume_thread.clone(),
                 workspace.clone(),
                 project.clone(),
+                track_load_event,
                 window,
                 cx,
             ),
@@ -448,6 +459,7 @@ impl AcpThreadView {
             self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
+            true,
             window,
             cx,
         );
@@ -461,6 +473,7 @@ impl AcpThreadView {
         resume_thread: Option<DbThreadMetadata>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        track_load_event: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
@@ -498,17 +511,7 @@ impl AcpThreadView {
             Some(new_version_available_tx),
         );
 
-        let agent_name = agent.name();
-        let timeout = cx.background_executor().timer(Duration::from_secs(30));
-        let connect_task = smol::future::or(
-            agent.connect(root_dir.as_deref(), delegate, cx),
-            async move {
-                timeout.await;
-                Err(anyhow::Error::new(LoadError::Other(
-                    format!("{agent_name} is unable to initialize after 30 seconds.").into(),
-                )))
-            },
-        );
+        let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
                 Ok((connection, login)) => {
@@ -528,6 +531,10 @@ impl AcpThreadView {
                     return;
                 }
             };
+
+            if track_load_event {
+                telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
+            }
 
             let result = if let Some(native_agent) = connection
                 .clone()
@@ -694,7 +701,7 @@ impl AcpThreadView {
                         this.new_server_version_available = Some(new_version.into());
                         cx.notify();
                     })
-                    .log_err();
+                    .ok();
                 }
             }
         })
@@ -1143,8 +1150,8 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
-        let agent_telemetry_id = self.agent.telemetry_id();
         let session_id = thread.read(cx).session_id().clone();
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let thread = thread.downgrade();
         if self.should_be_following {
             self.workspace
@@ -1319,7 +1326,7 @@ impl AcpThreadView {
             })?;
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn open_edited_buffer(
@@ -1486,18 +1493,8 @@ impl AcpThreadView {
                     .iter()
                     .any(|method| method.id.0.as_ref() == "claude-login")
                 {
-                    available_commands.push(acp::AvailableCommand {
-                        name: "login".to_owned(),
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
-                    available_commands.push(acp::AvailableCommand {
-                        name: "logout".to_owned(),
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
+                    available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
+                    available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
                 }
 
                 let has_commands = !available_commands.is_empty();
@@ -1532,6 +1529,7 @@ impl AcpThreadView {
         else {
             return;
         };
+        let agent_telemetry_id = connection.telemetry_id();
 
         // Check for the experimental "terminal-auth" _meta field
         let auth_method = connection.auth_methods().iter().find(|m| m.id == method);
@@ -1599,19 +1597,18 @@ impl AcpThreadView {
                             );
                             cx.notify();
                             self.auth_task = Some(cx.spawn_in(window, {
-                                let agent = self.agent.clone();
                                 async move |this, cx| {
                                     let result = authenticate.await;
 
                                     match &result {
                                         Ok(_) => telemetry::event!(
                                             "Authenticate Agent Succeeded",
-                                            agent = agent.telemetry_id()
+                                            agent = agent_telemetry_id
                                         ),
                                         Err(_) => {
                                             telemetry::event!(
                                                 "Authenticate Agent Failed",
-                                                agent = agent.telemetry_id(),
+                                                agent = agent_telemetry_id,
                                             )
                                         }
                                     }
@@ -1695,6 +1692,7 @@ impl AcpThreadView {
                             None,
                             this.workspace.clone(),
                             this.project.clone(),
+                            true,
                             window,
                             cx,
                         )
@@ -1750,43 +1748,38 @@ impl AcpThreadView {
             connection.authenticate(method, cx)
         };
         cx.notify();
-        self.auth_task =
-            Some(cx.spawn_in(window, {
-                let agent = self.agent.clone();
-                async move |this, cx| {
-                    let result = authenticate.await;
+        self.auth_task = Some(cx.spawn_in(window, {
+            async move |this, cx| {
+                let result = authenticate.await;
 
-                    match &result {
-                        Ok(_) => telemetry::event!(
-                            "Authenticate Agent Succeeded",
-                            agent = agent.telemetry_id()
-                        ),
-                        Err(_) => {
-                            telemetry::event!(
-                                "Authenticate Agent Failed",
-                                agent = agent.telemetry_id(),
-                            )
-                        }
+                match &result {
+                    Ok(_) => telemetry::event!(
+                        "Authenticate Agent Succeeded",
+                        agent = agent_telemetry_id
+                    ),
+                    Err(_) => {
+                        telemetry::event!("Authenticate Agent Failed", agent = agent_telemetry_id,)
                     }
-
-                    this.update_in(cx, |this, window, cx| {
-                        if let Err(err) = result {
-                            if let ThreadState::Unauthenticated {
-                                pending_auth_method,
-                                ..
-                            } = &mut this.thread_state
-                            {
-                                pending_auth_method.take();
-                            }
-                            this.handle_thread_error(err, cx);
-                        } else {
-                            this.reset(window, cx);
-                        }
-                        this.auth_task.take()
-                    })
-                    .ok();
                 }
-            }));
+
+                this.update_in(cx, |this, window, cx| {
+                    if let Err(err) = result {
+                        if let ThreadState::Unauthenticated {
+                            pending_auth_method,
+                            ..
+                        } = &mut this.thread_state
+                        {
+                            pending_auth_method.take();
+                        }
+                        this.handle_thread_error(err, cx);
+                    } else {
+                        this.reset(window, cx);
+                    }
+                    this.auth_task.take()
+                })
+                .ok();
+            }
+        }));
     }
 
     fn spawn_external_agent_login(
@@ -1916,10 +1909,11 @@ impl AcpThreadView {
         let Some(thread) = self.thread() else {
             return;
         };
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
 
         telemetry::event!(
             "Agent Tool Call Authorized",
-            agent = self.agent.telemetry_id(),
+            agent = agent_telemetry_id,
             session = thread.read(cx).session_id(),
             option = option_kind
         );
@@ -1957,6 +1951,16 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let is_indented = entry.is_indented();
+        let is_first_indented = is_indented
+            && self.thread().is_some_and(|thread| {
+                thread
+                    .read(cx)
+                    .entries()
+                    .get(entry_ix.saturating_sub(1))
+                    .is_none_or(|entry| !entry.is_indented())
+            });
+
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
                 let Some(editor) = self
@@ -1989,7 +1993,9 @@ impl AcpThreadView {
                 v_flex()
                     .id(("user_message", entry_ix))
                     .map(|this| {
-                        if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
+                        if is_first_indented {
+                            this.pt_0p5()
+                        } else if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
                             this.pt(rems_from_px(18.))
                         } else if rules_item.is_some() {
                             this.pt_3()
@@ -2035,6 +2041,9 @@ impl AcpThreadView {
                                     .shadow_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
+                                    .when(is_indented, |this| {
+                                        this.py_2().px_2().shadow_sm()
+                                    })
                                     .when(editing && !editor_focus, |this| this.border_dashed())
                                     .border_color(cx.theme().colors().border)
                                     .map(|this|{
@@ -2105,10 +2114,23 @@ impl AcpThreadView {
                                                     .icon_size(IconSize::Small)
                                                     .icon_color(Color::Muted)
                                                     .style(ButtonStyle::Transparent)
-                                                    .tooltip(move |_window, cx| {
-                                                        cx.new(|_| UnavailableEditingTooltip::new(agent_name.clone()))
-                                                            .into()
-                                                    })
+                                                    .tooltip(Tooltip::element({
+                                                        move |_, _| {
+                                                            v_flex()
+                                                                .gap_1()
+                                                                .child(Label::new("Unavailable Editing")).child(
+                                                                    div().max_w_64().child(
+                                                                        Label::new(format!(
+                                                                            "Editing previous messages is not available for {} yet.",
+                                                                            agent_name.clone()
+                                                                        ))
+                                                                        .size(LabelSize::Small)
+                                                                        .color(Color::Muted),
+                                                                    ),
+                                                                )
+                                                                .into_any_element()
+                                                        }
+                                                    }))
                                             )
                                     )
                                 }
@@ -2116,7 +2138,10 @@ impl AcpThreadView {
                     )
                     .into_any()
             }
-            AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
+            AgentThreadEntry::AssistantMessage(AssistantMessage {
+                chunks,
+                indented: _,
+            }) => {
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -2150,6 +2175,7 @@ impl AcpThreadView {
                 v_flex()
                     .px_5()
                     .py_1p5()
+                    .when(is_first_indented, |this| this.pt_0p5())
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
@@ -2159,19 +2185,48 @@ impl AcpThreadView {
             AgentThreadEntry::ToolCall(tool_call) => {
                 let has_terminals = tool_call.terminals().next().is_some();
 
-                div().w_full().map(|this| {
-                    if has_terminals {
-                        this.children(tool_call.terminals().map(|terminal| {
-                            self.render_terminal_tool_call(
-                                entry_ix, terminal, tool_call, window, cx,
-                            )
-                        }))
-                    } else {
-                        this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
-                    }
-                })
+                div()
+                    .w_full()
+                    .map(|this| {
+                        if has_terminals {
+                            this.children(tool_call.terminals().map(|terminal| {
+                                self.render_terminal_tool_call(
+                                    entry_ix, terminal, tool_call, window, cx,
+                                )
+                            }))
+                        } else {
+                            this.child(self.render_tool_call(entry_ix, tool_call, window, cx))
+                        }
+                    })
+                    .into_any()
             }
-            .into_any(),
+        };
+
+        let primary = if is_indented {
+            let line_top = if is_first_indented {
+                rems_from_px(-12.0)
+            } else {
+                rems_from_px(0.0)
+            };
+
+            div()
+                .relative()
+                .w_full()
+                .pl(rems_from_px(20.0))
+                .bg(cx.theme().colors().panel_background.opacity(0.2))
+                .child(
+                    div()
+                        .absolute()
+                        .left(rems_from_px(18.0))
+                        .top(line_top)
+                        .bottom_0()
+                        .w_px()
+                        .bg(cx.theme().colors().border.opacity(0.6)),
+                )
+                .child(primary)
+                .into_any_element()
+        } else {
+            primary
         };
 
         let needs_confirmation = if let AgentThreadEntry::ToolCall(tool_call) = entry {
@@ -2572,7 +2627,7 @@ impl AcpThreadView {
                 acp::ToolKind::Think => IconName::ToolThink,
                 acp::ToolKind::Fetch => IconName::ToolWeb,
                 acp::ToolKind::SwitchMode => IconName::ArrowRightLeft,
-                acp::ToolKind::Other => IconName::ToolHammer,
+                acp::ToolKind::Other | _ => IconName::ToolHammer,
             })
         }
         .size(IconSize::Small)
@@ -2824,7 +2879,7 @@ impl AcpThreadView {
             })
             .gap_0p5()
             .children(options.iter().map(move |option| {
-                let option_id = SharedString::from(option.id.0.clone());
+                let option_id = SharedString::from(option.option_id.0.clone());
                 Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| {
                         let (this, action) = match option.kind {
@@ -2840,7 +2895,7 @@ impl AcpThreadView {
                                 this.icon(IconName::Close).icon_color(Color::Error),
                                 Some(&RejectOnce as &dyn Action),
                             ),
-                            acp::PermissionOptionKind::RejectAlways => {
+                            acp::PermissionOptionKind::RejectAlways | _ => {
                                 (this.icon(IconName::Close).icon_color(Color::Error), None)
                             }
                         };
@@ -2865,7 +2920,7 @@ impl AcpThreadView {
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
-                        let option_id = option.id.clone();
+                        let option_id = option.option_id.clone();
                         let option_kind = option.kind;
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
@@ -3529,7 +3584,9 @@ impl AcpThreadView {
                                         (method.id.0.clone(), method.name.clone())
                                     };
 
-                                    Button::new(SharedString::from(method_id.clone()), name)
+                                    let agent_telemetry_id = connection.telemetry_id();
+
+                                    Button::new(method_id.clone(), name)
                                         .label_size(LabelSize::Small)
                                         .map(|this| {
                                             if ix == 0 {
@@ -3548,12 +3605,12 @@ impl AcpThreadView {
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
                                                     "Authenticate Agent Started",
-                                                    agent = this.agent.telemetry_id(),
+                                                    agent = agent_telemetry_id,
                                                     method = method_id
                                                 );
 
                                                 this.authenticate(
-                                                    acp::AuthMethodId(method_id.clone()),
+                                                    acp::AuthMethodId::new(method_id.clone()),
                                                     window,
                                                     cx,
                                                 )
@@ -3847,10 +3904,6 @@ impl AcpThreadView {
                             .text_xs()
                             .text_color(cx.theme().colors().text_muted)
                             .child(match entry.status {
-                                acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
                                 acp::PlanEntryStatus::InProgress => {
                                     Icon::new(IconName::TodoProgress)
                                         .size(IconSize::Small)
@@ -3862,6 +3915,12 @@ impl AcpThreadView {
                                     Icon::new(IconName::TodoComplete)
                                         .size(IconSize::Small)
                                         .color(Color::Success)
+                                        .into_any_element()
+                                }
+                                acp::PlanEntryStatus::Pending | _ => {
+                                    Icon::new(IconName::TodoPending)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
                                         .into_any_element()
                                 }
                             })
@@ -4218,7 +4277,11 @@ impl AcpThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if let Some(mode_selector) = this.mode_selector() {
+                if let Some(profile_selector) = this.profile_selector.as_ref() {
+                    profile_selector.update(cx, |profile_selector, cx| {
+                        profile_selector.cycle_profile(cx);
+                    });
+                } else if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.update(cx, |mode_selector, cx| {
                         mode_selector.cycle_mode(window, cx);
                     });
@@ -4228,6 +4291,13 @@ impl AcpThreadView {
                 if let Some(model_selector) = this.model_selector.as_ref() {
                     model_selector
                         .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector.update(cx, |model_selector, cx| {
+                        model_selector.cycle_favorite_models(window, cx);
+                    });
                 }
             }))
             .p_2()
@@ -4437,7 +4507,7 @@ impl AcpThreadView {
 
         self.authorize_tool_call(
             tool_call.id.clone(),
-            option.id.clone(),
+            option.option_id.clone(),
             option.kind,
             window,
             cx,
@@ -4869,6 +4939,32 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let entries = thread.read(cx).entries();
+        if entries.is_empty() {
+            return;
+        }
+
+        // Find the most recent user message and scroll it to the top of the viewport.
+        // (Fallback: if no user message exists, scroll to the bottom.)
+        if let Some(ix) = entries
+            .iter()
+            .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
+        } else {
+            self.scroll_to_bottom(cx);
+        }
+    }
+
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.thread() {
             let entry_count = thread.read(cx).entries().len();
@@ -4964,8 +5060,8 @@ impl AcpThreadView {
         });
 
         if let Some(screen_window) = cx
-            .open_window(options, |_, cx| {
-                cx.new(|_| {
+            .open_window(options, |_window, cx| {
+                cx.new(|_cx| {
                     AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
                 })
             })
@@ -5087,6 +5183,16 @@ impl AcpThreadView {
                 }
             }));
 
+        let scroll_to_recent_user_prompt =
+            IconButton::new("scroll_to_recent_user_prompt", IconName::ForwardArrow)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_most_recent_user_prompt(cx);
+                }));
+
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -5163,6 +5269,7 @@ impl AcpThreadView {
 
         container
             .child(open_as_markdown)
+            .child(scroll_to_recent_user_prompt)
             .child(scroll_to_top)
             .into_any_element()
     }
@@ -5394,47 +5501,39 @@ impl AcpThreadView {
         )
     }
 
-    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.show_codex_windows_warning {
-            Some(
-                Callout::new()
-                    .icon(IconName::Warning)
-                    .severity(Severity::Warning)
-                    .title("Codex on Windows")
-                    .description(
-                        "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
-                    )
-                    .actions_slot(
-                        Button::new("open-wsl-modal", "Open in WSL")
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener({
-                                move |_, _, _window, cx| {
-                                    #[cfg(windows)]
-                                    _window.dispatch_action(
-                                        zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .dismiss_action(
-                        IconButton::new("dismiss", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Dismiss Warning"))
-                            .on_click(cx.listener({
-                                move |this, _, _, cx| {
-                                    this.show_codex_windows_warning = false;
-                                    cx.notify();
-                                }
-                            })),
-                    ),
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {
+        Callout::new()
+            .icon(IconName::Warning)
+            .severity(Severity::Warning)
+            .title("Codex on Windows")
+            .description("For best performance, run Codex in Windows Subsystem for Linux (WSL2)")
+            .actions_slot(
+                Button::new("open-wsl-modal", "Open in WSL")
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener({
+                        move |_, _, _window, cx| {
+                            #[cfg(windows)]
+                            _window.dispatch_action(
+                                zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                cx,
+                            );
+                            cx.notify();
+                        }
+                    })),
             )
-        } else {
-            None
-        }
+            .dismiss_action(
+                IconButton::new("dismiss", IconName::Close)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text("Dismiss Warning"))
+                    .on_click(cx.listener({
+                        move |this, _, _, cx| {
+                            this.show_codex_windows_warning = false;
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     fn render_thread_error(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
@@ -5954,12 +6053,8 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
-            .children({
-                if cfg!(windows) && self.project.read(cx).is_local() {
-                    self.render_codex_windows_warning(cx)
-                } else {
-                    None
-                }
+            .when(self.show_codex_windows_warning, |this| {
+                this.child(self.render_codex_windows_warning(cx))
             })
             .children(self.render_thread_error(window, cx))
             .when_some(
@@ -6075,13 +6170,13 @@ fn default_markdown_style(
             },
             border_color: Some(colors.border_variant),
             background: Some(colors.editor_background.into()),
-            text: Some(TextStyleRefinement {
+            text: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 ..Default::default()
-            }),
+            },
             ..Default::default()
         },
         inline_code: TextStyleRefinement {
@@ -6253,27 +6348,18 @@ pub(crate) mod tests {
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let tool_call_id = acp::ToolCallId("1".into());
-        let tool_call = acp::ToolCall {
-            id: tool_call_id.clone(),
-            title: "Label".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Pending,
-            content: vec!["hi".into()],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call_id = acp::ToolCallId::new("1");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Label")
+            .kind(acp::ToolKind::Edit)
+            .content(vec!["hi".into()]);
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
                 tool_call_id,
-                vec![acp::PermissionOption {
-                    id: acp::PermissionOptionId("1".into()),
-                    name: "Allow".into(),
-                    kind: acp::PermissionOptionKind::AllowOnce,
-                    meta: None,
-                }],
+                vec![acp::PermissionOption::new(
+                    "1",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )],
             )]));
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
@@ -6401,6 +6487,57 @@ pub(crate) mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let weak_view = thread_view.downgrade();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify notification is shown
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification to be shown"
+        );
+
+        // Drop the thread view (simulating navigation to a new thread)
+        drop(thread_view);
+        drop(message_editor);
+        // Trigger an update to flush effects, which will call release_dropped_entities
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        // Verify the entity was actually released
+        assert!(
+            !weak_view.is_upgradable(),
+            "Thread view entity should be released after dropping"
+        );
+
+        // The notification should be automatically closed via on_release
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Notification should be closed when thread view is dropped"
+        );
+    }
+
     async fn setup_thread_view(
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
@@ -6425,6 +6562,7 @@ pub(crate) mod tests {
                     project,
                     history_store,
                     None,
+                    false,
                     window,
                     cx,
                 )
@@ -6492,10 +6630,7 @@ pub(crate) mod tests {
         fn default_response() -> Self {
             let conn = StubAgentConnection::new();
             conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-                acp::ContentChunk {
-                    content: "Default response".into(),
-                    meta: None,
-                },
+                acp::ContentChunk::new("Default response".into()),
             )]);
             Self::new(conn)
         }
@@ -6505,10 +6640,6 @@ pub(crate) mod tests {
     where
         C: 'static + AgentConnection + Send + Clone,
     {
-        fn telemetry_id(&self) -> &'static str {
-            "test"
-        }
-
         fn logo(&self) -> ui::IconName {
             ui::IconName::Ai
         }
@@ -6535,8 +6666,8 @@ pub(crate) mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "saboteur"
+        fn telemetry_id(&self) -> SharedString {
+            "saboteur".into()
         }
 
         fn new_thread(
@@ -6552,13 +6683,13 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId("test".into()),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                        meta: None,
-                    }),
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
                     cx,
                 )
             })))
@@ -6599,8 +6730,8 @@ pub(crate) mod tests {
     struct RefusalAgentConnection;
 
     impl AgentConnection for RefusalAgentConnection {
-        fn telemetry_id(&self) -> &'static str {
-            "refusal"
+        fn telemetry_id(&self) -> SharedString {
+            "refusal".into()
         }
 
         fn new_thread(
@@ -6616,13 +6747,13 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId("test".into()),
-                    watch::Receiver::constant(acp::PromptCapabilities {
-                        image: true,
-                        audio: true,
-                        embedded_context: true,
-                        meta: None,
-                    }),
+                    SessionId::new("test"),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
                     cx,
                 )
             })))
@@ -6646,10 +6777,7 @@ pub(crate) mod tests {
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
-            Task::ready(Ok(acp::PromptResponse {
-                stop_reason: acp::StopReason::Refusal,
-                meta: None,
-            }))
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::Refusal)))
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
@@ -6704,6 +6832,7 @@ pub(crate) mod tests {
                     project.clone(),
                     history_store.clone(),
                     None,
+                    false,
                     window,
                     cx,
                 )
@@ -6717,24 +6846,14 @@ pub(crate) mod tests {
             .unwrap();
 
         // First user message
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
-            id: acp::ToolCallId("tool1".into()),
-            title: "Edit file 1".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Completed,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/test1.txt".into(),
-                    old_text: Some("old content 1".into()),
-                    new_text: "new content 1".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        })]);
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool1", "Edit file 1")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test1.txt", "new content 1").old_text("old content 1"),
+                )]),
+        )]);
 
         thread
             .update(cx, |thread, cx| thread.send_raw("Give me a diff", cx))
@@ -6760,24 +6879,14 @@ pub(crate) mod tests {
         });
 
         // Second user message
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(acp::ToolCall {
-            id: acp::ToolCallId("tool2".into()),
-            title: "Edit file 2".into(),
-            kind: acp::ToolKind::Edit,
-            status: acp::ToolCallStatus::Completed,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/test2.txt".into(),
-                    old_text: Some("old content 2".into()),
-                    new_text: "new content 2".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        })]);
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(
+            acp::ToolCall::new("tool2", "Edit file 2")
+                .kind(acp::ToolKind::Edit)
+                .status(acp::ToolCallStatus::Completed)
+                .content(vec![acp::ToolCallContent::Diff(
+                    acp::Diff::new("/project/test2.txt", "new content 2").old_text("old content 2"),
+                )]),
+        )]);
 
         thread
             .update(cx, |thread, cx| thread.send_raw("Another one", cx))
@@ -6845,20 +6954,77 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        // Each user prompt will result in a user message entry plus an agent message entry.
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 1".into()),
+        )]);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = thread_view
+            .read_with(cx, |view, _| view.thread().cloned())
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 1", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response 2".into()),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Prompt 2", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Move somewhere else first so we're not trivially already on the last user prompt.
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_top(cx);
+        });
+        cx.run_until_parked();
+
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            // Entries layout is: [User1, Assistant1, User2, Assistant2]
+            assert_eq!(scroll_top.item_ix, 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_most_recent_user_prompt_falls_back_to_bottom_without_user_messages(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // With no entries, scrolling should be a no-op and must not panic.
+        thread_view.update(cx, |view, cx| {
+            view.scroll_to_most_recent_user_prompt(cx);
+            let scroll_top = view.list_state.logical_scroll_top();
+            assert_eq!(scroll_top.item_ix, 0);
+        });
+    }
+
+    #[gpui::test]
     async fn test_message_editing_cancel(cx: &mut TestAppContext) {
         init_test(cx);
 
         let connection = StubAgentConnection::new();
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
@@ -6944,14 +7110,7 @@ pub(crate) mod tests {
         let connection = StubAgentConnection::new();
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) =
@@ -6991,14 +7150,7 @@ pub(crate) mod tests {
 
         // Send
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "New Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("New Response".into()),
         )]);
 
         user_message_editor.update_in(cx, |_editor, window, cx| {
@@ -7086,14 +7238,7 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: acp::ContentBlock::Text(acp::TextContent {
-                        text: "Response".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Response".into())),
                 cx,
             );
             connection.end_turn(session_id, acp::StopReason::EndTurn);
@@ -7145,10 +7290,9 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "Message 1 resp".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 1 resp".into(),
+                )),
                 cx,
             );
         });
@@ -7182,10 +7326,7 @@ pub(crate) mod tests {
             // Simulate a response sent after beginning to cancel
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "onse".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("onse".into())),
                 cx,
             );
         });
@@ -7216,10 +7357,9 @@ pub(crate) mod tests {
         cx.update(|_, cx| {
             connection.send_update(
                 session_id.clone(),
-                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
-                    content: "Message 2 response".into(),
-                    meta: None,
-                }),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "Message 2 response".into(),
+                )),
                 cx,
             );
             connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
@@ -7258,14 +7398,7 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
@@ -7344,14 +7477,7 @@ pub(crate) mod tests {
 
         let connection = StubAgentConnection::new();
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk {
-                content: acp::ContentBlock::Text(acp::TextContent {
-                    text: "Response".into(),
-                    annotations: None,
-                    meta: None,
-                }),
-                meta: None,
-            },
+            acp::ContentChunk::new("Response".into()),
         )]);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
@@ -7398,55 +7524,5 @@ pub(crate) mod tests {
 
             assert_eq!(text, expected_txt);
         })
-    }
-
-    #[gpui::test]
-    async fn test_initialize_timeout(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        struct InfiniteInitialize;
-
-        impl AgentServer for InfiniteInitialize {
-            fn telemetry_id(&self) -> &'static str {
-                "test"
-            }
-
-            fn logo(&self) -> ui::IconName {
-                ui::IconName::Ai
-            }
-
-            fn name(&self) -> SharedString {
-                "Test".into()
-            }
-
-            fn connect(
-                &self,
-                _root_dir: Option<&Path>,
-                _delegate: AgentServerDelegate,
-                cx: &mut App,
-            ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>>
-            {
-                cx.spawn(async |_| futures::future::pending().await)
-            }
-
-            fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-                self
-            }
-        }
-
-        let (thread_view, cx) = setup_thread_view(InfiniteInitialize, cx).await;
-
-        cx.executor().advance_clock(Duration::from_secs(31));
-        cx.run_until_parked();
-
-        let error = thread_view.read_with(cx, |thread_view, _| match &thread_view.thread_state {
-            ThreadState::LoadError(err) => err.clone(),
-            _ => panic!("Incorrect thread state"),
-        });
-
-        match error {
-            LoadError::Other(str) => assert!(str.contains("initialize")),
-            _ => panic!("Unexpected load error"),
-        }
     }
 }

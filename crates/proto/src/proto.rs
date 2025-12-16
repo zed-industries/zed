@@ -294,6 +294,8 @@ messages!(
     (GitCheckoutFiles, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
+    (GitFileHistory, Background),
+    (GitFileHistoryResponse, Background),
     (SetIndexText, Background),
     (Push, Background),
     (Fetch, Background),
@@ -303,9 +305,13 @@ messages!(
     (RemoteMessageResponse, Background),
     (AskPassRequest, Background),
     (AskPassResponse, Background),
+    (GitCreateRemote, Background),
+    (GitRemoveRemote, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
     (GitRenameBranch, Background),
+    (TrustWorktrees, Background),
+    (RestrictWorktrees, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -492,6 +498,7 @@ request_messages!(
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
+    (GitFileHistory, GitFileHistoryResponse),
     (GitReset, Ack),
     (GitDeleteBranch, Ack),
     (GitCheckoutFiles, Ack),
@@ -501,6 +508,8 @@ request_messages!(
     (GetRemotes, GetRemotesResponse),
     (Pull, RemoteMessageResponse),
     (AskPassRequest, AskPassResponse),
+    (GitCreateRemote, Ack),
+    (GitRemoveRemote, Ack),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
     (GitRenameBranch, Ack),
@@ -522,7 +531,9 @@ request_messages!(
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
     (GitGetWorktrees, GitWorktreesResponse),
-    (GitCreateWorktree, Ack)
+    (GitCreateWorktree, Ack),
+    (TrustWorktrees, Ack),
+    (RestrictWorktrees, Ack),
 );
 
 lsp_messages!(
@@ -657,6 +668,7 @@ entity_messages!(
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
+    GitFileHistory,
     GitReset,
     GitDeleteBranch,
     GitCheckoutFiles,
@@ -672,6 +684,8 @@ entity_messages!(
     GitChangeBranch,
     GitRenameBranch,
     GitCreateBranch,
+    GitCreateRemote,
+    GitRemoveRemote,
     CheckForPushedCommits,
     GitDiff,
     GitInit,
@@ -692,7 +706,9 @@ entity_messages!(
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
     GitGetWorktrees,
-    GitCreateWorktree
+    GitCreateWorktree,
+    TrustWorktrees,
+    RestrictWorktrees,
 );
 
 entity_messages!(

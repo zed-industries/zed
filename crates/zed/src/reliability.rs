@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, TryStreamExt};
 use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
-use http_client::{self, HttpClient};
+use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
@@ -296,11 +296,14 @@ async fn upload_minidump(
 
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
+    let stream = form
+        .into_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .into_async_read();
+    let body = AsyncBody::from_reader(stream);
+    let req = Request::builder().uri(endpoint).body(body)?;
     let mut response_text = String::new();
-    let mut response = client
-        .http_client()
-        .send_multipart_form(endpoint, form)
-        .await?;
+    let mut response = client.http_client().send(req).await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)

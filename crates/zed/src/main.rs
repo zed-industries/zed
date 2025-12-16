@@ -3,7 +3,7 @@ mod zed;
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -27,7 +27,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::project_settings::ProjectSettings;
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -36,6 +36,7 @@ use std::{
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
+    pin::Pin,
     process,
     sync::{Arc, OnceLock},
     time::Instant,
@@ -130,6 +131,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         process::exit(1);
     }
 
+    // Maybe unify this with gpui::platform::linux::platform::ResultExt::notify_err(..)?
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
@@ -162,7 +164,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
         .detach();
     }
 }
-
 pub static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 pub fn main() {
@@ -240,6 +241,7 @@ pub fn main() {
     }
 
     zlog::init();
+
     if stdout_is_a_pty() {
         zlog::init_output_stdout();
     } else {
@@ -249,6 +251,7 @@ pub fn main() {
             zlog::init_output_stdout();
         };
     }
+    ztracing::init();
 
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
@@ -287,14 +290,16 @@ pub fn main() {
 
     let app = Application::new().with_assets(Assets);
 
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
+    let system_id = app.background_executor().spawn(system_id());
+    let installation_id = app.background_executor().spawn(installation_id());
     let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
+    let session = app
+        .background_executor()
+        .spawn(Session::new(session_id.clone()));
 
     app.background_executor()
         .spawn(crashes::init(InitCrashHandler {
-            session_id: session_id.clone(),
+            session_id,
             zed_version: app_version.to_string(),
             binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
@@ -402,6 +407,7 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        trusted_worktrees::init(None, None, cx);
         menu::init();
         zed_actions::init();
 
@@ -470,7 +476,15 @@ pub fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+
+        let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
+            .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
+        let node_runtime = NodeRuntime::new(
+            client.http_client(),
+            Some(shell_env_loaded_rx),
+            rx,
+            trust_task,
+        );
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
@@ -505,11 +519,16 @@ pub fn main() {
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
+
+        let system_id = cx.background_executor().block(system_id).ok();
+        let installation_id = cx.background_executor().block(installation_id).ok();
+        let session = cx.background_executor().block(session);
+
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
             installation_id.as_ref().map(|id| id.to_string()),
-            session_id.clone(),
+            session.id().to_owned(),
             cx,
         );
 
@@ -574,7 +593,7 @@ pub fn main() {
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
-        zeta2_tools::init(cx);
+        edit_prediction_ui::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -588,6 +607,7 @@ pub fn main() {
             false,
             cx,
         );
+        agent_ui_v2::agents_panel::init(cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -633,7 +653,7 @@ pub fn main() {
         settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
-        zeta::init(cx);
+        edit_prediction::init(cx);
         inspector_ui::init(app_state.clone(), cx);
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
@@ -1147,7 +1167,13 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
+                    let restore_on_startup = WorkspaceSettings::get_global(cx).restore_on_startup;
+                    match restore_on_startup {
+                        workspace::RestoreOnStartupBehavior::Launchpad => {}
+                        _ => {
+                            Editor::new_file(workspace, &Default::default(), window, cx);
+                        }
+                    }
                 },
             )
         })?

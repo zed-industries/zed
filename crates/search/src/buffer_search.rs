@@ -729,12 +729,14 @@ impl BufferSearchBar {
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
             self.sync_select_next_case_sensitivity(cx);
-            self.replace_enabled = deploy.replace_enabled;
-            self.selection_search_enabled = if deploy.selection_search_enabled {
-                Some(FilteredSearchRange::Default)
-            } else {
-                None
-            };
+            self.replace_enabled |= deploy.replace_enabled;
+            self.selection_search_enabled =
+                self.selection_search_enabled
+                    .or(if deploy.selection_search_enabled {
+                        Some(FilteredSearchRange::Default)
+                    } else {
+                        None
+                    });
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
@@ -1031,7 +1033,7 @@ impl BufferSearchBar {
             let new_match_index = searchable_item
                 .match_index_for_direction(matches, index, direction, count, window, cx);
 
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
             searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
@@ -1045,7 +1047,7 @@ impl BufferSearchBar {
             if matches.is_empty() {
                 return;
             }
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(0), window, cx);
             searchable_item.activate_match(0, matches, window, cx);
         }
     }
@@ -1060,7 +1062,7 @@ impl BufferSearchBar {
                 return;
             }
             let new_match_index = matches.len() - 1;
-            searchable_item.update_matches(matches, window, cx);
+            searchable_item.update_matches(matches, Some(new_match_index), window, cx);
             searchable_item.activate_match(new_match_index, matches, window, cx);
         }
     }
@@ -1300,7 +1302,12 @@ impl BufferSearchBar {
                                 if matches.is_empty() {
                                     active_searchable_item.clear_matches(window, cx);
                                 } else {
-                                    active_searchable_item.update_matches(matches, window, cx);
+                                    active_searchable_item.update_matches(
+                                        matches,
+                                        this.active_match_index,
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 let _ = done_tx.send(());
                             }
@@ -1335,6 +1342,18 @@ impl BufferSearchBar {
             });
         if new_index != self.active_match_index {
             self.active_match_index = new_index;
+            if !self.dismissed {
+                if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        if !matches.is_empty() {
+                            searchable_item.update_matches(matches, new_index, window, cx);
+                        }
+                    }
+                }
+            }
             cx.notify();
         }
     }

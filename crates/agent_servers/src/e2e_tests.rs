@@ -82,26 +82,9 @@ where
         .update(cx, |thread, cx| {
             thread.send(
                 vec![
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: "Read the file ".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                        uri: "foo.rs".into(),
-                        name: "foo.rs".into(),
-                        annotations: None,
-                        description: None,
-                        mime_type: None,
-                        size: None,
-                        title: None,
-                        meta: None,
-                    }),
-                    acp::ContentBlock::Text(acp::TextContent {
-                        text: " and tell me what the content of the println! is".into(),
-                        annotations: None,
-                        meta: None,
-                    }),
+                    "Read the file ".into(),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new("foo.rs", "foo.rs")),
+                    " and tell me what the content of the println! is".into(),
                 ],
                 cx,
             )
@@ -429,7 +412,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;

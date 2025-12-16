@@ -2,6 +2,7 @@ use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use client::ProxySettings;
+use project::trusted_worktrees;
 use util::ResultExt;
 
 use extension::ExtensionHostProxy;
@@ -34,6 +35,7 @@ use smol::Async;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::pin::Pin;
 use std::{
     env,
     ffi::OsStr,
@@ -199,6 +201,7 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
+    is_wsl_interop: bool,
 ) -> AnyProtoClient {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
@@ -318,7 +321,7 @@ fn start_server(
     })
     .detach();
 
-    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server", is_wsl_interop)
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -407,8 +410,16 @@ pub fn execute_run(
 
         HeadlessProject::init(cx);
 
+        let is_wsl_interop = if cfg!(target_os = "linux") {
+            // See: https://learn.microsoft.com/en-us/windows/wsl/filesystems#disable-interoperability
+            matches!(std::fs::read_to_string("/proc/sys/fs/binfmt_misc/WSLInterop"), Ok(s) if s.contains("enabled"))
+        } else {
+            false
+        };
+
         log::info!("gpui app started, initializing server");
-        let session = start_server(listeners, log_rx, cx);
+        let session = start_server(listeners, log_rx, cx, is_wsl_interop);
+        trusted_worktrees::init(Some((session.clone(), REMOTE_SERVER_PROJECT_ID)), None, cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
@@ -441,10 +452,13 @@ pub fn execute_run(
                 )
             };
 
+            let trust_task = trusted_worktrees::wait_for_default_workspace_trust("Node runtime", cx)
+                .map(|trust_task| Box::pin(trust_task) as Pin<Box<_>>);
             let node_runtime = NodeRuntime::new(
                 http_client.clone(),
                 Some(shell_env_loaded_rx),
                 node_settings_rx,
+                trust_task,
             );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
@@ -460,6 +474,7 @@ pub fn execute_run(
                     languages,
                     extension_host_proxy,
                 },
+                true,
                 cx,
             )
         });

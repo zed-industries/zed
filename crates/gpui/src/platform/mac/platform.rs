@@ -2,7 +2,7 @@ use super::{
     BoolExt, MacKeyboardLayout, MacKeyboardMapper,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer,
+    ns_string, renderer,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
@@ -1061,13 +1061,15 @@ impl Platform for MacPlatform {
                 let attributed_string = {
                     let mut buf = NSMutableAttributedString::alloc(nil)
                         // TODO can we skip this? Or at least part of it?
-                        .init_attributed_string(NSString::alloc(nil).init_str(""));
+                        .init_attributed_string(ns_string(""))
+                        .autorelease();
 
                     for entry in item.entries {
                         if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry
                         {
                             let to_append = NSAttributedString::alloc(nil)
-                                .init_attributed_string(NSString::alloc(nil).init_str(&text));
+                                .init_attributed_string(ns_string(&text))
+                                .autorelease();
 
                             buf.appendAttributedString_(to_append);
                         }
@@ -1541,10 +1543,6 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
             nil
         }
     }
-}
-
-unsafe fn ns_string(string: &str) -> id {
-    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
 }
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {

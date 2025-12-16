@@ -881,7 +881,6 @@ impl ConfigureMode {
                     .label("Stop on Entry")
                     .label_position(SwitchLabelPosition::Start)
                     .label_size(LabelSize::Default)
-                    .color(ui::SwitchColor::Accent)
                     .on_click({
                         let this = cx.weak_entity();
                         move |state, _, cx| {
@@ -1023,7 +1022,7 @@ impl DebugDelegate {
             Some(TaskSourceKind::Lsp { language_name, .. }) => {
                 Some(format!("LSP: {language_name}"))
             }
-            Some(TaskSourceKind::Language { name }) => Some(format!("Lang: {name}")),
+            Some(TaskSourceKind::Language { name }) => Some(format!("Language: {name}")),
             _ => context.clone().and_then(|ctx| {
                 ctx.task_context
                     .task_variables
@@ -1520,7 +1519,7 @@ impl PickerDelegate for DebugDelegate {
         });
 
         Some(
-            ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
+            ListItem::new(format!("debug-scenario-selection-{ix}"))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .spacing(ListItemSpacing::Sparse)

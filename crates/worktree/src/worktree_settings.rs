@@ -25,25 +25,25 @@ pub struct WorktreeSettings {
 impl WorktreeSettings {
     pub fn is_path_private(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.private_files.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.private_files.is_match(ancestor))
     }
 
     pub fn is_path_excluded(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor))
     }
 
     pub fn is_path_always_included(&self, path: &RelPath, is_dir: bool) -> bool {
         if is_dir {
-            self.parent_dir_scan_inclusions.is_match(path.as_std_path())
+            self.parent_dir_scan_inclusions.is_match(path)
         } else {
-            self.file_scan_inclusions.is_match(path.as_std_path())
+            self.file_scan_inclusions.is_match(path)
         }
     }
 
     pub fn is_path_hidden(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.hidden_files.is_match(ancestor.as_std_path()))
+            .any(|ancestor| self.hidden_files.is_match(ancestor))
     }
 }
 

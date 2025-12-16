@@ -151,7 +151,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, cx);
+            return;
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -518,7 +518,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.colors().element_hover, // todo update theme
+                        |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -607,23 +607,30 @@ async fn parse_blocks(
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_features = settings.ui_font.features.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
         font_family: Some(ui_font_family),
+        font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
     });
     MarkdownStyle {
         base_text_style,
-        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        code_block: StyleRefinement::default()
+            .my(rems(1.))
+            .font_buffer(cx)
+            .font_features(buffer_font_features.clone()),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
+            font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()
         },
@@ -649,6 +656,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .text_base()
             .mt(rems(1.))
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
@@ -657,12 +665,15 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let ui_font_features = settings.ui_font.features.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
         font_family: Some(ui_font_family),
+        font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -673,6 +684,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
             font_family: Some(buffer_font_family),
+            font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()
         },
@@ -698,6 +710,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mb_0(),
+        table_columns_min_size: true,
         ..Default::default()
     }
 }
