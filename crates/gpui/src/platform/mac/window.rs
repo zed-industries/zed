@@ -833,7 +833,12 @@ impl MacWindow {
                 }
                 WindowKind::Dialog => {
                     if !main_window.is_null() {
-                        let _: () = msg_send![main_window, beginSheet: native_window completionHandler: nil];
+                        let active_sheet: id = msg_send![main_window, attachedSheet];
+                        if active_sheet.is_null() {
+                            let _: () = msg_send![main_window, beginSheet: native_window completionHandler: nil];
+                        } else {
+                            let _: () = msg_send![active_sheet, beginSheet: native_window completionHandler: nil];
+                        }
                     }
                 }
             }
