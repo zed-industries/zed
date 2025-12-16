@@ -104,6 +104,7 @@ pub struct NotebookEditor {
 
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
+    original_cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
@@ -246,6 +247,7 @@ impl NotebookEditor {
             cell_list,
             selected_cell_index: 0,
             cell_order: cell_order.clone(),
+            original_cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
             kernel_specification: None,
@@ -254,6 +256,76 @@ impl NotebookEditor {
         };
         editor.launch_kernel(window, cx);
         editor
+    }
+
+    fn has_structural_changes(&self) -> bool {
+        self.cell_order != self.original_cell_order
+    }
+
+    fn has_content_changes(&self, cx: &App) -> bool {
+        self.cell_map.values().any(|cell| cell.is_dirty(cx))
+    }
+
+    pub fn to_notebook(&self, cx: &App) -> nbformat::v4::Notebook {
+        let cells: Vec<nbformat::v4::Cell> = self
+            .cell_order
+            .iter()
+            .filter_map(|cell_id| {
+                self.cell_map
+                    .get(cell_id)
+                    .map(|cell| cell.to_nbformat_cell(cx))
+            })
+            .collect();
+
+        let metadata = self.notebook_item.read(cx).notebook.metadata.clone();
+
+        nbformat::v4::Notebook {
+            metadata,
+            nbformat: 4,
+            nbformat_minor: 5,
+            cells,
+        }
+    }
+
+    pub fn mark_as_saved(&mut self, cx: &mut Context<Self>) {
+        self.original_cell_order = self.cell_order.clone();
+
+        for cell in self.cell_map.values() {
+            match cell {
+                Cell::Code(code_cell) => {
+                    code_cell.update(cx, |code_cell, cx| {
+                        let editor = code_cell.editor();
+                        editor.update(cx, |editor, cx| {
+                            editor.buffer().update(cx, |buffer, cx| {
+                                if let Some(buf) = buffer.as_singleton() {
+                                    buf.update(cx, |b, cx| {
+                                        let version = b.version();
+                                        b.did_save(version, None, cx);
+                                    });
+                                }
+                            });
+                        });
+                    });
+                }
+                Cell::Markdown(markdown_cell) => {
+                    markdown_cell.update(cx, |markdown_cell, cx| {
+                        let editor = markdown_cell.editor();
+                        editor.update(cx, |editor, cx| {
+                            editor.buffer().update(cx, |buffer, cx| {
+                                if let Some(buf) = buffer.as_singleton() {
+                                    buf.update(cx, |b, cx| {
+                                        let version = b.version();
+                                        b.did_save(version, None, cx);
+                                    });
+                                }
+                            });
+                        });
+                    });
+                }
+                Cell::Raw(_) => {}
+            }
+        }
+        cx.notify();
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1381,49 +1453,115 @@ impl Item for NotebookEditor {
         // TODO
     }
 
-    // TODO
     fn can_save(&self, _cx: &App) -> bool {
-        false
+        true
     }
-    // TODO
+
     fn save(
         &mut self,
         _options: SaveOptions,
-        _project: Entity<Project>,
+        project: Entity<Project>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        unimplemented!("save() must be implemented if can_save() returns true")
+        let notebook = self.to_notebook(cx);
+        let path = self.notebook_item.read(cx).path.clone();
+        let fs = project.read(cx).fs().clone();
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |_this, _cx| {
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            fs.atomic_write(path, json).await?;
+            Ok(())
+        })
     }
 
-    // TODO
     fn save_as(
         &mut self,
-        _project: Entity<Project>,
-        _path: ProjectPath,
+        project: Entity<Project>,
+        path: ProjectPath,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        unimplemented!("save_as() must be implemented if can_save() returns true")
+        let notebook = self.to_notebook(cx);
+        let fs = project.read(cx).fs().clone();
+
+        let abs_path = project.read(cx).absolute_path(&path, cx);
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |_this, _cx| {
+            let abs_path = abs_path.context("Failed to get absolute path")?;
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            fs.atomic_write(abs_path, json).await?;
+            Ok(())
+        })
     }
-    // TODO
+
     fn reload(
         &mut self,
-        _project: Entity<Project>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        unimplemented!("reload() must be implemented if can_save() returns true")
+        let path = self.notebook_item.read(cx).path.clone();
+        let fs = project.read(cx).fs().clone();
+        let languages = self.languages.clone();
+        let notebook_language = self.notebook_language.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let file_content = fs.load(&path).await?;
+
+            let mut json: serde_json::Value = serde_json::from_str(&file_content)?;
+            if let Some(cells) = json.get_mut("cells").and_then(|c| c.as_array_mut()) {
+                for cell in cells {
+                    if cell.get("id").is_none() {
+                        cell["id"] = serde_json::Value::String(Uuid::new_v4().to_string());
+                    }
+                }
+            }
+            let file_content = serde_json::to_string(&json)?;
+
+            let notebook = nbformat::parse_notebook(&file_content);
+            let notebook = match notebook {
+                Ok(nbformat::Notebook::V4(notebook)) => notebook,
+                Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
+                    nbformat::upgrade_legacy_notebook(legacy_notebook)?
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to parse notebook: {:?}", e);
+                }
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                let mut cell_order = vec![];
+                let mut cell_map = HashMap::default();
+
+                for cell in notebook.cells.iter() {
+                    let cell_id = cell.id();
+                    cell_order.push(cell_id.clone());
+                    let cell_entity =
+                        Cell::load(cell, &languages, notebook_language.clone(), window, cx);
+                    cell_map.insert(cell_id.clone(), cell_entity);
+                }
+
+                this.cell_order = cell_order.clone();
+                this.original_cell_order = cell_order;
+                this.cell_map = cell_map;
+                this.cell_list =
+                    ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        self.cell_map.values().any(|cell| {
-            if let Cell::Code(code_cell) = cell {
-                code_cell.read(cx).is_dirty(cx)
-            } else {
-                false
-            }
-        })
+        self.has_structural_changes() || self.has_content_changes(cx)
     }
 }
 

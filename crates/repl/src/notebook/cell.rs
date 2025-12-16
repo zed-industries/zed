@@ -126,6 +126,38 @@ fn convert_outputs(
 }
 
 impl Cell {
+    pub fn id(&self, cx: &App) -> CellId {
+        match self {
+            Cell::Code(code_cell) => code_cell.read(cx).id().clone(),
+            Cell::Markdown(markdown_cell) => markdown_cell.read(cx).id().clone(),
+            Cell::Raw(raw_cell) => raw_cell.read(cx).id().clone(),
+        }
+    }
+
+    pub fn current_source(&self, cx: &App) -> String {
+        match self {
+            Cell::Code(code_cell) => code_cell.read(cx).current_source(cx),
+            Cell::Markdown(markdown_cell) => markdown_cell.read(cx).current_source(cx),
+            Cell::Raw(raw_cell) => raw_cell.read(cx).source.clone(),
+        }
+    }
+
+    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
+        match self {
+            Cell::Code(code_cell) => code_cell.read(cx).to_nbformat_cell(cx),
+            Cell::Markdown(markdown_cell) => markdown_cell.read(cx).to_nbformat_cell(cx),
+            Cell::Raw(raw_cell) => raw_cell.read(cx).to_nbformat_cell(),
+        }
+    }
+
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        match self {
+            Cell::Code(code_cell) => code_cell.read(cx).is_dirty(cx),
+            Cell::Markdown(markdown_cell) => markdown_cell.read(cx).is_dirty(cx),
+            Cell::Raw(_) => false,
+        }
+    }
+
     pub fn load(
         cell: &nbformat::v4::Cell,
         languages: &Arc<LanguageRegistry>,
@@ -402,6 +434,31 @@ impl MarkdownCell {
 
     pub fn editor(&self) -> &Entity<Editor> {
         &self.editor
+    }
+
+    pub fn current_source(&self, cx: &App) -> String {
+        let editor = self.editor.read(cx);
+        let buffer = editor.buffer().read(cx);
+        buffer
+            .as_singleton()
+            .map(|b| b.read(cx).text())
+            .unwrap_or_default()
+    }
+
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+    }
+
+    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
+        let source = self.current_source(cx);
+        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+
+        nbformat::v4::Cell::Markdown {
+            id: self.id.clone(),
+            metadata: self.metadata.clone(),
+            source: source_lines,
+            attachments: None,
+        }
     }
 
     pub fn is_editing(&self) -> bool {
@@ -748,9 +805,41 @@ impl CodeCell {
         &self.editor
     }
 
+    pub fn current_source(&self, cx: &App) -> String {
+        let editor = self.editor.read(cx);
+        let buffer = editor.buffer().read(cx);
+        buffer
+            .as_singleton()
+            .map(|b| b.read(cx).text())
+            .unwrap_or_default()
+    }
+
     pub fn is_dirty(&self, cx: &App) -> bool {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
+
+    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
+        let source = self.current_source(cx);
+        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
+
+        let outputs = self.outputs_to_nbformat(cx);
+
+        nbformat::v4::Cell::Code {
+            id: self.id.clone(),
+            metadata: self.metadata.clone(),
+            execution_count: self.execution_count,
+            source: source_lines,
+            outputs,
+        }
+    }
+
+    fn outputs_to_nbformat(&self, cx: &App) -> Vec<nbformat::v4::Output> {
+        self.outputs
+            .iter()
+            .filter_map(|output| output.to_nbformat(cx))
+            .collect()
+    }
+
     pub fn has_outputs(&self) -> bool {
         !self.outputs.is_empty()
     }
@@ -1193,6 +1282,18 @@ pub struct RawCell {
     source: String,
     selected: bool,
     cell_position: Option<CellPosition>,
+}
+
+impl RawCell {
+    pub fn to_nbformat_cell(&self) -> nbformat::v4::Cell {
+        let source_lines: Vec<String> = self.source.lines().map(|l| format!("{}\n", l)).collect();
+
+        nbformat::v4::Cell::Raw {
+            id: self.id.clone(),
+            metadata: self.metadata.clone(),
+            source: source_lines,
+        }
+    }
 }
 
 impl RenderableCell for RawCell {
