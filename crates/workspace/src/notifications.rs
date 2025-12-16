@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, TextStyleRefinement, svg,
+    Task, TextStyleRefinement, UnderlineStyle, svg,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
@@ -269,7 +269,7 @@ impl Render for LanguageServerPrompt {
         };
 
         let (icon, color) = match request.level {
-            PromptLevel::Info => (IconName::Info, Color::Accent),
+            PromptLevel::Info => (IconName::Info, Color::Muted),
             PromptLevel::Warning => (IconName::Warning, Color::Warning),
             PromptLevel::Critical => (IconName::XCircle, Color::Error),
         };
@@ -298,16 +298,15 @@ impl Render for LanguageServerPrompt {
                     .child(
                         h_flex()
                             .justify_between()
-                            .items_start()
                             .child(
                                 h_flex()
                                     .gap_2()
-                                    .child(Icon::new(icon).color(color))
+                                    .child(Icon::new(icon).color(color).size(IconSize::Small))
                                     .child(Label::new(request.lsp_name.clone())),
                             )
                             .child(
                                 h_flex()
-                                    .gap_2()
+                                    .gap_1()
                                     .child(
                                         IconButton::new("copy", IconName::Copy)
                                             .on_click({
@@ -324,15 +323,17 @@ impl Render for LanguageServerPrompt {
                                         IconButton::new(close_id, close_icon)
                                             .tooltip(move |_window, cx| {
                                                 if suppress {
-                                                    Tooltip::for_action(
-                                                        "Suppress.\nClose with click.",
+                                                    Tooltip::with_meta(
+                                                        "Suppress",
                                                         &SuppressNotification,
+                                                        "Click to close",
                                                         cx,
                                                     )
                                                 } else {
-                                                    Tooltip::for_action(
-                                                        "Close.\nSuppress with shift-click.",
+                                                    Tooltip::with_meta(
+                                                        "Close",
                                                         &menu::Cancel,
+                                                        "Suppress with shift-click",
                                                         cx,
                                                     )
                                                 }
@@ -402,6 +403,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style,
+        selection_background_color: cx.theme().colors().element_selection_background,
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
             font_family: Some(buffer_font_family),
@@ -409,14 +411,13 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             ..Default::default()
         },
         link: TextStyleRefinement {
-            underline: Some(gpui::UnderlineStyle {
+            underline: Some(UnderlineStyle {
                 thickness: px(1.),
-                color: Some(cx.theme().colors().text),
+                color: Some(cx.theme().colors().text_accent),
                 wavy: false,
             }),
             ..Default::default()
         },
-        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }
