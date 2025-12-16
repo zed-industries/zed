@@ -1,6 +1,6 @@
-use gpui::{Entity, Img, SharedString};
-use language::Buffer;
 use collections::FxHasher;
+use gpui::{Entity, Img, SharedString};
+use language::{Buffer, HighlightId};
 use project::ProjectPath;
 use std::{
     hash::{Hash, Hasher},
@@ -47,6 +47,7 @@ pub enum PatchValue<T> {
 #[derive(Clone, Default)]
 pub struct QuickMatchPatch {
     pub snippet: PatchValue<Arc<str>>,
+    pub snippet_syntax_highlights: PatchValue<Arc<[(Range<usize>, HighlightId)]>>,
     pub blame: PatchValue<Arc<str>>,
     pub location_label: PatchValue<Arc<str>>,
     pub path_label: PatchValue<Arc<str>>,
@@ -62,7 +63,6 @@ pub enum QuickMatchKind {
         ranges: Vec<Range<TextAnchor>>,
         buffer_id: BufferId,
         position: Option<(u32, u32)>,
-        position_end: Option<(u32, u32)>,
     },
     ProjectPath {
         project_path: ProjectPath,
@@ -90,6 +90,8 @@ pub struct QuickMatch {
     pub location_label: Option<Arc<str>>,
     pub snippet: Option<Arc<str>>,
     pub first_line_snippet: Option<Arc<str>>,
+    pub snippet_match_positions: Option<Arc<[Range<usize>]>>,
+    pub snippet_syntax_highlights: Option<Arc<[(Range<usize>, HighlightId)]>>,
     pub blame: Option<Arc<str>>,
     pub kind: QuickMatchKind,
 }
@@ -110,7 +112,9 @@ pub fn compute_match_key(quick_match: &QuickMatch) -> MatchKey {
             hash_part(&mut hasher, &project_path.path.as_unix_str());
         }
         QuickMatchKind::Buffer {
-            buffer_id, position, ..
+            buffer_id,
+            position,
+            ..
         } => {
             hash_part(&mut hasher, b"buf");
             let id_u64: u64 = (*buffer_id).into();
@@ -130,7 +134,10 @@ pub fn compute_match_key(quick_match: &QuickMatch) -> MatchKey {
     MatchKey(hasher.finish())
 }
 
-pub fn compute_group_key_for_project_path(source_id: &Arc<str>, project_path: &ProjectPath) -> GroupKey {
+pub fn compute_group_key_for_project_path(
+    source_id: &Arc<str>,
+    project_path: &ProjectPath,
+) -> GroupKey {
     let mut hasher = FxHasher::default();
     hash_part(&mut hasher, source_id);
     hash_part(&mut hasher, b"group");
@@ -168,13 +175,6 @@ impl QuickMatch {
         }
     }
 
-    pub fn position_end(&self) -> Option<(u32, u32)> {
-        match &self.kind {
-            QuickMatchKind::Buffer { position_end, .. } => *position_end,
-            _ => None,
-        }
-    }
-
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match &self.kind {
             QuickMatchKind::ProjectPath { project_path } => Some(project_path),
@@ -203,6 +203,8 @@ impl QuickMatch {
                 if self.snippet.is_some() {
                     self.snippet = None;
                     self.first_line_snippet = None;
+                    self.snippet_match_positions = None;
+                    self.snippet_syntax_highlights = None;
                     changed = true;
                 }
             }
@@ -210,6 +212,24 @@ impl QuickMatch {
                 if self.snippet.as_ref() != Some(&value) {
                     self.first_line_snippet = value.lines().next().map(Arc::<str>::from);
                     self.snippet = Some(value);
+                    self.snippet_match_positions = None;
+                    self.snippet_syntax_highlights = None;
+                    changed = true;
+                }
+            }
+        }
+
+        match patch.snippet_syntax_highlights {
+            PatchValue::Unchanged => {}
+            PatchValue::Clear => {
+                if self.snippet_syntax_highlights.is_some() {
+                    self.snippet_syntax_highlights = None;
+                    changed = true;
+                }
+            }
+            PatchValue::SetTo(value) => {
+                if self.snippet_syntax_highlights.as_ref() != Some(&value) {
+                    self.snippet_syntax_highlights = Some(value);
                     changed = true;
                 }
             }
@@ -283,4 +303,3 @@ impl QuickMatch {
         changed
     }
 }
-

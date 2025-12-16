@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     ops::Range,
     path,
     path::Path,
@@ -6,14 +7,14 @@ use std::{
 };
 
 use file_icons::FileIcons;
-use gpui::{App, AppContext as _, AsyncApp, Context, WeakEntity};
-use language::Buffer;
+use gpui::{App, AppContext, AsyncApp, Context, WeakEntity};
+use language::{Buffer, HighlightId, LanguageRegistry};
 use search::SearchOptions;
-use text::{Anchor as TextAnchor, Point, ToPoint};
+use text::{Anchor as TextAnchor, BufferId, Point, ToOffset, ToPoint};
 use ui::IconName;
 
-use crate::QuickSearchDelegate;
 use crate::PickerHandle;
+use crate::QuickSearchDelegate;
 use crate::preview::{PreviewKey, PreviewRequest};
 use crate::types::{GroupHeader, GroupInfo, QuickMatch, QuickMatchKind};
 use log::debug;
@@ -22,11 +23,21 @@ use project::search::{SearchQuery, SearchResult};
 use smol::future::yield_now;
 use util::paths::{PathMatcher, PathStyle};
 
-use super::{ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId, SourceSpec};
+use super::{
+    ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId,
+    SourceSpec,
+};
 
 pub static TEXT_GREP_SOURCE: TextGrepSource = TextGrepSource;
 
 pub struct TextGrepSource;
+
+#[derive(Clone)]
+struct SyntaxEnrichItem {
+    key: crate::types::MatchKey,
+    row: u32,
+    snippet_len: usize,
+}
 
 impl TextGrepSource {
     fn spec_static() -> &'static SourceSpec {
@@ -65,6 +76,7 @@ impl QuickSearchSource for TextGrepSource {
         let project = delegate.project.clone();
         let search_options = delegate.search_engine.search_options;
         let source_id = self.spec().id.0.clone();
+        let language_registry = delegate.project.read(cx).languages().clone();
 
         cx.spawn(move |_, app: &mut gpui::AsyncApp| {
             let mut app = app.clone();
@@ -111,51 +123,42 @@ impl QuickSearchSource for TextGrepSource {
                 }) {
                     Ok(Ok(query)) => query,
                     Ok(Err(err)) => {
-                        crate::record_error(
-                            picker.clone(),
-                            generation,
-                            err.to_string(),
-                            &mut app,
-                        );
+                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
                         return;
                     }
                     Err(err) => {
-                        crate::record_error(
-                            picker.clone(),
-                            generation,
-                            err.to_string(),
-                            &mut app,
-                        );
+                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
                         return;
                     }
                 };
 
-                let rx = match app.update_entity(&project, |project, cx| project.search(search_query, cx))
+                let receiver = match app
+                    .update_entity(&project, |project, cx| project.search(search_query, cx))
                 {
-                    Ok(rx) => rx,
+                    Ok(receiver) => receiver,
                     Err(err) => {
-                        crate::record_error(
-                            picker.clone(),
-                            generation,
-                            err.to_string(),
-                            &mut app,
-                        );
+                        crate::record_error(picker.clone(), generation, err.to_string(), &mut app);
                         return;
                     }
                 };
 
-                let rx_for_drop = rx.clone();
+                let receiver_for_drop = receiver.clone();
                 if let Some(picker) = picker.upgrade() {
                     if let Err(err) = app.update_entity(&picker, |picker, _cx| {
-                        picker.delegate.search_engine.set_inflight_results(rx_for_drop);
+                        picker
+                            .delegate
+                            .search_engine
+                            .set_inflight_results(receiver_for_drop);
                     }) {
                         debug!("quick_search: failed to store inflight results: {:?}", err);
                     }
                 }
 
                 let mut batch: Vec<QuickMatch> = Vec::with_capacity(crate::RESULTS_BATCH_SIZE);
+                let mut syntax_workers: HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>> =
+                    HashMap::new();
                 loop {
-                    let result = match rx.recv().await {
+                    let result = match receiver.recv().await {
                         Ok(r) => r,
                         Err(_) => break,
                     };
@@ -165,14 +168,38 @@ impl QuickSearchSource for TextGrepSource {
 
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
-                            if let Some(matches) = build_matches_for_buffer(
+                            if let Some(out) = build_matches_for_buffer(
                                 &mut app,
                                 &buffer,
                                 ranges,
                                 &path_style,
                                 &source_id,
                             ) {
-                                batch.extend(matches);
+                                if !out.pending_syntax.is_empty() {
+                                    ensure_syntax_worker(
+                                        &mut app,
+                                        &mut syntax_workers,
+                                        out.buffer_id,
+                                        buffer.clone(),
+                                        picker.clone(),
+                                        generation,
+                                        cancel_flag.clone(),
+                                        language_registry.clone(),
+                                    );
+                                    if let Some(sender) = syntax_workers.get(&out.buffer_id) {
+                                        for item in out.pending_syntax {
+                                            if let Err(err) = sender.try_send(item) {
+                                                debug!(
+                                                    "quick_search: failed to queue syntax enrich item: {:?}",
+                                                    err
+                                                );
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                batch.extend(out.matches);
                                 if batch.len() >= crate::RESULTS_BATCH_SIZE {
                                     crate::flush_batch(
                                         picker.clone(),
@@ -205,6 +232,7 @@ impl QuickSearchSource for TextGrepSource {
                     yield_now().await;
                 }
 
+                drop(syntax_workers);
                 if !batch.is_empty() && !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     crate::flush_batch(picker.clone(), generation, &mut batch, &mut app);
                 }
@@ -356,14 +384,212 @@ fn elide_path(segments: &[Arc<str>]) -> Arc<str> {
     Arc::<str>::from(parts.join("/"))
 }
 
-fn clip_snippet(text: &str) -> String {
-    for (count, (idx, _)) in text.char_indices().enumerate() {
-        if count == crate::MAX_SNIPPET_CHARS {
-            let clipped = &text[..idx];
-            return format!("{clipped}.");
-        }
+fn clip_snippet(text: &str) -> (String, usize) {
+    if text.len() <= crate::MAX_SNIPPET_BYTES {
+        return (text.to_string(), text.len());
     }
-    text.to_string()
+
+    let suffix = "…";
+    let max_content_bytes = crate::MAX_SNIPPET_BYTES.saturating_sub(suffix.len());
+    let mut end = max_content_bytes.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    let mut out = String::with_capacity(end + suffix.len());
+    out.push_str(&text[..end]);
+    out.push_str(suffix);
+    (out, end)
+}
+
+fn coalesce_syntax_runs(runs: &mut Vec<(Range<usize>, HighlightId)>) {
+    if runs.len() <= 1 {
+        return;
+    }
+    runs.sort_by_key(|(range, _)| (range.start, range.end));
+    let mut out: Vec<(Range<usize>, HighlightId)> = Vec::with_capacity(runs.len());
+    for (range, id) in runs.drain(..) {
+        if let Some((last_range, last_id)) = out.last_mut() {
+            if *last_id == id && last_range.end == range.start {
+                last_range.end = range.end;
+                continue;
+            }
+        }
+        out.push((range, id));
+    }
+    *runs = out;
+}
+
+struct BuildMatchesOutput {
+    matches: Vec<QuickMatch>,
+    pending_syntax: Vec<SyntaxEnrichItem>,
+    buffer_id: BufferId,
+}
+
+fn ensure_syntax_worker(
+    app: &mut AsyncApp,
+    workers: &mut HashMap<BufferId, async_channel::Sender<SyntaxEnrichItem>>,
+    buffer_id: BufferId,
+    buffer: gpui::Entity<Buffer>,
+    picker: WeakEntity<PickerHandle>,
+    generation: usize,
+    cancel_flag: Arc<AtomicBool>,
+    language_registry: Arc<LanguageRegistry>,
+) {
+    if workers.contains_key(&buffer_id) {
+        return;
+    }
+
+    let (sender, receiver) = async_channel::unbounded();
+    workers.insert(buffer_id, sender);
+
+    app.spawn(async move |app| {
+        let mut language_attempted = false;
+        let mut queued: Vec<SyntaxEnrichItem> = Vec::new();
+
+        loop {
+            let first = match receiver.recv().await {
+                Ok(item) => item,
+                Err(_) => break,
+            };
+            queued.push(first);
+            while let Ok(item) = receiver.try_recv() {
+                queued.push(item);
+            }
+
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
+            let snapshot = match app.read_entity(&buffer, |b, _| b.snapshot()) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+
+            if snapshot.language().is_none() && !language_attempted {
+                language_attempted = true;
+                let file = app
+                    .read_entity(&buffer, |b, _| b.file().cloned())
+                    .ok()
+                    .flatten();
+                if let Some(file) = file {
+                    let available = app
+                        .update({
+                            let language_registry = language_registry.clone();
+                            let file = file.clone();
+                            move |cx| language_registry.language_for_file(&file, None, cx)
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(available) = available {
+                        let language_receiver = language_registry.load_language(&available);
+                        if let Ok(Ok(language)) = language_receiver.await {
+                            if let Err(err) = app.update_entity(&buffer, |b, cx| {
+                                b.set_language_registry(language_registry.clone());
+                                b.set_language_async(Some(language.clone()), cx);
+                            }) {
+                                debug!(
+                                    "quick_search: failed to set language for syntax enrich worker: {:?}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            let parsing_idle = app.read_entity(&buffer, |b, _| b.parsing_idle());
+            if let Ok(idle) = parsing_idle {
+                idle.await;
+            }
+
+            while let Ok(item) = receiver.try_recv() {
+                queued.push(item);
+            }
+
+            if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
+            let snapshot = match app.read_entity(&buffer, |b, _| b.snapshot()) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            if snapshot.language().is_none() {
+                queued.clear();
+                continue;
+            }
+
+            let mut patches: Vec<(crate::types::MatchKey, crate::types::QuickMatchPatch)> =
+                Vec::new();
+
+            for item in queued.drain(..) {
+                let snippet_len = item.snippet_len;
+                if snippet_len == 0 {
+                    continue;
+                }
+
+                let max_row = snapshot.text.max_point().row;
+                let row = item.row.min(max_row);
+                let line_start = Point::new(row, 0);
+                let line_end = Point::new(row, snapshot.text.line_len(row));
+                let line_start_offset = snapshot.text.point_to_offset(line_start);
+                let line_end_offset = snapshot.text.point_to_offset(line_end);
+
+                let line_text: String = snapshot
+                    .text_for_range(line_start_offset..line_end_offset)
+                    .collect();
+                let line_trimmed_end = line_text.trim_end();
+                let trim_start = line_trimmed_end.len() - line_trimmed_end.trim_start().len();
+                let snippet_end_abs = (trim_start + snippet_len).min(line_trimmed_end.len());
+                if trim_start >= snippet_end_abs {
+                    continue;
+                }
+
+                let mut highlight_ids: Vec<(Range<usize>, HighlightId)> = Vec::new();
+                let mut current_offset = 0usize;
+                for chunk in snapshot.chunks(line_start_offset..line_end_offset, true) {
+                    let chunk_len = chunk.text.len();
+
+                    if let Some(highlight_id) = chunk.syntax_highlight_id {
+                        let abs_start = current_offset;
+                        let abs_end = current_offset + chunk_len;
+                        let rel_start = abs_start.saturating_sub(trim_start);
+                        let rel_end = abs_end.saturating_sub(trim_start);
+                        if rel_end > 0 && rel_start < snippet_len {
+                            let clamped_start = rel_start.min(snippet_len);
+                            let clamped_end = rel_end.min(snippet_len);
+                            if clamped_start < clamped_end {
+                                highlight_ids.push((clamped_start..clamped_end, highlight_id));
+                            }
+                        }
+                    }
+
+                    current_offset += chunk_len;
+                }
+
+                if highlight_ids.is_empty() {
+                    continue;
+                }
+                coalesce_syntax_runs(&mut highlight_ids);
+
+                patches.push((
+                    item.key,
+                    crate::types::QuickMatchPatch {
+                        snippet_syntax_highlights: crate::types::PatchValue::SetTo(Arc::from(
+                            highlight_ids.into_boxed_slice(),
+                        )),
+                        ..Default::default()
+                    },
+                ));
+            }
+
+            if !patches.is_empty() {
+                crate::apply_patches_by_key(picker.clone(), generation, patches, app);
+            }
+        }
+    })
+    .detach();
 }
 
 fn build_matches_for_buffer(
@@ -372,11 +598,12 @@ fn build_matches_for_buffer(
     ranges: Vec<Range<TextAnchor>>,
     path_style: &PathStyle,
     source_id: &Arc<str>,
-) -> Option<Vec<QuickMatch>> {
+) -> Option<BuildMatchesOutput> {
     let snapshot = match app.read_entity(buffer, |b, _| b.snapshot()) {
         Ok(s) => s,
         Err(_) => return None,
     };
+    let buffer_id = snapshot.text.remote_id();
 
     let (project_path, path_label): (Option<ProjectPath>, Arc<str>) = app
         .read_entity(buffer, |b, cx| {
@@ -396,11 +623,14 @@ fn build_matches_for_buffer(
     let file_name: Arc<str> = path_label
         .rsplit_once(path::MAIN_SEPARATOR)
         .map(|(_, name)| Arc::<str>::from(name))
-        .or_else(|| path_label.rsplit_once('/').map(|(_, name)| Arc::<str>::from(name)))
+        .or_else(|| {
+            path_label
+                .rsplit_once('/')
+                .map(|(_, name)| Arc::<str>::from(name))
+        })
         .unwrap_or_else(|| path_label.clone());
 
     let path_segments = crate::split_path_segments(&path_label);
-    let buffer_id = snapshot.text.remote_id();
     let display_path: Arc<str> = elide_path(&path_segments);
 
     let group: Option<Arc<GroupInfo>> = project_path.as_ref().map(|project_path| {
@@ -444,8 +674,8 @@ fn build_matches_for_buffer(
         per_line.entry(row).or_default().push((start.column, range));
     }
 
-    let mut line_cache: std::collections::HashMap<u32, Arc<str>> = std::collections::HashMap::new();
     let mut matches = Vec::with_capacity(line_order.len());
+    let mut pending_syntax: Vec<SyntaxEnrichItem> = Vec::new();
     for row in line_order {
         let mut items = match per_line.remove(&row) {
             Some(v) => v,
@@ -460,27 +690,92 @@ fn build_matches_for_buffer(
 
         let (first_col, first_range) = &items[0];
         let start_point = first_range.start.to_point(&snapshot.text);
-        let end_point = first_range.end.to_point(&snapshot.text);
         let location_label: Option<Arc<str>> =
             Some(format!(":{}:{}", row + 1, first_col + 1).into());
 
-        let snippet: Arc<str> = line_cache
-            .entry(row)
-            .or_insert_with(|| {
-                let max_row = snapshot.text.max_point().row;
-                let row = row.min(max_row);
-                let line_start = Point::new(row, 0);
-                let line_end = Point::new(row, snapshot.text.line_len(row));
-                let mut line_text = String::new();
-                for part in snapshot.text.text_for_range(line_start..line_end) {
-                    line_text.push_str(part);
-                }
-                let clipped = clip_snippet(line_text.trim_end());
-                Arc::<str>::from(clipped)
-            })
-            .clone();
+        let max_row = snapshot.text.max_point().row;
+        let row = row.min(max_row);
+        let line_start = Point::new(row, 0);
+        let line_end = Point::new(row, snapshot.text.line_len(row));
+        let line_start_offset = snapshot.text.point_to_offset(line_start);
+        let line_end_offset = snapshot.text.point_to_offset(line_end);
+        let line_text: String = snapshot
+            .text_for_range(line_start_offset..line_end_offset)
+            .collect();
+        let line_trimmed_end = line_text.trim_end();
+        let trim_start = line_trimmed_end.len() - line_trimmed_end.trim_start().len();
+        let line_trimmed = &line_trimmed_end[trim_start..];
+        let (snippet_string, snippet_content_len) = clip_snippet(line_trimmed);
+        let snippet: Arc<str> = Arc::<str>::from(snippet_string);
 
-        matches.push(QuickMatch {
+        let mut snippet_match_positions: Vec<Range<usize>> = Vec::new();
+        for r in &ranges_for_line {
+            let match_start_offset = r.start.to_offset(&snapshot.text);
+            let match_end_offset = r.end.to_offset(&snapshot.text);
+
+            let start_in_line = match_start_offset.saturating_sub(line_start_offset);
+            let end_in_line = match_end_offset.saturating_sub(line_start_offset);
+
+            let start_in_preview = start_in_line.saturating_sub(trim_start);
+            let end_in_preview = end_in_line.saturating_sub(trim_start);
+
+            if start_in_preview >= snippet_content_len || end_in_preview == 0 {
+                continue;
+            }
+
+            let clamped_start = start_in_preview.min(snippet_content_len);
+            let clamped_end = end_in_preview.min(snippet_content_len);
+            if clamped_start >= clamped_end {
+                continue;
+            }
+
+            let snippet_str = snippet.as_ref();
+            let mut safe_start = clamped_start.min(snippet_str.len());
+            while safe_start > 0 && !snippet_str.is_char_boundary(safe_start) {
+                safe_start -= 1;
+            }
+            let mut safe_end = clamped_end.min(snippet_str.len());
+            while safe_end < snippet_str.len() && !snippet_str.is_char_boundary(safe_end) {
+                safe_end += 1;
+            }
+
+            if safe_start < safe_end {
+                snippet_match_positions.push(safe_start..safe_end);
+            }
+        }
+        snippet_match_positions.sort_by_key(|r| (r.start, r.end));
+        snippet_match_positions.dedup();
+
+        let mut snippet_syntax_highlights: Vec<(Range<usize>, HighlightId)> = Vec::new();
+        if snippet_content_len > 0 && snapshot.language().is_some() {
+            let mut rel_offset = 0usize;
+            let mut chunks = snapshot.chunks(line_start_offset..line_end_offset, true);
+            for chunk in chunks.by_ref() {
+                let chunk_len = chunk.text.len();
+                let chunk_start = rel_offset;
+                let chunk_end = rel_offset + chunk_len;
+                rel_offset = chunk_end;
+
+                let chunk_start = chunk_start.min(line_trimmed_end.len());
+                let chunk_end = chunk_end.min(line_trimmed_end.len());
+                let start_abs = chunk_start.max(trim_start);
+                let end_abs = chunk_end.min(trim_start + snippet_content_len);
+                if start_abs >= end_abs {
+                    continue;
+                }
+
+                if let Some(id) = chunk.syntax_highlight_id {
+                    let start_rel = start_abs - trim_start;
+                    let end_rel = end_abs - trim_start;
+                    if start_rel < end_rel {
+                        snippet_syntax_highlights.push((start_rel..end_rel, id));
+                    }
+                }
+            }
+            coalesce_syntax_runs(&mut snippet_syntax_highlights);
+        }
+
+        let mut match_item = QuickMatch {
             id: 0,
             key: crate::types::MatchKey(0),
             source_id: source_id.clone(),
@@ -494,6 +789,10 @@ fn build_matches_for_buffer(
             location_label,
             snippet: Some(snippet.clone()),
             first_line_snippet: Some(snippet),
+            snippet_match_positions: (!snippet_match_positions.is_empty())
+                .then(|| Arc::<[Range<usize>]>::from(snippet_match_positions)),
+            snippet_syntax_highlights: (!snippet_syntax_highlights.is_empty())
+                .then(|| Arc::<[(Range<usize>, HighlightId)]>::from(snippet_syntax_highlights)),
             blame: None,
             kind: crate::types::QuickMatchKind::Buffer {
                 buffer: buffer.clone(),
@@ -501,11 +800,22 @@ fn build_matches_for_buffer(
                 ranges: ranges_for_line,
                 buffer_id,
                 position: Some((row, start_point.column)),
-                position_end: Some((end_point.row, end_point.column)),
             },
-        });
+        };
+        match_item.key = crate::types::compute_match_key(&match_item);
+        if match_item.snippet_syntax_highlights.is_none() && snippet_content_len > 0 {
+            pending_syntax.push(SyntaxEnrichItem {
+                key: match_item.key,
+                row,
+                snippet_len: snippet_content_len,
+            });
+        }
+        matches.push(match_item);
     }
 
-    Some(matches)
+    Some(BuildMatchesOutput {
+        matches,
+        pending_syntax,
+        buffer_id,
+    })
 }
-

@@ -11,8 +11,8 @@ mod source;
 use crate::{
     grouped_list::{GroupedFileHeader, GroupedListState, GroupedRow},
     match_list::MatchList,
-    preview::PreviewState,
     preview::PreviewRequest,
+    preview::PreviewState,
     types::{MatchId, MatchKey, PatchValue, QuickMatch},
 };
 use async_channel::Receiver;
@@ -21,30 +21,31 @@ use gpui::AsyncApp;
 use project::search::SearchResult;
 use std::path;
 use std::path::Path;
-use std::{sync::Arc, time::Duration};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{sync::Arc, time::Duration};
 
-use search::{
-    SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleWholeWord,
-    search_bar::{input_base_styles, render_text_input},
-};
+use ::git::GitRemote;
 use editor::{Editor, EditorSettings, SelectionEffects, scroll::Autoscroll};
-use gpui::{
-    Action, App, Context, DismissEvent, Entity, EntityInputHandler, FocusHandle,
-    Focusable, Render, Styled, Task, WeakEntity, Window,
-};
+use git_ui::commit_tooltip::CommitAvatar;
 use gpui::SharedString;
+use gpui::{
+    Action, App, Context, DismissEvent, Entity, EntityInputHandler, FocusHandle, Focusable,
+    HighlightStyle, Render, Styled, StyledText, Task, WeakEntity, Window,
+};
 use language::Buffer;
 use log::debug;
 use picker::{Picker, PickerDelegate};
 use project::{Project, debounced_delay::DebouncedDelay};
+use search::{
+    SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleWholeWord,
+    search_bar::{input_base_styles, render_text_input},
+};
 use settings::{Settings, SettingsStore};
-use ::git::GitRemote;
-use git_ui::commit_tooltip::CommitAvatar;
 use ui::{
-    Button, ButtonStyle, Chip, Color, DiffStat, HighlightedLabel, Icon, IconButton, IconButtonShape,
-    IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon as _, LabelSize, ListItem,
-    ListItemSpacing, Modal, ModalHeader, Section, SpinnerLabel, Tooltip, prelude::*, rems_from_px,
+    Button, ButtonStyle, Chip, Color, DiffStat, HighlightedLabel, Icon, IconButton,
+    IconButtonShape, IconName, IconPosition, IconSize, KeyBinding, Label, LabelCommon, LabelLike,
+    LabelSize, ListItem, ListItemSpacing, Modal, ModalHeader, Section, SpinnerLabel, Tooltip,
+    prelude::*, rems_from_px,
 };
 use workspace::{ModalView, Workspace, item::PreviewTabsSettings};
 
@@ -59,10 +60,63 @@ const H_LIST_FRAC: f32 = 0.35;
 
 const PREVIEW_MIN_WIDTH_REM: f32 = 30.;
 const PREVIEW_MIN_HEIGHT_REM: f32 = 12.;
-const MAX_SNIPPET_CHARS: usize = 240;
+const MAX_SNIPPET_BYTES: usize = 240;
 const MAX_RESULTS: usize = 20_000;
-const HIGHLIGHT_WINDOW: usize = 40;
 const QUERY_DEBOUNCE_MS: u64 = 80;
+
+fn snippet_shared_for_entry(entry: &QuickMatch) -> SharedString {
+    let snippet_arc: Arc<str> = entry
+        .first_line_snippet
+        .clone()
+        .or_else(|| {
+            entry
+                .snippet
+                .as_ref()
+                .and_then(|s| s.lines().next().map(|line| Arc::<str>::from(line.to_string())))
+        })
+        .unwrap_or_else(|| Arc::<str>::from(""));
+    SharedString::new(snippet_arc)
+}
+
+fn syntax_and_match_snippet_element(
+    entry: &QuickMatch,
+    snippet_shared: &SharedString,
+    cx: &App,
+) -> Option<AnyElement> {
+    let mut syntax_highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+    let mut match_highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+
+    if let Some(syntax_runs) = entry.snippet_syntax_highlights.as_deref() {
+        let syntax_theme = cx.theme().syntax();
+        for (range, highlight_id) in syntax_runs.iter() {
+            if let Some(style) = highlight_id.style(syntax_theme) {
+                syntax_highlights.push((range.clone(), style));
+            }
+        }
+    }
+
+    if let Some(match_ranges) = entry.snippet_match_positions.as_deref() {
+        let style = HighlightStyle {
+            background_color: Some(cx.theme().colors().search_match_background.opacity(0.35)),
+            ..Default::default()
+        };
+        match_highlights.extend(match_ranges.iter().cloned().map(|r| (r, style)));
+    }
+
+    if syntax_highlights.is_empty() && match_highlights.is_empty() {
+        return None;
+    }
+
+    let highlights = gpui::combine_highlights(syntax_highlights, match_highlights);
+    Some(
+        LabelLike::new()
+            .size(LabelSize::Small)
+            .single_line()
+            .truncate()
+            .child(StyledText::new(snippet_shared.clone()).with_highlights(highlights))
+            .into_any_element(),
+    )
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(QuickSearch::register).detach();
@@ -392,12 +446,7 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let selected = self
-            .picker
-            .read(cx)
-            .delegate
-            .selected_match()
-            .cloned();
+        let selected = self.picker.read(cx).delegate.selected_match().cloned();
         let content = if layout.show_preview {
             self.render_preview_content(selected, window, cx)
         } else {
@@ -479,9 +528,10 @@ impl QuickSearch {
             source::PreviewPanelUi::GitCommit { meta } => {
                 self.render_git_commit_preview(meta, &selected, window, cx)
             }
-            source::PreviewPanelUi::Standard { path_text, highlights } => {
-                self.render_standard_preview(path_text, highlights, &selected, window, cx)
-            }
+            source::PreviewPanelUi::Standard {
+                path_text,
+                highlights,
+            } => self.render_standard_preview(path_text, highlights, &selected, window, cx),
         }
     }
 
@@ -498,13 +548,7 @@ impl QuickSearch {
             .overflow_hidden()
             .gap_1()
             .child(Self::render_preview_header(path_text, selected, highlights))
-            .child(self.render_preview_editor(
-                selected,
-                selected.blame.clone(),
-                true,
-                window,
-                cx,
-            ))
+            .child(self.render_preview_editor(selected, selected.blame.clone(), true, window, cx))
             .into_any_element()
     }
 
@@ -594,7 +638,11 @@ impl QuickSearch {
             .child(
                 h_flex()
                     .gap_1p5()
-                    .child(Label::new(date_string).color(Color::Muted).size(LabelSize::Small))
+                    .child(
+                        Label::new(date_string)
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
                     .child(Label::new("•").color(Color::Ignored).size(LabelSize::Small))
                     .children(commit_diff_stat)
                     .when(!meta.repo_label.trim().is_empty(), |this| {
@@ -647,14 +695,15 @@ impl QuickSearch {
                 continue;
             };
             let base_text = diff.base_text();
-            for hunk in diff.hunks_intersecting_range(
-                language::Anchor::MIN..language::Anchor::MAX,
-                buffer,
-            ) {
+            for hunk in
+                diff.hunks_intersecting_range(language::Anchor::MIN..language::Anchor::MAX, buffer)
+            {
                 let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
                 total_additions += added_rows;
 
-                let base_start = base_text.offset_to_point(hunk.diff_base_byte_range.start).row;
+                let base_start = base_text
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
                 let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
                 let deleted_rows = base_end.saturating_sub(base_start);
                 total_deletions += deleted_rows;
@@ -958,21 +1007,14 @@ impl QuickSearchDelegate {
 
     fn rebuild_grouped_rows(&mut self, cx: &App) {
         let selected_id = self.selection.and_then(|k| self.match_list.id_by_key(k));
-        let selected_row = self.grouped_list.rebuild(
-            &mut self.match_list,
-            selected_id,
-            &self.project,
-            cx,
-        );
+        let selected_row =
+            self.grouped_list
+                .rebuild(&mut self.match_list, selected_id, &self.project, cx);
         if selected_row.is_none() {
-            self.selection = self
-                .grouped_list
-                .rows
-                .iter()
-                .find_map(|row| match row {
-                    GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
-                    _ => None,
-                });
+            self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
+                GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
+                _ => None,
+            });
         }
     }
 
@@ -986,14 +1028,10 @@ impl QuickSearchDelegate {
             cx,
         );
         if selected_row.is_none() {
-            self.selection = self
-                .grouped_list
-                .rows
-                .iter()
-                .find_map(|row| match row {
-                    GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
-                    _ => None,
-                });
+            self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
+                GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
+                _ => None,
+            });
         }
     }
 
@@ -1007,14 +1045,10 @@ impl QuickSearchDelegate {
             cx,
         );
         if selected_row.is_none() {
-            self.selection = self
-                .grouped_list
-                .rows
-                .iter()
-                .find_map(|row| match row {
-                    GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
-                    _ => None,
-                });
+            self.selection = self.grouped_list.rows.iter().find_map(|row| match row {
+                GroupedRow::LineMatch { match_id } => self.match_list.key_by_id(*match_id),
+                _ => None,
+            });
         }
     }
 }
@@ -1054,72 +1088,16 @@ pub(crate) fn highlight_indices(text: &str, query: &str, case_sensitive: bool) -
         let end = abs + query.len();
         positions.extend(text[abs..end].char_indices().map(|(ix, _)| abs + ix));
 
-        let step = text[abs..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let step = text[abs..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
         start = abs + step;
     }
     positions.sort_unstable();
     positions.dedup();
     positions
-}
-
-fn byte_index_for_column(text: &str, column: usize) -> usize {
-    if column == 0 {
-        return 0;
-    }
-    let mut col = 0usize;
-    for (ix, _ch) in text.char_indices() {
-        if col == column {
-            return ix;
-        }
-        col = col.saturating_add(1);
-        if col > column {
-            return ix;
-        }
-    }
-    text.len()
-}
-
-pub(crate) fn highlight_match_range_in_snippet(
-    entry: &QuickMatch,
-    snippet_text: &str,
-) -> Option<Vec<usize>> {
-    let ((start_row, start_col), (end_row, end_col)) =
-        match (entry.position(), entry.position_end()) {
-            (Some(a), Some(b)) => (a, b),
-            _ => return None,
-        };
-
-    if start_row != end_row {
-        return None;
-    }
-
-    let start_byte = byte_index_for_column(snippet_text, start_col as usize);
-    if start_byte >= snippet_text.len() {
-        return None;
-    }
-
-    let mut end_byte = byte_index_for_column(snippet_text, end_col as usize);
-    if end_byte <= start_byte {
-        end_byte = start_byte
-            + snippet_text[start_byte..]
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
-    }
-    end_byte = end_byte.min(snippet_text.len());
-
-    let mut indices = Vec::new();
-    for (ix, _ch) in snippet_text.char_indices() {
-        if ix < start_byte {
-            continue;
-        }
-        if ix >= end_byte {
-            break;
-        }
-        indices.push(ix);
-    }
-    (!indices.is_empty()).then_some(indices)
 }
 
 fn find_case_insensitive_unicode(text: &str, query: &str) -> Vec<usize> {
@@ -1148,7 +1126,11 @@ fn find_case_insensitive_unicode(text: &str, query: &str) -> Vec<usize> {
             .zip(needle.iter())
             .all(|(a, b)| a == b)
         {
-            positions.extend(folded_to_orig_byte[start..start + needle.len()].iter().copied());
+            positions.extend(
+                folded_to_orig_byte[start..start + needle.len()]
+                    .iter()
+                    .copied(),
+            );
         }
         start += 1;
     }
@@ -1283,7 +1265,12 @@ impl PickerDelegate for QuickSearchDelegate {
         let active_spec = self
             .source_registry
             .spec_for_id(&active_source)
-            .or_else(|| self.source_registry.available_sources().first().map(|s| s.spec()));
+            .or_else(|| {
+                self.source_registry
+                    .available_sources()
+                    .first()
+                    .map(|s| s.spec())
+            });
 
         let toggle_button = |icon: IconName,
                              active: bool,
@@ -1310,22 +1297,22 @@ impl PickerDelegate for QuickSearchDelegate {
                              active: bool,
                              source_id: source::SourceId|
          -> IconButton {
-                IconButton::new(("quick-search-source", id), spec.icon)
-                    .shape(IconButtonShape::Square)
-                    .style(ButtonStyle::Subtle)
-                    .toggle_state(active)
-                    .on_click({
-                        let qs = self.quick_search.clone();
-                        move |_, window, cx| {
-                            if let Some(qs) = qs.upgrade() {
-                                qs.update(cx, |qs, cx| {
-                                    qs.set_search_source(source_id.clone(), window, cx)
-                                });
-                            }
+            IconButton::new(("quick-search-source", id), spec.icon)
+                .shape(IconButtonShape::Square)
+                .style(ButtonStyle::Subtle)
+                .toggle_state(active)
+                .on_click({
+                    let qs = self.quick_search.clone();
+                    move |_, window, cx| {
+                        if let Some(qs) = qs.upgrade() {
+                            qs.update(cx, |qs, cx| {
+                                qs.set_search_source(source_id.clone(), window, cx)
+                            });
                         }
-                    })
-                    .tooltip(Tooltip::text(spec.title.to_string()))
-            };
+                    }
+                })
+                .tooltip(Tooltip::text(spec.title.to_string()))
+        };
 
         let mut toggles = h_flex().gap_1();
         let supported = active_spec
@@ -1429,8 +1416,8 @@ impl PickerDelegate for QuickSearchDelegate {
 
         match direction {
             picker::Direction::Up => {
-                let should_use_history = self.selected_index() == 0
-                    || self.history_nav.index(&source_id).is_some();
+                let should_use_history =
+                    self.selected_index() == 0 || self.history_nav.index(&source_id).is_some();
                 if !should_use_history {
                     return None;
                 }
@@ -1557,10 +1544,7 @@ impl PickerDelegate for QuickSearchDelegate {
                 project_path,
                 point_range,
             } => (Some(project_path), point_range),
-            source::ConfirmOutcome::OpenGitCommit {
-                repo_workdir,
-                sha,
-            } => {
+            source::ConfirmOutcome::OpenGitCommit { repo_workdir, sha } => {
                 let project = self.project.clone();
                 let workspace = workspace.downgrade();
                 window.defer(cx, move |window, cx| {
@@ -1708,14 +1692,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     return render_grouped_file_header(self, header, ix, _window, cx);
                 }
                 GroupedRow::LineMatch { match_id, .. } => {
-                    return render_grouped_match_row(
-                        self,
-                        match_id,
-                        ix,
-                        selected,
-                        _window,
-                        cx,
-                    );
+                    return render_grouped_match_row(self, match_id, ix, selected, _window, cx);
                 }
             }
         }
@@ -1892,6 +1869,7 @@ pub struct SearchEngine {
 pub(crate) enum SourceEvent {
     AppendMatches(Vec<QuickMatch>),
     ApplyPatches(Vec<(MatchId, types::QuickMatchPatch)>),
+    ApplyPatchesByKey(Vec<(MatchKey, types::QuickMatchPatch)>),
     Error(String),
     FinishStream,
 }
@@ -2053,6 +2031,44 @@ pub(crate) fn apply_source_event(
                     }
                 }
             }
+            SourceEvent::ApplyPatchesByKey(patches) => {
+                if patches.is_empty() {
+                    return;
+                }
+
+                let mut changed = false;
+                for (key, patch) in patches {
+                    if picker.delegate.match_list.update_by_key_or_queue(key, patch) {
+                        changed = true;
+                    }
+                }
+
+                if changed {
+                    picker.delegate.notify_pending = true;
+                    if !picker.delegate.notify_scheduled {
+                        picker.delegate.notify_scheduled = true;
+                        let interval_ms = picker.delegate.notify_interval_ms;
+                        picker.delegate.notify_debouncer.fire_new(
+                            Duration::from_millis(interval_ms),
+                            cx,
+                            move |picker, cx| {
+                                if picker.delegate.search_engine.generation() != generation {
+                                    picker.delegate.notify_pending = false;
+                                    picker.delegate.notify_scheduled = false;
+                                    return Task::ready(());
+                                }
+
+                                if picker.delegate.notify_pending {
+                                    cx.notify();
+                                }
+                                picker.delegate.notify_pending = false;
+                                picker.delegate.notify_scheduled = false;
+                                Task::ready(())
+                            },
+                        );
+                    }
+                }
+            }
         }
     }) {
         debug!("quick_search: apply_ui_update failed: {:?}", err);
@@ -2076,9 +2092,10 @@ pub(crate) fn apply_source_event(
             picker.set_selected_index(0, Some(picker::Direction::Down), true, window, cx);
             let current_index = picker.delegate.selected_index();
             if previous_index == current_index {
-                if let Some(action) = picker
-                    .delegate
-                    .selected_index_changed(current_index, window, cx)
+                if let Some(action) =
+                    picker
+                        .delegate
+                        .selected_index_changed(current_index, window, cx)
                 {
                     action(window, cx);
                 }
@@ -2298,7 +2315,11 @@ pub(crate) fn record_error(
     apply_source_event(picker, generation, SourceEvent::Error(message), app);
 }
 
-pub(crate) fn finish_stream(picker: WeakEntity<PickerHandle>, generation: usize, app: &mut AsyncApp) {
+pub(crate) fn finish_stream(
+    picker: WeakEntity<PickerHandle>,
+    generation: usize,
+    app: &mut AsyncApp,
+) {
     apply_source_event(picker, generation, SourceEvent::FinishStream, app);
 }
 
@@ -2389,6 +2410,20 @@ fn apply_patch_to_match(
     );
 }
 
+pub(crate) fn apply_patches_by_key(
+    picker: WeakEntity<PickerHandle>,
+    generation: usize,
+    patches: Vec<(MatchKey, types::QuickMatchPatch)>,
+    app: &mut AsyncApp,
+) {
+    apply_source_event(
+        picker,
+        generation,
+        SourceEvent::ApplyPatchesByKey(patches),
+        app,
+    );
+}
+
 fn set_selected_index_grouped(
     delegate: &mut QuickSearchDelegate,
     ix: usize,
@@ -2449,10 +2484,7 @@ fn render_grouped_file_header(
     _window: &mut Window,
     _cx: &mut Context<Picker<QuickSearchDelegate>>,
 ) -> Option<ListItem> {
-    let is_collapsed = delegate
-        .grouped_list
-        .collapsed_groups
-        .contains(&header.key);
+    let is_collapsed = delegate.grouped_list.collapsed_groups.contains(&header.key);
     let chevron_icon = if is_collapsed {
         IconName::ChevronRight
     } else {
@@ -2532,9 +2564,7 @@ fn render_grouped_file_header(
                     qs.update(cx, |qs, cx| {
                         qs.picker.update(cx, |picker, cx| {
                             if event.modifiers().alt {
-                                picker
-                                    .delegate
-                                    .toggle_all_groups_collapsed(key, cx);
+                                picker.delegate.toggle_all_groups_collapsed(key, cx);
                             } else {
                                 picker.delegate.toggle_group_collapsed(key, cx);
                             }
@@ -2563,14 +2593,9 @@ fn render_grouped_match_row(
     let snippet_known = entry.location_label.is_some()
         || entry.first_line_snippet.is_some()
         || entry.snippet.is_some();
-    let snippet_text = entry
-        .first_line_snippet
-        .as_deref()
-        .or_else(|| entry.snippet.as_deref().and_then(|s| s.lines().next()))
-        .unwrap_or("");
-
-    let snippet_display = snippet_text.trim_start().to_string();
-    let is_blank_line = snippet_known && snippet_display.trim().is_empty();
+    let snippet_shared = snippet_shared_for_entry(entry);
+    let snippet_text = snippet_shared.as_ref();
+    let is_blank_line = snippet_known && snippet_text.trim().is_empty();
 
     let case_sensitive = delegate
         .search_engine
@@ -2581,10 +2606,14 @@ fn render_grouped_match_row(
             .search_engine
             .search_options
             .contains(SearchOptions::REGEX);
-    let snippet_highlights = if do_highlights && !is_blank_line {
-        highlight_indices(&snippet_display, &delegate.current_query, case_sensitive)
+    let snippet_element = if snippet_known && !is_blank_line {
+        syntax_and_match_snippet_element(
+            entry,
+            &snippet_shared,
+            cx,
+        )
     } else {
-        Vec::new()
+        None
     };
 
     let content = h_flex()
@@ -2612,11 +2641,18 @@ fn render_grouped_match_row(
                 .single_line()
                 .into_any_element()
         } else {
-            HighlightedLabel::new(snippet_display, snippet_highlights)
-                .size(LabelSize::Small)
-                .single_line()
-                .truncate()
-                .into_any_element()
+            snippet_element.unwrap_or_else(|| {
+                let snippet_highlights = if do_highlights && !is_blank_line {
+                    highlight_indices(snippet_text, &delegate.current_query, case_sensitive)
+                } else {
+                    Vec::new()
+                };
+                HighlightedLabel::new(snippet_shared.clone(), snippet_highlights)
+                    .size(LabelSize::Small)
+                    .single_line()
+                    .truncate()
+                    .into_any_element()
+            })
         });
 
     Some(
@@ -2647,23 +2683,20 @@ fn render_flat_match_row(
 ) -> Option<ListItem> {
     let entry = delegate.match_list.item(ix)?;
 
-    let distance = delegate.selected_match_index().unwrap_or(0).abs_diff(ix);
-    let within_window = distance <= HIGHLIGHT_WINDOW;
-
     let case_sensitive = delegate
         .search_engine
         .search_options
         .contains(SearchOptions::CASE_SENSITIVE);
-    let do_highlights = within_window && delegate.current_query.len() >= 3;
+    let do_highlights = delegate.current_query.len() >= 3
+        && !delegate
+            .search_engine
+            .search_options
+            .contains(SearchOptions::REGEX);
 
     let (start_icon, content) = match &entry.kind {
         types::QuickMatchKind::ProjectPath { .. } => {
-            let icon = if within_window {
-                FileIcons::get_icon(Path::new(&*entry.file_name), cx)
-                    .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted))
-            } else {
-                None
-            };
+            let icon = FileIcons::get_icon(Path::new(&*entry.file_name), cx)
+                .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
 
             let file_name_positions = entry
                 .file_name_positions
@@ -2695,34 +2728,29 @@ fn render_flat_match_row(
             (icon, content.into_any_element())
         }
         types::QuickMatchKind::Buffer { .. } => {
-            let icon = if within_window {
-                FileIcons::get_icon(Path::new(&*entry.file_name), cx)
-                    .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted))
-            } else {
-                None
-            };
+            let icon = FileIcons::get_icon(Path::new(&*entry.file_name), cx)
+                .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
 
-            let snippet_text = entry
-                .first_line_snippet
-                .as_ref()
-                .map(|s| s.as_ref().to_string())
-                .or_else(|| {
-                    entry
-                        .snippet
-                        .as_ref()
-                        .map(|s| s.lines().next().unwrap_or("").to_string())
-                })
-                .unwrap_or_default();
-            let snippet_highlights = if within_window {
-                highlight_match_range_in_snippet(entry, &snippet_text).unwrap_or_else(|| {
-                    if do_highlights {
-                        highlight_indices(&snippet_text, &delegate.current_query, case_sensitive)
+            let snippet_shared = snippet_shared_for_entry(entry);
+            let snippet_text = snippet_shared.as_ref();
+            let snippet_element = {
+                syntax_and_match_snippet_element(
+                    entry,
+                    &snippet_shared,
+                    cx,
+                )
+                .unwrap_or_else(|| {
+                    let snippet_highlights = if do_highlights {
+                        highlight_indices(snippet_text, &delegate.current_query, case_sensitive)
                     } else {
                         Vec::new()
-                    }
+                    };
+                    HighlightedLabel::new(snippet_shared.clone(), snippet_highlights)
+                        .size(LabelSize::Small)
+                        .single_line()
+                        .truncate()
+                        .into_any_element()
                 })
-            } else {
-                Vec::new()
             };
 
             let content = v_flex()
@@ -2756,12 +2784,7 @@ fn render_flat_match_row(
                                 .truncate(),
                         ),
                 )
-                .child(
-                    HighlightedLabel::new(snippet_text, snippet_highlights)
-                        .size(LabelSize::Small)
-                        .single_line()
-                        .truncate(),
-                );
+                .child(snippet_element);
             (icon, content.into_any_element())
         }
         types::QuickMatchKind::GitCommit { branch, .. } => {

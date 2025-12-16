@@ -1,17 +1,20 @@
-use std::{ops::Range, sync::{Arc, OnceLock, atomic::AtomicBool}};
+use std::{
+    ops::Range,
+    sync::{Arc, OnceLock, atomic::AtomicBool},
+};
 
-use gpui::{App, AppContext as _, Context, WeakEntity};
+use gpui::{App, AppContext, Context, WeakEntity};
 use search::SearchOptions;
 use text::Anchor as TextAnchor;
 use ui::IconName;
 
-use crate::QuickSearchDelegate;
 use crate::PickerHandle;
+use crate::QuickSearchDelegate;
 use crate::preview::{PreviewKey, PreviewRequest};
 use crate::types::{QuickMatch, QuickMatchKind};
-use anyhow::{Context as _, Result};
-use git2::Sort;
+use anyhow::{Context as AnyhowContext, Result};
 use fuzzy::StringMatchCandidate;
+use git2::Sort;
 use log::debug;
 
 use super::{
@@ -25,9 +28,10 @@ fn resolve_git_remote_for_workdir(
     cx: &mut gpui::App,
 ) -> Option<::git::GitRemote> {
     let git_store = project.read(cx).git_store().read(cx);
-    let repo = git_store.repositories().values().find(|repo| {
-        repo.read(cx).work_directory_abs_path.as_ref() == repo_workdir.as_ref()
-    })?;
+    let repo = git_store
+        .repositories()
+        .values()
+        .find(|repo| repo.read(cx).work_directory_abs_path.as_ref() == repo_workdir.as_ref())?;
 
     let snapshot = repo.read(cx).snapshot();
     let remote_url = snapshot
@@ -58,9 +62,11 @@ pub struct GitCommitEntry {
     pub branch: Option<Arc<str>>,
 }
 
-pub fn list_commits_local(repo_workdir: Arc<std::path::Path>, limit: usize) -> Result<Vec<GitCommitEntry>> {
-    let repo =
-        git2::Repository::open(repo_workdir.as_ref()).context("opening git repository")?;
+pub fn list_commits_local(
+    repo_workdir: Arc<std::path::Path>,
+    limit: usize,
+) -> Result<Vec<GitCommitEntry>> {
+    let repo = git2::Repository::open(repo_workdir.as_ref()).context("opening git repository")?;
 
     let branch: Option<Arc<str>> = repo
         .head()
@@ -74,7 +80,9 @@ pub fn list_commits_local(repo_workdir: Arc<std::path::Path>, limit: usize) -> R
     let mut revwalk = repo.revwalk().context("creating git revwalk")?;
     revwalk.push_head().context("pushing HEAD to revwalk")?;
 
-    revwalk.set_sorting(Sort::TIME).context("setting revwalk sorting")?;
+    revwalk
+        .set_sorting(Sort::TIME)
+        .context("setting revwalk sorting")?;
 
     let mut commits = Vec::new();
     for oid in revwalk.take(limit) {
@@ -355,6 +363,8 @@ impl QuickSearchSource for CommitsSource {
                         location_label: Some(author),
                         snippet: Some(subject),
                         first_line_snippet: None,
+                        snippet_match_positions: None,
+                        snippet_syntax_highlights: None,
                         blame: None,
                         kind: QuickMatchKind::GitCommit {
                             repo_workdir: commit.repo_workdir.clone(),
@@ -459,4 +469,3 @@ impl QuickSearchSource for CommitsSource {
         }
     }
 }
-

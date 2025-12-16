@@ -134,4 +134,3 @@ pub fn set_last_source_id(source_id: Arc<str>) {
     let slot = LAST_SOURCE_ID.get_or_init(|| Mutex::new(Arc::from(DEFAULT_SOURCE_ID)));
     *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = source_id;
 }
-

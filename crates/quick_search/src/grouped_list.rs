@@ -101,7 +101,9 @@ impl GroupedListState {
                     project
                         .read(cx)
                         .worktree_for_id(project_path.worktree_id, cx)
-                        .map(|worktree| Arc::<str>::from(worktree.read(cx).root_name_str().to_string()))
+                        .map(|worktree| {
+                            Arc::<str>::from(worktree.read(cx).root_name_str().to_string())
+                        })
                 })
             } else {
                 None
@@ -138,9 +140,9 @@ impl GroupedListState {
     }
 
     pub fn row_index_for_match_id(&self, id: MatchId) -> Option<usize> {
-        self.rows.iter().position(|row| {
-            matches!(row, GroupedRow::LineMatch { match_id } if *match_id == id)
-        })
+        self.rows
+            .iter()
+            .position(|row| matches!(row, GroupedRow::LineMatch { match_id } if *match_id == id))
     }
 
     pub fn toggle_group_collapsed(
@@ -181,4 +183,3 @@ impl GroupedListState {
         self.rebuild(match_list, selection, project, cx)
     }
 }
-

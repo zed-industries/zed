@@ -6,6 +6,7 @@ pub struct MatchList {
     items: Vec<QuickMatch>,
     id_index: HashMap<MatchId, usize>,
     key_index: HashMap<MatchKey, MatchId>,
+    pending_patches_by_key: HashMap<MatchKey, Vec<QuickMatchPatch>>,
     max_results: usize,
     truncated: bool,
 }
@@ -16,6 +17,7 @@ impl MatchList {
             items: Vec::new(),
             id_index: HashMap::new(),
             key_index: HashMap::new(),
+            pending_patches_by_key: HashMap::new(),
             max_results,
             truncated: false,
         }
@@ -25,11 +27,12 @@ impl MatchList {
         self.items.clear();
         self.id_index.clear();
         self.key_index.clear();
+        self.pending_patches_by_key.clear();
         self.truncated = false;
     }
 
     pub fn extend(&mut self, batch: Vec<QuickMatch>) -> bool {
-        for match_item in batch {
+        for mut match_item in batch {
             if self.items.len() >= self.max_results {
                 self.truncated = true;
                 break;
@@ -39,6 +42,11 @@ impl MatchList {
             }
             if self.key_index.contains_key(&match_item.key) {
                 continue;
+            }
+            if let Some(patches) = self.pending_patches_by_key.remove(&match_item.key) {
+                for patch in patches {
+                    match_item.apply_patch(patch);
+                }
             }
             let index = self.items.len();
             let id = match_item.id;
@@ -94,6 +102,20 @@ impl MatchList {
         false
     }
 
+    pub fn update_by_key_or_queue(&mut self, key: MatchKey, patch: QuickMatchPatch) -> bool {
+        let Some(id) = self.id_by_key(key) else {
+            if self.truncated {
+                return false;
+            }
+            self.pending_patches_by_key
+                .entry(key)
+                .or_default()
+                .push(patch);
+            return false;
+        };
+        self.update_by_id(id, patch)
+    }
+
     pub fn sort_by<F>(&mut self, mut compare: F)
     where
         F: FnMut(&QuickMatch, &QuickMatch) -> Ordering,
@@ -108,4 +130,3 @@ impl MatchList {
         }
     }
 }
-

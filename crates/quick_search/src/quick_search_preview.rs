@@ -1,11 +1,11 @@
-use gpui::Entity;
 use super::QuickSearch;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as AnyhowContext, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{
     Addon, Anchor as MultiBufferAnchor, Editor, EditorMode, MultiBuffer, SelectionEffects,
     SizingBehavior, scroll::Autoscroll,
 };
+use gpui::Entity;
 use gpui::{AppContext, Context, IntoElement, Subscription, WeakEntity, Window};
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, ReplicaId, Rope, TextBuffer,
@@ -17,18 +17,21 @@ use project::WorktreeId;
 use std::{
     any::Any,
     ops::Range,
-    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use text::{Anchor as TextAnchor, BufferId, Point, ToPoint};
-use ui::LabelCommon as _;
-use util::ResultExt as _;
+use ui::LabelCommon;
+use util::ResultExt;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
+use crate::GenerationGuard;
 use project::ProjectPath;
 use project::debounced_delay::DebouncedDelay;
-use crate::GenerationGuard;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct PreviewKey(pub u64);

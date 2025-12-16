@@ -10,17 +10,17 @@ use search::SearchOptions;
 use text::{Anchor as TextAnchor, Point};
 use ui::IconName;
 
-use crate::QuickSearchDelegate;
 use crate::PickerHandle;
+use crate::QuickSearchDelegate;
 use crate::preview::PreviewRequest;
 use crate::types::QuickMatch;
 
+#[path = "sources/commits.rs"]
+mod commits;
 #[path = "sources/files.rs"]
 mod files;
 #[path = "sources/text_grep.rs"]
 mod text_grep;
-#[path = "sources/commits.rs"]
-mod commits;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SourceId(pub Arc<str>);
@@ -164,7 +164,10 @@ impl SourceRegistry {
             .find(|source| source.spec().id == *id)
     }
 
-    pub fn source_for_match(&self, selected: &QuickMatch) -> Option<&'static dyn QuickSearchSource> {
+    pub fn source_for_match(
+        &self,
+        selected: &QuickMatch,
+    ) -> Option<&'static dyn QuickSearchSource> {
         let id = SourceId(selected.source_id.clone());
         self.source_for_id(&id)
     }
@@ -226,4 +229,3 @@ impl Default for SourceRegistry {
 pub fn default_source_id() -> SourceId {
     SourceId(Arc::from("grep"))
 }
-

@@ -8,14 +8,17 @@ use search::SearchOptions;
 use text::Anchor as TextAnchor;
 use ui::IconName;
 
-use crate::QuickSearchDelegate;
 use crate::PickerHandle;
+use crate::QuickSearchDelegate;
 use crate::preview::{PreviewKey, PreviewRequest};
 use crate::types::{QuickMatch, QuickMatchKind};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use util::rel_path::RelPath;
 
-use super::{ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId, SourceSpec};
+use super::{
+    ConfirmOutcome, ListPresentation, PreviewPanelUi, QuickSearchSource, SortPolicy, SourceId,
+    SourceSpec,
+};
 
 pub static FILES_SOURCE: FilesSource = FilesSource;
 
@@ -164,6 +167,8 @@ impl QuickSearchSource for FilesSource {
                         location_label: None,
                         snippet: None,
                         first_line_snippet: None,
+                        snippet_match_positions: None,
+                        snippet_syntax_highlights: None,
                         blame: None,
                         kind: QuickMatchKind::ProjectPath { project_path },
                     });
@@ -222,4 +227,3 @@ impl QuickSearchSource for FilesSource {
         }
     }
 }
-
