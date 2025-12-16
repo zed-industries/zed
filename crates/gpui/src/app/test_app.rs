@@ -482,6 +482,15 @@ impl<V: 'static + Render> TestWindow<V> {
             .expect("window not found");
         window.rendered_frame.scene.snapshot()
     }
+
+    /// Get the named diagnostic quads recorded during imperative paint, without inspecting the
+    /// rest of the scene snapshot.
+    ///
+    /// This is useful for tests that want a stable, semantic view of layout/paint geometry without
+    /// coupling to the low-level quad/glyph output.
+    pub fn diagnostic_quads(&self) -> Vec<crate::scene::test_scene::DiagnosticQuad> {
+        self.scene_snapshot().diagnostic_quads
+    }
 }
 
 impl<V> Clone for TestWindow<V> {

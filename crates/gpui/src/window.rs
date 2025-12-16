@@ -760,6 +760,11 @@ impl Frame {
         self.tab_stops.clear();
         self.focus = None;
 
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.debug_bounds.clear();
+        }
+
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
             self.next_inspector_instance_ids.clear();
@@ -2944,6 +2949,41 @@ impl Window {
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
         });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    /// Record a named diagnostic quad for test/debug snapshots.
+    ///
+    /// This is intended for debugging and asserting against imperative painting logic. The
+    /// recorded quad does not affect rendering; it is captured alongside the rendered scene and
+    /// exposed via `scene_snapshot()`.
+    pub fn record_diagnostic_quad(
+        &mut self,
+        name: impl Into<SharedString>,
+        bounds: Bounds<Pixels>,
+        color: Option<Hsla>,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        self.next_frame.scene.diagnostic_quads.push(crate::test_scene::DiagnosticQuad {
+            name: name.into(),
+            bounds: bounds.scale(scale_factor),
+            color,
+        });
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    #[inline]
+    /// Record a named diagnostic quad for test/debug snapshots.
+    ///
+    /// This is a no-op unless tests or the `test-support` feature are enabled.
+    pub fn record_diagnostic_quad(
+        &mut self,
+        _name: impl Into<SharedString>,
+        _bounds: Bounds<Pixels>,
+        _color: Option<Hsla>,
+    ) {
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.

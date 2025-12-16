@@ -23,7 +23,7 @@ pub(crate) type DrawOrder = u32;
 /// Test-only scene snapshot for inspecting rendered content.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scene {
-    use crate::{Bounds, Hsla, Point, ScaledPixels};
+    use crate::{Bounds, Hsla, Point, ScaledPixels, SharedString};
 
     /// A rendered quad (background, border, cursor, selection, etc.)
     #[derive(Debug, Clone)]
@@ -34,6 +34,19 @@ pub mod test_scene {
         pub background_color: Option<Hsla>,
         /// Border color.
         pub border_color: Hsla,
+    }
+
+    /// A named diagnostic quad for tests and debugging of imperative paint logic.
+    ///
+    /// This is not necessarily a "real" painted quad; it is metadata recorded alongside a scene.
+    #[derive(Debug, Clone)]
+    pub struct DiagnosticQuad {
+        /// A stable name that test code can filter by.
+        pub name: SharedString,
+        /// Bounds in scaled pixels.
+        pub bounds: Bounds<ScaledPixels>,
+        /// Optional color hint (useful when visualizing).
+        pub color: Option<Hsla>,
     }
 
     /// A rendered text glyph.
@@ -54,6 +67,8 @@ pub mod test_scene {
         pub quads: Vec<RenderedQuad>,
         /// All rendered text glyphs.
         pub glyphs: Vec<RenderedGlyph>,
+        /// Named diagnostic quads recorded by imperative drawing code for tests/debugging.
+        pub diagnostic_quads: Vec<DiagnosticQuad>,
         /// Number of shadow primitives.
         pub shadow_count: usize,
         /// Number of path primitives.
@@ -108,9 +123,10 @@ pub mod test_scene {
         /// Debug summary string.
         pub fn summary(&self) -> String {
             format!(
-                "quads: {}, glyphs: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
+                "quads: {}, glyphs: {}, diagnostic_quads: {}, shadows: {}, paths: {}, underlines: {}, polychrome: {}, surfaces: {}",
                 self.quads.len(),
                 self.glyphs.len(),
+                self.diagnostic_quads.len(),
                 self.shadow_count,
                 self.path_count,
                 self.underline_count,
@@ -136,6 +152,8 @@ pub(crate) struct Scene {
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<PaintSurface>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) diagnostic_quads: Vec<test_scene::DiagnosticQuad>,
 }
 
 impl Scene {
@@ -150,6 +168,8 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        #[cfg(any(test, feature = "test-support"))]
+        self.diagnostic_quads.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -254,6 +274,7 @@ impl Scene {
         SceneSnapshot {
             quads,
             glyphs,
+            diagnostic_quads: self.diagnostic_quads.clone(),
             shadow_count: self.shadows.len(),
             path_count: self.paths.len(),
             underline_count: self.underlines.len(),
@@ -272,6 +293,10 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+
+        #[cfg(any(test, feature = "test-support"))]
+        self.diagnostic_quads
+            .sort_by(|a, b| a.name.as_ref().cmp(b.name.as_ref()));
     }
 
     #[cfg_attr(
