@@ -11410,100 +11410,86 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_snapshot = self.display_snapshot(cx);
-        let selections = self.selections.all_adjusted(&display_snapshot);
-        let initial_cursors: Vec<Point> = selections
+
+        struct CursorData {
+            anchor: Anchor,
+            point: Point,
+        }
+        let cursor_data: Vec<CursorData> = self
+            .selections
+            .disjoint_anchors()
             .iter()
             .map(|selection| {
-                if selection.reversed {
+                let anchor = if selection.reversed {
                     selection.head()
                 } else {
                     selection.tail()
+                };
+                CursorData {
+                    anchor: anchor,
+                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
                 }
             })
             .collect();
 
-        // Group cursors by row: (row_number, cursor_count, mut column_offset)
-        let mut rows = Vec::new();
-        let mut current_row = None;
-        let mut current_row_count = 0;
-        for cursor in &initial_cursors {
-            match current_row {
-                Some(row) if row == cursor.row => {
-                    current_row_count += 1;
-                }
-                _ => {
-                    // Save previous row if any
-                    if let Some(row) = current_row {
-                        rows.push((row, current_row_count, 0));
-                    }
-                    // Start new row
-                    current_row = Some(cursor.row);
-                    current_row_count = 1;
-                }
-            }
-        }
-        // Save the last row
-        if let Some(row) = current_row {
-            rows.push((row, current_row_count, 0));
-        }
+        let rows_anchors_count: Vec<usize> = cursor_data
+            .iter()
+            .map(|cursor| cursor.point.row)
+            .chunk_by(|&row| row)
+            .into_iter()
+            .map(|(_, group)| group.count())
+            .collect();
+        let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
+        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut edits = Vec::new();
 
-        let max_columns = rows.iter().map(|(_, count, _)| *count).max().unwrap_or(0);
         for column_idx in 0..max_columns {
-            let mut target_column = 0;
             let mut cursor_index = 0;
 
             // Calculate target_column => position that the selections will go
-            for (row_num, cursor_count, column_offset) in &rows {
+            let mut target_column = 0;
+            for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
                     cursor_index += cursor_count;
                     continue;
                 }
 
-                let cursor = &initial_cursors[cursor_index + column_idx];
-                if cursor.row == *row_num {
-                    let adjusted_column = cursor.column + column_offset;
-                    if adjusted_column > target_column {
-                        target_column = adjusted_column;
-                    }
+                let point = &cursor_data[cursor_index + column_idx].point;
+                let adjusted_column = point.column + rows_column_offset[row_idx];
+                if adjusted_column > target_column {
+                    target_column = adjusted_column;
                 }
                 cursor_index += cursor_count;
             }
 
             // Collect edits for this column
-            let mut edits = Vec::new();
             cursor_index = 0;
-            for (row_num, cursor_count, column_offset) in &mut rows {
+            for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
                     cursor_index += *cursor_count;
                     continue;
                 }
 
-                let cursor = &initial_cursors[cursor_index + column_idx];
-                if cursor.row == *row_num {
-                    let spaces_needed = target_column - cursor.column - *column_offset;
-                    if spaces_needed > 0 {
-                        let insertion_point = Point {
-                            row: cursor.row,
-                            column: cursor.column + *column_offset,
-                        };
-                        edits.push((
-                            insertion_point..insertion_point,
-                            " ".repeat(spaces_needed as usize),
-                        ));
-                    }
-                    *column_offset += spaces_needed;
+                let point = &cursor_data[cursor_index + column_idx].point;
+                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                if spaces_needed > 0 {
+                    let anchor = cursor_data[cursor_index + column_idx]
+                        .anchor
+                        .bias_left(&display_snapshot);
+                    edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
                 }
+                rows_column_offset[row_idx] += spaces_needed;
+
                 cursor_index += *cursor_count;
             }
+        }
 
-            // Apply edits for this column
-            if !edits.is_empty() {
-                self.transact(window, cx, |editor, _window, cx| {
-                    editor.edit(edits, cx);
-                });
-            }
+        if !edits.is_empty() {
+            self.transact(window, cx, |editor, _window, cx| {
+                editor.edit(edits, cx);
+            });
         }
     }
 

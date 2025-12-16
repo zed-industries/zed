@@ -29312,4 +29312,25 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
     cx.set_state(before);
     cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
+
+    // 3) A aligned column shall stay aligned
+    let before = indoc!(
+        r#"
+            $ ˇa    ˇa
+            $  ˇa   ˇa
+            $   ˇa  ˇa
+            $    ˇa ˇa
+        "#
+    );
+    let after = indoc!(
+        r#"
+            $    ˇa    ˇa
+            $    ˇa    ˇa
+            $    ˇa    ˇa
+            $    ˇa    ˇa
+        "#
+    );
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
 }
