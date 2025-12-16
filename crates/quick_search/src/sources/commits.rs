@@ -345,6 +345,7 @@ impl QuickSearchSource for CommitsSource {
                         id: 0,
                         key: crate::types::MatchKey(0),
                         source_id: source_id.clone(),
+                        group: None,
                         path_label,
                         display_path,
                         display_path_positions: None,

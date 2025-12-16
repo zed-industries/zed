@@ -19,13 +19,10 @@ use async_channel::Receiver;
 use file_icons::FileIcons;
 use gpui::AsyncApp;
 use project::search::SearchResult;
-use std::ops::Range;
 use std::path;
 use std::path::Path;
 use std::{sync::Arc, time::Duration};
 use std::sync::atomic::{AtomicBool, Ordering};
-use text::{Anchor as TextAnchor, Point, ToPoint};
-use util::paths::PathStyle;
 
 use search::{
     SearchOptions, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleWholeWord,
@@ -40,7 +37,7 @@ use gpui::SharedString;
 use language::Buffer;
 use log::debug;
 use picker::{Picker, PickerDelegate};
-use project::{Project, ProjectPath, debounced_delay::DebouncedDelay};
+use project::{Project, debounced_delay::DebouncedDelay};
 use settings::{Settings, SettingsStore};
 use ::git::GitRemote;
 use git_ui::commit_tooltip::CommitAvatar;
@@ -979,13 +976,13 @@ impl QuickSearchDelegate {
         }
     }
 
-    fn toggle_group_collapsed(&mut self, project_path: &ProjectPath, cx: &App) {
+    fn toggle_group_collapsed(&mut self, key: types::GroupKey, cx: &App) {
         let selected_id = self.selection.and_then(|k| self.match_list.id_by_key(k));
         let selected_row = self.grouped_list.toggle_group_collapsed(
             &mut self.match_list,
             selected_id,
             &self.project,
-            project_path,
+            key,
             cx,
         );
         if selected_row.is_none() {
@@ -1000,7 +997,7 @@ impl QuickSearchDelegate {
         }
     }
 
-    fn toggle_all_groups_collapsed(&mut self, clicked: &ProjectPath, cx: &App) {
+    fn toggle_all_groups_collapsed(&mut self, clicked: types::GroupKey, cx: &App) {
         let selected_id = self.selection.and_then(|k| self.match_list.id_by_key(k));
         let selected_row = self.grouped_list.toggle_all_groups_collapsed(
             &mut self.match_list,
@@ -1125,25 +1122,6 @@ pub(crate) fn highlight_match_range_in_snippet(
     (!indices.is_empty()).then_some(indices)
 }
 
-fn elide_path(segments: &[Arc<str>]) -> Arc<str> {
-    const MAX_SEGMENTS: usize = 5;
-    if segments.is_empty() {
-        return Arc::<str>::from("");
-    }
-    if segments.len() <= MAX_SEGMENTS {
-        return Arc::<str>::from(segments.join("/"));
-    }
-
-    let head = &segments[0];
-    let tail_count = MAX_SEGMENTS.saturating_sub(1);
-    let tail_start = segments.len().saturating_sub(tail_count);
-    let mut parts = Vec::with_capacity(2 + tail_count);
-    parts.push(head.clone());
-    parts.push(Arc::<str>::from("…"));
-    parts.extend_from_slice(&segments[tail_start..]);
-    Arc::<str>::from(parts.join("/"))
-}
-
 fn find_case_insensitive_unicode(text: &str, query: &str) -> Vec<usize> {
     if query.is_empty() {
         return Vec::new();
@@ -1186,16 +1164,6 @@ fn stable_source_button_id(id: &source::SourceId) -> u32 {
         hash = hash.wrapping_mul(0x0100_0193);
     }
     hash
-}
-
-pub(crate) fn clip_snippet(text: &str) -> String {
-    for (count, (idx, _)) in text.char_indices().enumerate() {
-        if count == MAX_SNIPPET_CHARS {
-            let clipped = &text[..idx];
-            return format!("{clipped}.");
-        }
-    }
-    text.to_string()
 }
 
 impl PickerDelegate for QuickSearchDelegate {
@@ -2347,115 +2315,6 @@ pub(crate) fn flush_batch(
     apply_source_event(picker, generation, SourceEvent::AppendMatches(drained), app);
 }
 
-pub(crate) fn build_matches_fg(
-    app: &mut AsyncApp,
-    buffer: &Entity<language::Buffer>,
-    ranges: Vec<Range<TextAnchor>>,
-    path_style: &PathStyle,
-    source_id: Arc<str>,
-) -> Option<Vec<QuickMatch>> {
-    let snapshot = match app.read_entity(buffer, |b, _| b.snapshot()) {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-
-    let path_label: Arc<str> = app
-        .read_entity(buffer, |b, _cx| {
-            b.file()
-                .map(|f| f.path().display(*path_style).to_string())
-                .unwrap_or_else(|| "<untitled>".into())
-        })
-        .map(Arc::from)
-        .unwrap_or_else(|_| Arc::<str>::from("<untitled>"));
-
-    let file_name: Arc<str> = path_label
-        .rsplit_once(path::MAIN_SEPARATOR)
-        .map(|(_, name)| Arc::<str>::from(name))
-        .or_else(|| {
-            path_label
-                .rsplit_once('/')
-                .map(|(_, name)| Arc::<str>::from(name))
-        })
-        .unwrap_or_else(|| path_label.clone());
-    let path_segments = split_path_segments(&path_label);
-    let buffer_id = snapshot.text.remote_id();
-    let display_path: Arc<str> = elide_path(&path_segments);
-
-    let mut per_line: std::collections::HashMap<u32, Vec<(u32, Range<TextAnchor>)>> =
-        std::collections::HashMap::new();
-    let mut line_order: Vec<u32> = Vec::new();
-    for range in ranges {
-        let start = range.start.to_point(&snapshot.text);
-        let row = start.row;
-        if !per_line.contains_key(&row) {
-            line_order.push(row);
-        }
-        per_line.entry(row).or_default().push((start.column, range));
-    }
-
-    let mut line_cache: std::collections::HashMap<u32, Arc<str>> = std::collections::HashMap::new();
-    let mut matches = Vec::with_capacity(line_order.len());
-    for row in line_order {
-        let mut items = match per_line.remove(&row) {
-            Some(v) => v,
-            None => continue,
-        };
-        items.sort_by_key(|(col, _)| *col);
-
-        let mut ranges_for_line = Vec::with_capacity(items.len());
-        for (_, r) in &items {
-            ranges_for_line.push(r.clone());
-        }
-
-        let (first_col, first_range) = &items[0];
-        let start_point = first_range.start.to_point(&snapshot.text);
-        let end_point = first_range.end.to_point(&snapshot.text);
-        let location_label: Option<Arc<str>> =
-            Some(format!(":{}:{}", row + 1, first_col + 1).into());
-
-        let snippet: Arc<str> = line_cache
-            .entry(row)
-            .or_insert_with(|| {
-                let max_row = snapshot.text.max_point().row;
-                let row = row.min(max_row);
-                let line_start = Point::new(row, 0);
-                let line_end = Point::new(row, snapshot.text.line_len(row));
-                let mut line_text = String::new();
-                for part in snapshot.text.text_for_range(line_start..line_end) {
-                    line_text.push_str(part);
-                }
-                let clipped = clip_snippet(line_text.trim_end());
-                Arc::<str>::from(clipped)
-            })
-            .clone();
-
-        matches.push(QuickMatch {
-            id: 0,
-            key: types::MatchKey(0),
-            source_id: source_id.clone(),
-            path_label: path_label.clone(),
-            display_path: display_path.clone(),
-            display_path_positions: None,
-            path_segments: path_segments.clone(),
-            file_name: file_name.clone(),
-            file_name_positions: None,
-            location_label,
-            snippet: Some(snippet.clone()),
-            first_line_snippet: Some(snippet),
-            blame: None,
-            kind: types::QuickMatchKind::Buffer {
-                buffer: buffer.clone(),
-                ranges: ranges_for_line,
-                buffer_id,
-                position: Some((row, start_point.column)),
-                position_end: Some((end_point.row, end_point.column)),
-            },
-        });
-    }
-
-    Some(matches)
-}
-
 pub(crate) fn split_path_segments(path_label: &str) -> Arc<[Arc<str>]> {
     if path_label.is_empty() {
         return Arc::from(Box::<[Arc<str>]>::default());
@@ -2588,24 +2447,27 @@ fn render_grouped_file_header(
     header: GroupedFileHeader,
     ix: usize,
     _window: &mut Window,
-    cx: &mut Context<Picker<QuickSearchDelegate>>,
+    _cx: &mut Context<Picker<QuickSearchDelegate>>,
 ) -> Option<ListItem> {
     let is_collapsed = delegate
         .grouped_list
-        .collapsed_files
-        .contains(&header.project_path);
+        .collapsed_groups
+        .contains(&header.key);
     let chevron_icon = if is_collapsed {
         IconName::ChevronRight
     } else {
         IconName::ChevronDown
     };
 
-    let file_icon = FileIcons::get_icon(Path::new(header.file_name.as_ref()), cx)
+    let file_icon = header
+        .header
+        .icon_path
+        .clone()
         .map(Icon::from_path)
-        .unwrap_or_else(|| Icon::new(IconName::File));
+        .unwrap_or_else(|| Icon::new(header.header.icon_name));
 
     let quick_search = delegate.quick_search.clone();
-    let project_path = header.project_path.clone();
+    let key = header.key;
 
     let right = h_flex()
         .gap_1()
@@ -2647,14 +2509,14 @@ fn render_grouped_file_header(
                             )
                             .child(file_icon.color(Color::Muted).size(ui::IconSize::Small))
                             .child(
-                                Label::new(header.file_name)
+                                Label::new(header.header.title.clone())
                                     .size(LabelSize::Small)
                                     .single_line()
                                     .truncate(),
                             )
-                            .when(!header.parent_path.is_empty(), |this| {
+                            .when_some(header.header.subtitle.as_ref(), |this, subtitle| {
                                 this.child(
-                                    Label::new(header.parent_path)
+                                    Label::new(subtitle.clone())
                                         .size(LabelSize::Small)
                                         .color(Color::Muted)
                                         .single_line()
@@ -2672,9 +2534,9 @@ fn render_grouped_file_header(
                             if event.modifiers().alt {
                                 picker
                                     .delegate
-                                    .toggle_all_groups_collapsed(&project_path, cx);
+                                    .toggle_all_groups_collapsed(key, cx);
                             } else {
-                                picker.delegate.toggle_group_collapsed(&project_path, cx);
+                                picker.delegate.toggle_group_collapsed(key, cx);
                             }
                             cx.notify();
                         });

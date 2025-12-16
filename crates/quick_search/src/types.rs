@@ -1,14 +1,39 @@
-use gpui::{Entity, Img};
+use gpui::{Entity, Img, SharedString};
 use language::Buffer;
+use collections::FxHasher;
 use project::ProjectPath;
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{
+    hash::{Hash, Hasher},
+    ops::Range,
+    path::Path,
+    sync::Arc,
+};
 use text::{Anchor as TextAnchor, BufferId};
+use ui::IconName;
 
 pub type MatchId = u64;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct MatchKey(pub u64);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct GroupKey(pub u64);
+
+#[derive(Clone)]
+pub struct GroupHeader {
+    pub icon_name: IconName,
+    pub icon_path: Option<SharedString>,
+    pub title: Arc<str>,
+    pub subtitle: Option<Arc<str>>,
+}
+
+#[derive(Clone)]
+pub struct GroupInfo {
+    pub key: GroupKey,
+    pub header: GroupHeader,
+}
 
 #[derive(Clone, Debug, Default)]
 pub enum PatchValue<T> {
@@ -33,6 +58,7 @@ pub struct QuickMatchPatch {
 pub enum QuickMatchKind {
     Buffer {
         buffer: Entity<Buffer>,
+        project_path: Option<ProjectPath>,
         ranges: Vec<Range<TextAnchor>>,
         buffer_id: BufferId,
         position: Option<(u32, u32)>,
@@ -54,6 +80,7 @@ pub struct QuickMatch {
     pub id: MatchId,
     pub key: MatchKey,
     pub source_id: Arc<str>,
+    pub group: Option<Arc<GroupInfo>>,
     pub path_label: Arc<str>,
     pub display_path: Arc<str>,
     pub display_path_positions: Option<Arc<[usize]>>,
@@ -67,62 +94,49 @@ pub struct QuickMatch {
     pub kind: QuickMatchKind,
 }
 
+fn hash_part<H: Hasher, T: Hash>(hasher: &mut H, value: &T) {
+    value.hash(hasher);
+    0u8.hash(hasher);
+}
+
 pub fn compute_match_key(quick_match: &QuickMatch) -> MatchKey {
-    use std::hash::{Hash, Hasher};
-
-    struct FnvHasher(u64);
-
-    impl FnvHasher {
-        const OFFSET: u64 = 0xcbf29ce484222325;
-        const PRIME: u64 = 0x100000001b3;
-
-        fn new() -> Self {
-            Self(Self::OFFSET)
-        }
-    }
-
-    impl Hasher for FnvHasher {
-        fn finish(&self) -> u64 {
-            self.0
-        }
-
-        fn write(&mut self, bytes: &[u8]) {
-            for byte in bytes {
-                self.0 ^= *byte as u64;
-                self.0 = self.0.wrapping_mul(Self::PRIME);
-            }
-        }
-    }
-
-    let mut hasher = FnvHasher::new();
-    quick_match.source_id.hash(&mut hasher);
-    0u8.hash(&mut hasher);
+    let mut hasher = FxHasher::default();
+    hash_part(&mut hasher, &quick_match.source_id);
 
     match &quick_match.kind {
         QuickMatchKind::ProjectPath { project_path } => {
-            b"path".hash(&mut hasher);
-            project_path.worktree_id.to_proto().hash(&mut hasher);
-            project_path.path.as_unix_str().hash(&mut hasher);
+            hash_part(&mut hasher, b"path");
+            hash_part(&mut hasher, &project_path.worktree_id.to_proto());
+            hash_part(&mut hasher, &project_path.path.as_unix_str());
         }
         QuickMatchKind::Buffer {
             buffer_id, position, ..
         } => {
-            b"buf".hash(&mut hasher);
+            hash_part(&mut hasher, b"buf");
             let id_u64: u64 = (*buffer_id).into();
-            id_u64.hash(&mut hasher);
+            hash_part(&mut hasher, &id_u64);
             let row: u32 = position.map(|(row, _)| row).unwrap_or(0);
-            row.hash(&mut hasher);
+            hash_part(&mut hasher, &row);
         }
         QuickMatchKind::GitCommit {
             repo_workdir, sha, ..
         } => {
-            b"commit".hash(&mut hasher);
-            repo_workdir.to_string_lossy().hash(&mut hasher);
-            sha.hash(&mut hasher);
+            hash_part(&mut hasher, b"commit");
+            hash_part(&mut hasher, &repo_workdir.to_string_lossy());
+            hash_part(&mut hasher, sha);
         }
     }
 
     MatchKey(hasher.finish())
+}
+
+pub fn compute_group_key_for_project_path(source_id: &Arc<str>, project_path: &ProjectPath) -> GroupKey {
+    let mut hasher = FxHasher::default();
+    hash_part(&mut hasher, source_id);
+    hash_part(&mut hasher, b"group");
+    hash_part(&mut hasher, &project_path.worktree_id.to_proto());
+    hash_part(&mut hasher, &project_path.path.as_unix_str());
+    GroupKey(hasher.finish())
 }
 
 impl QuickMatch {
@@ -157,6 +171,14 @@ impl QuickMatch {
     pub fn position_end(&self) -> Option<(u32, u32)> {
         match &self.kind {
             QuickMatchKind::Buffer { position_end, .. } => *position_end,
+            _ => None,
+        }
+    }
+
+    pub fn project_path(&self) -> Option<&ProjectPath> {
+        match &self.kind {
+            QuickMatchKind::ProjectPath { project_path } => Some(project_path),
+            QuickMatchKind::Buffer { project_path, .. } => project_path.as_ref(),
             _ => None,
         }
     }

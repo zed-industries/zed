@@ -1,18 +1,23 @@
 use std::{
     ops::Range,
+    path,
+    path::Path,
     sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 
-use gpui::{App, AppContext as _, Context, WeakEntity};
+use file_icons::FileIcons;
+use gpui::{App, AppContext as _, AsyncApp, Context, WeakEntity};
+use language::Buffer;
 use search::SearchOptions;
-use text::{Anchor as TextAnchor, ToPoint};
+use text::{Anchor as TextAnchor, Point, ToPoint};
 use ui::IconName;
 
 use crate::QuickSearchDelegate;
 use crate::PickerHandle;
 use crate::preview::{PreviewKey, PreviewRequest};
-use crate::types::{QuickMatch, QuickMatchKind};
+use crate::types::{GroupHeader, GroupInfo, QuickMatch, QuickMatchKind};
 use log::debug;
+use project::ProjectPath;
 use project::search::{SearchQuery, SearchResult};
 use smol::future::yield_now;
 use util::paths::{PathMatcher, PathStyle};
@@ -160,12 +165,12 @@ impl QuickSearchSource for TextGrepSource {
 
                     match result {
                         SearchResult::Buffer { buffer, ranges } => {
-                            if let Some(matches) = crate::build_matches_fg(
+                            if let Some(matches) = build_matches_for_buffer(
                                 &mut app,
                                 &buffer,
                                 ranges,
                                 &path_style,
-                                source_id.clone(),
+                                &source_id,
                             ) {
                                 batch.extend(matches);
                                 if batch.len() >= crate::RESULTS_BATCH_SIZE {
@@ -330,5 +335,177 @@ impl QuickSearchSource for TextGrepSource {
                 .unwrap_or_default(),
         }
     }
+}
+
+fn elide_path(segments: &[Arc<str>]) -> Arc<str> {
+    const MAX_SEGMENTS: usize = 5;
+    if segments.is_empty() {
+        return Arc::<str>::from("");
+    }
+    if segments.len() <= MAX_SEGMENTS {
+        return Arc::<str>::from(segments.join("/"));
+    }
+
+    let head = &segments[0];
+    let tail_count = MAX_SEGMENTS.saturating_sub(1);
+    let tail_start = segments.len().saturating_sub(tail_count);
+    let mut parts = Vec::with_capacity(2 + tail_count);
+    parts.push(head.clone());
+    parts.push(Arc::<str>::from("…"));
+    parts.extend_from_slice(&segments[tail_start..]);
+    Arc::<str>::from(parts.join("/"))
+}
+
+fn clip_snippet(text: &str) -> String {
+    for (count, (idx, _)) in text.char_indices().enumerate() {
+        if count == crate::MAX_SNIPPET_CHARS {
+            let clipped = &text[..idx];
+            return format!("{clipped}.");
+        }
+    }
+    text.to_string()
+}
+
+fn build_matches_for_buffer(
+    app: &mut AsyncApp,
+    buffer: &gpui::Entity<Buffer>,
+    ranges: Vec<Range<TextAnchor>>,
+    path_style: &PathStyle,
+    source_id: &Arc<str>,
+) -> Option<Vec<QuickMatch>> {
+    let snapshot = match app.read_entity(buffer, |b, _| b.snapshot()) {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+
+    let (project_path, path_label): (Option<ProjectPath>, Arc<str>) = app
+        .read_entity(buffer, |b, cx| {
+            let Some(file) = b.file() else {
+                return (None, Arc::<str>::from("<untitled>"));
+            };
+            let project_path = ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            };
+            let path_label: Arc<str> =
+                Arc::<str>::from(file.path().display(*path_style).to_string());
+            (Some(project_path), path_label)
+        })
+        .unwrap_or((None, Arc::<str>::from("<untitled>")));
+
+    let file_name: Arc<str> = path_label
+        .rsplit_once(path::MAIN_SEPARATOR)
+        .map(|(_, name)| Arc::<str>::from(name))
+        .or_else(|| path_label.rsplit_once('/').map(|(_, name)| Arc::<str>::from(name)))
+        .unwrap_or_else(|| path_label.clone());
+
+    let path_segments = crate::split_path_segments(&path_label);
+    let buffer_id = snapshot.text.remote_id();
+    let display_path: Arc<str> = elide_path(&path_segments);
+
+    let group: Option<Arc<GroupInfo>> = project_path.as_ref().map(|project_path| {
+        let title: Arc<str> = project_path
+            .path
+            .file_name()
+            .map(|name| Arc::<str>::from(name.to_string()))
+            .unwrap_or_else(|| Arc::<str>::from(project_path.path.as_unix_str().to_string()));
+        let subtitle: Option<Arc<str>> = project_path.path.parent().and_then(|path| {
+            let s = path.as_unix_str().to_string();
+            (!s.is_empty()).then(|| Arc::<str>::from(s))
+        });
+        let icon_path = app
+            .update({
+                let file_name = file_name.clone();
+                move |cx| FileIcons::get_icon(Path::new(file_name.as_ref()), cx)
+            })
+            .ok()
+            .flatten();
+
+        Arc::new(GroupInfo {
+            key: crate::types::compute_group_key_for_project_path(source_id, project_path),
+            header: GroupHeader {
+                icon_name: IconName::File,
+                icon_path,
+                title,
+                subtitle,
+            },
+        })
+    });
+
+    let mut per_line: std::collections::HashMap<u32, Vec<(u32, Range<TextAnchor>)>> =
+        std::collections::HashMap::new();
+    let mut line_order: Vec<u32> = Vec::new();
+    for range in ranges {
+        let start = range.start.to_point(&snapshot.text);
+        let row = start.row;
+        if !per_line.contains_key(&row) {
+            line_order.push(row);
+        }
+        per_line.entry(row).or_default().push((start.column, range));
+    }
+
+    let mut line_cache: std::collections::HashMap<u32, Arc<str>> = std::collections::HashMap::new();
+    let mut matches = Vec::with_capacity(line_order.len());
+    for row in line_order {
+        let mut items = match per_line.remove(&row) {
+            Some(v) => v,
+            None => continue,
+        };
+        items.sort_by_key(|(col, _)| *col);
+
+        let mut ranges_for_line = Vec::with_capacity(items.len());
+        for (_, r) in &items {
+            ranges_for_line.push(r.clone());
+        }
+
+        let (first_col, first_range) = &items[0];
+        let start_point = first_range.start.to_point(&snapshot.text);
+        let end_point = first_range.end.to_point(&snapshot.text);
+        let location_label: Option<Arc<str>> =
+            Some(format!(":{}:{}", row + 1, first_col + 1).into());
+
+        let snippet: Arc<str> = line_cache
+            .entry(row)
+            .or_insert_with(|| {
+                let max_row = snapshot.text.max_point().row;
+                let row = row.min(max_row);
+                let line_start = Point::new(row, 0);
+                let line_end = Point::new(row, snapshot.text.line_len(row));
+                let mut line_text = String::new();
+                for part in snapshot.text.text_for_range(line_start..line_end) {
+                    line_text.push_str(part);
+                }
+                let clipped = clip_snippet(line_text.trim_end());
+                Arc::<str>::from(clipped)
+            })
+            .clone();
+
+        matches.push(QuickMatch {
+            id: 0,
+            key: crate::types::MatchKey(0),
+            source_id: source_id.clone(),
+            group: group.clone(),
+            path_label: path_label.clone(),
+            display_path: display_path.clone(),
+            display_path_positions: None,
+            path_segments: path_segments.clone(),
+            file_name: file_name.clone(),
+            file_name_positions: None,
+            location_label,
+            snippet: Some(snippet.clone()),
+            first_line_snippet: Some(snippet),
+            blame: None,
+            kind: crate::types::QuickMatchKind::Buffer {
+                buffer: buffer.clone(),
+                project_path: project_path.clone(),
+                ranges: ranges_for_line,
+                buffer_id,
+                position: Some((row, start_point.column)),
+                position_end: Some((end_point.row, end_point.column)),
+            },
+        });
+    }
+
+    Some(matches)
 }
 
