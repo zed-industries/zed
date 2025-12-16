@@ -100,13 +100,26 @@ actions!(
 pub struct TerminalRenameEditor {
     editor: Entity<Editor>,
     terminal_view: WeakEntity<TerminalView>,
+    _on_blur_subscription: Subscription,
 }
 
 impl TerminalRenameEditor {
-    pub fn new(editor: Entity<Editor>, terminal_view: WeakEntity<TerminalView>) -> Self {
+    pub fn new(
+        editor: Entity<Editor>,
+        terminal_view: WeakEntity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = editor.focus_handle(cx);
+        let on_blur_subscription =
+            cx.on_blur(&focus_handle, window, |this: &mut Self, window, cx| {
+                this.cancel(&Cancel, window, cx);
+            });
+
         Self {
             editor,
             terminal_view,
+            _on_blur_subscription: on_blur_subscription,
         }
     }
 
@@ -442,7 +455,8 @@ impl TerminalView {
         });
 
         let terminal_view = cx.entity().downgrade();
-        let rename_editor = cx.new(|_cx| TerminalRenameEditor::new(editor, terminal_view));
+        let rename_editor =
+            cx.new(|cx| TerminalRenameEditor::new(editor, terminal_view, window, cx));
 
         let focus_handle = rename_editor.focus_handle(cx);
         window.focus(&focus_handle);
