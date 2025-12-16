@@ -133,7 +133,8 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             completion.range.clone(),
             Arc::from(completion.text.as_ref()),
         )];
-        let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)?;
+        let edits = interpolate_edits(&completion.snapshot, &buffer.snapshot(), &edits)
+            .filter(|edits| !edits.is_empty())?;
 
         Some(EditPrediction::Local {
             id: None,
@@ -160,7 +161,7 @@ fn trim_completion(
     );
     completion_range.end = completion_range.end.saturating_sub(suffix_len);
     let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-    if completion_text.trim().is_empty() {
+    if !completion_range.is_empty() || completion_text.trim().is_empty() {
         None
     } else {
         let completion_range =
@@ -429,9 +430,11 @@ mod tests {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
-
             // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
             editor.tab(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -636,17 +639,29 @@ mod tests {
             assert_eq!(editor.text(cx), "one\ntw\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\nt\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\n\nthree\n");
 
             // Deleting across the original suggestion range invalidates it.
             editor.backspace(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
             assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\nthree\n");
             assert_eq!(editor.text(cx), "one\nthree\n");
