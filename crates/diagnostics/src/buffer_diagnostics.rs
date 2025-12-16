@@ -175,7 +175,7 @@ impl BufferDiagnosticsEditor {
                     // `BufferDiagnosticsEditor` instance.
                     EditorEvent::Focused => {
                         if buffer_diagnostics_editor.multibuffer.read(cx).is_empty() {
-                            window.focus(&buffer_diagnostics_editor.focus_handle);
+                            window.focus(&buffer_diagnostics_editor.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => {
@@ -517,7 +517,7 @@ impl BufferDiagnosticsEditor {
                                 .editor
                                 .read(cx)
                                 .focus_handle(cx)
-                                .focus(window);
+                                .focus(window, cx);
                         }
                     }
                 }
@@ -617,7 +617,7 @@ impl BufferDiagnosticsEditor {
         // not empty, focus on the editor instead, which will allow the user to
         // start interacting and editing the buffer's contents.
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 

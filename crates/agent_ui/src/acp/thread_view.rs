@@ -256,7 +256,7 @@ impl ThreadFeedbackState {
             editor
         });
 
-        editor.read(cx).focus_handle(cx).focus(window);
+        editor.read(cx).focus_handle(cx).focus(window, cx);
         editor
     }
 }
@@ -674,7 +674,7 @@ impl AcpThreadView {
                             })
                         });
 
-                        this.message_editor.focus_handle(cx).focus(window);
+                        this.message_editor.focus_handle(cx).focus(window, cx);
 
                         cx.notify();
                     }
@@ -776,7 +776,7 @@ impl AcpThreadView {
                 _subscription: subscription,
             };
             if this.message_editor.focus_handle(cx).is_focused(window) {
-                this.focus_handle.focus(window)
+                this.focus_handle.focus(window, cx)
             }
             cx.notify();
         })
@@ -796,7 +796,7 @@ impl AcpThreadView {
                 ThreadState::LoadError(LoadError::Other(format!("{:#}", err).into()))
         }
         if self.message_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window)
+            self.focus_handle.focus(window, cx)
         }
         cx.notify();
     }
@@ -1262,7 +1262,7 @@ impl AcpThreadView {
                 }
             })
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -1314,7 +1314,7 @@ impl AcpThreadView {
                 .await?;
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1457,7 +1457,7 @@ impl AcpThreadView {
                 self.thread_retry_status.take();
                 self.thread_state = ThreadState::LoadError(error.clone());
                 if self.message_editor.focus_handle(cx).is_focused(window) {
-                    self.focus_handle.focus(window)
+                    self.focus_handle.focus(window, cx)
                 }
             }
             AcpThreadEvent::TitleUpdated => {

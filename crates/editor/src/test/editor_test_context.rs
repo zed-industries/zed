@@ -78,7 +78,7 @@ impl EditorTestContext {
                 cx,
             );
 
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
             editor
         });
         let editor_view = editor.root(cx).unwrap();
@@ -139,7 +139,7 @@ impl EditorTestContext {
 
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor(buffer, window, cx);
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
 
             editor
         });

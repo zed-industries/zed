@@ -351,7 +351,7 @@ impl TerminalPanel {
                 } else if let Some(focus_on_pane) =
                     focus_on_pane.as_ref().or_else(|| self.center.panes().pop())
                 {
-                    focus_on_pane.focus_handle(cx).focus(window);
+                    focus_on_pane.focus_handle(cx).focus(window, cx);
                 }
             }
             pane::Event::ZoomIn => {
@@ -394,7 +394,7 @@ impl TerminalPanel {
                         panel
                             .update_in(cx, |panel, window, cx| {
                                 panel.center.split(&pane, &new_pane, direction).log_err();
-                                window.focus(&new_pane.focus_handle(cx));
+                                window.focus(&new_pane.focus_handle(cx), cx);
                             })
                             .ok();
                     })
@@ -416,7 +416,7 @@ impl TerminalPanel {
                         pane.add_item(item, true, true, None, window, cx);
                     });
                     self.center.split(&pane, &new_pane, direction).log_err();
-                    window.focus(&new_pane.focus_handle(cx));
+                    window.focus(&new_pane.focus_handle(cx), cx);
                 }
             }
             pane::Event::Focus => {
@@ -995,7 +995,7 @@ impl TerminalPanel {
                 RevealStrategy::NoFocus => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.active_pane().focus_handle(cx).focus(window);
+                            workspace.active_pane().focus_handle(cx).focus(window, cx);
                         })?;
                     }
                     RevealTarget::Dock => {
@@ -1050,7 +1050,7 @@ impl TerminalPanel {
             .center
             .find_pane_in_direction(&self.active_pane, direction, cx)
         {
-            window.focus(&pane.focus_handle(cx));
+            window.focus(&pane.focus_handle(cx), cx);
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1293,7 +1293,7 @@ fn add_paths_to_terminal(
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
     {
-        window.focus(&terminal_view.focus_handle(cx));
+        window.focus(&terminal_view.focus_handle(cx), cx);
         let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
         new_text.push(' ');
         terminal_view.update(cx, |terminal_view, cx| {
@@ -1447,7 +1447,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let next_ix = (ix + 1) % panes.len();
-                            window.focus(&panes[next_ix].focus_handle(cx));
+                            window.focus(&panes[next_ix].focus_handle(cx), cx);
                         }
                     }),
                 )
@@ -1459,7 +1459,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
-                            window.focus(&panes[prev_ix].focus_handle(cx));
+                            window.focus(&panes[prev_ix].focus_handle(cx), cx);
                         }
                     },
                 ))
@@ -1467,7 +1467,7 @@ impl Render for TerminalPanel {
                     cx.listener(|terminal_panel, action: &ActivatePane, window, cx| {
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
-                            window.focus(&pane.read(cx).focus_handle(cx));
+                            window.focus(&pane.read(cx).focus_handle(cx), cx);
                         } else {
                             let future =
                                 terminal_panel.new_pane_with_cloned_active_terminal(window, cx);
@@ -1485,7 +1485,7 @@ impl Render for TerminalPanel {
                                                 )
                                                 .log_err();
                                             let new_pane = new_pane.read(cx);
-                                            window.focus(&new_pane.focus_handle(cx));
+                                            window.focus(&new_pane.focus_handle(cx), cx);
                                         },
                                     );
                                 }

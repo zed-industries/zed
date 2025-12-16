@@ -281,7 +281,7 @@ impl Dock {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
                     if let Some(active_entry) = dock.active_panel_entry() {
-                        active_entry.panel.panel_focus_handle(cx).focus(window)
+                        active_entry.panel.panel_focus_handle(cx).focus(window, cx)
                     }
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
@@ -508,7 +508,7 @@ impl Dock {
                         this.set_panel_zoomed(&panel.to_any(), true, window, cx);
                         if !PanelHandle::panel_focus_handle(panel, cx).contains_focused(window, cx)
                         {
-                            window.focus(&panel.focus_handle(cx));
+                            window.focus(&panel.focus_handle(cx), cx);
                         }
                         workspace
                             .update(cx, |workspace, cx| {
@@ -540,7 +540,7 @@ impl Dock {
                         {
                             this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
-                            window.focus(&panel.read(cx).focus_handle(cx));
+                            window.focus(&panel.read(cx).focus_handle(cx), cx);
                         }
                     }
                     PanelEvent::Close => {
@@ -952,7 +952,7 @@ impl Render for PanelButtons {
                                             name = name,
                                             toggle_state = !is_open
                                         );
-                                        window.focus(&focus_handle);
+                                        window.focus(&focus_handle, cx);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })

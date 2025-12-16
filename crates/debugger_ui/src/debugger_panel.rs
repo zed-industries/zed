@@ -577,7 +577,7 @@ impl DebugPanel {
                 menu
             });
 
-            window.focus(&context_menu.focus_handle(cx));
+            window.focus(&context_menu.focus_handle(cx), cx);
             let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
                 this.context_menu.take();
                 cx.notify();
@@ -1052,7 +1052,7 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         debug_assert!(self.sessions_with_children.contains_key(&session_item));
-        session_item.focus_handle(cx).focus(window);
+        session_item.focus_handle(cx).focus(window, cx);
         session_item.update(cx, |this, cx| {
             this.running_state().update(cx, |this, cx| {
                 this.go_to_selected_stack_frame(window, cx);

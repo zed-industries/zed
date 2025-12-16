@@ -3809,7 +3809,7 @@ impl Editor {
     ) {
         if !self.focus_handle.is_focused(window) {
             self.last_focused_descendant = None;
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -3914,7 +3914,7 @@ impl Editor {
     ) {
         if !self.focus_handle.is_focused(window) {
             self.last_focused_descendant = None;
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -6764,7 +6764,7 @@ impl Editor {
                 })
             })
             .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(cx), cx);
                 editor.toggle_code_actions(
                     &crate::actions::ToggleCodeActions {
                         deployed_from: Some(crate::actions::CodeActionSource::Indicator(
@@ -8638,7 +8638,7 @@ impl Editor {
                         BreakpointEditAction::Toggle
                     };
 
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
@@ -8830,7 +8830,7 @@ impl Editor {
                 ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
             };
 
-            window.focus(&editor.focus_handle(cx));
+            window.focus(&editor.focus_handle(cx), cx);
             editor.toggle_code_actions(
                 &ToggleCodeActions {
                     deployed_from: Some(CodeActionSource::RunMenu(row)),
@@ -11244,7 +11244,7 @@ impl Editor {
         }];
 
         let focus_handle = bp_prompt.focus_handle(cx);
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         let block_ids = self.insert_blocks(blocks, None, cx);
         bp_prompt.update(cx, |prompt, _| {
@@ -18065,7 +18065,7 @@ impl Editor {
                         cx,
                     );
                     let rename_focus_handle = rename_editor.focus_handle(cx);
-                    window.focus(&rename_focus_handle);
+                    window.focus(&rename_focus_handle, cx);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Flex,
@@ -18179,7 +18179,7 @@ impl Editor {
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
         if rename.editor.focus_handle(cx).is_focused(window) {
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
         }
 
         self.remove_blocks(
@@ -22749,7 +22749,7 @@ impl Editor {
             .take()
             .and_then(|descendant| descendant.upgrade())
         {
-            window.focus(&descendant);
+            window.focus(&descendant, cx);
         } else {
             if let Some(blame) = self.blame.as_ref() {
                 blame.update(cx, GitBlame::focus)
@@ -25852,7 +25852,7 @@ impl BreakpointPromptEditor {
         self.editor
             .update(cx, |editor, cx| {
                 editor.remove_blocks(self.block_ids.clone(), None, cx);
-                window.focus(&editor.focus_handle);
+                window.focus(&editor.focus_handle, cx);
             })
             .log_err();
     }

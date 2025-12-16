@@ -819,7 +819,7 @@ impl AgentPanel {
             window,
             cx,
         );
-        text_thread_editor.focus_handle(cx).focus(window);
+        text_thread_editor.focus_handle(cx).focus(window, cx);
     }
 
     fn external_thread(
@@ -947,7 +947,7 @@ impl AgentPanel {
         if let Some(thread_view) = self.active_thread_view() {
             thread_view.update(cx, |view, cx| {
                 view.expand_message_editor(&ExpandMessageEditor, window, cx);
-                view.focus_handle(cx).focus(window);
+                view.focus_handle(cx).focus(window, cx);
             });
         }
     }
@@ -1028,12 +1028,12 @@ impl AgentPanel {
 
                     match &self.active_view {
                         ActiveView::ExternalAgentThread { thread_view } => {
-                            thread_view.focus_handle(cx).focus(window);
+                            thread_view.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::TextThread {
                             text_thread_editor, ..
                         } => {
-                            text_thread_editor.focus_handle(cx).focus(window);
+                            text_thread_editor.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::History | ActiveView::Configuration => {}
                     }
@@ -1181,7 +1181,7 @@ impl AgentPanel {
                 Self::handle_agent_configuration_event,
             ));
 
-            configuration.focus_handle(cx).focus(window);
+            configuration.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -1317,7 +1317,7 @@ impl AgentPanel {
         }
 
         if focus {
-            self.focus_handle(cx).focus(window);
+            self.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -1598,7 +1598,7 @@ impl AgentPanel {
                             let thread_view = thread_view.downgrade();
                             move |_: &menu::Confirm, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
+                                    thread_view.focus_handle(cx).focus(window, cx);
                                 }
                             }
                         })
@@ -1606,7 +1606,7 @@ impl AgentPanel {
                             let thread_view = thread_view.downgrade();
                             move |_: &editor::actions::Cancel, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.focus_handle(cx).focus(window);
+                                    thread_view.focus_handle(cx).focus(window, cx);
                                 }
                             }
                         })

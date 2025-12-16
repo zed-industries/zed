@@ -243,7 +243,7 @@ impl ProjectDiagnosticsEditor {
                 match event {
                     EditorEvent::Focused => {
                         if this.multibuffer.read(cx).is_empty() {
-                            window.focus(&this.focus_handle);
+                            window.focus(&this.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
@@ -434,7 +434,7 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 
@@ -650,7 +650,7 @@ impl ProjectDiagnosticsEditor {
                         })
                     });
                     if this.focus_handle.is_focused(window) {
-                        this.editor.read(cx).focus_handle(cx).focus(window);
+                        this.editor.read(cx).focus_handle(cx).focus(window, cx);
                     }
                 }
 

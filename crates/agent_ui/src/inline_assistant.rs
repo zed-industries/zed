@@ -1187,7 +1187,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
+            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
             .ok();
     }
 
@@ -1199,7 +1199,7 @@ impl InlineAssistant {
         if let Some(decorations) = assist.decorations.as_ref() {
             decorations.prompt_editor.update(cx, |prompt_editor, cx| {
                 prompt_editor.editor.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle(cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                     editor.select_all(&SelectAll, window, cx);
                 })
             });

@@ -253,13 +253,13 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                                     && let Some(previous_focus_handle) =
                                         previous_focus_handle.as_ref()
                                 {
-                                    window.focus(previous_focus_handle);
+                                    window.focus(previous_focus_handle, cx);
                                 }
                                 *menu2.borrow_mut() = None;
                                 window.refresh();
                             })
                             .detach();
-                        window.focus(&new_menu.focus_handle(cx));
+                        window.focus(&new_menu.focus_handle(cx), cx);
                         *menu.borrow_mut() = Some(new_menu);
                         *position.borrow_mut() = if let Some(child_bounds) = child_bounds {
                             if let Some(attach) = attach {

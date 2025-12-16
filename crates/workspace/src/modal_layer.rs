@@ -116,7 +116,7 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_modal.focus_handle(cx));
+            window.focus(&new_modal.focus_handle(cx), cx);
         });
         cx.notify();
     }
@@ -144,7 +144,7 @@ impl ModalLayer {
             if let Some(previous_focus) = active_modal.previous_focus_handle
                 && active_modal.focus_handle.contains_focused(window, cx)
             {
-                previous_focus.focus(window);
+                previous_focus.focus(window, cx);
             }
             cx.notify();
         }

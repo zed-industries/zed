@@ -97,7 +97,7 @@ pub fn popover(
             window,
             cx,
         );
-        list.focus_handle(cx).focus(window);
+        list.focus_handle(cx).focus(window, cx);
         list
     })
 }

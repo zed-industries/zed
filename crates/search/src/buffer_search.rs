@@ -518,7 +518,7 @@ impl BufferSearchBar {
 
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, window, cx| {
-            this.query_editor.focus_handle(cx).focus(window);
+            this.query_editor.focus_handle(cx).focus(window, cx);
             this.select_query(window, cx);
         }));
         registrar.register_handler(ForDeployed(
@@ -706,7 +706,7 @@ impl BufferSearchBar {
             active_editor.search_bar_visibility_changed(false, window, cx);
             active_editor.toggle_filtered_search_ranges(None, window, cx);
             let handle = active_editor.item_focus_handle(cx);
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
         }
 
         cx.emit(Event::UpdateLocation);
@@ -747,7 +747,7 @@ impl BufferSearchBar {
                     self.select_query(window, cx);
                 }
 
-                window.focus(&handle);
+                window.focus(&handle, cx);
             }
             return true;
         }
@@ -876,7 +876,7 @@ impl BufferSearchBar {
     }
 
     pub fn focus_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus(&self.replacement_editor.focus_handle(cx), window);
+        self.focus(&self.replacement_editor.focus_handle(cx), window, cx);
         cx.notify();
     }
 
@@ -907,7 +907,7 @@ impl BufferSearchBar {
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
-            window.focus(&handle);
+            window.focus(&handle, cx);
         }
     }
 
@@ -1382,7 +1382,7 @@ impl BufferSearchBar {
             Direction::Prev => (current_index - 1) % handles.len(),
         };
         let next_focus_handle = &handles[new_index];
-        self.focus(next_focus_handle, window);
+        self.focus(next_focus_handle, window, cx);
         cx.stop_propagation();
     }
 
@@ -1429,9 +1429,9 @@ impl BufferSearchBar {
         }
     }
 
-    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window) {
+    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut App) {
         window.invalidate_character_coordinates();
-        window.focus(handle);
+        window.focus(handle, cx);
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
@@ -1442,7 +1442,7 @@ impl BufferSearchBar {
             } else {
                 self.query_editor.focus_handle(cx)
             };
-            self.focus(&handle, window);
+            self.focus(&handle, window, cx);
             cx.notify();
         }
     }
@@ -2036,7 +2036,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.activate_current_match(window, cx);
                 });
                 assert!(
@@ -2054,7 +2054,7 @@ mod tests {
                 search_bar.update(cx, |search_bar, cx| {
                     assert_eq!(search_bar.active_match_index, Some(0));
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
                 assert!(
@@ -2107,7 +2107,7 @@ mod tests {
                         "Match index should be updated to the next one"
                     );
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.select_all_matches(&SelectAllMatches, window, cx);
                 });
             })
@@ -2173,7 +2173,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
-                    window.focus(&handle);
+                    window.focus(&handle, cx);
                     search_bar.search("abas_nonexistent_match", None, true, window, cx)
                 })
             })

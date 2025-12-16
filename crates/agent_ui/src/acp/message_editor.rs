@@ -1365,7 +1365,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             message_editor.read(cx).editor().clone()
         });
 
@@ -1587,7 +1587,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
         });
@@ -2315,7 +2315,7 @@ mod tests {
                     cx,
                 );
             });
-            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
             let editor = message_editor.read(cx).editor().clone();
             (message_editor, editor)
         });
