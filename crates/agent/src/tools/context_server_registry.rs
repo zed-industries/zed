@@ -88,10 +88,20 @@ impl ContextServerRegistry {
             .flat_map(|server| server.prompts.values())
     }
 
-    pub fn prompt_by_name(&self, name: &str) -> Option<&ContextServerPrompt> {
-        self.registered_servers
-            .values()
-            .find_map(|server| server.prompts.get(name))
+    pub fn find_prompt(
+        &self,
+        server_id: Option<&ContextServerId>,
+        name: &str,
+    ) -> Option<&ContextServerPrompt> {
+        if let Some(server_id) = server_id {
+            self.registered_servers
+                .get(server_id)
+                .and_then(|server| server.prompts.get(name))
+        } else {
+            self.registered_servers
+                .values()
+                .find_map(|server| server.prompts.get(name))
+        }
     }
 
     pub fn server_store(&self) -> &Entity<ContextServerStore> {
@@ -348,7 +358,6 @@ impl AnyAgentTool for ContextServerTool {
     }
 }
 
-// todo! move to impl?
 pub fn get_prompt(
     server_store: &Entity<ContextServerStore>,
     server_id: &ContextServerId,

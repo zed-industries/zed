@@ -676,14 +676,34 @@ impl NativeAgent {
     }
 
     fn build_available_commands(&self, cx: &App) -> Vec<acp::AvailableCommand> {
-        self.context_server_registry
-            .read(cx)
+        let registry = self.context_server_registry.read(cx);
+
+        let mut prompt_name_counts: HashMap<&str, usize> = HashMap::default();
+        for context_server_prompt in registry.prompts() {
+            *prompt_name_counts
+                .entry(context_server_prompt.prompt.name.as_str())
+                .or_insert(0) += 1;
+        }
+
+        registry
             .prompts()
             .flat_map(|context_server_prompt| {
                 let prompt = &context_server_prompt.prompt;
 
+                let should_prefix = prompt_name_counts
+                    .get(prompt.name.as_str())
+                    .copied()
+                    .unwrap_or(0)
+                    > 1;
+
+                let name = if should_prefix {
+                    format!("{}.{}", context_server_prompt.server_id, prompt.name)
+                } else {
+                    prompt.name.clone()
+                };
+
                 let mut command = acp::AvailableCommand::new(
-                    prompt.name.clone(),
+                    name,
                     prompt.description.clone().unwrap_or_default(),
                 );
 
@@ -1028,18 +1048,38 @@ impl NativeAgentConnection {
             anyhow::Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
         })
     }
+}
 
-    fn get_command_in_prompt(prompt: &[acp::ContentBlock]) -> Option<(&str, &str)> {
+struct Command<'a> {
+    prompt_name: &'a str,
+    arg_value: &'a str,
+    explicit_server_id: Option<&'a str>,
+}
+
+impl<'a> Command<'a> {
+    fn parse(prompt: &'a [acp::ContentBlock]) -> Option<Self> {
         let acp::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
         };
         let text = text_content.text.trim();
         let command = text.strip_prefix('/')?;
-        return Some(
-            command
-                .split_once(char::is_whitespace)
-                .unwrap_or((command, "")),
-        );
+        let (command, arg_value) = command
+            .split_once(char::is_whitespace)
+            .unwrap_or((command, ""));
+
+        if let Some((server_id, prompt_name)) = command.split_once('.') {
+            Some(Self {
+                prompt_name,
+                arg_value,
+                explicit_server_id: Some(server_id),
+            })
+        } else {
+            Some(Self {
+                prompt_name: command,
+                arg_value,
+                explicit_server_id: None,
+            })
+        }
     }
 }
 
@@ -1209,17 +1249,18 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
-        if let Some((prompt_name, arg_value)) = Self::get_command_in_prompt(&params.prompt) {
+        if let Some(parsed_command) = Command::parse(&params.prompt) {
             let session_id = session_id.clone();
+            let registry = self.0.read(cx).context_server_registry.read(cx);
 
-            if let Some(prompt) = self
-                .0
-                .read(cx)
-                .context_server_registry
-                .read(cx)
-                .prompt_by_name(prompt_name)
+            let explicit_server_id = parsed_command
+                .explicit_server_id
+                .map(|server_id| ContextServerId(server_id.into()));
+
+            if let Some(prompt) =
+                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
             {
-                let arguments = if !arg_value.is_empty()
+                let arguments = if !parsed_command.arg_value.is_empty()
                     && let Some(arg_name) = prompt
                         .prompt
                         .arguments
@@ -1227,7 +1268,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         .and_then(|args| args.first())
                         .map(|arg| arg.name.clone())
                 {
-                    HashMap::from_iter([(arg_name.to_string(), arg_value.to_string())])
+                    HashMap::from_iter([(
+                        arg_name.to_string(),
+                        parsed_command.arg_value.to_string(),
+                    )])
                 } else {
                     Default::default()
                 };
