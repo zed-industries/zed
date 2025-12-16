@@ -33,7 +33,8 @@ use gpui::{
 use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
+    WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
@@ -50,18 +51,6 @@ pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<project::telemetry_snapshot::TelemetryWorktreeSnapshot>,
     pub timestamp: DateTime<Utc>,
 }
-
-const RULES_FILE_NAMES: [&str; 9] = [
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "CLAUDE.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "GEMINI.md",
-];
 
 pub struct RulesLoadingError {
     pub message: SharedString,
