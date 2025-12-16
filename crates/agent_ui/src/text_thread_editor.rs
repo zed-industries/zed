@@ -304,17 +304,31 @@ impl TextThreadEditor {
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
-                    move |model, cx| {
-                        update_settings_file(fs.clone(), cx, move |settings, _| {
-                            let provider = model.provider_id().0.to_string();
-                            let model = model.id().0.to_string();
-                            settings.agent.get_or_insert_default().set_model(
-                                LanguageModelSelection {
-                                    provider: LanguageModelProviderSetting(provider),
-                                    model,
-                                },
-                            )
-                        });
+                    {
+                        let fs = fs.clone();
+                        move |model, cx| {
+                            update_settings_file(fs.clone(), cx, move |settings, _| {
+                                let provider = model.provider_id().0.to_string();
+                                let model = model.id().0.to_string();
+                                settings.agent.get_or_insert_default().set_model(
+                                    LanguageModelSelection {
+                                        provider: LanguageModelProviderSetting(provider),
+                                        model,
+                                    },
+                                )
+                            });
+                        }
+                    },
+                    {
+                        let fs = fs.clone();
+                        move |model, should_be_favorite, cx| {
+                            crate::favorite_models::toggle_in_settings(
+                                model,
+                                should_be_favorite,
+                                fs.clone(),
+                                cx,
+                            );
+                        }
                     },
                     true, // Use popover styles for picker
                     focus_handle,

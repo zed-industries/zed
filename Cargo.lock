@@ -301,6 +301,7 @@ dependencies = [
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "anyhow",
  "cloud_llm_client",
  "collections",

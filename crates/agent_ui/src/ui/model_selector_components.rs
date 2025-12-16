@@ -1,5 +1,5 @@
 use gpui::{Action, FocusHandle, prelude::*};
-use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 
 #[derive(IntoElement)]
 pub struct ModelSelectorHeader {
@@ -42,6 +42,8 @@ pub struct ModelSelectorListItem {
     icon: Option<IconName>,
     is_selected: bool,
     is_focused: bool,
+    is_favorite: bool,
+    on_toggle_favorite: Option<Box<dyn Fn(&App) + 'static>>,
 }
 
 impl ModelSelectorListItem {
@@ -52,6 +54,8 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
+            is_favorite: false,
+            on_toggle_favorite: None,
         }
     }
 
@@ -69,6 +73,16 @@ impl ModelSelectorListItem {
         self.is_focused = is_focused;
         self
     }
+
+    pub fn is_favorite(mut self, is_favorite: bool) -> Self {
+        self.is_favorite = is_favorite;
+        self
+    }
+
+    pub fn on_toggle_favorite(mut self, handler: impl Fn(&App) + 'static) -> Self {
+        self.on_toggle_favorite = Some(Box::new(handler));
+        self
+    }
 }
 
 impl RenderOnce for ModelSelectorListItem {
@@ -78,6 +92,8 @@ impl RenderOnce for ModelSelectorListItem {
         } else {
             Color::Muted
         };
+
+        let is_favorite = self.is_favorite;
 
         ListItem::new(self.index)
             .inset(true)
@@ -102,6 +118,23 @@ impl RenderOnce for ModelSelectorListItem {
                         .color(Color::Accent)
                         .size(IconSize::Small),
                 )
+            }))
+            .end_hover_slot(div().pr_2().when_some(self.on_toggle_favorite, {
+                |this, handle_click| {
+                    let (icon, color, tooltip) = if is_favorite {
+                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                    } else {
+                        (IconName::Star, Color::Default, "Favorite Model")
+                    };
+                    this.child(
+                        IconButton::new(("toggle-favorite", self.index), icon)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .icon_color(color)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text(tooltip))
+                            .on_click(move |_, _, cx| (handle_click)(cx)),
+                    )
+                }
             }))
     }
 }

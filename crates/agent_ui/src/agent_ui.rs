@@ -7,6 +7,7 @@ mod buffer_codegen;
 mod completion_provider;
 mod context;
 mod context_server_configuration;
+mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -467,6 +468,7 @@ mod tests {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
+            favorite_models: vec![],
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
