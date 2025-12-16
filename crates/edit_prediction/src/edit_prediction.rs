@@ -19,13 +19,14 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity, actions,
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
 use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, File, Point, ToPoint};
+use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::{Project, ProjectPath, WorktreeId};
@@ -47,7 +48,8 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
-mod cursor_excerpt;
+pub mod cursor_excerpt;
+pub mod example_spec;
 mod license_detection;
 pub mod mercury;
 mod onboarding_modal;
@@ -55,7 +57,7 @@ pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
 
-#[cfg(any(test, feature = "test-support", feature = "eval-support"))]
+#[cfg(any(test, feature = "test-support", feature = "cli-support"))]
 pub mod udiff;
 
 mod zed_edit_prediction_delegate;
@@ -72,6 +74,7 @@ pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
 pub use crate::sweep_ai::SweepAi;
+pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 
@@ -88,6 +91,7 @@ actions!(
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 6;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 
@@ -124,15 +128,6 @@ static EDIT_PREDICTIONS_MODEL_ID: LazyLock<String> = LazyLock::new(|| {
     }
     .to_string()
 });
-static PREDICT_EDITS_URL: LazyLock<Option<String>> = LazyLock::new(|| {
-    env::var("ZED_PREDICT_EDITS_URL").ok().or_else(|| {
-        if *USE_OLLAMA {
-            Some("http://localhost:11434/v1/chat/completions".into())
-        } else {
-            None
-        }
-    })
-});
 
 pub struct Zeta2FeatureFlag;
 
@@ -158,7 +153,7 @@ pub struct EditPredictionStore {
     use_context: bool,
     options: ZetaOptions,
     update_required: bool,
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     eval_cache: Option<Arc<dyn EvalCache>>,
     edit_prediction_model: EditPredictionModel,
     pub sweep_ai: SweepAi,
@@ -167,6 +162,7 @@ pub struct EditPredictionStore {
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
+    custom_predict_edits_url: Option<Arc<Url>>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -264,6 +260,19 @@ impl ProjectState {
             .collect()
     }
 
+    pub fn events_split_by_pause(&self, cx: &App) -> Vec<Arc<zeta_prompt::Event>> {
+        self.events
+            .iter()
+            .cloned()
+            .chain(self.last_event.as_ref().iter().flat_map(|event| {
+                let (one, two) = event.split_by_pause();
+                let one = one.finalize(&self.license_detection_watchers, cx);
+                let two = two.and_then(|two| two.finalize(&self.license_detection_watchers, cx));
+                one.into_iter().chain(two)
+            }))
+            .collect()
+    }
+
     fn cancel_pending_prediction(
         &mut self,
         pending_prediction: PendingPrediction,
@@ -282,6 +291,18 @@ impl ProjectState {
             .ok();
         })
         .detach()
+    }
+
+    fn active_buffer(
+        &self,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, Option<Anchor>)> {
+        let project = project.read(cx);
+        let active_path = project.path_for_entry(project.active_entry()?, cx)?;
+        let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
+        let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
+        Some((active_buffer, registered_buffer.last_position))
     }
 }
 
@@ -372,14 +393,21 @@ impl std::ops::Deref for BufferEditPrediction<'_> {
 }
 
 struct RegisteredBuffer {
-    snapshot: BufferSnapshot,
+    file: Option<Arc<dyn File>>,
+    snapshot: TextBufferSnapshot,
+    last_position: Option<Anchor>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
+#[derive(Clone)]
 struct LastEvent {
-    old_snapshot: BufferSnapshot,
-    new_snapshot: BufferSnapshot,
+    old_snapshot: TextBufferSnapshot,
+    new_snapshot: TextBufferSnapshot,
+    old_file: Option<Arc<dyn File>>,
+    new_file: Option<Arc<dyn File>>,
     end_edit_anchor: Option<Anchor>,
+    snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
+    last_edit_time: Option<Instant>,
 }
 
 impl LastEvent {
@@ -388,19 +416,19 @@ impl LastEvent {
         license_detection_watchers: &HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
         cx: &App,
     ) -> Option<Arc<zeta_prompt::Event>> {
-        let path = buffer_path_with_id_fallback(&self.new_snapshot, cx);
-        let old_path = buffer_path_with_id_fallback(&self.old_snapshot, cx);
+        let path = buffer_path_with_id_fallback(self.new_file.as_ref(), &self.new_snapshot, cx);
+        let old_path = buffer_path_with_id_fallback(self.old_file.as_ref(), &self.old_snapshot, cx);
 
-        let file = self.new_snapshot.file();
-        let old_file = self.old_snapshot.file();
-
-        let in_open_source_repo = [file, old_file].iter().all(|file| {
-            file.is_some_and(|file| {
-                license_detection_watchers
-                    .get(&file.worktree_id(cx))
-                    .is_some_and(|watcher| watcher.is_project_open_source())
-            })
-        });
+        let in_open_source_repo =
+            [self.new_file.as_ref(), self.old_file.as_ref()]
+                .iter()
+                .all(|file| {
+                    file.is_some_and(|file| {
+                        license_detection_watchers
+                            .get(&file.worktree_id(cx))
+                            .is_some_and(|watcher| watcher.is_project_open_source())
+                    })
+                });
 
         let diff = language::unified_diff(&self.old_snapshot.text(), &self.new_snapshot.text());
 
@@ -417,10 +445,42 @@ impl LastEvent {
             }))
         }
     }
+
+    pub fn split_by_pause(&self) -> (LastEvent, Option<LastEvent>) {
+        let Some(boundary_snapshot) = self.snapshot_after_last_editing_pause.as_ref() else {
+            return (self.clone(), None);
+        };
+
+        let before = LastEvent {
+            old_snapshot: self.old_snapshot.clone(),
+            new_snapshot: boundary_snapshot.clone(),
+            old_file: self.old_file.clone(),
+            new_file: self.new_file.clone(),
+            end_edit_anchor: self.end_edit_anchor,
+            snapshot_after_last_editing_pause: None,
+            last_edit_time: self.last_edit_time,
+        };
+
+        let after = LastEvent {
+            old_snapshot: boundary_snapshot.clone(),
+            new_snapshot: self.new_snapshot.clone(),
+            old_file: self.old_file.clone(),
+            new_file: self.new_file.clone(),
+            end_edit_anchor: self.end_edit_anchor,
+            snapshot_after_last_editing_pause: None,
+            last_edit_time: self.last_edit_time,
+        };
+
+        (before, Some(after))
+    }
 }
 
-fn buffer_path_with_id_fallback(snapshot: &BufferSnapshot, cx: &App) -> Arc<Path> {
-    if let Some(file) = snapshot.file() {
+fn buffer_path_with_id_fallback(
+    file: Option<&Arc<dyn File>>,
+    snapshot: &TextBufferSnapshot,
+    cx: &App,
+) -> Arc<Path> {
+    if let Some(file) = file {
         file.full_path(cx).into()
     } else {
         Path::new(&format!("untitled-{}", snapshot.remote_id())).into()
@@ -492,7 +552,7 @@ impl EditPredictionStore {
                 },
             ),
             update_required: false,
-            #[cfg(feature = "eval-support")]
+            #[cfg(feature = "cli-support")]
             eval_cache: None,
             edit_prediction_model: EditPredictionModel::Zeta2,
             sweep_ai: SweepAi::new(cx),
@@ -501,6 +561,20 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
+            custom_predict_edits_url: match env::var("ZED_PREDICT_EDITS_URL") {
+                Ok(custom_url) => Url::parse(&custom_url).log_err().map(Into::into),
+                Err(_) => {
+                    if *USE_OLLAMA {
+                        Some(
+                            Url::parse("http://localhost:11434/v1/chat/completions")
+                                .unwrap()
+                                .into(),
+                        )
+                    } else {
+                        None
+                    }
+                }
+            },
         };
 
         this.configure_context_retrieval(cx);
@@ -519,29 +593,24 @@ impl EditPredictionStore {
         this
     }
 
+    #[cfg(test)]
+    pub fn set_custom_predict_edits_url(&mut self, url: Url) {
+        self.custom_predict_edits_url = Some(url.into());
+    }
+
     pub fn set_edit_prediction_model(&mut self, model: EditPredictionModel) {
         self.edit_prediction_model = model;
     }
 
-    pub fn has_sweep_api_token(&self) -> bool {
-        self.sweep_ai
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
+        self.sweep_ai.api_token.read(cx).has_key()
     }
 
-    pub fn has_mercury_api_token(&self) -> bool {
-        self.mercury
-            .api_token
-            .clone()
-            .now_or_never()
-            .flatten()
-            .is_some()
+    pub fn has_mercury_api_token(&self, cx: &App) -> bool {
+        self.mercury.api_token.read(cx).has_key()
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn with_eval_cache(&mut self, cache: Arc<dyn EvalCache>) {
         self.eval_cache = Some(cache);
     }
@@ -564,13 +633,31 @@ impl EditPredictionStore {
         }
     }
 
+    pub fn clear_history_for_project(&mut self, project: &Entity<Project>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            project_state.events.clear();
+        }
+    }
+
     pub fn edit_history_for_project(
         &self,
         project: &Entity<Project>,
+        cx: &App,
     ) -> Vec<Arc<zeta_prompt::Event>> {
         self.projects
             .get(&project.entity_id())
-            .map(|project_state| project_state.events.iter().cloned().collect())
+            .map(|project_state| project_state.events(cx))
+            .unwrap_or_default()
+    }
+
+    pub fn edit_history_for_project_with_pause_split_last_event(
+        &self,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Vec<Arc<zeta_prompt::Event>> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| project_state.events_split_by_pause(cx))
             .unwrap_or_default()
     }
 
@@ -791,10 +878,14 @@ impl EditPredictionStore {
         match project_state.registered_buffers.entry(buffer_id) {
             hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hash_map::Entry::Vacant(entry) => {
-                let snapshot = buffer.read(cx).snapshot();
+                let buf = buffer.read(cx);
+                let snapshot = buf.text_snapshot();
+                let file = buf.file().cloned();
                 let project_entity_id = project.entity_id();
                 entry.insert(RegisteredBuffer {
                     snapshot,
+                    file,
+                    last_position: None,
                     _subscriptions: [
                         cx.subscribe(buffer, {
                             let project = project.downgrade();
@@ -828,11 +919,14 @@ impl EditPredictionStore {
         let project_state = self.get_or_init_project(project, cx);
         let registered_buffer = Self::register_buffer_impl(project_state, buffer, project, cx);
 
-        let new_snapshot = buffer.read(cx).snapshot();
+        let buf = buffer.read(cx);
+        let new_file = buf.file().cloned();
+        let new_snapshot = buf.text_snapshot();
         if new_snapshot.version == registered_buffer.snapshot.version {
             return;
         }
 
+        let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
         let end_edit_anchor = new_snapshot
             .anchored_edits_since::<Point>(&old_snapshot.version)
@@ -840,20 +934,16 @@ impl EditPredictionStore {
             .map(|(_, range)| range.end);
         let events = &mut project_state.events;
 
-        if let Some(LastEvent {
-            new_snapshot: last_new_snapshot,
-            end_edit_anchor: last_end_edit_anchor,
-            ..
-        }) = project_state.last_event.as_mut()
-        {
+        let now = cx.background_executor().now();
+        if let Some(last_event) = project_state.last_event.as_mut() {
             let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
-                == last_new_snapshot.remote_id()
-                && old_snapshot.version == last_new_snapshot.version;
+                == last_event.new_snapshot.remote_id()
+                && old_snapshot.version == last_event.new_snapshot.version;
 
             let should_coalesce = is_next_snapshot_of_same_buffer
                 && end_edit_anchor
                     .as_ref()
-                    .zip(last_end_edit_anchor.as_ref())
+                    .zip(last_event.end_edit_anchor.as_ref())
                     .is_some_and(|(a, b)| {
                         let a = a.to_point(&new_snapshot);
                         let b = b.to_point(&new_snapshot);
@@ -861,8 +951,18 @@ impl EditPredictionStore {
                     });
 
             if should_coalesce {
-                *last_end_edit_anchor = end_edit_anchor;
-                *last_new_snapshot = new_snapshot;
+                let pause_elapsed = last_event
+                    .last_edit_time
+                    .map(|t| now.duration_since(t) >= LAST_CHANGE_GROUPING_TIME)
+                    .unwrap_or(false);
+                if pause_elapsed {
+                    last_event.snapshot_after_last_editing_pause =
+                        Some(last_event.new_snapshot.clone());
+                }
+
+                last_event.end_edit_anchor = end_edit_anchor;
+                last_event.new_snapshot = new_snapshot;
+                last_event.last_edit_time = Some(now);
                 return;
             }
         }
@@ -876,19 +976,31 @@ impl EditPredictionStore {
         }
 
         project_state.last_event = Some(LastEvent {
+            old_file,
+            new_file,
             old_snapshot,
             new_snapshot,
             end_edit_anchor,
+            snapshot_after_last_editing_pause: None,
+            last_edit_time: Some(now),
         });
     }
 
-    fn current_prediction_for_buffer(
-        &self,
+    fn prediction_at(
+        &mut self,
         buffer: &Entity<Buffer>,
+        position: Option<language::Anchor>,
         project: &Entity<Project>,
         cx: &App,
     ) -> Option<BufferEditPrediction<'_>> {
-        let project_state = self.projects.get(&project.entity_id())?;
+        let project_state = self.projects.get_mut(&project.entity_id())?;
+        if let Some(position) = position
+            && let Some(buffer) = project_state
+                .registered_buffers
+                .get_mut(&buffer.entity_id())
+        {
+            buffer.last_position = Some(position);
+        }
 
         let CurrentEditPrediction {
             requested_by,
@@ -915,8 +1027,13 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
+        let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                if self.custom_predict_edits_url.is_some() && custom_accept_url.is_none() {
+                    return;
+                }
+            }
             EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
@@ -936,12 +1053,15 @@ impl EditPredictionStore {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
         cx.spawn(async move |this, cx| {
-            let url = if let Ok(predict_edits_url) = env::var("ZED_ACCEPT_PREDICTION_URL") {
-                http_client::Url::parse(&predict_edits_url)?
+            let (url, require_auth) = if let Some(accept_edits_url) = custom_accept_url {
+                (http_client::Url::parse(&accept_edits_url)?, false)
             } else {
-                client
-                    .http_client()
-                    .build_zed_llm_url("/predict_edits/accept", &[])?
+                (
+                    client
+                        .http_client()
+                        .build_zed_llm_url("/predict_edits/accept", &[])?,
+                    true,
+                )
             };
 
             let response = cx
@@ -958,6 +1078,7 @@ impl EditPredictionStore {
                     client,
                     llm_token,
                     app_version,
+                    require_auth,
                 ))
                 .await;
 
@@ -1016,6 +1137,7 @@ impl EditPredictionStore {
                 client.clone(),
                 llm_token.clone(),
                 app_version.clone(),
+                true,
             )
             .await;
 
@@ -1061,7 +1183,11 @@ impl EditPredictionStore {
         was_shown: bool,
     ) {
         match self.edit_prediction_model {
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {}
+            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
+                if self.custom_predict_edits_url.is_some() {
+                    return;
+                }
+            }
             EditPredictionModel::Sweep | EditPredictionModel::Mercury => return,
         }
 
@@ -1131,12 +1257,21 @@ impl EditPredictionStore {
         };
 
         self.queue_prediction_refresh(project.clone(), project.entity_id(), cx, move |this, cx| {
-            let Some(open_buffer_task) = project
-                .update(cx, |project, cx| {
-                    project
-                        .active_entry()
-                        .and_then(|entry| project.path_for_entry(entry, cx))
-                        .map(|path| project.open_buffer(path, cx))
+            let Some((active_buffer, snapshot, cursor_point)) = this
+                .read_with(cx, |this, cx| {
+                    let project_state = this.projects.get(&project.entity_id())?;
+                    let (buffer, position) = project_state.active_buffer(&project, cx)?;
+                    let snapshot = buffer.read(cx).snapshot();
+
+                    if !Self::predictions_enabled_at(&snapshot, position, cx) {
+                        return None;
+                    }
+
+                    let cursor_point = position
+                        .map(|pos| pos.to_point(&snapshot))
+                        .unwrap_or_default();
+
+                    Some((buffer, snapshot, cursor_point))
                 })
                 .log_err()
                 .flatten()
@@ -1145,14 +1280,11 @@ impl EditPredictionStore {
             };
 
             cx.spawn(async move |cx| {
-                let active_buffer = open_buffer_task.await?;
-                let snapshot = active_buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
                 let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
                     active_buffer,
                     &snapshot,
                     Default::default(),
-                    Default::default(),
+                    cursor_point,
                     &project,
                     cx,
                 )
@@ -1195,6 +1327,37 @@ impl EditPredictionStore {
                 })
             })
         });
+    }
+
+    fn predictions_enabled_at(
+        snapshot: &BufferSnapshot,
+        position: Option<language::Anchor>,
+        cx: &App,
+    ) -> bool {
+        let file = snapshot.file();
+        let all_settings = all_language_settings(file, cx);
+        if !all_settings.show_edit_predictions(snapshot.language(), cx)
+            || file.is_some_and(|file| !all_settings.edit_predictions_enabled_for_file(file, cx))
+        {
+            return false;
+        }
+
+        if let Some(last_position) = position {
+            let settings = snapshot.settings_at(last_position, cx);
+
+            if !settings.edit_predictions_disabled_in.is_empty()
+                && let Some(scope) = snapshot.language_scope_at(last_position)
+                && let Some(scope_name) = scope.override_name()
+                && settings
+                    .edit_predictions_disabled_in
+                    .iter()
+                    .any(|s| s == scope_name)
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     #[cfg(not(test))]
@@ -1531,18 +1694,14 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
-        #[cfg(feature = "eval-support")] eval_cache: Option<Arc<dyn EvalCache>>,
-        #[cfg(feature = "eval-support")] eval_cache_kind: EvalCacheEntryKind,
+        #[cfg(feature = "cli-support")] eval_cache: Option<Arc<dyn EvalCache>>,
+        #[cfg(feature = "cli-support")] eval_cache_kind: EvalCacheEntryKind,
     ) -> Result<(open_ai::Response, Option<EditPredictionUsage>)> {
-        let url = if let Some(predict_edits_url) = PREDICT_EDITS_URL.as_ref() {
-            http_client::Url::parse(&predict_edits_url)?
-        } else {
-            client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/raw", &[])?
-        };
+        let url = client
+            .http_client()
+            .build_zed_llm_url("/predict_edits/raw", &[])?;
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         let cache_key = if let Some(cache) = eval_cache {
             use collections::FxHasher;
             use std::hash::{Hash, Hasher};
@@ -1573,10 +1732,11 @@ impl EditPredictionStore {
             client,
             llm_token,
             app_version,
+            true,
         )
         .await?;
 
-        #[cfg(feature = "eval-support")]
+        #[cfg(feature = "cli-support")]
         if let Some((cache, request, key)) = cache_key {
             cache.write(key, &request, &serde_json::to_string_pretty(&response)?);
         }
@@ -1633,23 +1793,34 @@ impl EditPredictionStore {
         client: Arc<Client>,
         llm_token: LlmApiToken,
         app_version: Version,
+        require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
         Res: DeserializeOwned,
     {
         let http_client = client.http_client();
-        let mut token = llm_token.acquire(&client).await?;
+
+        let mut token = if require_auth {
+            Some(llm_token.acquire(&client).await?)
+        } else {
+            llm_token.acquire(&client).await.ok()
+        };
         let mut did_retry = false;
 
         loop {
             let request_builder = http_client::Request::builder().method(Method::POST);
 
-            let request = build(
-                request_builder
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", token))
-                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string()),
-            )?;
+            let mut request_builder = request_builder
+                .header("Content-Type", "application/json")
+                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
+
+            // Only add Authorization header if we have a token
+            if let Some(ref token_value) = token {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", token_value));
+            }
+
+            let request = build(request_builder)?;
 
             let mut response = http_client.send(request).await?;
 
@@ -1673,13 +1844,14 @@ impl EditPredictionStore {
                 response.body_mut().read_to_end(&mut body).await?;
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry
+                && token.is_some()
                 && response
                     .headers()
                     .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
                     .is_some()
             {
                 did_retry = true;
-                token = llm_token.refresh(&client).await?;
+                token = Some(llm_token.refresh(&client).await?);
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
@@ -1708,7 +1880,7 @@ impl EditPredictionStore {
         }
     }
 
-    #[cfg(feature = "eval-support")]
+    #[cfg(feature = "cli-support")]
     pub fn set_context_for_buffer(
         &mut self,
         project: &Entity<Project>,
@@ -1833,10 +2005,10 @@ pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub type EvalCacheKey = (EvalCacheEntryKind, u64);
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EvalCacheEntryKind {
     Context,
@@ -1844,7 +2016,7 @@ pub enum EvalCacheEntryKind {
     Prediction,
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 impl std::fmt::Display for EvalCacheEntryKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1855,7 +2027,7 @@ impl std::fmt::Display for EvalCacheEntryKind {
     }
 }
 
-#[cfg(feature = "eval-support")]
+#[cfg(feature = "cli-support")]
 pub trait EvalCache: Send + Sync {
     fn read(&self, key: EvalCacheKey) -> Option<String>;
     fn write(&self, key: EvalCacheKey, input: &str, value: &str);

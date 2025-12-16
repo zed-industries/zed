@@ -92,6 +92,7 @@ pub enum BedrockAuthMethodContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
+    pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
 }
 

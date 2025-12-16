@@ -1,9 +1,7 @@
-use crate::{
-    PredictionProvider, PromptFormat,
-    metrics::ClassificationMetrics,
-    paths::{REPOS_DIR, WORKTREES_DIR},
-};
+use crate::{PredictionProvider, PromptFormat, metrics::ClassificationMetrics};
 use anyhow::{Context as _, Result};
+use collections::HashMap;
+use edit_prediction::example_spec::ExampleSpec;
 use edit_prediction::udiff::OpenedBuffers;
 use gpui::Entity;
 use http_client::Url;
@@ -14,22 +12,14 @@ use std::sync::Arc;
 use std::{
     borrow::Cow,
     io::{Read, Write},
-    mem,
     path::{Path, PathBuf},
 };
 use zeta_prompt::RelatedFile;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
-    #[serde(default)]
-    pub name: String,
-    pub repository_url: String,
-    pub revision: String,
-    pub uncommitted_diff: String,
-    pub cursor_path: Arc<Path>,
-    pub cursor_position: String,
-    pub edit_history: String,
-    pub expected_patch: String,
+    #[serde(flatten)]
+    pub spec: ExampleSpec,
 
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
@@ -101,10 +91,11 @@ pub struct ExampleScore {
 }
 
 impl Example {
-    fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
+    pub fn repo_name(&self) -> Result<(Cow<'_, str>, Cow<'_, str>)> {
         // git@github.com:owner/repo.git
-        if self.repository_url.contains('@') {
+        if self.spec.repository_url.contains('@') {
             let (owner, repo) = self
+                .spec
                 .repository_url
                 .split_once(':')
                 .context("expected : in git url")?
@@ -117,7 +108,7 @@ impl Example {
             ))
         // http://github.com/owner/repo.git
         } else {
-            let url = Url::parse(&self.repository_url)?;
+            let url = Url::parse(&self.spec.repository_url)?;
             let mut segments = url.path_segments().context("empty http url")?;
             let owner = segments
                 .next()
@@ -132,17 +123,6 @@ impl Example {
 
             Ok((owner.into(), repo.into()))
         }
-    }
-
-    pub fn worktree_path(&self) -> PathBuf {
-        WORKTREES_DIR
-            .join(&self.name)
-            .join(self.repo_name().unwrap().1.as_ref())
-    }
-
-    pub fn repo_path(&self) -> PathBuf {
-        let (repo_owner, repo_name) = self.repo_name().expect("failed to get repo name");
-        REPOS_DIR.join(repo_owner.as_ref()).join(repo_name.as_ref())
     }
 }
 
@@ -184,8 +164,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                     serde_json::from_str::<Example>(&content).unwrap_or_else(|error| {
                         panic!("Failed to parse example file: {}\n{error}", path.display())
                     });
-                if example.name.is_empty() {
-                    example.name = filename;
+                if example.spec.name.is_empty() {
+                    example.spec.name = filename;
                 }
                 examples.push(example);
             }
@@ -195,15 +175,15 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
                     .enumerate()
                     .map(|(line_ix, line)| {
                         let mut example =
-                            serde_json::from_str::<Example>(line).unwrap_or_else(|_| {
+                            serde_json::from_str::<Example>(line).unwrap_or_else(|error| {
                                 panic!(
-                                    "Failed to parse example on {}:{}",
+                                    "Failed to parse example on {}:{}\n{error}",
                                     path.display(),
                                     line_ix + 1
                                 )
                             });
-                        if example.name.is_empty() {
-                            example.name = format!("{filename}-{line_ix}")
+                        if example.spec.name.is_empty() {
+                            example.spec.name = format!("{filename}-{line_ix}")
                         }
                         example
                     })
@@ -217,6 +197,8 @@ pub fn read_examples(inputs: &[PathBuf]) -> Vec<Example> {
             }
         }
     }
+
+    sort_examples_by_repo_and_rev(&mut examples);
     examples
 }
 
@@ -234,144 +216,35 @@ pub fn write_examples(examples: &[Example], output_path: Option<&PathBuf>) {
     }
 }
 
-fn parse_markdown_example(id: String, input: &str) -> Result<Example> {
-    use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Parser, Tag, TagEnd};
+pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
+    examples.sort_by(|a, b| {
+        a.spec
+            .repository_url
+            .cmp(&b.spec.repository_url)
+            .then(b.spec.revision.cmp(&a.spec.revision))
+    });
+}
 
-    const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
-    const EDIT_HISTORY_HEADING: &str = "Edit History";
-    const CURSOR_POSITION_HEADING: &str = "Cursor Position";
-    const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
-    const EXPECTED_CONTEXT_HEADING: &str = "Expected Context";
-    const REPOSITORY_URL_FIELD: &str = "repository_url";
-    const REVISION_FIELD: &str = "revision";
+pub fn group_examples_by_repo(examples: &mut [Example]) -> Vec<Vec<&mut Example>> {
+    let mut examples_by_repo = HashMap::default();
+    for example in examples.iter_mut() {
+        examples_by_repo
+            .entry(example.spec.repository_url.clone())
+            .or_insert_with(Vec::new)
+            .push(example);
+    }
+    examples_by_repo.into_values().collect()
+}
 
-    let parser = Parser::new(input);
-
-    let mut example = Example {
-        name: id,
-        repository_url: String::new(),
-        revision: String::new(),
-        uncommitted_diff: String::new(),
-        cursor_path: PathBuf::new().into(),
-        cursor_position: String::new(),
-        edit_history: String::new(),
-        expected_patch: String::new(),
+fn parse_markdown_example(name: String, input: &str) -> Result<Example> {
+    let spec = ExampleSpec::from_markdown(name, input)?;
+    Ok(Example {
+        spec,
         buffer: None,
         context: None,
         prompt: None,
         predictions: Vec::new(),
         score: Vec::new(),
         state: None,
-    };
-
-    let mut name = String::new();
-    let mut text = String::new();
-    let mut block_info: CowStr = "".into();
-
-    #[derive(PartialEq)]
-    enum Section {
-        UncommittedDiff,
-        EditHistory,
-        CursorPosition,
-        ExpectedExcerpts,
-        ExpectedPatch,
-        Other,
-    }
-
-    let mut current_section = Section::Other;
-
-    for event in parser {
-        match event {
-            Event::Text(line) => {
-                text.push_str(&line);
-
-                if let Some((field, value)) = line.split_once('=') {
-                    match field.trim() {
-                        REPOSITORY_URL_FIELD => {
-                            example.repository_url = value.trim().to_string();
-                        }
-                        REVISION_FIELD => {
-                            example.revision = value.trim().to_string();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H1)) => {
-                if !name.is_empty() {
-                    anyhow::bail!(
-                        "Found multiple H1 headings. There should only be one with the name of the example."
-                    );
-                }
-                name = mem::take(&mut text);
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H2)) => {
-                let title = mem::take(&mut text);
-                current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
-                    Section::UncommittedDiff
-                } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
-                    Section::EditHistory
-                } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
-                    Section::CursorPosition
-                } else if title.eq_ignore_ascii_case(EXPECTED_PATCH_HEADING) {
-                    Section::ExpectedPatch
-                } else if title.eq_ignore_ascii_case(EXPECTED_CONTEXT_HEADING) {
-                    Section::ExpectedExcerpts
-                } else {
-                    Section::Other
-                };
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H3)) => {
-                mem::take(&mut text);
-            }
-            Event::End(TagEnd::Heading(HeadingLevel::H4)) => {
-                mem::take(&mut text);
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                anyhow::bail!("Unexpected heading level: {level}");
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                match kind {
-                    CodeBlockKind::Fenced(info) => {
-                        block_info = info;
-                    }
-                    CodeBlockKind::Indented => {
-                        anyhow::bail!("Unexpected indented codeblock");
-                    }
-                };
-            }
-            Event::Start(_) => {
-                text.clear();
-                block_info = "".into();
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                let block_info = block_info.trim();
-                match current_section {
-                    Section::UncommittedDiff => {
-                        example.uncommitted_diff = mem::take(&mut text);
-                    }
-                    Section::EditHistory => {
-                        example.edit_history.push_str(&mem::take(&mut text));
-                    }
-                    Section::CursorPosition => {
-                        example.cursor_path = Path::new(block_info).into();
-                        example.cursor_position = mem::take(&mut text);
-                    }
-                    Section::ExpectedExcerpts => {
-                        mem::take(&mut text);
-                    }
-                    Section::ExpectedPatch => {
-                        example.expected_patch = mem::take(&mut text);
-                    }
-                    Section::Other => {}
-                }
-            }
-            _ => {}
-        }
-    }
-    if example.cursor_path.as_ref() == Path::new("") || example.cursor_position.is_empty() {
-        anyhow::bail!("Missing cursor position codeblock");
-    }
-
-    Ok(example)
+    })
 }

@@ -3336,7 +3336,6 @@ mod tests {
             let mut text_thread = TextThread::local(
                 registry,
                 None,
-                None,
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
                 cx,

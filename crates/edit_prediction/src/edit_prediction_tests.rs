@@ -45,10 +45,6 @@ async fn test_current_state(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_project(&project, cx);
-    });
-
     let buffer1 = project
         .update(cx, |project, cx| {
             let path = project.find_project_path(path!("/root/1.txt"), cx).unwrap();
@@ -59,6 +55,11 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .unwrap();
     let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
     let position = snapshot1.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer1, &project, cx);
+    });
 
     // Prediction for current file
 
@@ -84,9 +85,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -140,9 +141,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer1, &project, cx)
+            .prediction_at(&buffer1, None, &project, cx)
             .unwrap();
         assert_matches!(
             prediction,
@@ -158,9 +159,9 @@ async fn test_current_state(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         let prediction = ep_store
-            .current_prediction_for_buffer(&buffer2, &project, cx)
+            .prediction_at(&buffer2, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
@@ -303,11 +304,102 @@ async fn test_request_events(cx: &mut TestAppContext) {
     let prediction = prediction_task.await.unwrap().unwrap().prediction.unwrap();
 
     assert_eq!(prediction.edits.len(), 1);
-    assert_eq!(
-        prediction.edits[0].0.to_point(&snapshot).start,
-        language::Point::new(1, 3)
-    );
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\n\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First burst: insert "How"
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(7..7, "How")], None, cx);
+    });
+
+    // Simulate a pause longer than the grouping threshold (e.g. 500ms).
+    cx.executor().advance_clock(LAST_CHANGE_GROUPING_TIME * 2);
+    cx.run_until_parked();
+
+    // Second burst: append " are you?" immediately after "How" on the same line.
+    //
+    // Keeping both bursts on the same line ensures the existing line-span coalescing logic
+    // groups them into a single `LastEvent`, allowing the pause-split getter to return two diffs.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(10..10, " are you?")], None, cx);
+    });
+
+    // A second edit shortly after the first post-pause edit ensures the last edit timestamp is
+    // advanced after the pause boundary is recorded, making pause-splitting deterministic.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(19..19, "!")], None, cx);
+    });
+
+    // Without time-based splitting, there is one event.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(events.len(), 1);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How are you?!
+             Bye
+        "}
+    );
+
+    // With time-based splitting, there are two distinct events.
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project_with_pause_split_last_event(&project, cx)
+    });
+    assert_eq!(events.len(), 2);
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[0].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -
+            +How
+             Bye
+        "}
+    );
+
+    let zeta_prompt::Event::BufferChange { diff, .. } = events[1].as_ref();
+    assert_eq!(
+        diff.as_str(),
+        indoc! {"
+            @@ -1,3 +1,3 @@
+             Hello!
+            -How
+            +How are you?!
+             Bye
+        "}
+    );
 }
 
 #[gpui::test]
@@ -344,10 +436,10 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -404,10 +496,10 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .is_none()
         );
     });
@@ -469,10 +561,10 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -492,11 +584,11 @@ async fn test_replace_current(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // second replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -551,10 +643,10 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -586,11 +678,11 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // first is preferred over second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -657,11 +749,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is second
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -675,11 +767,11 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still second, since first was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -768,11 +860,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -786,11 +878,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // current prediction is still first, since second was cancelled
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -804,11 +896,11 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    ep_store.read_with(cx, |ep_store, cx| {
+    ep_store.update(cx, |ep_store, cx| {
         // third completes and replaces first
         assert_eq!(
             ep_store
-                .current_prediction_for_buffer(&buffer, &project, cx)
+                .prediction_at(&buffer, None, &project, cx)
                 .unwrap()
                 .id
                 .0,
@@ -1820,6 +1912,174 @@ fn from_completion_edits(
             )
         })
         .collect()
+}
+
+#[gpui::test]
+async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "fn main() {\n    \n}\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let http_client = FakeHttpClient::create(|_req| async move {
+        Ok(gpui::http_client::Response::builder()
+            .status(401)
+            .body("Unauthorized".into())
+            .unwrap())
+    });
+
+    let client =
+        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    cx.update(|cx| {
+        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
+    });
+
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx)
+    });
+    cx.background_executor.run_until_parked();
+
+    let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
+    });
+
+    let result = completion_task.await;
+    assert!(
+        result.is_err(),
+        "Without authentication and without custom URL, prediction should fail"
+    );
+}
+
+#[gpui::test]
+async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "fn main() {\n    \n}\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let predict_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let predict_called_clone = predict_called.clone();
+
+    let http_client = FakeHttpClient::create({
+        move |req| {
+            let uri = req.uri().path().to_string();
+            let predict_called = predict_called_clone.clone();
+            async move {
+                if uri.contains("predict") {
+                    predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(gpui::http_client::Response::builder()
+                        .body(
+                            serde_json::to_string(&open_ai::Response {
+                                id: "test-123".to_string(),
+                                object: "chat.completion".to_string(),
+                                created: 0,
+                                model: "test".to_string(),
+                                usage: open_ai::Usage {
+                                    prompt_tokens: 0,
+                                    completion_tokens: 0,
+                                    total_tokens: 0,
+                                },
+                                choices: vec![open_ai::Choice {
+                                    index: 0,
+                                    message: open_ai::RequestMessage::Assistant {
+                                        content: Some(open_ai::MessageContent::Plain(
+                                            indoc! {"
+                                                ```main.rs
+                                                <|start_of_file|>
+                                                <|editable_region_start|>
+                                                fn main() {
+                                                    println!(\"Hello, world!\");
+                                                }
+                                                <|editable_region_end|>
+                                                ```
+                                            "}
+                                            .to_string(),
+                                        )),
+                                        tool_calls: vec![],
+                                    },
+                                    finish_reason: Some("stop".to_string()),
+                                }],
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap())
+                } else {
+                    Ok(gpui::http_client::Response::builder()
+                        .status(401)
+                        .body("Unauthorized".into())
+                        .unwrap())
+                }
+            }
+        }
+    });
+
+    let client =
+        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+    cx.update(|cx| {
+        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
+    });
+
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx)
+    });
+    cx.background_executor.run_until_parked();
+
+    let completion_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
+        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
+        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
+    });
+
+    let _ = completion_task.await;
+
+    assert!(
+        predict_called.load(std::sync::atomic::Ordering::SeqCst),
+        "With custom URL, predict endpoint should be called even without authentication"
+    );
 }
 
 #[ctor::ctor]

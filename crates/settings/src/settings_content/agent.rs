@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
-use crate::DockPosition;
+use crate::{DockPosition, DockSide};
 
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
@@ -22,6 +22,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to dock the utility pane (the thread view pane).
+    ///
+    /// Default: left
+    pub agents_panel_dock: Option<DockSide>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -39,7 +43,13 @@ pub struct AgentSettingsContent {
     pub favorite_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
-    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model to use for the inline assistant when streaming tools are enabled.
+    ///
+    /// Default: true
+    pub inline_assistant_use_streaming_tools: Option<bool>,
+    /// Model to use for generating git commit messages.
+    ///
+    /// Default: true
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -131,6 +141,9 @@ impl AgentSettingsContent {
             provider: provider.into(),
             model,
         });
+    }
+    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
+        self.inline_assistant_use_streaming_tools = Some(use_tools);
     }
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {

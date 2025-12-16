@@ -29,11 +29,16 @@ pub struct CommitDetails {
 pub struct CommitAvatar<'a> {
     sha: &'a SharedString,
     remote: Option<&'a GitRemote>,
+    size: Option<IconSize>,
 }
 
 impl<'a> CommitAvatar<'a> {
     pub fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
-        Self { sha, remote }
+        Self {
+            sha,
+            remote,
+            size: None,
+        }
     }
 
     pub fn from_commit_details(details: &'a CommitDetails) -> Self {
@@ -43,28 +48,37 @@ impl<'a> CommitAvatar<'a> {
                 .message
                 .as_ref()
                 .and_then(|details| details.remote.as_ref()),
+            size: None,
         }
     }
-}
 
-impl<'a> CommitAvatar<'a> {
-    pub fn render(&'a self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    pub fn render(&'a self, window: &mut Window, cx: &mut App) -> AnyElement {
+        match self.avatar(window, cx) {
+            // Loading or no avatar found
+            None => Icon::new(IconName::Person)
+                .color(Color::Muted)
+                .when_some(self.size, |this, size| this.size(size))
+                .into_any_element(),
+            // Found
+            Some(avatar) => avatar
+                .when_some(self.size, |this, size| this.size(size.rems()))
+                .into_any_element(),
+        }
+    }
+
+    pub fn avatar(&'a self, window: &mut Window, cx: &mut App) -> Option<Avatar> {
         let remote = self
             .remote
             .filter(|remote| remote.host_supports_avatars())?;
-
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha.clone());
 
-        let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
-            // Loading or no avatar found
-            None | Some(None) => Icon::new(IconName::Person)
-                .color(Color::Muted)
-                .into_element()
-                .into_any(),
-            // Found
-            Some(Some(url)) => Avatar::new(url.to_string()).into_element().into_any(),
-        };
-        Some(element)
+        let url = window.use_asset::<CommitAvatarAsset>(&avatar_url, cx)??;
+        Some(Avatar::new(url.to_string()))
     }
 }
 
@@ -253,7 +267,7 @@ impl Render for CommitTooltip {
                                 .gap_x_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
-                                .children(avatar)
+                                .child(avatar)
                                 .child(author)
                                 .when(!author_email.is_empty(), |this| {
                                     this.child(

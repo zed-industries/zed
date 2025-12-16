@@ -201,7 +201,10 @@ pub enum LspFormatTarget {
     Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
-pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct OpenLspBufferHandle(Entity<OpenLspBuffer>);
+
+struct OpenLspBuffer(Entity<Buffer>);
 
 impl FormatTrigger {
     fn from_proto(value: i32) -> FormatTrigger {
@@ -4207,7 +4210,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
-        let handle = cx.new(|_| buffer.clone());
+        let handle = OpenLspBufferHandle(cx.new(|_| OpenLspBuffer(buffer.clone())));
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             if !ignore_refcounts {
@@ -4229,7 +4232,7 @@ impl LspStore {
                 local.register_buffer_with_language_servers(buffer, only_register_servers, cx);
             }
             if !ignore_refcounts {
-                cx.observe_release(&handle, move |lsp_store, buffer, cx| {
+                cx.observe_release(&handle.0, move |lsp_store, buffer, cx| {
                     let refcount = {
                         let local = lsp_store.as_local_mut().unwrap();
                         let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
@@ -4246,8 +4249,8 @@ impl LspStore {
                         local.registered_buffers.remove(&buffer_id);
 
                         local.buffers_opened_in_servers.remove(&buffer_id);
-                        if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                            local.unregister_old_buffer_from_language_servers(buffer, &file, cx);
+                        if let Some(file) = File::from_dyn(buffer.0.read(cx).file()).cloned() {
+                            local.unregister_old_buffer_from_language_servers(&buffer.0, &file, cx);
 
                             let buffer_abs_path = file.abs_path(cx);
                             for (_, buffer_pull_diagnostics_result_ids) in
@@ -6782,7 +6785,7 @@ impl LspStore {
             })
         } else {
             let servers = buffer.update(cx, |buffer, cx| {
-                self.language_servers_for_local_buffer(buffer, cx)
+                self.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
@@ -6846,9 +6849,15 @@ impl LspStore {
         ranges: &[Range<text::Anchor>],
         cx: &mut Context<Self>,
     ) -> Vec<Range<BufferRow>> {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         self.latest_lsp_data(buffer, cx)
             .inlay_hints
-            .applicable_chunks(ranges)
+            .applicable_chunks(ranges.as_slice())
             .map(|chunk| chunk.row_range())
             .collect()
     }
@@ -6895,6 +6904,12 @@ impl LspStore {
             .map(|(_, known_chunks)| known_chunks)
             .unwrap_or_default();
 
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&buffer_snapshot))
+            .collect::<Vec<_>>();
+
         let mut hint_fetch_tasks = Vec::new();
         let mut cached_inlay_hints = None;
         let mut ranges_to_query = None;
@@ -6919,9 +6934,7 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
-                    let Some(chunk_range) = existing_inlay_hints.chunk_range(row_chunk) else {
-                        continue;
-                    };
+                    let chunk_range = row_chunk.anchor_range();
                     ranges_to_query
                         .get_or_insert_with(Vec::new)
                         .push((row_chunk, chunk_range));
@@ -8122,7 +8135,7 @@ impl LspStore {
         })
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
+    pub fn running_language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
         cx: &mut App,
@@ -8142,6 +8155,17 @@ impl LspStore {
                     _ => None,
                 },
             )
+    }
+
+    pub fn language_servers_for_local_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Vec<LanguageServerId> {
+        let local = self.as_local();
+        local
+            .map(|local| local.language_server_ids_for_buffer(buffer, cx))
+            .unwrap_or_default()
     }
 
     pub fn language_server_for_local_buffer<'a>(
@@ -12712,10 +12736,11 @@ impl LspStore {
             .update(cx, |buffer, _| buffer.wait_for_version(version))?
             .await?;
         lsp_store.update(cx, |lsp_store, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot();
             let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
             let chunks_queried_for = lsp_data
                 .inlay_hints
-                .applicable_chunks(&[range])
+                .applicable_chunks(&[range.to_point(&buffer_snapshot)])
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {
