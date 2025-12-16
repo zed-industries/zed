@@ -387,7 +387,7 @@ impl LanguageModel for OpenAiLanguageModel {
             }
             .boxed()
         } else {
-            let (request, stop_sequences) = into_open_ai_response(
+            let request = into_open_ai_response(
                 request,
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
@@ -397,7 +397,7 @@ impl LanguageModel for OpenAiLanguageModel {
             );
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = ResponseEventMapper::new(stop_sequences);
+                let mapper = ResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()
@@ -535,7 +535,7 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
-) -> (ResponseRequest, Vec<String>) {
+) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -556,7 +556,7 @@ pub fn into_open_ai_response(
         append_message_to_response_items(message, index, &mut input_items);
     }
 
-    let converted_tools: Vec<_> = tools
+    let tools: Vec<_> = tools
         .into_iter()
         .map(|tool| open_ai::responses::ToolDefinition::Function {
             name: tool.name,
@@ -566,42 +566,32 @@ pub fn into_open_ai_response(
         })
         .collect();
 
-    let parallel_tool_calls_value = if converted_tools.is_empty() {
-        None
-    } else {
-        if !supports_parallel_tool_calls {
-            log::debug!(
-                "Model `{}` using Responses API does not support parallel tool calls; calls will be sequential",
-                model_id
-            );
-        }
-        Some(false)
-    };
-
-    let response_request = ResponseRequest {
+    ResponseRequest {
         model: model_id.into(),
         input: input_items,
         stream,
-        stop_sequences: stop.clone(),
+        stop_sequences: stop,
         temperature,
         top_p: None,
         max_output_tokens,
-        parallel_tool_calls: parallel_tool_calls_value,
+        parallel_tool_calls: if tools.is_empty() {
+            None
+        } else {
+            Some(supports_parallel_tool_calls)
+        },
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
             LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
-        tools: converted_tools,
+        tools,
         prompt_cache_key: if supports_prompt_cache_key {
             thread_id
         } else {
             None
         },
         reasoning: reasoning_effort.map(|effort| open_ai::responses::ReasoningConfig { effort }),
-    };
-
-    (response_request, stop)
+    }
 }
 
 fn append_message_to_response_items(
@@ -879,10 +869,6 @@ struct RawToolCall {
 pub struct ResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     pending_stop_reason: Option<StopReason>,
-    stop_sequences: Vec<String>,
-    max_stop_sequence_len: usize,
-    text_buffer: String,
-    stop_triggered: bool,
 }
 
 #[derive(Default)]
@@ -893,15 +879,10 @@ struct PendingResponseFunctionCall {
 }
 
 impl ResponseEventMapper {
-    pub fn new(stop_sequences: Vec<String>) -> Self {
-        let max_stop_sequence_len = stop_sequences.iter().map(|s| s.len()).max().unwrap_or(0);
+    pub fn new() -> Self {
         Self {
             function_calls_by_item: HashMap::default(),
             pending_stop_reason: None,
-            stop_sequences,
-            max_stop_sequence_len,
-            text_buffer: String::new(),
-            stop_triggered: false,
         }
     }
 
@@ -924,8 +905,7 @@ impl ResponseEventMapper {
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         match event {
             ResponsesStreamEvent::OutputItemAdded { item, .. } => {
-                let mut events = self.flush_text_buffer();
-                self.stop_triggered = false;
+                let mut events = Vec::new();
 
                 match item.item_type.as_str() {
                     "message" => {
@@ -954,7 +934,13 @@ impl ResponseEventMapper {
                 }
                 events
             }
-            ResponsesStreamEvent::OutputTextDelta { delta, .. } => self.handle_text_delta(delta),
+            ResponsesStreamEvent::OutputTextDelta { delta, .. } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Ok(LanguageModelCompletionEvent::Text(delta))]
+                }
+            }
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
                 if let Some(entry) = self.function_calls_by_item.get_mut(&item_id) {
                     entry.arguments.push_str(&delta);
@@ -1042,7 +1028,7 @@ impl ResponseEventMapper {
                     "{error:?}"
                 ))))]
             }
-            ResponsesStreamEvent::OutputTextDone { .. } => self.flush_text_buffer(),
+            ResponsesStreamEvent::OutputTextDone { .. } => Vec::new(),
             ResponsesStreamEvent::OutputItemDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
@@ -1052,90 +1038,12 @@ impl ResponseEventMapper {
         }
     }
 
-    fn handle_text_delta(
-        &mut self,
-        delta: String,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        if delta.is_empty() || self.stop_triggered {
-            return Vec::new();
-        }
-
-        if self.stop_sequences.is_empty() {
-            return vec![Ok(LanguageModelCompletionEvent::Text(delta))];
-        }
-
-        self.text_buffer.push_str(&delta);
-
-        let mut events = Vec::new();
-        if self.stop_triggered {
-            self.text_buffer.clear();
-        }
-        let mut earliest_stop: Option<(usize, usize)> = None;
-        for sequence in &self.stop_sequences {
-            if sequence.is_empty() {
-                continue;
-            }
-            if let Some(idx) = self.text_buffer.find(sequence) {
-                if earliest_stop
-                    .map(|(existing_idx, existing_len)| {
-                        idx < existing_idx || (idx == existing_idx && sequence.len() < existing_len)
-                    })
-                    .unwrap_or(true)
-                {
-                    earliest_stop = Some((idx, sequence.len()));
-                }
-            }
-        }
-
-        if let Some((stop_idx, stop_len)) = earliest_stop {
-            if stop_idx > 0 {
-                let before_stop = self.text_buffer[..stop_idx].to_string();
-                events.push(Ok(LanguageModelCompletionEvent::Text(before_stop)));
-            }
-            // Remove up to and including the stop sequence
-            self.text_buffer.drain(..stop_idx + stop_len);
-            if self.pending_stop_reason.is_none() {
-                self.pending_stop_reason = Some(StopReason::EndTurn);
-            }
-            self.stop_triggered = true;
-            self.text_buffer.clear();
-        } else {
-            let retain_len = self.max_stop_sequence_len.saturating_sub(1);
-            if self.text_buffer.len() > retain_len {
-                let emit_len = self.text_buffer.len() - retain_len;
-                let emit_text = self.text_buffer[..emit_len].to_string();
-                events.push(Ok(LanguageModelCompletionEvent::Text(emit_text)));
-                self.text_buffer.drain(..emit_len);
-            }
-        }
-
-        events
-    }
-
-    fn flush_text_buffer(
-        &mut self,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        if self.stop_triggered || self.text_buffer.is_empty() {
-            self.text_buffer.clear();
-            return Vec::new();
-        }
-
-        let text = std::mem::take(&mut self.text_buffer);
-        if text.is_empty() {
-            Vec::new()
-        } else {
-            vec![Ok(LanguageModelCompletionEvent::Text(text))]
-        }
-    }
-
     fn handle_completion(
         &mut self,
         response: ResponsesSummary,
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
-
-        events.extend(self.flush_text_buffer());
 
         if self.pending_stop_reason.is_none() {
             events.extend(self.emit_tool_calls_from_output(&response.output));
@@ -1455,34 +1363,19 @@ impl Render for ConfigurationView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
-    use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
-
     use super::*;
     use futures::{StreamExt, executor::block_on};
+    use gpui::TestAppContext;
+    use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
     use open_ai::responses::{
         ResponseItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
         StreamEvent as ResponsesStreamEvent,
     };
+    use pretty_assertions::assert_eq;
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            ResponseEventMapper::new(Vec::new())
-                .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .map(Result::unwrap)
-                .collect()
-        })
-    }
-
-    fn map_response_events_with_stop(
-        events: Vec<ResponsesStreamEvent>,
-        stop_sequences: Vec<String>,
-    ) -> Vec<LanguageModelCompletionEvent> {
-        block_on(async {
-            ResponseEventMapper::new(stop_sequences)
+            ResponseEventMapper::new()
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await
@@ -1604,173 +1497,6 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_respects_stop_sequences() {
-        let events = vec![
-            ResponsesStreamEvent::OutputItemAdded {
-                output_index: 0,
-                sequence_number: None,
-                item: response_item_message("msg_stop"),
-            },
-            ResponsesStreamEvent::OutputTextDelta {
-                item_id: "msg_stop".into(),
-                output_index: 0,
-                content_index: Some(0),
-                delta: "Hello wor".into(),
-            },
-            ResponsesStreamEvent::OutputTextDelta {
-                item_id: "msg_stop".into(),
-                output_index: 0,
-                content_index: Some(0),
-                delta: "ld<stop>Ignored text".into(),
-            },
-            ResponsesStreamEvent::OutputTextDone {
-                item_id: "msg_stop".into(),
-                output_index: 0,
-                content_index: Some(0),
-                text: "Hello world".into(),
-            },
-            ResponsesStreamEvent::Completed {
-                response: ResponseSummary::default(),
-            },
-        ];
-
-        let mapped = map_response_events_with_stop(events, vec!["<stop>".into()]);
-
-        assert!(matches!(
-            mapped[0],
-            LanguageModelCompletionEvent::StartMessage { .. }
-        ));
-
-        let collected_text: String = mapped
-            .iter()
-            .filter_map(|event| match event {
-                LanguageModelCompletionEvent::Text(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(collected_text, "Hello world");
-        assert!(matches!(
-            mapped.last(),
-            Some(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
-        ));
-    }
-
-    #[test]
-    fn responses_stream_allows_new_message_after_stop_sequence() {
-        let events = vec![
-            ResponsesStreamEvent::OutputItemAdded {
-                output_index: 0,
-                sequence_number: None,
-                item: response_item_message("msg_stop"),
-            },
-            ResponsesStreamEvent::OutputTextDelta {
-                item_id: "msg_stop".into(),
-                output_index: 0,
-                content_index: Some(0),
-                delta: "First chunk<STOP>".into(),
-            },
-            ResponsesStreamEvent::OutputItemAdded {
-                output_index: 1,
-                sequence_number: None,
-                item: response_item_message("msg_next"),
-            },
-            ResponsesStreamEvent::OutputTextDelta {
-                item_id: "msg_next".into(),
-                output_index: 1,
-                content_index: Some(0),
-                delta: "Second chunk".into(),
-            },
-            ResponsesStreamEvent::Completed {
-                response: ResponseSummary::default(),
-            },
-        ];
-
-        let mapped = map_response_events_with_stop(events, vec!["<STOP>".into()]);
-        assert!(matches!(
-            mapped[0],
-            LanguageModelCompletionEvent::StartMessage { ref message_id }
-            if message_id == "msg_stop"
-        ));
-        assert!(matches!(
-            mapped[1],
-            LanguageModelCompletionEvent::Text(ref text) if text == "First chunk"
-        ));
-        assert!(matches!(
-            mapped[2],
-            LanguageModelCompletionEvent::StartMessage { ref message_id }
-            if message_id == "msg_next"
-        ));
-        assert!(matches!(
-            mapped[3],
-            LanguageModelCompletionEvent::Text(ref text) if text == "Second chunk"
-        ));
-        assert!(matches!(
-            mapped.last(),
-            Some(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))
-        ));
-    }
-
-    #[test]
-    fn into_open_ai_response_disables_parallel_tool_calls_when_tools_present() {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            mode: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("hi".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: vec![LanguageModelRequestTool {
-                name: "get_weather".into(),
-                description: "Retrieve weather".into(),
-                input_schema: json!({}),
-            }],
-            tool_choice: Some(LanguageModelToolChoice::Auto),
-            stop: vec!["<stop>".into()],
-            temperature: Some(0.5),
-            thinking_allowed: false,
-        };
-
-        let (response, stops) =
-            into_open_ai_response(request, "custom-model", false, false, None, None);
-
-        assert_eq!(response.parallel_tool_calls, Some(false));
-        assert_eq!(response.stop_sequences, vec!["<stop>".to_string()]);
-        assert_eq!(stops, vec!["<stop>".to_string()]);
-    }
-
-    #[test]
-    fn into_open_ai_response_omits_parallel_tool_calls_when_no_tools() {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            mode: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("hi".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: Vec::new(),
-            tool_choice: None,
-            stop: Vec::new(),
-            temperature: None,
-            thinking_allowed: false,
-        };
-
-        let (response, stops) =
-            into_open_ai_response(request, "custom-model", true, false, None, None);
-
-        assert_eq!(response.parallel_tool_calls, None);
-        assert!(response.stop_sequences.is_empty());
-        assert!(stops.is_empty());
-    }
-
-    #[test]
     fn into_open_ai_response_builds_complete_payload() {
         let tool_call_id = LanguageModelToolUseId::from("call-42");
         let tool_input = json!({ "city": "Boston" });
@@ -1840,11 +1566,11 @@ mod tests {
             }],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
-            temperature: Some(0.2),
+            temperature: None,
             thinking_allowed: false,
         };
 
-        let (response, stops) = into_open_ai_response(
+        let response = into_open_ai_response(
             request,
             "custom-model",
             true,
@@ -1852,7 +1578,6 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
         );
-        assert_eq!(stops, vec!["<STOP>".to_string()]);
 
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
@@ -1895,9 +1620,8 @@ mod tests {
             ],
             "stream": true,
             "stop_sequences": ["<STOP>"],
-            "temperature": 0.2,
             "max_output_tokens": 2048,
-            "parallel_tool_calls": false,
+            "parallel_tool_calls": true,
             "tool_choice": "required",
             "tools": [
                 {

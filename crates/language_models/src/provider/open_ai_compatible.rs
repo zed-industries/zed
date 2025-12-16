@@ -397,7 +397,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             }
             .boxed()
         } else {
-            let (request, stop_sequences) = into_open_ai_response(
+            let request = into_open_ai_response(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -407,7 +407,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             );
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = ResponseEventMapper::new(stop_sequences);
+                let mapper = ResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()
