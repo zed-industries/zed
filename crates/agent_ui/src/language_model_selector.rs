@@ -183,7 +183,7 @@ impl LanguageModelPickerDelegate {
         entries
             .iter()
             .position(|entry| {
-                if let LanguageModelPickerEntry::Model(model, _) = entry {
+                if let LanguageModelPickerEntry::Model(model) = entry {
                     active_model
                         .as_ref()
                         .map(|active_model| {
@@ -289,22 +289,16 @@ impl GroupedModels {
 
         if !self.favorites.is_empty() {
             entries.push(LanguageModelPickerEntry::Separator("Favorite".into()));
-            entries.extend(self.favorites.iter().map(|info| {
-                LanguageModelPickerEntry::Model(
-                    info.clone(),
-                    ModelSelectorFavoriteAction::Unfavorite,
-                )
-            }));
+            for info in &self.favorites {
+                entries.push(LanguageModelPickerEntry::Model(info.clone()));
+            }
         }
 
         if !self.recommended.is_empty() {
             entries.push(LanguageModelPickerEntry::Separator("Recommended".into()));
-            entries.extend(self.recommended.iter().map(|info| {
-                LanguageModelPickerEntry::Model(
-                    info.clone(),
-                    ModelSelectorFavoriteAction::from_is_favorite(info.is_favorite),
-                )
-            }));
+            for info in &self.recommended {
+                entries.push(LanguageModelPickerEntry::Model(info.clone()));
+            }
         }
 
         for models in self.all.values() {
@@ -314,19 +308,17 @@ impl GroupedModels {
             entries.push(LanguageModelPickerEntry::Separator(
                 models[0].model.provider_name().0,
             ));
-            entries.extend(models.iter().map(|info| {
-                LanguageModelPickerEntry::Model(
-                    info.clone(),
-                    ModelSelectorFavoriteAction::from_is_favorite(info.is_favorite),
-                )
-            }));
+            for info in models {
+                entries.push(LanguageModelPickerEntry::Model(info.clone()));
+            }
         }
+
         entries
     }
 }
 
 enum LanguageModelPickerEntry {
-    Model(ModelInfo, ModelSelectorFavoriteAction),
+    Model(ModelInfo),
     Separator(SharedString),
 }
 
@@ -426,7 +418,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(LanguageModelPickerEntry::Model(_, _)) => true,
+            Some(LanguageModelPickerEntry::Model(_)) => true,
             Some(LanguageModelPickerEntry::Separator(_)) | None => false,
         }
     }
@@ -496,7 +488,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(LanguageModelPickerEntry::Model(model_info, _)) =
+        if let Some(LanguageModelPickerEntry::Model(model_info)) =
             self.filtered_entries.get(self.selected_index)
         {
             let model = model_info.model.clone();
@@ -524,7 +516,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             LanguageModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            LanguageModelPickerEntry::Model(model_info, action) => {
+            LanguageModelPickerEntry::Model(model_info) => {
                 let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
                 let active_model_id = active_model.map(|m| m.model.id());
@@ -532,8 +524,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
+                let is_favorite = model_info.is_favorite;
                 let handle_action_click = {
-                    let is_favorite = model_info.is_favorite;
                     let model = model_info.model.clone();
                     let on_toggle_favorite = self.on_toggle_favorite.clone();
                     move |cx: &App| on_toggle_favorite(model.clone(), !is_favorite, cx)
@@ -544,7 +536,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon(model_info.icon)
                         .is_selected(is_selected)
                         .is_focused(selected)
-                        .favorite_action(*action)
+                        .favorite_action(ModelSelectorFavoriteAction::from_is_favorite(is_favorite))
                         .on_favorite_action_click(handle_action_click)
                         .into_any_element(),
                 )
@@ -865,26 +857,12 @@ mod tests {
         let grouped_models = GroupedModels::new(all_models, recommended_models);
         let entries = grouped_models.entries();
 
-        let mut in_favorites_section = false;
         for entry in &entries {
-            match entry {
-                LanguageModelPickerEntry::Separator(s) if s == "Favorite" => {
-                    in_favorites_section = true;
-                }
-                LanguageModelPickerEntry::Separator(_) => {
-                    in_favorites_section = false;
-                }
-                LanguageModelPickerEntry::Model(info, action)
-                    if !in_favorites_section && info.model.telemetry_id() == "zed/claude" =>
-                {
-                    assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
-                }
-                LanguageModelPickerEntry::Model(info, action) => {
-                    if info.is_favorite {
-                        assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
-                    } else {
-                        assert!(matches!(action, ModelSelectorFavoriteAction::Favorite));
-                    }
+            if let LanguageModelPickerEntry::Model(info) = entry {
+                if info.model.telemetry_id() == "zed/claude" {
+                    assert!(info.is_favorite, "zed/claude should be a favorite");
+                } else {
+                    assert!(!info.is_favorite, "{} should not be a favorite", info.model.telemetry_id());
                 }
             }
         }

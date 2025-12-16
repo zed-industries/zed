@@ -45,7 +45,7 @@ pub fn acp_model_selector(
 
 enum AcpModelPickerEntry {
     Separator(SharedString),
-    Model(AgentModelInfo, ModelSelectorFavoriteAction),
+    Model(AgentModelInfo, bool),
 }
 
 pub struct AcpModelPickerDelegate {
@@ -254,15 +254,15 @@ impl PickerDelegate for AcpModelPickerDelegate {
             AcpModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            AcpModelPickerEntry::Model(model_info, action) => {
+            AcpModelPickerEntry::Model(model_info, is_favorite) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
 
                 let supports_favorites = self.selector.supports_favorites();
 
+                let is_favorite = *is_favorite;
                 let handle_action_click = {
-                    let is_favorite = matches!(action, ModelSelectorFavoriteAction::Unfavorite);
                     let model_id = model_info.id.clone();
                     let fs = self.fs.clone();
 
@@ -296,7 +296,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .when(supports_favorites, |this| {
-                                    this.favorite_action(*action)
+                                    this.favorite_action(ModelSelectorFavoriteAction::from_is_favorite(is_favorite))
                                         .on_favorite_action_click(handle_action_click)
                                 }),
                         )
@@ -367,10 +367,7 @@ fn info_list_to_picker_entries(
     if has_favorites {
         entries.push(AcpModelPickerEntry::Separator("Favorite".into()));
         for model in favorite_models {
-            entries.push(AcpModelPickerEntry::Model(
-                (*model).clone(),
-                ModelSelectorFavoriteAction::Unfavorite,
-            ));
+            entries.push(AcpModelPickerEntry::Model((*model).clone(), true));
         }
     }
 
@@ -380,19 +377,16 @@ fn info_list_to_picker_entries(
                 entries.push(AcpModelPickerEntry::Separator("All".into()));
             }
             for model in list {
-                let action =
-                    ModelSelectorFavoriteAction::from_is_favorite(favorites.contains(&model.id));
-                entries.push(AcpModelPickerEntry::Model(model, action));
+                let is_favorite = favorites.contains(&model.id);
+                entries.push(AcpModelPickerEntry::Model(model, is_favorite));
             }
         }
         AgentModelList::Grouped(index_map) => {
             for (group_name, models) in index_map {
                 entries.push(AcpModelPickerEntry::Separator(group_name.0));
                 for model in models {
-                    let action = ModelSelectorFavoriteAction::from_is_favorite(
-                        favorites.contains(&model.id),
-                    );
-                    entries.push(AcpModelPickerEntry::Model(model, action));
+                    let is_favorite = favorites.contains(&model.id);
+                    entries.push(AcpModelPickerEntry::Model(model, is_favorite));
                 }
             }
         }
@@ -592,13 +586,11 @@ mod tests {
         let entries = info_list_to_picker_entries(models, favorites);
 
         for entry in &entries {
-            match entry {
-                AcpModelPickerEntry::Separator(_) => {}
-                AcpModelPickerEntry::Model(info, action) if info.id.0.as_ref() == "zed/claude" => {
-                    assert!(matches!(action, ModelSelectorFavoriteAction::Unfavorite));
-                }
-                AcpModelPickerEntry::Model(_, action) => {
-                    assert!(matches!(action, ModelSelectorFavoriteAction::Favorite));
+            if let AcpModelPickerEntry::Model(info, is_favorite) = entry {
+                if info.id.0.as_ref() == "zed/claude" {
+                    assert!(is_favorite, "zed/claude should be a favorite");
+                } else {
+                    assert!(!is_favorite, "{} should not be a favorite", info.id.0);
                 }
             }
         }
