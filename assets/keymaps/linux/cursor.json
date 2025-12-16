@@ -8,8 +8,8 @@
       "ctrl-shift-i": "agent::ToggleFocus",
       "ctrl-l": "agent::ToggleFocus",
       "ctrl-shift-l": "agent::ToggleFocus",
-      "ctrl-shift-j": "agent::OpenSettings"
-    }
+      "ctrl-shift-j": "agent::OpenSettings",
+    },
   },
   {
     "context": "Editor && mode == full",
@@ -20,18 +20,18 @@
       "ctrl-shift-l": "agent::AddSelectionToThread", // In cursor uses "Ask" mode
       "ctrl-l": "agent::AddSelectionToThread", // In cursor uses "Agent" mode
       "ctrl-k": "assistant::InlineAssist",
-      "ctrl-shift-k": "assistant::InsertIntoEditor"
-    }
+      "ctrl-shift-k": "assistant::InsertIntoEditor",
+    },
   },
   {
     "context": "InlineAssistEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "editor::Cancel"
+      "ctrl-shift-backspace": "editor::Cancel",
       // "alt-enter": // Quick Question
       // "ctrl-shift-enter": // Full File Context
       // "ctrl-shift-k": // Toggle input focus (editor <> inline assist)
-    }
+    },
   },
   {
     "context": "AgentPanel || ContextEditor || (MessageEditor > Editor)",
@@ -47,7 +47,7 @@
       "ctrl-shift-backspace": "editor::Cancel",
       "ctrl-r": "agent::NewThread",
       "ctrl-shift-v": "editor::Paste",
-      "ctrl-shift-k": "assistant::InsertIntoEditor"
+      "ctrl-shift-k": "assistant::InsertIntoEditor",
       // "escape": "agent::ToggleFocus"
       ///// Enable when Zed supports multiple thread tabs
       // "ctrl-t": // new thread tab
@@ -56,28 +56,29 @@
       ///// Enable if Zed adds support for keyboard navigation of thread elements
       // "tab": // cycle to next message
       // "shift-tab": // cycle to previous message
-    }
+    },
   },
   {
     "context": "Editor && editor_agent_diff",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-enter": "agent::KeepAll",
-      "ctrl-backspace": "agent::RejectAll"
-    }
+      "ctrl-backspace": "agent::RejectAll",
+    },
   },
   {
     "context": "Editor && mode == full && edit_prediction",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-right": "editor::AcceptPartialEditPrediction"
-    }
+      "ctrl-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-down": "editor::AcceptNextLineEditPrediction",
+    },
   },
   {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-k": "assistant::InlineAssist"
-    }
-  }
+      "ctrl-k": "assistant::InlineAssist",
+    },
+  },
 ]

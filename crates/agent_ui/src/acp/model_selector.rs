@@ -403,9 +403,7 @@ async fn fuzzy_search(
         let candidates = model_list
             .iter()
             .enumerate()
-            .map(|(ix, model)| {
-                StringMatchCandidate::new(ix, &format!("{}/{}", model.id, model.name))
-            })
+            .map(|(ix, model)| StringMatchCandidate::new(ix, model.name.as_ref()))
             .collect::<Vec<_>>();
         let mut matches = match_strings(
             &candidates,

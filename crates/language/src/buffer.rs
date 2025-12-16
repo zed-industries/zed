@@ -4317,14 +4317,12 @@ impl BufferSnapshot {
         for chunk in self
             .tree_sitter_data
             .chunks
-            .applicable_chunks(&[self.anchor_before(range.start)..self.anchor_after(range.end)])
+            .applicable_chunks(&[range.to_point(self)])
         {
             if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
                 continue;
             }
-            let Some(chunk_range) = self.tree_sitter_data.chunks.chunk_range(chunk) else {
-                continue;
-            };
+            let chunk_range = chunk.anchor_range();
             let chunk_range = chunk_range.to_offset(&self);
 
             if let Some(cached_brackets) =

@@ -20,6 +20,7 @@ struct ProgressInner {
     max_example_name_len: usize,
     status_lines_displayed: usize,
     total_examples: usize,
+    failed_examples: usize,
     last_line_is_logging: bool,
 }
 
@@ -78,7 +79,7 @@ impl Step {
 static GLOBAL: OnceLock<Arc<Progress>> = OnceLock::new();
 static LOGGER: ProgressLogger = ProgressLogger;
 
-const RIGHT_MARGIN: usize = 4;
+const MARGIN: usize = 4;
 const MAX_STATUS_LINES: usize = 10;
 
 impl Progress {
@@ -95,6 +96,7 @@ impl Progress {
                         max_example_name_len: 0,
                         status_lines_displayed: 0,
                         total_examples: 0,
+                        failed_examples: 0,
                         last_line_is_logging: false,
                     }),
                 });
@@ -110,6 +112,11 @@ impl Progress {
         inner.total_examples = total;
     }
 
+    pub fn increment_failed(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.failed_examples += 1;
+    }
+
     /// Prints a message to stderr, clearing and redrawing status lines to avoid corruption.
     /// This should be used for any output that needs to appear above the status lines.
     fn log(&self, message: &str) {
@@ -119,7 +126,7 @@ impl Progress {
         if !inner.last_line_is_logging {
             let reset = "\x1b[0m";
             let dim = "\x1b[2m";
-            let divider = "─".repeat(inner.terminal_width.saturating_sub(RIGHT_MARGIN));
+            let divider = "─".repeat(inner.terminal_width.saturating_sub(MARGIN));
             eprintln!("{dim}{divider}{reset}");
             inner.last_line_is_logging = true;
         }
@@ -180,7 +187,7 @@ impl Progress {
         if inner.last_line_is_logging {
             let reset = "\x1b[0m";
             let dim = "\x1b[2m";
-            let divider = "─".repeat(inner.terminal_width.saturating_sub(RIGHT_MARGIN));
+            let divider = "─".repeat(inner.terminal_width.saturating_sub(MARGIN));
             eprintln!("{dim}{divider}{reset}");
             inner.last_line_is_logging = false;
         }
@@ -229,7 +236,7 @@ impl Progress {
             let duration_with_margin = format!("{duration} ");
             let padding_needed = inner
                 .terminal_width
-                .saturating_sub(RIGHT_MARGIN)
+                .saturating_sub(MARGIN)
                 .saturating_sub(duration_with_margin.len())
                 .saturating_sub(strip_ansi_len(&prefix));
             let padding = " ".repeat(padding_needed);
@@ -263,20 +270,33 @@ impl Progress {
         // Build the done/in-progress/total label
         let done_count = inner.completed.len();
         let in_progress_count = inner.in_progress.len();
+        let failed_count = inner.failed_examples;
+
+        let failed_label = if failed_count > 0 {
+            format!(" {} failed ", failed_count)
+        } else {
+            String::new()
+        };
+
         let range_label = format!(
             " {}/{}/{} ",
             done_count, in_progress_count, inner.total_examples
         );
 
-        // Print a divider line with range label aligned with timestamps
+        // Print a divider line with failed count on left, range label on right
+        let failed_visible_len = strip_ansi_len(&failed_label);
         let range_visible_len = range_label.len();
-        let left_divider_len = inner
+        let middle_divider_len = inner
             .terminal_width
-            .saturating_sub(RIGHT_MARGIN)
+            .saturating_sub(MARGIN * 2)
+            .saturating_sub(failed_visible_len)
             .saturating_sub(range_visible_len);
-        let left_divider = "─".repeat(left_divider_len);
-        let right_divider = "─".repeat(RIGHT_MARGIN);
-        eprintln!("{dim}{left_divider}{reset}{range_label}{dim}{right_divider}{reset}");
+        let left_divider = "─".repeat(MARGIN);
+        let middle_divider = "─".repeat(middle_divider_len);
+        let right_divider = "─".repeat(MARGIN);
+        eprintln!(
+            "{dim}{left_divider}{reset}{failed_label}{dim}{middle_divider}{reset}{range_label}{dim}{right_divider}{reset}"
+        );
 
         let mut tasks: Vec<_> = inner.in_progress.iter().collect();
         tasks.sort_by_key(|(name, _)| *name);
@@ -304,7 +324,7 @@ impl Progress {
             let duration_with_margin = format!("{elapsed} ");
             let padding_needed = inner
                 .terminal_width
-                .saturating_sub(RIGHT_MARGIN)
+                .saturating_sub(MARGIN)
                 .saturating_sub(duration_with_margin.len())
                 .saturating_sub(strip_ansi_len(&prefix));
             let padding = " ".repeat(padding_needed);
@@ -324,9 +344,23 @@ impl Progress {
         let _ = std::io::stderr().flush();
     }
 
-    pub fn clear(&self) {
+    pub fn finalize(&self) {
         let mut inner = self.inner.lock().unwrap();
         Self::clear_status_lines(&mut inner);
+
+        // Print summary if there were failures
+        if inner.failed_examples > 0 {
+            let total_processed = inner.completed.len() + inner.failed_examples;
+            let percentage = if total_processed > 0 {
+                inner.failed_examples as f64 / total_processed as f64 * 100.0
+            } else {
+                0.0
+            };
+            eprintln!(
+                "\n{} of {} examples failed ({:.1}%)",
+                inner.failed_examples, total_processed, percentage
+            );
+        }
     }
 }
 
