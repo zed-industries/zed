@@ -306,7 +306,7 @@ impl GroupedModels {
             entries.extend(self.recommended.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::for_model_in_general_section(&info),
+                    LanguageModelPickerEntryAction::from_favorite_state(info.is_favorite),
                 )
             }));
         }
@@ -321,7 +321,7 @@ impl GroupedModels {
             entries.extend(models.iter().map(|info| {
                 LanguageModelPickerEntry::Model(
                     info.clone(),
-                    LanguageModelPickerEntryAction::for_model_in_general_section(&info),
+                    LanguageModelPickerEntryAction::from_favorite_state(info.is_favorite),
                 )
             }));
         }
@@ -342,8 +342,8 @@ enum LanguageModelPickerEntryAction {
 }
 
 impl LanguageModelPickerEntryAction {
-    fn for_model_in_general_section(model: &ModelInfo) -> Self {
-        if model.is_favorite {
+    fn from_favorite_state(is_favorite: bool) -> Self {
+        if is_favorite {
             Self::Unfavorite
         } else {
             Self::Favorite

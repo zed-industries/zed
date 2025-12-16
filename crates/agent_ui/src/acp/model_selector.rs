@@ -58,8 +58,8 @@ enum AcpModelPickerEntryAction {
 }
 
 impl AcpModelPickerEntryAction {
-    fn for_model_in_general_section(model: &AgentModelInfo, favorites: &HashSet<ModelId>) -> Self {
-        if favorites.contains(&model.id) {
+    fn from_favorite_state(is_favorite: bool) -> Self {
+        if is_favorite {
             Self::Unfavorite
         } else {
             Self::Favorite
@@ -404,9 +404,8 @@ fn info_list_to_picker_entries(
     let all_models_entries = match model_list {
         AgentModelList::Flat(list) => {
             itertools::Either::Left(list.into_iter().map(move |model_info| {
-                let action = AcpModelPickerEntryAction::for_model_in_general_section(
-                    &model_info,
-                    &favorites,
+                let action = AcpModelPickerEntryAction::from_favorite_state(
+                    favorites.contains(&model_info.id),
                 );
                 AcpModelPickerEntry::Model(model_info, action)
             }))
@@ -416,9 +415,8 @@ fn info_list_to_picker_entries(
                 let favorites = favorites.clone();
                 std::iter::once(AcpModelPickerEntry::Separator(group_name.0)).chain(
                     models.into_iter().map(move |model_info| {
-                        let action = AcpModelPickerEntryAction::for_model_in_general_section(
-                            &model_info,
-                            &favorites,
+                        let action = AcpModelPickerEntryAction::from_favorite_state(
+                            favorites.contains(&model_info.id),
                         );
                         AcpModelPickerEntry::Model(model_info, action)
                     }),
