@@ -344,3 +344,13 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
 }
+
+pub fn trigger_autofix() -> Step<Run> {
+    named::bash(indoc::indoc! {r#"
+        gh workflow run autofix_pr.yml -f pr_number=${{ github.event.pull_request.number }}
+    "#})
+    .if_condition(Expression::new(
+        "failure() && github.event_name == 'pull_request'",
+    ))
+    .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+}
