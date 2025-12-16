@@ -13491,7 +13491,7 @@ impl From<lsp::Documentation> for CompletionDocumentation {
             lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
                 lsp::MarkupKind::PlainText => {
                     if value.lines().count() <= 1 {
-                        CompletionDocumentation::SingleLine(text.trim().to_string().into())
+                        CompletionDocumentation::SingleLine(value.into())
                     } else {
                         CompletionDocumentation::MultiLinePlainText(value.into())
                     }
@@ -14073,5 +14073,23 @@ mod tests {
                 vec![(0..6, HighlightId(1))],
             )
         );
+    }
+
+    #[test]
+    fn test_trailing_newline_in_completion_documentation() {
+        let doc =
+            lsp::Documentation::String("Inappropriate argument value (of correct type).\n".to_string());
+        let completion_doc: CompletionDocumentation = doc.into();
+        assert!(
+            matches!(completion_doc, CompletionDocumentation::SingleLine(s) if s == "Inappropriate argument value (of correct type).")
+        );
+
+        let doc = lsp::Documentation::String("  some value  \n".to_string());
+        let completion_doc: CompletionDocumentation = doc.into();
+        assert!(matches!(
+            completion_doc,
+            CompletionDocumentation::SingleLine(s) if s == "some value"
+        ));
+
     }
 }
