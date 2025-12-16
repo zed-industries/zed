@@ -1636,7 +1636,7 @@ impl Workspace {
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
 
-                let workspace_entity = cx.update_window(window.into(), |_, window, cx| {
+                cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
                         let mut workspace = Workspace::new(
                             Some(workspace_id),
@@ -1647,17 +1647,15 @@ impl Workspace {
                         );
 
                         workspace.centered_layout = centered_layout;
+                        
+                        // Call init callback before window renders to avoid flicker
+                        if let Some(init) = init {
+                            init(&mut workspace, window, cx);
+                        }
+                        
                         workspace
-                    })
+                    });
                 })?;
-                
-                // Call init callback before window is shown to avoid flicker
-                if let Some(init) = init {
-                    workspace_entity.update(cx, |workspace, window, cx| {
-                        init(workspace, window, cx);
-                    })?;
-                }
-                
                 window
             } else {
                 let window_bounds_override = window_bounds_env_override();
@@ -1685,7 +1683,7 @@ impl Workspace {
                     .as_ref()
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
-                let workspace_entity = cx.open_window(options, {
+                cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |window, cx| {
@@ -1698,19 +1696,16 @@ impl Workspace {
                                 cx,
                             );
                             workspace.centered_layout = centered_layout;
+                            
+                            // Call init callback before window renders to avoid flicker
+                            if let Some(init) = init {
+                                init(&mut workspace, window, cx);
+                            }
+                            
                             workspace
                         })
                     }
-                })?;
-                
-                // Call init callback before window is shown to avoid flicker
-                if let Some(init) = init {
-                    workspace_entity.update(cx, |workspace, window, cx| {
-                        init(workspace, window, cx);
-                    })?;
-                }
-                
-                workspace_entity
+                })?
             };
 
             notify_if_database_failed(window, cx);
@@ -7905,7 +7900,7 @@ pub fn open_new(
     );
     cx.spawn(async move |_cx| {
         let (_workspace, _opened_paths) = task.await?;
-        // Init callback is now called synchronously during window creation
+        // Init callback is called synchronously during window creation to avoid flicker
         Ok(())
     })
 }
