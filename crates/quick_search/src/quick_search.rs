@@ -29,8 +29,8 @@ use editor::{Editor, EditorSettings, SelectionEffects, scroll::Autoscroll};
 use git_ui::commit_tooltip::CommitAvatar;
 use gpui::SharedString;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EntityInputHandler, FocusHandle, Focusable,
-    HighlightStyle, Render, Styled, StyledText, Task, WeakEntity, Window,
+    Action, App, Context, DismissEvent, Entity, EntityInputHandler, FocusHandle, FocusOutEvent,
+    Focusable, HighlightStyle, Render, Styled, StyledText, Task, WeakEntity, Window,
 };
 use language::Buffer;
 use log::debug;
@@ -127,6 +127,7 @@ pub struct QuickSearch {
     picker: Entity<Picker<QuickSearchDelegate>>,
     preview: PreviewState,
     source_registry: source::SourceRegistry,
+    focus_handle: FocusHandle,
 }
 
 impl QuickSearch {
@@ -248,6 +249,10 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle();
+        cx.on_focus_out(&focus_handle, window, Self::handle_focus_out)
+            .detach();
+
         let preview_project = project.clone();
         let initial_buffer = cx.new(|cx| Buffer::local("", cx));
         let editor_settings = EditorSettings::get_global(cx);
@@ -286,7 +291,29 @@ impl QuickSearch {
             picker,
             preview,
             source_registry,
+            focus_handle,
         }
+    }
+
+    fn handle_focus_out(
+        &mut self,
+        _event: FocusOutEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Defer so we don't dismiss during transient focus transitions.
+        let owner = cx.entity().downgrade();
+        window.defer(cx, move |window, cx| {
+            let Some(qs) = owner.upgrade() else {
+                return;
+            };
+            qs.update(cx, |qs, cx| {
+                if qs.focus_handle.contains_focused(window, cx) {
+                    return;
+                }
+                cx.emit(DismissEvent);
+            });
+        });
     }
 
     fn toggle_search_option(
@@ -414,7 +441,16 @@ impl QuickSearch {
     }
 }
 
-impl ModalView for QuickSearch {}
+impl ModalView for QuickSearch {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        // Guard hook for future focus-stealing popovers/menus.
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl gpui::EventEmitter<DismissEvent> for QuickSearch {}
 
@@ -474,6 +510,7 @@ impl Render for QuickSearch {
             .h(layout.modal_height)
             .overflow_hidden()
             .elevation_3(cx)
+            .track_focus(&self.focus_handle)
             .key_context("QuickSearch")
             .on_action(cx.listener(Self::handle_activate_item))
             .on_action(cx.listener(Self::handle_activate_next_item))
