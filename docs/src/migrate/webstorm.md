@@ -33,7 +33,7 @@ This opens the current directory in Zed.
 If you're coming from WebStorm, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
 
 1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
-2. Search for `base_keymap`
+2. Search for `Base Keymap`
 3. Select `JetBrains`
 
 Or add this directly to your `settings.json`:
