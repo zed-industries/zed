@@ -1,6 +1,6 @@
 //! Provides `language`-related settings.
 
-use crate::{Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName};
+use crate::{File, Language, LanguageName, LanguageServerName, ModelineSettings};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
