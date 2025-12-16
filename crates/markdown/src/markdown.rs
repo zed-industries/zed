@@ -1063,6 +1063,7 @@ impl Element for MarkdownElement {
                         MarkdownTag::Table(alignments) => {
                             builder.table_alignments = alignments.clone();
                             builder.table_row_index = 0;
+                            builder.in_table_head = false;
 
                             let column_count = alignments.len();
                             builder.push_div(
