@@ -9,7 +9,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToPreviousHunk, ToggleFoldAll},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
@@ -70,6 +70,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    is_collapsed: bool,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -329,6 +330,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
+            is_collapsed: false,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
             _task: task,
@@ -908,6 +910,49 @@ impl Item for ProjectDiff {
         } else {
             None
         }
+    }
+
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let is_collapsed = self.is_collapsed;
+
+        let (icon, label, tooltip_label) = if is_collapsed {
+            (
+                IconName::ChevronUpDown,
+                "Expand All",
+                "Expand All Search Results",
+            )
+        } else {
+            (
+                IconName::ChevronDownUp,
+                "Collapse All",
+                "Collapse All Search Results",
+            )
+        };
+
+        let focus_handle = self.editor.focus_handle(cx);
+
+        Some(
+            Button::new("multibuffer-collapse-expand", label)
+                .icon(icon)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(tooltip_label, &ToggleFoldAll, &focus_handle, cx)
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.is_collapsed = !this.is_collapsed;
+                    this.editor.update(cx, |splittable, cx| {
+                        splittable.last_selected_editor().update(cx, |editor, cx| {
+                            editor.toggle_fold_all(&ToggleFoldAll, window, cx);
+                        })
+                    })
+                }))
+                .into_any_element(),
+        )
     }
 
     fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {

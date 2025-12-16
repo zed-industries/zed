@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Autoscroll, BufferSerialization, Editor, EditorEvent, EditorSettings, ExcerptId,
     ExcerptRange, FormatTarget, MultiBuffer, MultiBufferSnapshot, NavigationData,
-    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _,
+    ReportEditorEvent, SearchWithinRange, SelectionEffects, ToPoint as _, ToggleFoldAll,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -39,7 +39,7 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{IconDecorationKind, prelude::*};
+use ui::{IconButtonShape, IconDecorationKind, Tooltip, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
@@ -940,7 +940,50 @@ impl Item for Editor {
         self.pixel_position_of_newest_cursor
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
+    fn breadcrumb_prefix(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if self.buffer().read(cx).is_singleton() {
+            return None;
+        }
+
+        let is_collapsed = self.is_multibuffer_collapsed;
+
+        let (icon, label, tooltip_label) = if is_collapsed {
+            (
+                IconName::ChevronUpDown,
+                "Expand All",
+                "Expand All Search Results",
+            )
+        } else {
+            (
+                IconName::ChevronDownUp,
+                "Collapse All",
+                "Collapse All Search Results",
+            )
+        };
+
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            Button::new("multibuffer-collapse-expand", label)
+                .icon(icon)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(tooltip_label, &ToggleFoldAll, &focus_handle, cx)
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.is_multibuffer_collapsed = !this.is_multibuffer_collapsed;
+                    this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn breadcrumb_location(&self, _cx: &App) -> ToolbarItemLocation {
         if self.show_breadcrumbs {
             ToolbarItemLocation::PrimaryLeft
         } else {
@@ -948,48 +991,14 @@ impl Item for Editor {
         }
     }
 
+    // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
+    // In those cases, the toolbar breadcrumbs should be an empty vector.
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        let cursor = self.selections.newest_anchor().head();
-        let multibuffer = self.buffer().read(cx);
-        let (buffer_id, symbols) = multibuffer
-            .read(cx)
-            .symbols_containing(cursor, Some(variant.syntax()))?;
-        let buffer = multibuffer.buffer(buffer_id)?;
-
-        let buffer = buffer.read(cx);
-        let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
-            buffer
-                .snapshot()
-                .resolve_file_path(
-                    self.project
-                        .as_ref()
-                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                        .unwrap_or_default(),
-                    cx,
-                )
-                .unwrap_or_else(|| {
-                    if multibuffer.is_singleton() {
-                        multibuffer.title(cx).to_string()
-                    } else {
-                        "untitled".to_string()
-                    }
-                })
-        });
-
-        let settings = ThemeSettings::get_global(cx);
-
-        let mut breadcrumbs = vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }];
-
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
-            text: symbol.text,
-            highlights: Some(symbol.highlight_ranges),
-            font: Some(settings.buffer_font.clone()),
-        }));
-        Some(breadcrumbs)
+        if self.buffer.read(cx).is_singleton() {
+            self.breadcrumbs_inner(variant, cx)
+        } else {
+            Some(vec![])
+        }
     }
 
     fn added_to_workspace(

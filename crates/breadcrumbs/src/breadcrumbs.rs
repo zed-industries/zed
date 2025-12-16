@@ -5,12 +5,12 @@ use gpui::{
 };
 use itertools::Itertools;
 use settings::Settings;
-use std::cmp;
+use std::{any::Any, cmp};
 use theme::ActiveTheme;
 use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
     TabBarSettings, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    item::{BreadcrumbText, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, ItemBufferKind, ItemEvent, ItemHandle},
 };
 
 pub struct Breadcrumbs {
@@ -51,6 +51,7 @@ impl Render for Breadcrumbs {
             return element;
         };
 
+        // Begin - logic we should copy/move
         let Some(mut segments) = active_item.breadcrumbs(cx.theme(), cx) else {
             return element;
         };
@@ -151,6 +152,7 @@ impl Render for Breadcrumbs {
                 .pl_1()
                 .child(breadcrumbs),
         }
+        // End
     }
 }
 

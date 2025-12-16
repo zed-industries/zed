@@ -50,9 +50,9 @@ use gpui::{
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextRun, TextStyleRefinement,
+    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
@@ -98,8 +98,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
-    CollaboratorId, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel, Workspace,
-    item::{Item, ItemBufferKind},
+    CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
+    Workspace,
+    item::{BreadcrumbText, Item, ItemBufferKind},
     notifications::NotifyTaskExt,
 };
 
@@ -3956,6 +3957,13 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let multi_buffer = editor.buffer.read(cx);
         let is_read_only = self.editor.read(cx).read_only(cx);
+        let weak_editor = self.editor.downgrade();
+
+        let breadcrumbs = if is_selected {
+            editor.breadcrumbs_inner(cx.theme(), cx)
+        } else {
+            None
+        };
 
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
@@ -4160,6 +4168,15 @@ impl EditorElement {
                                             },
                                         ))
                                     })
+                                    .when_some(breadcrumbs, |then, breadcrumbs| {
+                                        then.child(self.render_breadcrumb_text(
+                                            breadcrumbs,
+                                            None, // TODO gotta figure this out somehow
+                                            weak_editor,
+                                            window,
+                                            cx,
+                                        ))
+                                    })
                             }))
                             .when(
                                 can_open_excerpts && is_selected && relative_path.is_some(),
@@ -4311,6 +4328,108 @@ impl EditorElement {
                     menu.context(menu_context)
                 })
             })
+    }
+
+    fn render_breadcrumb_text(
+        &self,
+        mut segments: Vec<BreadcrumbText>,
+        prefix: Option<gpui::AnyElement>,
+        editor: WeakEntity<Editor>,
+        window: &mut Window,
+        cx: &App,
+    ) -> impl IntoElement {
+        const MAX_SEGMENTS: usize = 12;
+
+        let element = h_flex()
+            .id("breadcrumb-container")
+            .flex_grow()
+            .overflow_x_scroll()
+            .text_ui(cx);
+
+        let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
+        let suffix_start_ix = cmp::max(
+            prefix_end_ix,
+            segments.len().saturating_sub(MAX_SEGMENTS / 2),
+        );
+
+        if suffix_start_ix > prefix_end_ix {
+            segments.splice(
+                prefix_end_ix..suffix_start_ix,
+                Some(BreadcrumbText {
+                    text: "⋯".into(),
+                    highlights: None,
+                    font: None,
+                }),
+            );
+        }
+
+        let highlighted_segments = segments.into_iter().enumerate().map(|(_index, segment)| {
+            let mut text_style = window.text_style();
+            if let Some(ref font) = segment.font {
+                text_style.font_family = font.family.clone();
+                text_style.font_features = font.features.clone();
+                text_style.font_style = font.style;
+                text_style.font_weight = font.weight;
+            }
+            text_style.color = Color::Muted.color(cx);
+
+            // TODO this shouldn't apply here, but will in the formal breadcrumb (e.g. singleton buffer). Need to resolve the difference.
+            // if index == 0
+            //     && !TabBarSettings::get_global(cx).show
+            //     && active_item.is_dirty(cx)
+            //     && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+            // {
+            //     return styled_element;
+            // }
+
+            StyledText::new(segment.text.replace('\n', "⏎"))
+                .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
+                .into_any()
+        });
+        let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
+            Label::new("›").color(Color::Placeholder).into_any_element()
+        });
+
+        let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+
+        let breadcrumbs = if let Some(prefix) = prefix {
+            h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+        } else {
+            breadcrumbs_stack
+        };
+        element.child(
+            ButtonLike::new("toggle outline view")
+                .child(breadcrumbs)
+                .style(ButtonStyle::Transparent)
+                .on_click({
+                    let editor = editor.clone();
+                    move |_, window, cx| {
+                        if let Some((editor, callback)) = editor
+                            .upgrade()
+                            .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                        {
+                            callback(editor.to_any_view(), window, cx);
+                        }
+                    }
+                })
+                .tooltip(move |_window, cx| {
+                    if let Some(editor) = editor.upgrade() {
+                        let focus_handle = editor.read(cx).focus_handle(cx);
+                        Tooltip::for_action_in(
+                            "Show Symbol Outline",
+                            &zed_actions::outline::ToggleOutline,
+                            &focus_handle,
+                            cx,
+                        )
+                    } else {
+                        Tooltip::for_action(
+                            "Show Symbol Outline",
+                            &zed_actions::outline::ToggleOutline,
+                            cx,
+                        )
+                    }
+                }),
+        )
     }
 
     fn render_blocks(

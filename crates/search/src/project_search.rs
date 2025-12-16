@@ -667,8 +667,9 @@ impl Item for ProjectSearchView {
         }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.results_editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, _theme: &theme::Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+        // This should only show the prefix - hence it cannot be none right now
+        Some(vec![])
     }
 
     fn breadcrumb_prefix(
@@ -682,17 +683,26 @@ impl Item for ProjectSearchView {
 
         let is_collapsed = self.results_collapsed;
 
-        let (icon, tooltip_label) = if is_collapsed {
-            (IconName::ChevronUpDown, "Expand All Search Results")
+        let (icon, label, tooltip_label) = if is_collapsed {
+            (
+                IconName::ChevronUpDown,
+                "Expand All",
+                "Expand All Search Results",
+            )
         } else {
-            (IconName::ChevronDownUp, "Collapse All Search Results")
+            (
+                IconName::ChevronDownUp,
+                "Collapse All",
+                "Collapse All Search Results",
+            )
         };
 
         let focus_handle = self.query_editor.focus_handle(cx);
 
         Some(
-            IconButton::new("project-search-collapse-expand", icon)
-                .shape(IconButtonShape::Square)
+            Button::new("project-search-collapse-expand", label)
+                .icon(icon)
+                .icon_position(IconPosition::Start)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in(
