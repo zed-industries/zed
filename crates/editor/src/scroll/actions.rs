@@ -1,10 +1,11 @@
 use super::Axis;
 use crate::{
-    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
-use gpui::{Context, Point, Window};
+use gpui::{Context, Point, Window, point};
+use settings::Settings;
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
@@ -38,8 +39,14 @@ impl Editor {
         &mut self,
         scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let smooth_scroll_enabled = EditorSettings::get_global(cx).smooth_scroll;
+        if !smooth_scroll_enabled {
+            return self.scroll(scroll_position, axis, window, cx);
+        }
+
         let current_position = self.scroll_position(cx);
         self.scroll_manager.update_ongoing_scroll(axis);
         self.scroll_manager
@@ -99,7 +106,16 @@ impl Editor {
             .then(|| display_snapshot.buffer_header_height())
             .unwrap_or(0);
         let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows + header_offset);
-        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
+        let display_row = DisplayRow(new_screen_top);
+
+        if EditorSettings::get_global(cx).smooth_scroll {
+            let current_position = self.scroll_position(cx);
+            let new_position = point(current_position.x, display_row.0 as f64);
+
+            self.scroll_animated(new_position, None, window, cx);
+        } else {
+            self.set_scroll_top_row(display_row, window, cx);
+        }
     }
 
     pub fn scroll_cursor_center(
@@ -118,7 +134,16 @@ impl Editor {
             .row()
             .0;
         let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
-        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
+        let display_row = DisplayRow(new_screen_top);
+
+        if EditorSettings::get_global(cx).smooth_scroll {
+            let current_position = self.scroll_position(cx);
+            let new_position = point(current_position.x, display_row.0 as f64);
+
+            self.scroll_animated(new_position, None, window, cx);
+        } else {
+            self.set_scroll_top_row(display_row, window, cx);
+        }
     }
 
     pub fn scroll_cursor_bottom(
@@ -139,6 +164,15 @@ impl Editor {
             .0;
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
-        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
+        let display_row = DisplayRow(new_screen_top);
+
+        if EditorSettings::get_global(cx).smooth_scroll {
+            let current_position = self.scroll_position(cx);
+            let new_position = point(current_position.x, display_row.0 as f64);
+
+            self.scroll_animated(new_position, None, window, cx);
+        } else {
+            self.set_scroll_top_row(display_row, window, cx);
+        }
     }
 }
