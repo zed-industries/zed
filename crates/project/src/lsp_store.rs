@@ -13482,7 +13482,7 @@ impl From<lsp::Documentation> for CompletionDocumentation {
         match docs {
             lsp::Documentation::String(text) => {
                 if text.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(text.into())
+                    CompletionDocumentation::SingleLine(text.trim().to_string().into())
                 } else {
                     CompletionDocumentation::MultiLinePlainText(text.into())
                 }
