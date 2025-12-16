@@ -108,14 +108,7 @@ impl Editor {
         let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows + header_offset);
         let display_row = DisplayRow(new_screen_top);
 
-        if EditorSettings::get_global(cx).smooth_scroll {
-            let current_position = self.scroll_position(cx);
-            let new_position = point(current_position.x, display_row.0 as f64);
-
-            self.scroll_animated(new_position, None, window, cx);
-        } else {
-            self.set_scroll_top_row(display_row, window, cx);
-        }
+        self.set_scroll_top_row(display_row, window, cx);
     }
 
     pub fn scroll_cursor_center(
@@ -136,14 +129,7 @@ impl Editor {
         let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
         let display_row = DisplayRow(new_screen_top);
 
-        if EditorSettings::get_global(cx).smooth_scroll {
-            let current_position = self.scroll_position(cx);
-            let new_position = point(current_position.x, display_row.0 as f64);
-
-            self.scroll_animated(new_position, None, window, cx);
-        } else {
-            self.set_scroll_top_row(display_row, window, cx);
-        }
+        self.set_scroll_top_row(display_row, window, cx);
     }
 
     pub fn scroll_cursor_bottom(
@@ -166,13 +152,6 @@ impl Editor {
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
         let display_row = DisplayRow(new_screen_top);
 
-        if EditorSettings::get_global(cx).smooth_scroll {
-            let current_position = self.scroll_position(cx);
-            let new_position = point(current_position.x, display_row.0 as f64);
-
-            self.scroll_animated(new_position, None, window, cx);
-        } else {
-            self.set_scroll_top_row(display_row, window, cx);
-        }
+        self.set_scroll_top_row(display_row, window, cx);
     }
 }

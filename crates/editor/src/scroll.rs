@@ -582,12 +582,6 @@ impl ScrollManager {
             })
         }
     }
-
-    pub fn animation_progress(&self) -> Option<f32> {
-        self.scroll_animation
-            .as_ref()
-            .map(|animation| animation.progress())
-    }
 }
 
 impl Editor {
@@ -676,19 +670,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
-        let new_screen_top = DisplayPoint::new(row, 0);
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
+        if EditorSettings::get_global(cx).smooth_scroll {
+            let current_position = self.scroll_position(cx);
+            let new_position = point(current_position.x, row.0 as f64);
 
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        );
+            self.scroll_animated(new_position, None, window, cx);
+        } else {
+            let snapshot = self.snapshot(window, cx).display_snapshot;
+            let new_screen_top = DisplayPoint::new(row, 0);
+            let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
+            let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
+
+            self.set_scroll_anchor(
+                ScrollAnchor {
+                    anchor: new_anchor,
+                    offset: Default::default(),
+                },
+                window,
+                cx,
+            );
+        }
     }
 
     pub(crate) fn set_scroll_position_internal(
