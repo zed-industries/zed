@@ -90,7 +90,7 @@ Open buffers appear as tabs across the top. The sidebar shows your file tree and
 
 If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to WebStorm.
 
-### Common Shared Keybindings (Zed with JetBrains keymap ↔ WebStorm)
+### Common Shared Keybindings
 
 | Action                        | Shortcut                |
 | ----------------------------- | ----------------------- |
@@ -145,12 +145,9 @@ Zed also supports key sequences (multi-key shortcuts).
 
 If you've used WebStorm on large projects, you know the wait. Opening a project with many dependencies can mean watching "Indexing..." for anywhere from 30 seconds to several minutes. WebStorm indexes your entire codebase and `node_modules` to power its code intelligence, and re-indexes when dependencies change.
 
-> "I work for AWS and the applications I deal with are massive. Often I need to keep many projects open due to tight dependencies. I'm talking about complex microservices and micro frontend infrastructure which oftentimes lead to 2-15 minutes of indexing wait time whenever I open a project or build the system locally."
-> — Developer working on large-scale microservices
-
 Zed doesn't index. You open a folder and start coding immediately—no progress bars, no "Indexing paused" banners. File search and navigation stay fast regardless of project size or how many `node_modules` dependencies you have.
 
-The trade-off: WebStorm's index enables features like finding all usages across your entire codebase, tracking import hierarchies, and flagging unused exports project-wide. Zed relies on language servers for this analysis, which may not cover as much ground.
+WebStorm's index enables features like finding all usages across your entire codebase, tracking import hierarchies, and flagging unused exports project-wide. Zed relies on language servers for this analysis, which may not cover as much ground.
 
 **How to adapt:**
 
@@ -239,7 +236,7 @@ Zed has none of this built-in. The TypeScript language server sees your code as 
 - Consider using framework-specific CLI tools (`ng`, `next`, `vite`) from Zed's terminal
 - For React, JSX/TSX syntax and TypeScript types still provide good intelligence
 
-> **Tip:** For projects with complex configurations, keep your framework's documentation handy. The trade-off for Zed's speed is less hand-holding for framework-specific features.
+> **Tip:** For projects with complex configurations, keep your framework's documentation handy. Zed's speed comes with less hand-holding for framework-specific features.
 
 ### Tool Windows vs. Docks
 

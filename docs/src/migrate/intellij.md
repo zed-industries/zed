@@ -147,7 +147,7 @@ If you've used IntelliJ on large projects, you know the wait: "Indexing..." can 
 
 Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size.
 
-The trade-off is real: IntelliJ's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting dead code. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
+IntelliJ's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting dead code. Zed delegates this work to language servers, which may not analyze at the same depth.
 
 **How to adapt:**
 
@@ -158,7 +158,7 @@ The trade-off is real: IntelliJ's index powers features like finding all usages 
 
 ### LSP vs. Native Language Intelligence
 
-IntelliJ has its own language analysis engine built from scratch for each supported language. For Java, Kotlin, and other JVM languages, this engine understands your code deeply: it resolves types, tracks data flow, knows about framework annotations, and offers dozens of specialized refactorings.
+IntelliJ has its own language analysis engine built from scratch for each supported language. For Java, Kotlin, and other JVM languages, this engine understands your code thoroughly: it resolves types, tracks data flow, knows about framework annotations, and offers dozens of specialized refactorings.
 
 Zed uses the Language Server Protocol (LSP) for code intelligence. Each language has its own server: `jdtls` for Java, `rust-analyzer` for Rust, and so on.
 

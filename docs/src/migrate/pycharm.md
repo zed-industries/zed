@@ -147,7 +147,7 @@ If you've used PyCharm on large projects, you know the wait: "Indexing..." can t
 
 Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size. For many PyCharm users, this alone is reason enough to switch—no more waiting, no more "Indexing paused" interruptions.
 
-The trade-off is real: PyCharm's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting unused imports project-wide. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
+PyCharm's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting unused imports project-wide. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
 
 **How to adapt:**
 
