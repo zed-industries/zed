@@ -12,14 +12,11 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use ui::{
-    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, KeyBinding, ListItem,
-    ListItemSpacing, prelude::*,
-};
+use ui::{DocumentationAside, DocumentationEdge, DocumentationSide, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::HoldForDefault;
+use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
@@ -236,38 +233,18 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn render_match(
         &self,
         ix: usize,
-        selected: bool,
+        is_focused: bool,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
-            AcpModelPickerEntry::Separator(title) => Some(
-                div()
-                    .px_2()
-                    .pb_1()
-                    .when(ix > 1, |this| {
-                        this.mt_1()
-                            .pt_2()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                    })
-                    .child(
-                        Label::new(title)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .into_any_element(),
-            ),
+            AcpModelPickerEntry::Separator(title) => {
+                Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
+            }
             AcpModelPickerEntry::Model(model_info) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
                 let default_model = self.agent_server.default_model(cx);
                 let is_default = default_model.as_ref() == Some(&model_info.id);
-
-                let model_icon_color = if is_selected {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                };
 
                 Some(
                     div()
@@ -284,30 +261,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 }))
                         })
                         .child(
-                            ListItem::new(ix)
-                                .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
-                                .toggle_state(selected)
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_1p5()
-                                        .when_some(model_info.icon, |this, icon| {
-                                            this.child(
-                                                Icon::new(icon)
-                                                    .color(model_icon_color)
-                                                    .size(IconSize::Small)
-                                            )
-                                        })
-                                        .child(Label::new(model_info.name.clone()).truncate()),
-                                )
-                                .end_slot(div().pr_3().when(is_selected, |this| {
-                                    this.child(
-                                        Icon::new(IconName::Check)
-                                            .color(Color::Accent)
-                                            .size(IconSize::Small),
-                                    )
-                                })),
+                            ModelSelectorListItem::new(ix, model_info.name.clone())
+                                .is_focused(is_focused)
+                                .is_selected(is_selected)
+                                .when_some(model_info.icon, |this, icon| this.icon(icon)),
                         )
                         .into_any_element()
                 )
@@ -343,7 +300,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
     fn render_footer(
         &self,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
@@ -351,26 +308,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
             return None;
         }
 
-        Some(
-            h_flex()
-                .w_full()
-                .p_1p5()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("configure", "Configure")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
-                        }),
-                )
-                .into_any(),
-        )
+        Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
     }
 }
 
