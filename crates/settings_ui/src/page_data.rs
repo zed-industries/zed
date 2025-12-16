@@ -2471,7 +2471,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     in_json: true,
                     files: USER | PROJECT,
                     render: Arc::new(|this, window, cx| {
-                        let items: Vec<_> = language_settings_data()
+                        let items: Box<[_]> = language_settings_data()
                             .chain(non_editor_language_settings_data())
                             .chain(edit_prediction_language_settings_section())
                             .collect();
