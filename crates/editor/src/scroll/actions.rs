@@ -4,7 +4,7 @@ use crate::{
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
-use gpui::{Context, Point, Window, point};
+use gpui::{Context, Point, Window};
 use settings::Settings;
 
 impl Editor {
