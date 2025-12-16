@@ -252,6 +252,7 @@
       "ctrl-y": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
       "ctrl-alt-z": "agent::RejectOnce",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
@@ -346,6 +347,7 @@
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
       "shift-tab": "agent::CycleModeSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
     },
   },
   {
