@@ -917,8 +917,12 @@ mod tests {
                 {
                     assert!(matches!(action, LanguageModelPickerEntryAction::Unfavorite));
                 }
-                LanguageModelPickerEntry::Model(_, action) => {
-                    assert!(matches!(action, LanguageModelPickerEntryAction::Favorite));
+                LanguageModelPickerEntry::Model(info, action) => {
+                    if info.is_favorite {
+                        assert!(matches!(action, LanguageModelPickerEntryAction::Unfavorite));
+                    } else {
+                        assert!(matches!(action, LanguageModelPickerEntryAction::Favorite));
+                    }
                 }
             }
         }
